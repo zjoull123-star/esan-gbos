@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       custom_image:
-        description: Immutable final image containing crm and esan_gbos (repository@sha256:digest)
+        description: Immutable linux/amd64 final image or manifest containing crm and esan_gbos (repository@sha256:digest)
         required: true
         type: string
 
@@ -21,6 +21,7 @@ jobs:
       - name: Require an immutable final image
         run: |
           [[ "${CUSTOM_IMAGE}" =~ ^[a-zA-Z0-9._/-]+(:[a-zA-Z0-9._-]+)?@sha256:[a-f0-9]{64}$ ]]
+          docker pull --platform linux/amd64 "${CUSTOM_IMAGE}"
 
   frappe-app-install-smoke:
     name: Fresh four-app install and double migration

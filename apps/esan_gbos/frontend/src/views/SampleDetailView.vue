@@ -84,7 +84,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import Button from "@frappe-ui/button";
 
 import { BffError, createIdempotencyKey } from "@/api/bff";
@@ -126,11 +126,13 @@ const feedbackUnavailableMessage = computed(() =>
 const feedbackSummary = ref("");
 const submitting = ref(false);
 const commandMessage = ref("");
+let commandGeneration = 0;
 
 const submitFeedback = async () => {
   if (!canRecordFeedback.value) {
     return;
   }
+  const currentGeneration = ++commandGeneration;
   commandMessage.value = "";
   submitting.value = true;
   try {
@@ -140,15 +142,33 @@ const submitFeedback = async () => {
       expected_revision: currentRevision.value,
       idempotency_key: createIdempotencyKey(),
     });
+    if (currentGeneration !== commandGeneration) {
+      return;
+    }
     feedbackSummary.value = "";
     commandMessage.value = "反馈已记录。请刷新以读取最新样品状态。";
   } catch (error) {
+    if (currentGeneration !== commandGeneration) {
+      return;
+    }
     commandMessage.value =
       error instanceof BffError ? error.displayMessage : "提交失败，请刷新后重试。";
   } finally {
-    submitting.value = false;
+    if (currentGeneration === commandGeneration) {
+      submitting.value = false;
+    }
   }
 };
 
 const { state, message, requestId, load } = resource;
+watch(
+  () => props.id,
+  () => {
+    commandGeneration += 1;
+    feedbackSummary.value = "";
+    commandMessage.value = "";
+    submitting.value = false;
+    void load();
+  },
+);
 </script>

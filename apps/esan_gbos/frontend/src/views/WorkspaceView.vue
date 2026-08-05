@@ -43,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, watch } from "vue";
 
 import { useBffClient } from "@/api/injection";
 import RecordGrid from "@/components/RecordGrid.vue";
@@ -99,4 +99,10 @@ const records = computed(() =>
     : recordsFromPayload(resource.data.value),
 );
 const { state, message, requestId, load } = resource;
+watch(
+  () => props.workspace,
+  () => {
+    void load();
+  },
+);
 </script>

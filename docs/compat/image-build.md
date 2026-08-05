@@ -12,7 +12,8 @@ scripts/dev/build-custom-image \
 ```
 
 The script verifies the Frappe, ERPNext, CRM, and frappe_docker release tags
-against their frozen 40-character commits before building for `linux/arm64`.
+against their frozen 40-character commits before building for `linux/arm64`
+by default.
 It passes [`apps.upstream.json`](../../infra/dev/apps.upstream.json) as a
 BuildKit secret and prints the local image digest plus `bench version`.
 
@@ -57,6 +58,24 @@ The exact frappe_docker builder stage supplies Node 24.13.0 for
 `bench build --app esan_gbos`. The final backend stage copies the built assets
 and Python app, runs only the Python editable install, and does not assume Node
 exists at runtime.
+
+The manual GitHub fresh-site smoke runs on `linux/amd64`. An explicitly
+authorized registry publisher can create its single-platform prerequisite
+without changing the local ARM64 default:
+
+```bash
+scripts/dev/build-custom-image \
+  --stage final \
+  --esan-commit 0123456789abcdef0123456789abcdef01234567 \
+  --platform linux/amd64 \
+  --push \
+  --image registry.example/esan/esan-gbos:gate1-0123456
+```
+
+`--push` accepts only a registry-qualified final-image tag. The smoke workflow
+then accepts the immutable `repository@sha256:digest` and first proves it can
+be pulled for `linux/amd64`. Publishing a registry image is not part of the
+default local bootstrap and must be separately authorized.
 
 Default `scripts/dev/bootstrap` is the final gate and requires
 `APP_LIST=erpnext,crm,esan_gbos`. Site creation fails before installation if

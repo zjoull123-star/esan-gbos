@@ -317,6 +317,9 @@ nav {
   min-width: 0;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
   gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .record-card,
@@ -392,7 +395,7 @@ blockquote {
 }
 
 .status-list dt {
-  color: var(--muted);
+  color: #405148;
   font-size: 0.68rem;
 }
 

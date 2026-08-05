@@ -16,6 +16,17 @@ OPERATIONS = {
     "/api/method/esan_gbos.api.v1.work_item.transition": "post",
 }
 
+SUCCESS_RESPONSES = {
+    "/api/method/esan_gbos.api.v1.party.get_360": "Party360Success",
+    "/api/method/esan_gbos.api.v1.work_item.list": "WorkItemListSuccess",
+    "/api/method/esan_gbos.api.v1.sample.get_status": "SampleStatusSuccess",
+    "/api/method/esan_gbos.api.v1.sourcing.get_board": "SourcingBoardSuccess",
+    "/api/method/esan_gbos.api.v1.sample.create_project": "SampleCreateSuccess",
+    "/api/method/esan_gbos.api.v1.sample.record_feedback": "SampleFeedbackSuccess",
+    "/api/method/esan_gbos.api.v1.sourcing.create_from_demand": "SourcingCreateSuccess",
+    "/api/method/esan_gbos.api.v1.work_item.transition": "WorkItemTransitionSuccess",
+}
+
 
 def _contract() -> dict[str, object]:
     return json.loads(CONTRACT.read_text(encoding="utf-8"))
@@ -68,10 +79,39 @@ def test_bff_error_envelope_contains_request_id_and_conflict_codes() -> None:
         assert "default" in responses
 
 
+def test_bff_contract_models_the_real_frappe_wire_envelope() -> None:
+    contract = _contract()
+    schemas = contract["components"]["schemas"]
+    responses = contract["components"]["responses"]
+
+    error_wire = schemas["FrappeErrorWire"]
+    assert set(error_wire["required"]) == {"message"}
+    assert set(error_wire["properties"]) == {"message"}
+    assert error_wire["properties"]["message"]["$ref"] == "#/components/schemas/ErrorEnvelope"
+    assert (
+        responses["Error"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/FrappeErrorWire"
+    )
+
+    for path, response_name in SUCCESS_RESPONSES.items():
+        method = OPERATIONS[path]
+        response_ref = contract["paths"][path][method]["responses"]["200"]["$ref"]
+        assert response_ref == f"#/components/responses/{response_name}"
+        wire_name = response_name.removesuffix("Success") + "Wire"
+        wire = schemas[wire_name]
+        assert set(wire["required"]) == {"message"}
+        assert set(wire["properties"]) == {"message"}
+        inner_ref = wire["properties"]["message"]["$ref"]
+        assert inner_ref.endswith("Envelope")
+        inner = schemas[inner_ref.rsplit("/", maxsplit=1)[-1]]
+        assert inner["properties"]["data"]["$ref"].startswith("#/components/schemas/")
+        assert inner["properties"]["meta"]["$ref"] == "#/components/schemas/SuccessMeta"
+
+
 def test_bff_envelopes_freeze_schema_version_and_error_shape() -> None:
     contract = _contract()
     schemas = contract["components"]["schemas"]
-    success_meta = schemas["SuccessEnvelope"]["properties"]["meta"]
+    success_meta = schemas["SuccessMeta"]
     error = schemas["ErrorEnvelope"]
 
     assert {"request_id", "schema_version"} <= set(success_meta["required"])

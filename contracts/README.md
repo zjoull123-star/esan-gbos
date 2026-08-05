@@ -14,6 +14,10 @@ business core.
   internal `AI Draft`.
 - `ApprovedCommand`: human-authorized, idempotent internal state transition.
 - `ConnectorCheckpoint`: durable cursor, replay window, and connector lease.
+- `bff-v1.openapi.json`: the eight frozen Gate 1 BFF methods. Each operation
+  declares its concrete response DTO and the real Frappe HTTP wire wrapper
+  (`{"message": {"data": ..., "meta": ...}}` or
+  `{"message": {"error": ...}}`).
 
 ## Cross-record uniqueness
 

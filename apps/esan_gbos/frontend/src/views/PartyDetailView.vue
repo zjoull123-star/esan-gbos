@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, watch } from "vue";
 
 import { useBffClient } from "@/api/injection";
 import RecordGrid from "@/components/RecordGrid.vue";
@@ -56,4 +56,10 @@ const records = computed(
   () => flattenParty360Payload(resource.data.value).records,
 );
 const { state, message, requestId, load } = resource;
+watch(
+  () => props.id,
+  () => {
+    void load();
+  },
+);
 </script>

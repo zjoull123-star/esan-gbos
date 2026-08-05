@@ -9,20 +9,29 @@ export const useOnlineResource = <T>(loader: () => Promise<T>) => {
   const state = ref<ResourceState>("idle");
   const message = ref("");
   const requestId = ref<string>();
+  let generation = 0;
 
   const clear = () => {
     data.value = undefined;
   };
 
   const load = async () => {
+    const currentGeneration = ++generation;
     clear();
     message.value = "";
     requestId.value = undefined;
     state.value = "loading";
     try {
-      data.value = await loader();
+      const result = await loader();
+      if (currentGeneration !== generation) {
+        return;
+      }
+      data.value = result;
       state.value = "ready";
     } catch (error) {
+      if (currentGeneration !== generation) {
+        return;
+      }
       clear();
       if (error instanceof BffError) {
         message.value = error.displayMessage;
@@ -46,6 +55,7 @@ export const useOnlineResource = <T>(loader: () => Promise<T>) => {
   };
 
   const handleOffline = () => {
+    generation += 1;
     clear();
     message.value = "需要联网，请检查网络后重试。";
     state.value = "offline";
@@ -57,6 +67,7 @@ export const useOnlineResource = <T>(loader: () => Promise<T>) => {
   });
   onBeforeUnmount(() => {
     window.removeEventListener("offline", handleOffline);
+    generation += 1;
     clear();
   });
 

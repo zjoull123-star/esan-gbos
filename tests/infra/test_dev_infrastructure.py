@@ -229,7 +229,10 @@ def test_custom_image_builder_verifies_every_source_ref() -> None:
         "68ea583a1fbd1c533004cabc4294213e9a58716e",
         "f6016eab20936ea15e5f450ec8dff9880f4dffe9",
         "3061850feface8fbbad15b5dc08a110c596107cb",
-        "--platform linux/arm64",
+        "PLATFORM=linux/arm64",
+        "--platform",
+        "--push",
+        "Final push target must be a registry-qualified image tag",
         "--secret id=apps_json",
         "docker image inspect",
         "--stage final",
@@ -386,6 +389,8 @@ def test_frappe_app_smoke_is_manual_and_final_image_gated() -> None:
     assert re.search(r"needs:\s*preconditions", workflow)
     assert "custom_image" in workflow
     assert "sha256:" in workflow
+    assert "linux/amd64" in workflow
+    assert 'docker pull --platform linux/amd64 "${CUSTOM_IMAGE}"' in workflow
     assert "APP_LIST: erpnext,crm,esan_gbos" in workflow
     assert workflow.count('bench --site "${SITE_NAME}" migrate') >= 2
     assert "list-apps" in workflow

@@ -13,24 +13,52 @@ const workspaces = [
   ["/gbos/review", "审核队列"],
 ] as const;
 
-const syntheticEnvelope = {
+const syntheticWorkEnvelope = {
   message: {
-    data: {
-      items: [
-        {
-          name: "WORK-E2E-1",
-          title: "确认客户柑橘香调",
-          summary_zh: "客户偏好清新的柑橘香调。",
-          original_text: "نفضل رائحة حمضيات منعشة",
-          original_language: "ar",
-          origin: "Fixture",
-          business_status: "Open",
-          revision: 1,
-        },
-      ],
-    },
+    data: [
+      {
+        name: "WORK-E2E-1",
+        title: "SALES-ONLY · 确认客户柑橘香调",
+        summary_zh: "客户偏好清新的柑橘香调。",
+        original_text: "نفضل رائحة حمضيات منعشة",
+        original_language: "ar",
+        origin: "Fixture",
+        business_status: "Open",
+        revision: 1,
+      },
+    ],
     meta: {
       request_id: "req-e2e-synthetic",
+      schema_version: "1.0",
+    },
+  },
+};
+
+const syntheticSourcingEnvelope = {
+  message: {
+    data: {
+      lanes: {
+        Draft: [
+          {
+            name: "SRC-E2E-1",
+            title: "PURCHASE-ONLY · 玻璃瓶询源",
+            origin: "Fixture",
+            business_status: "Draft",
+            revision: 1,
+            candidates: [],
+          },
+        ],
+        Invited: [],
+        Collecting: [],
+        Evaluating: [],
+        Selected: [],
+        Closed: [],
+        Cancelled: [],
+      },
+      total: 1,
+    },
+    meta: {
+      request_id: "req-e2e-sourcing",
       schema_version: "1.0",
     },
   },
@@ -55,10 +83,13 @@ const prepareHarness = async (page: Page) => {
     };
   });
   await page.route("**/api/method/**", async (route) => {
+    const envelope = route.request().url().includes("sourcing.get_board")
+      ? syntheticSourcingEnvelope
+      : syntheticWorkEnvelope;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(syntheticEnvelope),
+      body: JSON.stringify(envelope),
     });
   });
 };
@@ -117,6 +148,18 @@ test("五个角色工作台无 axe 违规", async ({ page }, testInfo) => {
     await expect(page.getByText("演示数据")).toBeVisible();
     expect(await axeViolations(page), `${path} axe violations`).toEqual([]);
   }
+});
+
+test("SPA 内销售切换采购会重新读取采购数据", async ({ page }, testInfo) => {
+  test.skip(!isHarness(testInfo), "合成哨兵仅用于前端 SPA 路由回归");
+  await openWorkspace(page, testInfo, "/gbos/sales", "销售协同");
+  await expect(page.getByText(/SALES-ONLY/u)).toBeVisible();
+
+  await page.getByRole("link", { name: "采购协同", exact: true }).click();
+  await expect(page).toHaveURL(/\/gbos\/purchase$/u);
+  await expect(page.getByRole("heading", { level: 1, name: "采购协同" })).toBeVisible();
+  await expect(page.getByText(/PURCHASE-ONLY/u)).toBeVisible();
+  await expect(page.getByText(/SALES-ONLY/u)).toHaveCount(0);
 });
 
 test("375、768、1440 无横向溢出", async ({ page }, testInfo) => {

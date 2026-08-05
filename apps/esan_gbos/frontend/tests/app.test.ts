@@ -72,9 +72,7 @@ describe("工作台数据状态", () => {
     expect(wrapper.text()).toContain("客户偏好清新的柑橘香调。");
     expect(wrapper.get("blockquote").text()).toBe("نفضل رائحة حمضيات منعشة");
     expect(wrapper.get("article.evidence-card").attributes("role")).toBeUndefined();
-    expect(
-      wrapper.find("[role='listitem'] article.evidence-card").exists(),
-    ).toBe(true);
+    expect(wrapper.find("li article.evidence-card").exists()).toBe(true);
   });
 
   it("离线时清空业务区，只显示需要联网状态", async () => {
@@ -145,9 +143,172 @@ describe("工作台数据状态", () => {
     expect(wrapper.text()).toContain("草稿");
     expect(wrapper.text()).toContain("演示数据");
   });
+
+  it("同一组件从销售切换到采购时重新请求并清除旧工作台数据", async () => {
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValueOnce(
+        apiResponse([
+          {
+            name: "WORK-SALES-ONLY",
+            title: "SALES-ONLY",
+            origin: "Fixture",
+            business_status: "Open",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        apiResponse({
+          lanes: {
+            Draft: [
+              {
+                name: "SRC-PURCHASE-ONLY",
+                title: "PURCHASE-ONLY",
+                origin: "Fixture",
+                business_status: "Draft",
+                candidates: [],
+              },
+            ],
+            Invited: [],
+            Collecting: [],
+            Evaluating: [],
+            Selected: [],
+            Closed: [],
+            Cancelled: [],
+          },
+          total: 1,
+        }),
+      );
+    const client = createBffClient({
+      fetcher,
+      isOnline: () => true,
+      getCsrfToken: () => "csrf-test",
+    });
+    const wrapper = mount(WorkspaceView, {
+      props: { workspace: "sales" },
+      global: { provide: { [BFF_CLIENT_KEY as symbol]: client } },
+    });
+    await flushPromises();
+    expect(wrapper.text()).toContain("SALES-ONLY");
+
+    await wrapper.setProps({ workspace: "purchase" });
+    await flushPromises();
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(String(fetcher.mock.calls[1]?.[0])).toContain("sourcing.get_board");
+    expect(wrapper.text()).toContain("PURCHASE-ONLY");
+    expect(wrapper.text()).not.toContain("SALES-ONLY");
+  });
 });
 
 describe("详情页", () => {
+  it("客户详情 id 改变时重新读取新客户并清除旧客户内容", async () => {
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValueOnce(
+        apiResponse({
+          profile: { name: "PARTY-OLD", party_name: "OLD-PARTY" },
+          product_briefs: [],
+          samples: [],
+          demands: [],
+        }),
+      )
+      .mockResolvedValueOnce(
+        apiResponse({
+          profile: { name: "PARTY-NEW", party_name: "NEW-PARTY" },
+          product_briefs: [],
+          samples: [],
+          demands: [],
+        }),
+      );
+    const wrapper = mount(PartyDetailView, {
+      props: { id: "PARTY-OLD" },
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+            getCsrfToken: () => "csrf-test",
+          }),
+        },
+      },
+    });
+    await flushPromises();
+    expect(wrapper.text()).toContain("OLD-PARTY");
+
+    await wrapper.setProps({ id: "PARTY-NEW" });
+    await flushPromises();
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(String(fetcher.mock.calls[1]?.[0])).toContain("party=PARTY-NEW");
+    expect(wrapper.text()).toContain("NEW-PARTY");
+    expect(wrapper.text()).not.toContain("OLD-PARTY");
+  });
+
+  it("样品详情 id 改变时忽略迟到的旧响应和旧 revision", async () => {
+    setFrappeSession("sales@example.invalid", ["Sales User"]);
+    let resolveOld: ((value: Response) => void) | undefined;
+    const oldResponse = new Promise<Response>((resolve) => {
+      resolveOld = resolve;
+    });
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockReturnValueOnce(oldResponse)
+      .mockResolvedValueOnce(
+        apiResponse({
+          project: {
+            name: "SAMPLE-NEW",
+            title: "NEW-SAMPLE",
+            revision: 7,
+            business_status: "Draft",
+          },
+          iterations: [],
+          shipments: [],
+          feedback: [],
+        }),
+      );
+    const wrapper = mount(SampleDetailView, {
+      props: { id: "SAMPLE-OLD" },
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+            getCsrfToken: () => "csrf-test",
+          }),
+        },
+      },
+    });
+    await flushPromises();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    await wrapper.setProps({ id: "SAMPLE-NEW" });
+    await flushPromises();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(String(fetcher.mock.calls[1]?.[0])).toContain("project=SAMPLE-NEW");
+    expect(wrapper.text()).toContain("NEW-SAMPLE");
+    expect(wrapper.find("form").exists()).toBe(false);
+
+    resolveOld?.(
+      apiResponse({
+        project: {
+          name: "SAMPLE-OLD",
+          title: "OLD-SAMPLE",
+          revision: 99,
+          business_status: "Sent",
+        },
+        iterations: [],
+        shipments: [],
+        feedback: [],
+      }),
+    );
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("NEW-SAMPLE");
+    expect(wrapper.text()).not.toContain("OLD-SAMPLE");
+    expect(wrapper.find("form").exists()).toBe(false);
+  });
+
   it("客户 360 以中文摘要优先且保留原文", async () => {
     const wrapper = mount(PartyDetailView, {
       props: { id: "PARTY-1" },

@@ -30,11 +30,13 @@ FINAL_INPUT_PATHS=(
 STAGE=
 IMAGE=
 ESAN_COMMIT=
+PLATFORM=linux/arm64
+PUSH=false
 
 usage() {
   echo "Usage:" >&2
-  echo "  scripts/dev/build-custom-image --stage upstream [--image name:tag]" >&2
-  echo "  scripts/dev/build-custom-image --stage final --esan-commit MONOREPO_SHA [--image name:tag]" >&2
+  echo "  scripts/dev/build-custom-image --stage upstream [--image name:tag] [--platform linux/arm64]" >&2
+  echo "  scripts/dev/build-custom-image --stage final --esan-commit MONOREPO_SHA [--image name:tag] [--platform linux/arm64|linux/amd64] [--push]" >&2
 }
 
 while (( $# > 0 )); do
@@ -51,6 +53,13 @@ while (( $# > 0 )); do
       ESAN_COMMIT="${2:-}"
       shift
       ;;
+    --platform)
+      PLATFORM="${2:-}"
+      shift
+      ;;
+    --push)
+      PUSH=true
+      ;;
     *)
       usage
       exit 64
@@ -58,6 +67,14 @@ while (( $# > 0 )); do
   esac
   shift
 done
+
+case "${PLATFORM}" in
+  linux/arm64|linux/amd64) ;;
+  *)
+    echo "Platform must be linux/arm64 or linux/amd64." >&2
+    exit 64
+    ;;
+esac
 
 case "${STAGE}" in
   upstream)
@@ -76,6 +93,18 @@ case "${STAGE}" in
     exit 64
     ;;
 esac
+
+if [[ "${PUSH}" == "true" ]]; then
+  if [[ "${STAGE}" != "final" ]]; then
+    echo "--push is supported only for the final image." >&2
+    exit 64
+  fi
+  IMAGE_LEAF="${IMAGE##*/}"
+  if [[ "${IMAGE}" != */* || "${IMAGE_LEAF}" != *:* || "${IMAGE}" == *@* ]]; then
+    echo "Final push target must be a registry-qualified image tag." >&2
+    exit 64
+  fi
+fi
 
 verify_tag() {
   local name="$1"
@@ -121,9 +150,9 @@ if [[ "${STAGE}" == "upstream" ]]; then
   UPSTREAM_IMAGE="${IMAGE}"
 fi
 for attempt in 1 2; do
-  echo "Build attempt ${attempt}/2 for ${UPSTREAM_IMAGE} (upstream, linux/arm64)."
+  echo "Build attempt ${attempt}/2 for ${UPSTREAM_IMAGE} (upstream, ${PLATFORM})."
   if docker buildx build \
-    --platform linux/arm64 \
+    --platform "${PLATFORM}" \
     --file "${BUILD_ROOT}/frappe_docker/images/custom/Containerfile" \
     --build-arg "FRAPPE_PATH=${FRAPPE_URL}" \
     --build-arg "FRAPPE_BRANCH=${FRAPPE_TAG}" \
@@ -198,7 +227,7 @@ PY
   )"
   UPSTREAM_BUILDER_IMAGE="esan-gbos-upstream-builder:gate1"
   docker buildx build \
-    --platform linux/arm64 \
+    --platform "${PLATFORM}" \
     --file "${BUILD_ROOT}/frappe_docker/images/custom/Containerfile" \
     --target builder \
     --build-arg "FRAPPE_PATH=${FRAPPE_URL}" \
@@ -208,19 +237,26 @@ PY
     --load \
     --tag "${UPSTREAM_BUILDER_IMAGE}" \
     "${BUILD_ROOT}/frappe_docker"
+  FINAL_OUTPUT=(--load)
+  if [[ "${PUSH}" == "true" ]]; then
+    FINAL_OUTPUT=(--push)
+  fi
   docker buildx build \
-    --platform linux/arm64 \
+    --platform "${PLATFORM}" \
     --file "${REPO_ROOT}/infra/dev/Containerfile.final" \
     --build-arg "UPSTREAM_IMAGE=${UPSTREAM_IMAGE}" \
     --build-arg "UPSTREAM_BUILDER_IMAGE=${UPSTREAM_BUILDER_IMAGE}" \
     --build-arg "ESAN_SOURCE_COMMIT=${ESAN_COMMIT}" \
     --build-arg "ESAN_SOURCE_SHA256=${ESAN_SOURCE_SHA256}" \
     --provenance=true \
-    --load \
+    "${FINAL_OUTPUT[@]}" \
     --tag "${IMAGE}" \
     "${FINAL_CONTEXT}"
 fi
 
+if [[ "${PUSH}" == "true" ]]; then
+  docker pull --platform "${PLATFORM}" "${IMAGE}"
+fi
 docker image inspect "${IMAGE}" \
   --format 'image={{index .RepoTags 0}} platform={{.Os}}/{{.Architecture}} created={{.Created}} digest={{.Id}}'
 docker run --rm "${IMAGE}" bench version

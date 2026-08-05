@@ -1,54 +1,56 @@
 <template>
   <div class="record-region">
     <DemoBanner v-if="hasFixtureData" />
-    <div class="record-grid" role="list">
+    <ul class="record-grid">
       <template v-for="(record, index) in records" :key="recordKey(record, index)">
-        <div v-if="originalText(record)" role="listitem">
+        <li v-if="originalText(record)">
           <EvidenceCard
             :title="title(record)"
             :summary-zh="summary(record)"
             :original-text="originalText(record) ?? ''"
             :original-language="language(record)"
           />
-        </div>
-        <article v-else class="record-card" role="listitem">
-          <header>
-            <p class="eyebrow">
-              {{ identifier(record) }}
+        </li>
+        <li v-else>
+          <article class="record-card">
+            <header>
+              <p class="eyebrow">
+                {{ identifier(record) }}
+              </p>
+              <h2>{{ title(record) }}</h2>
+            </header>
+            <p v-if="summary(record)">
+              {{ summary(record) }}
             </p>
-            <h2>{{ title(record) }}</h2>
-          </header>
-          <p v-if="summary(record)">
-            {{ summary(record) }}
-          </p>
-          <dl class="status-list">
-            <div v-if="businessStatus(record)">
-              <dt>业务状态</dt>
-              <dd>{{ businessStatus(record) }}</dd>
-            </div>
-            <div v-if="reviewStatus(record)">
-              <dt>审核状态</dt>
-              <dd>{{ reviewStatus(record) }}</dd>
-            </div>
-            <div v-if="candidateStatus(record)">
-              <dt>候选状态</dt>
-              <dd>{{ candidateStatus(record) }}</dd>
-            </div>
-            <div v-if="candidatePrice(record)">
-              <dt>报价</dt>
-              <dd>{{ candidatePrice(record) }}</dd>
-            </div>
-            <div v-if="candidateLeadTime(record)">
-              <dt>预计交期</dt>
-              <dd>{{ candidateLeadTime(record) }}</dd>
-            </div>
-          </dl>
-          <a v-if="detailLink(record)" class="text-link" :href="detailLink(record)">
-            查看详情
-          </a>
-        </article>
+            <dl class="status-list">
+              <div v-if="businessStatus(record)">
+                <dt>业务状态</dt>
+                <dd>{{ businessStatus(record) }}</dd>
+              </div>
+              <div v-if="reviewStatus(record)">
+                <dt>审核状态</dt>
+                <dd>{{ reviewStatus(record) }}</dd>
+              </div>
+              <div v-if="candidateStatus(record)">
+                <dt>候选状态</dt>
+                <dd>{{ candidateStatus(record) }}</dd>
+              </div>
+              <div v-if="candidatePrice(record)">
+                <dt>报价</dt>
+                <dd>{{ candidatePrice(record) }}</dd>
+              </div>
+              <div v-if="candidateLeadTime(record)">
+                <dt>预计交期</dt>
+                <dd>{{ candidateLeadTime(record) }}</dd>
+              </div>
+            </dl>
+            <a v-if="detailLink(record)" class="text-link" :href="detailLink(record)">
+              查看详情
+            </a>
+          </article>
+        </li>
       </template>
-    </div>
+    </ul>
   </div>
 </template>
 
