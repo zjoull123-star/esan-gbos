@@ -287,6 +287,7 @@ def test_security_and_sbom_commands_are_reproducible_and_pinned() -> None:
 
 def test_ci_has_required_jobs_and_immutable_actions() -> None:
     workflow = read_required(WORKFLOWS_DIR / "ci.yml")
+    final_containerfile = read_required(FINAL_CONTAINERFILE)
 
     for job in (
         "contracts:",
@@ -306,6 +307,12 @@ def test_ci_has_required_jobs_and_immutable_actions() -> None:
     assert "apps/esan_gbos" in workflow
     assert "pnpm" in workflow
     assert "playwright" in workflow
+    assert "git . --no-banner --redact --exit-code 1" in workflow
+    assert "git --source ." not in workflow
+    assert "corepack install --global pnpm@11.9.0" in workflow
+    assert 'test "$(pnpm --version)" = "11.9.0"' in workflow
+    assert "corepack install --global pnpm@11.9.0" in final_containerfile
+    assert 'test "$(pnpm --version)" = "11.9.0"' in final_containerfile
 
     action_refs = [
         ref
@@ -314,6 +321,12 @@ def test_ci_has_required_jobs_and_immutable_actions() -> None:
     ]
     assert action_refs
     assert all(re.search(r"@[a-f0-9]{40}$", ref) for ref in action_refs)
+    assert set(action_refs) == {
+        "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+        "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+        "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
+        "astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9",
+    }
 
 
 def test_frappe_app_smoke_is_manual_and_final_image_gated() -> None:

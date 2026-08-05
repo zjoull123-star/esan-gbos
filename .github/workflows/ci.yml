@@ -17,8 +17,8 @@ jobs:
     name: Contract schemas
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           enable-cache: true
       - run: uv run --frozen pytest tests/contracts
@@ -27,8 +27,8 @@ jobs:
     name: Compatibility locks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           enable-cache: true
       - run: uv run --frozen pytest tests/compat
@@ -38,8 +38,8 @@ jobs:
     name: Python lint, format and type checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           enable-cache: true
       - run: uv run --frozen ruff check .
@@ -55,7 +55,7 @@ jobs:
     name: Compose static validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - run: >-
           docker compose
           --env-file infra/dev/.env.example
@@ -79,7 +79,7 @@ jobs:
     name: Gate 1 app materialization (fail closed)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - name: Require the Frappe app and Vue/Playwright workspaces
         run: |
           test -f apps/esan_gbos/pyproject.toml
@@ -106,11 +106,11 @@ jobs:
     needs: app-materialization
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           enable-cache: true
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: "24.13.0"
           check-latest: false
@@ -131,6 +131,8 @@ jobs:
           FRONTEND_PACKAGE="$(find apps/esan_gbos -path '*/node_modules' -prune -o -name package.json -print -quit)"
           FRONTEND_DIR="$(dirname "${FRONTEND_PACKAGE}")"
           corepack enable
+          corepack install --global pnpm@11.9.0
+          test "$(pnpm --version)" = "11.9.0"
           pnpm --dir "${FRONTEND_DIR}" install --frozen-lockfile
           pnpm --dir "${FRONTEND_DIR}" run lint
           pnpm --dir "${FRONTEND_DIR}" run test
@@ -142,7 +144,7 @@ jobs:
     name: Gitleaks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 0
       - run: scripts/dev/secret-scan
@@ -152,18 +154,18 @@ jobs:
           -v "${PWD}:/repo"
           -w /repo
           ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
-          git --source . --no-banner --redact --exit-code 1
+          git . --no-banner --redact --exit-code 1
 
   security-sbom:
     name: Dependency, license and SBOM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - name: Block unapproved high or critical findings
         run: scripts/dev/security-scan
       - name: Generate license inventory and CycloneDX SBOM
         run: scripts/dev/license-sbom "${RUNNER_TEMP}/sbom"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: sbom-cyclonedx
           path: |

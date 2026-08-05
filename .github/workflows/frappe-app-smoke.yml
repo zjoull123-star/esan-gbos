@@ -36,7 +36,7 @@ jobs:
       ADMIN_PASSWORD: SYNTHETIC-ci-admin-e29b4dc1
       OBSERVER_POSTGRES_PASSWORD: SYNTHETIC-ci-observer-5fe821a6
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - name: Create a fresh site with the final four-app gate
         run: docker compose -f infra/dev/compose.yml --profile core up -d --wait
       - name: Run two consecutive migrations
@@ -61,7 +61,7 @@ jobs:
         run: scripts/dev/security-scan "${ERPNEXT_IMAGE}"
       - name: Generate final-image licenses and SBOM
         run: scripts/dev/license-sbom "${RUNNER_TEMP}/final-image-sbom" "${ERPNEXT_IMAGE}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: final-image-gate-evidence
           path: |

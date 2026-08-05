@@ -11,10 +11,12 @@ RUN test -f apps/esan_gbos/pyproject.toml \
     && test -f apps/esan_gbos/frontend/pnpm-lock.yaml \
     && ./env/bin/pip install --no-deps -e apps/esan_gbos
 RUN mkdir -p /home/frappe/.local/bin \
-    && corepack enable --install-directory /home/frappe/.local/bin
+    && corepack enable --install-directory /home/frappe/.local/bin \
+    && corepack install --global pnpm@11.9.0
 ENV PATH="/home/frappe/.local/bin:${PATH}"
 WORKDIR /home/frappe/frappe-bench/apps/esan_gbos/frontend
-RUN pnpm install --frozen-lockfile \
+RUN test "$(pnpm --version)" = "11.9.0" \
+    && pnpm install --frozen-lockfile \
     && pnpm run build
 WORKDIR /home/frappe/frappe-bench
 RUN mkdir -p apps/esan_gbos/esan_gbos/public/frontend/ \

@@ -71,8 +71,10 @@ def test_repository_and_ci_pin_python_and_node_patch_versions() -> None:
     assert (REPO_ROOT / ".python-version").read_text(encoding="utf-8").strip() == runtime["python"]
     assert (REPO_ROOT / ".node-version").read_text(encoding="utf-8").strip() == runtime["node"]
     workflow = CI_WORKFLOW.read_text(encoding="utf-8")
-    assert "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020" in workflow
+    assert "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38" in workflow
     assert 'node-version: "24.13.0"' in workflow
+    assert "corepack install --global pnpm@11.9.0" in workflow
+    assert 'test "$(pnpm --version)" = "11.9.0"' in workflow
 
 
 def test_local_upstream_runtime_evidence_is_frozen_without_claiming_gate1() -> None:
