@@ -45,6 +45,12 @@ jobs:
             bench --site "${SITE_NAME}" migrate
           docker compose -f infra/dev/compose.yml exec -T backend \
             bench --site "${SITE_NAME}" migrate
+      - name: Run Frappe domain, permission, state-machine, and idempotency tests
+        run: |
+          docker compose -f infra/dev/compose.yml exec -T backend \
+            bench --site "${SITE_NAME}" set-config allow_tests true
+          docker compose -f infra/dev/compose.yml exec -T backend \
+            bench --site "${SITE_NAME}" run-tests --app esan_gbos
       - name: Verify the exact four installed apps
         run: |
           docker compose -f infra/dev/compose.yml exec -T backend \

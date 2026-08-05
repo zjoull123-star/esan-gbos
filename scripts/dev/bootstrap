@@ -50,6 +50,29 @@ else
   export APP_LIST=erpnext,crm,esan_gbos
 fi
 
+if [[ "${IMAGE_STAGE}" == "final" ]]; then
+  FINAL_INPUT_PATHS=(
+    apps/esan_gbos
+    fixtures/gate1
+    infra/dev/nginx
+    infra/dev/Containerfile.final
+    infra/dev/apps.upstream.json
+    scripts/dev/build-custom-image
+  )
+  FINAL_SOURCE_DIRTY=false
+  if ! git -C "${REPO_ROOT}" diff --quiet -- "${FINAL_INPUT_PATHS[@]}" ||
+    ! git -C "${REPO_ROOT}" diff --cached --quiet -- "${FINAL_INPUT_PATHS[@]}" ||
+    [[ -n "$(
+      git -C "${REPO_ROOT}" ls-files --others --exclude-standard -- "${FINAL_INPUT_PATHS[@]}"
+    )" ]]; then
+    FINAL_SOURCE_DIRTY=true
+  fi
+  if [[ "${FINAL_SOURCE_DIRTY}" == "true" ]]; then
+    echo "Final runtime source must be tracked and clean before bootstrap." >&2
+    exit 65
+  fi
+fi
+
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${PROFILES[@]}" config --quiet
 TARGET_IMAGE="$(
   docker compose \
@@ -59,13 +82,29 @@ TARGET_IMAGE="$(
     config --format json |
     python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["backend"]["image"])'
 )"
-if ! docker image inspect "${TARGET_IMAGE}" >/dev/null 2>&1; then
+SOURCE_COMMIT=
+IMAGE_AVAILABLE=false
+if docker image inspect "${TARGET_IMAGE}" >/dev/null 2>&1; then
+  IMAGE_AVAILABLE=true
+  if [[ "${IMAGE_STAGE}" == "final" ]]; then
+    SOURCE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+    IMAGE_REVISION="$(
+      docker image inspect "${TARGET_IMAGE}" \
+        --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+    )"
+    if [[ "${IMAGE_REVISION}" != "${SOURCE_COMMIT}" ]]; then
+      echo "Configured final image revision ${IMAGE_REVISION:-missing} does not match repository HEAD ${SOURCE_COMMIT}; rebuilding."
+      IMAGE_AVAILABLE=false
+    fi
+  fi
+fi
+if [[ "${IMAGE_AVAILABLE}" != "true" ]]; then
   case "${TARGET_IMAGE}" in
     esan-gbos-upstream:*)
       "${SCRIPT_DIR}/build-custom-image" --stage upstream --image "${TARGET_IMAGE}"
       ;;
     esan-gbos-final:*)
-      SOURCE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+      SOURCE_COMMIT="${SOURCE_COMMIT:-$(git -C "${REPO_ROOT}" rev-parse HEAD)}"
       "${SCRIPT_DIR}/build-custom-image" \
         --stage final \
         --esan-commit "${SOURCE_COMMIT}" \

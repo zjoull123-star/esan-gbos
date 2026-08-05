@@ -20,6 +20,49 @@ from esan_gbos.domain.state_machine import InvalidTransition, validate_transitio
 
 READ_ROLES = SOURCING_READ_ROLES
 WRITE_ROLES = {"GBOS Admin", "Purchase Manager", "Buyer"}
+MAX_BOARD_CANDIDATES = 5000
+CANDIDATE_FIELDS = [
+    "name",
+    "parent",
+    "idx",
+    "supplier_name",
+    "external_supplier_id",
+    "quoted_price",
+    "currency",
+    "lead_time_days",
+    "candidate_status",
+    "notes",
+]
+
+
+def _attach_candidates(events: list[dict[str, Any]]) -> None:
+    event_names = [str(event["name"]) for event in events]
+    if not event_names:
+        return
+    candidate_rows = frappe.get_all(
+        "GBOS Sourcing Candidate",
+        filters={
+            "parent": ["in", event_names],
+            "parenttype": "GBOS Sourcing Event",
+            "parentfield": "candidates",
+        },
+        fields=CANDIDATE_FIELDS,
+        order_by="parent asc, idx asc",
+        limit_page_length=MAX_BOARD_CANDIDATES + 1,
+    )
+    if len(candidate_rows) > MAX_BOARD_CANDIDATES:
+        raise BFFError(
+            "invalid_query",
+            "候选供应商数量超过单次看板上限，请按团队筛选后重试",
+        )
+    by_parent: dict[str, list[dict[str, Any]]] = {}
+    for row in candidate_rows:
+        candidate = dict(row)
+        parent = str(candidate.pop("parent"))
+        candidate.pop("idx", None)
+        by_parent.setdefault(parent, []).append(candidate)
+    for event in events:
+        event["candidates"] = by_parent.get(str(event["name"]), [])
 
 
 @frappe.whitelist(methods=["GET"])
@@ -46,6 +89,7 @@ def get_board(team: str | None = None) -> dict[str, Any]:
         order_by="modified desc",
         page_length=500,
     )
+    _attach_candidates(events)
     lanes: dict[str, list[dict[str, Any]]] = {
         status: []
         for status in (

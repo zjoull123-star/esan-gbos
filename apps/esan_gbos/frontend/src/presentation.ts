@@ -114,11 +114,18 @@ export const flattenSourcingBoardPayload = (
 
   const records: Record<string, unknown>[] = [];
   for (const [lane, label] of SOURCING_LANES) {
-    records.push(
-      ...recordsAt(value.lanes, lane).map((record) =>
-        withSection(record, label, { sourcing_lane: lane }),
-      ),
-    );
+    for (const event of recordsAt(value.lanes, lane)) {
+      records.push(withSection(event, label, { sourcing_lane: lane }));
+      const eventName = textField(event, "name");
+      records.push(
+        ...recordsAt(event, "candidates").map((candidate) =>
+          withSection(candidate, `${label} · 候选供应商`, {
+            sourcing_event: eventName,
+            sourcing_lane: lane,
+          }),
+        ),
+      );
+    }
   }
   return { records, total: numberField(value, "total") };
 };

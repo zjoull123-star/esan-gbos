@@ -67,3 +67,28 @@ def test_work_item_query_exposes_governed_reference_for_detail_navigation() -> N
 
     assert '"reference_doctype"' in source
     assert '"reference_name"' in source
+
+
+def test_sourcing_board_exposes_candidates_from_visible_parent_events() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "apps"
+        / "esan_gbos"
+        / "esan_gbos"
+        / "api"
+        / "v1"
+        / "sourcing.py"
+    ).read_text(encoding="utf-8")
+
+    assert '"GBOS Sourcing Candidate"' in source
+    assert '"parenttype": "GBOS Sourcing Event"' in source
+    assert '"parentfield": "candidates"' in source
+    for field in (
+        '"supplier_name"',
+        '"external_supplier_id"',
+        '"quoted_price"',
+        '"currency"',
+        '"lead_time_days"',
+        '"candidate_status"',
+    ):
+        assert field in source

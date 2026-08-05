@@ -15,11 +15,31 @@ from esan_gbos.domain.access_policy import PARTY_360_ROLES
 READ_ROLES = PARTY_360_ROLES
 
 
-def _linked(doctype: str, name: str | None, fields: list[str]) -> dict[str, Any] | None:
-    if not name:
+def _linked(
+    doctype: str,
+    name: str | None,
+    team: str | None,
+    fields: list[str],
+) -> dict[str, Any] | None:
+    if not name or not team:
         return None
-    value = frappe.db.get_value(doctype, name, fields, as_dict=True)
-    return dict(value) if value else None
+    value = frappe.db.get_value(
+        doctype,
+        name,
+        [*fields, "custom_esan_team"],
+        as_dict=True,
+    )
+    if not value or value.get("custom_esan_team") != team:
+        return None
+    try:
+        can_read = frappe.has_permission(doctype, ptype="read", doc=name)
+    except frappe.DoesNotExistError:
+        return None
+    except frappe.PermissionError:
+        return None
+    if not can_read:
+        return None
+    return {field: value.get(field) for field in fields}
 
 
 @frappe.whitelist(methods=["GET"])
@@ -43,21 +63,25 @@ def get_360(party: str) -> dict[str, Any]:
         "organization": _linked(
             "CRM Organization",
             profile.crm_organization,
+            profile.team,
             ["name", "organization_name", "website", "territory", "industry"],
         ),
         "contact": _linked(
             "Contact",
             profile.contact,
+            profile.team,
             ["name", "full_name", "email_id", "mobile_no"],
         ),
         "lead": _linked(
             "CRM Lead",
             profile.crm_lead,
+            profile.team,
             ["name", "lead_name", "organization", "status", "lead_owner"],
         ),
         "deal": _linked(
             "CRM Deal",
             profile.crm_deal,
+            profile.team,
             ["name", "organization", "status", "deal_owner", "expected_deal_value"],
         ),
         "product_briefs": frappe.get_list(

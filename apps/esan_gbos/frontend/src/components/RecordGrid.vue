@@ -30,6 +30,18 @@
               <dt>审核状态</dt>
               <dd>{{ reviewStatus(record) }}</dd>
             </div>
+            <div v-if="candidateStatus(record)">
+              <dt>候选状态</dt>
+              <dd>{{ candidateStatus(record) }}</dd>
+            </div>
+            <div v-if="candidatePrice(record)">
+              <dt>报价</dt>
+              <dd>{{ candidatePrice(record) }}</dd>
+            </div>
+            <div v-if="candidateLeadTime(record)">
+              <dt>预计交期</dt>
+              <dd>{{ candidateLeadTime(record) }}</dd>
+            </div>
           </dl>
           <a v-if="detailLink(record)" class="text-link" :href="detailLink(record)">
             查看详情
@@ -45,7 +57,7 @@ import { computed } from "vue";
 
 import DemoBanner from "./DemoBanner.vue";
 import EvidenceCard from "./EvidenceCard.vue";
-import { isFixturePayload, textField } from "@/presentation";
+import { isFixturePayload, numberField, textField } from "@/presentation";
 
 const props = defineProps<{ records: Record<string, unknown>[] }>();
 
@@ -64,10 +76,11 @@ const title = (record: Record<string, unknown>) =>
     "full_name",
     "lead_name",
     "party_name",
+    "supplier_name",
     "name",
   ) ?? "未命名记录";
 const summary = (record: Record<string, unknown>) =>
-  textField(record, "summary_zh", "chinese_summary", "summary", "description");
+  textField(record, "summary_zh", "chinese_summary", "summary", "description", "notes");
 const originalText = (record: Record<string, unknown>) =>
   textField(record, "original_text", "source_text");
 const language = (record: Record<string, unknown>) =>
@@ -76,6 +89,20 @@ const businessStatus = (record: Record<string, unknown>) =>
   textField(record, "business_status", "status");
 const reviewStatus = (record: Record<string, unknown>) =>
   textField(record, "review_status");
+const candidateStatus = (record: Record<string, unknown>) =>
+  textField(record, "candidate_status");
+const candidatePrice = (record: Record<string, unknown>) => {
+  const value = numberField(record, "quoted_price");
+  if (value === undefined) {
+    return undefined;
+  }
+  const currency = textField(record, "currency");
+  return currency ? `${value} ${currency}` : String(value);
+};
+const candidateLeadTime = (record: Record<string, unknown>) => {
+  const days = numberField(record, "lead_time_days");
+  return days === undefined ? undefined : `${days} 天`;
+};
 const recordKey = (record: Record<string, unknown>, index: number) =>
   `${identifier(record)}-${index}`;
 const detailLink = (record: Record<string, unknown>) => {

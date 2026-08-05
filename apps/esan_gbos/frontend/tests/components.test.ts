@@ -104,4 +104,27 @@ describe("多语言证据与演示数据", () => {
       "/gbos/sample/SAM-1",
     ]);
   });
+
+  it("采购候选卡片展示供应商、报价、交期和候选状态", () => {
+    const wrapper = mount(RecordGrid, {
+      props: {
+        records: [
+          {
+            name: "CANDIDATE-1",
+            presentation_section: "评估中 · 候选供应商",
+            supplier_name: "合成供应商 A",
+            quoted_price: 12.5,
+            currency: "USD",
+            lead_time_days: 21,
+            candidate_status: "Shortlisted",
+          },
+        ],
+      },
+    });
+
+    expect(wrapper.text()).toContain("合成供应商 A");
+    expect(wrapper.text()).toContain("12.5 USD");
+    expect(wrapper.text()).toContain("21 天");
+    expect(wrapper.text()).toContain("Shortlisted");
+  });
 });

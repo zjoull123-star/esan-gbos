@@ -35,7 +35,23 @@ describe("BFF presentation adapters", () => {
   it("flattens sourcing lanes while retaining the board total", () => {
     const result = flattenSourcingBoardPayload({
       lanes: {
-        Draft: [{ name: "SRC-1", title: "玻璃瓶询源", origin: "Fixture" }],
+        Draft: [
+          {
+            name: "SRC-1",
+            title: "玻璃瓶询源",
+            origin: "Fixture",
+            candidates: [
+              {
+                name: "CANDIDATE-1",
+                supplier_name: "合成供应商 A",
+                quoted_price: 12.5,
+                currency: "USD",
+                lead_time_days: 21,
+                candidate_status: "Shortlisted",
+              },
+            ],
+          },
+        ],
         Invited: [{ name: "SRC-2", title: "香精询源" }],
         Collecting: [],
         Evaluating: [],
@@ -52,6 +68,12 @@ describe("BFF presentation adapters", () => {
         name: "SRC-1",
         sourcing_lane: "Draft",
         presentation_section: "草稿",
+      }),
+      expect.objectContaining({
+        name: "CANDIDATE-1",
+        sourcing_event: "SRC-1",
+        sourcing_lane: "Draft",
+        presentation_section: "草稿 · 候选供应商",
       }),
       expect.objectContaining({
         name: "SRC-2",

@@ -9,6 +9,7 @@ VERSION_LOCK = Path(__file__).parents[2] / "docs" / "compat" / "versions.json"
 CRM_CONTRACT = Path(__file__).parents[2] / "docs" / "compat" / "crm-doctype-contract.json"
 REPO_ROOT = Path(__file__).parents[2]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+FRONTEND_PACKAGE = REPO_ROOT / "apps" / "esan_gbos" / "frontend" / "package.json"
 SHA_PATTERN = re.compile(r"^[a-f0-9]{40}$")
 DIGEST_PATTERN = re.compile(r"^sha256:[a-f0-9]{64}$")
 
@@ -70,6 +71,8 @@ def test_repository_and_ci_pin_python_and_node_patch_versions() -> None:
 
     assert (REPO_ROOT / ".python-version").read_text(encoding="utf-8").strip() == runtime["python"]
     assert (REPO_ROOT / ".node-version").read_text(encoding="utf-8").strip() == runtime["node"]
+    package = json.loads(FRONTEND_PACKAGE.read_text(encoding="utf-8"))
+    assert package["packageManager"] == "pnpm@11.9.0"
     workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     assert "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38" in workflow
     assert 'node-version: "24.13.0"' in workflow

@@ -10,6 +10,8 @@ COMPOSE_FILE = REPO_ROOT / "infra" / "dev" / "compose.yml"
 ENV_EXAMPLE = REPO_ROOT / "infra" / "dev" / ".env.example"
 UPSTREAM_APPS = REPO_ROOT / "infra" / "dev" / "apps.upstream.json"
 FINAL_CONTAINERFILE = REPO_ROOT / "infra" / "dev" / "Containerfile.final"
+FRONTEND_WORKSPACE = REPO_ROOT / "apps" / "esan_gbos" / "frontend" / "pnpm-workspace.yaml"
+GITLEAKS_CONFIG = REPO_ROOT / ".gitleaks.toml"
 NGINX_TEMPLATE = REPO_ROOT / "infra" / "dev" / "nginx" / "frappe.conf.template"
 OBSERVER_CONTRACT_CHECK = REPO_ROOT / "services" / "observer" / "contract_check.py"
 SCRIPTS_DIR = REPO_ROOT / "scripts" / "dev"
@@ -208,10 +210,14 @@ def test_bootstrap_is_final_by_default_with_explicit_upstream_escape_hatch() -> 
     assert "APP_LIST=erpnext,crm" in bootstrap
     assert "APP_LIST=erpnext,crm,esan_gbos" in bootstrap
     assert "GBOS_PRODUCTION_ENABLED" in bootstrap
-    assert "scripts/dev/build-custom-image" not in bootstrap
     assert '"${SCRIPT_DIR}/build-custom-image"' in bootstrap
     assert "--esan-commit" in bootstrap
     assert "docker image inspect" in bootstrap
+    assert "org.opencontainers.image.revision" in bootstrap
+    assert "does not match repository HEAD" in bootstrap
+    assert "Final runtime source must be tracked and clean" in bootstrap
+    assert "ls-files --others --exclude-standard" in bootstrap
+    assert "FINAL_INPUT_PATHS" in bootstrap
 
 
 def test_custom_image_builder_verifies_every_source_ref() -> None:
@@ -231,6 +237,10 @@ def test_custom_image_builder_verifies_every_source_ref() -> None:
         "apps/esan_gbos",
         "git archive",
         "FINAL_CONTEXT",
+        "FINAL_INPUT_PATHS",
+        "infra/dev/Containerfile.final",
+        "infra/dev/apps.upstream.json",
+        "scripts/dev/build-custom-image",
     ):
         assert expected in builder
     assert "latest" not in builder
@@ -287,6 +297,7 @@ def test_security_and_sbom_commands_are_reproducible_and_pinned() -> None:
 
 def test_ci_has_required_jobs_and_immutable_actions() -> None:
     workflow = read_required(WORKFLOWS_DIR / "ci.yml")
+    smoke_workflow = read_required(WORKFLOWS_DIR / "frappe-app-smoke.yml")
     final_containerfile = read_required(FINAL_CONTAINERFILE)
 
     for job in (
@@ -301,7 +312,12 @@ def test_ci_has_required_jobs_and_immutable_actions() -> None:
     ):
         assert job in workflow
     assert "docker compose" in workflow
-    assert "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:" in workflow
+    assert (
+        "ghcr.io/gitleaks/gitleaks:v8.30.1"
+        "@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
+    ) in workflow
+    assert "fetch-depth: 0" in workflow
+    assert workflow.count("git . --no-banner --redact --exit-code 1") == 1
     assert "scripts/dev/security-scan" in workflow
     assert "scripts/dev/license-sbom" in workflow
     assert "apps/esan_gbos" in workflow
@@ -327,6 +343,37 @@ def test_ci_has_required_jobs_and_immutable_actions() -> None:
         "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
         "astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9",
     }
+    assert workflow.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803") == 8
+    assert workflow.count("astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9") == 4
+    assert workflow.count("actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38") == 1
+    assert workflow.count("actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f") == 1
+    assert smoke_workflow.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803") == 1
+    assert (
+        smoke_workflow.count("actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f")
+        == 1
+    )
+
+
+def test_frontend_dependency_build_scripts_are_explicitly_denied() -> None:
+    workspace = read_required(FRONTEND_WORKSPACE)
+
+    assert "allowBuilds:" in workspace
+    for dependency in ("core-js", "sharp", "vue-demi"):
+        assert re.search(rf"(?m)^  {re.escape(dependency)}: false$", workspace)
+    assert "dangerouslyAllowAllBuilds" not in workspace
+    assert "strictDepBuilds: false" not in workspace
+
+
+def test_gitleaks_exception_is_narrow_and_keeps_default_rules() -> None:
+    config = read_required(GITLEAKS_CONFIG)
+
+    assert "useDefault = true" in config
+    assert 'targetRules = ["generic-api-key"]' in config
+    assert 'condition = "AND"' in config
+    assert 'regexTarget = "line"' in config
+    assert r"^\.github/workflows/frappe-app-smoke\.yml$" in config
+    assert r"DB_ROOT_PASSWORD: SYNTHETIC-ci-db-root-[a-f0-9]{8}" in config
+    assert "commits =" not in config
 
 
 def test_frappe_app_smoke_is_manual_and_final_image_gated() -> None:
@@ -344,3 +391,5 @@ def test_frappe_app_smoke_is_manual_and_final_image_gated() -> None:
     assert "list-apps" in workflow
     assert "esan_gbos" in workflow
     assert 'apps_by_site["gbos-smoke.localhost"]' in workflow
+    assert "set-config allow_tests true" in workflow
+    assert 'bench --site "${SITE_NAME}" run-tests --app esan_gbos' in workflow

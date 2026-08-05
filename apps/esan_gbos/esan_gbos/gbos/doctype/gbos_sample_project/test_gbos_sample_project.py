@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from esan_gbos.api.v1.audit import run_idempotent
 from esan_gbos.api.v1.common import BFFError
+from esan_gbos.api.v1.party import get_360
 from esan_gbos.api.v1.sample import create_project
 from esan_gbos.api.v1.sourcing import create_from_demand, get_board
 from esan_gbos.api.v1.work_item import list as list_work_items
@@ -253,6 +256,150 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
             [],
         )
 
+    def test_party_360_omits_every_linked_crm_record_from_another_team(self) -> None:
+        other_team = frappe.get_doc(
+            {
+                "doctype": "GBOS Team",
+                "team_name": "Gate 1 other Party 360 team",
+            }
+        ).insert(ignore_permissions=True)
+        organization = frappe.get_doc(
+            {
+                "doctype": "CRM Organization",
+                "organization_name": "Gate 1 hidden Party 360 organization",
+                "custom_esan_team": other_team.name,
+            }
+        ).insert(ignore_permissions=True)
+        contact = frappe.get_doc(
+            {
+                "doctype": "Contact",
+                "first_name": "Gate 1 hidden Party 360",
+                "last_name": "contact",
+                "custom_esan_team": other_team.name,
+            }
+        ).insert(ignore_permissions=True)
+        lead = frappe.get_doc(
+            {
+                "doctype": "CRM Lead",
+                "first_name": "Gate 1 hidden Party 360",
+                "last_name": "lead",
+                "lead_name": "Gate 1 hidden Party 360 lead",
+                "organization": organization.name,
+                "status": "Qualified",
+                "custom_esan_team": other_team.name,
+            }
+        ).insert(ignore_permissions=True)
+        deal = frappe.get_doc(
+            {
+                "doctype": "CRM Deal",
+                "organization": organization.name,
+                "contact": contact.name,
+                "lead": lead.name,
+                "status": "Won",
+                "expected_deal_value": 987654,
+                "custom_esan_team": other_team.name,
+            }
+        ).insert(ignore_permissions=True)
+        party = frappe.get_doc(
+            {
+                "doctype": "GBOS Party Profile",
+                "party_name": "Gate 1 cross-team Party 360 profile",
+                "team": self.team.name,
+                "business_status": "Active",
+                "review_status": "Pending",
+            }
+        ).insert(ignore_permissions=True)
+        frappe.db.set_value(
+            "GBOS Party Profile",
+            party.name,
+            {
+                "crm_organization": organization.name,
+                "contact": contact.name,
+                "crm_lead": lead.name,
+                "crm_deal": deal.name,
+            },
+            update_modified=False,
+        )
+
+        frappe.set_user(self.member)
+        data = get_360(party.name)["data"]
+        frappe.set_user("Administrator")
+        frappe.db.set_value(
+            "GBOS Party Profile",
+            party.name,
+            "crm_organization",
+            "CRM-ORG-MISSING-PARTY-360",
+            update_modified=False,
+        )
+        frappe.set_user(self.member)
+        missing_data = get_360(party.name)["data"]
+
+        self.assertIsNone(data["organization"])
+        self.assertIsNone(data["contact"])
+        self.assertIsNone(data["lead"])
+        self.assertIsNone(data["deal"])
+        self.assertEqual(data["organization"], missing_data["organization"])
+
+    def test_party_profile_rejects_cross_team_crm_links_on_write(self) -> None:
+        other_team = frappe.get_doc(
+            {
+                "doctype": "GBOS Team",
+                "team_name": "Gate 1 invalid profile link team",
+            }
+        ).insert(ignore_permissions=True)
+        organization = frappe.get_doc(
+            {
+                "doctype": "CRM Organization",
+                "organization_name": "Gate 1 invalid profile link organization",
+                "custom_esan_team": other_team.name,
+            }
+        ).insert(ignore_permissions=True)
+
+        with self.assertRaises(frappe.ValidationError):
+            frappe.get_doc(
+                {
+                    "doctype": "GBOS Party Profile",
+                    "party_name": "Gate 1 invalid cross-team profile",
+                    "team": self.team.name,
+                    "crm_organization": organization.name,
+                    "business_status": "Active",
+                    "review_status": "Pending",
+                }
+            ).insert(ignore_permissions=True)
+
+    def test_party_360_omits_link_when_record_read_permission_is_denied(self) -> None:
+        organization = frappe.get_doc(
+            {
+                "doctype": "CRM Organization",
+                "organization_name": "Gate 1 permission checked Party 360 organization",
+                "custom_esan_team": self.team.name,
+            }
+        ).insert(ignore_permissions=True)
+        party = frappe.get_doc(
+            {
+                "doctype": "GBOS Party Profile",
+                "party_name": "Gate 1 permission checked Party 360 profile",
+                "team": self.team.name,
+                "crm_organization": organization.name,
+                "business_status": "Active",
+                "review_status": "Pending",
+            }
+        ).insert(ignore_permissions=True)
+
+        frappe.set_user(self.member)
+        with patch(
+            "esan_gbos.api.v1.party.frappe.has_permission",
+            return_value=False,
+        ) as has_permission:
+            data = get_360(party.name)["data"]
+
+        self.assertIsNone(data["organization"])
+        has_permission.assert_any_call(
+            "CRM Organization",
+            ptype="read",
+            doc=organization.name,
+        )
+
     def test_sales_and_buyer_doctype_access_is_partitioned(self) -> None:
         party = frappe.get_doc(
             {
@@ -421,6 +568,18 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
                         "candidate_status": "Selected",
                     }
                 ]
+            elif status == "Draft":
+                values["candidates"] = [
+                    {
+                        "supplier_name": "Synthetic Draft supplier",
+                        "external_supplier_id": "SYNTHETIC-SUPPLIER-DRAFT",
+                        "quoted_price": 12.5,
+                        "currency": "USD",
+                        "lead_time_days": 21,
+                        "candidate_status": "Shortlisted",
+                        "notes": "Synthetic candidate evidence",
+                    }
+                ]
             event = frappe.get_doc(values)
             event.flags.gbos_fixture_seed = True
             event.insert(ignore_permissions=True)
@@ -433,6 +592,24 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
         self.assertEqual(
             sum(len(records) for records in board["lanes"].values()),
             board["total"],
+        )
+        draft_event = next(
+            row for row in board["lanes"]["Draft"] if row["title"] == "Gate 1 board Draft"
+        )
+        self.assertEqual(
+            draft_event["candidates"],
+            [
+                {
+                    "name": draft_event["candidates"][0]["name"],
+                    "supplier_name": "Synthetic Draft supplier",
+                    "external_supplier_id": "SYNTHETIC-SUPPLIER-DRAFT",
+                    "quoted_price": 12.5,
+                    "currency": "USD",
+                    "lead_time_days": 21,
+                    "candidate_status": "Shortlisted",
+                    "notes": "Synthetic candidate evidence",
+                }
+            ],
         )
 
     def test_business_member_cannot_change_team_membership(self) -> None:

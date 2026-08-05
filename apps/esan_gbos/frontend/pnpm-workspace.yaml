@@ -1,3 +1,8 @@
+allowBuilds:
+  core-js: false
+  sharp: false
+  vue-demi: false
+
 minimumReleaseAgeExclude:
   - '@vue/compiler-core@3.5.41'
   - '@vue/compiler-dom@3.5.41'

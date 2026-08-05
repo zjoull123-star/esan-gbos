@@ -18,6 +18,15 @@ FRAPPE_DOCKER_URL=https://github.com/frappe/frappe_docker
 FRAPPE_DOCKER_TAG=v3.2.2
 FRAPPE_DOCKER_COMMIT=3061850feface8fbbad15b5dc08a110c596107cb
 
+FINAL_INPUT_PATHS=(
+  apps/esan_gbos
+  fixtures/gate1
+  infra/dev/nginx
+  infra/dev/Containerfile.final
+  infra/dev/apps.upstream.json
+  scripts/dev/build-custom-image
+)
+
 STAGE=
 IMAGE=
 ESAN_COMMIT=
@@ -155,21 +164,19 @@ if [[ "${STAGE}" == "final" ]]; then
     fixtures/gate1/manifest.json \
     fixtures/gate1/frappe_payload.json \
     infra/dev/nginx/frappe.conf.template >/dev/null
-  if ! git -C "${REPO_ROOT}" diff --quiet -- apps/esan_gbos ||
-    ! git -C "${REPO_ROOT}" diff --cached --quiet -- apps/esan_gbos ||
-    ! git -C "${REPO_ROOT}" diff --quiet -- fixtures/gate1 ||
-    ! git -C "${REPO_ROOT}" diff --cached --quiet -- fixtures/gate1 ||
-    ! git -C "${REPO_ROOT}" diff --quiet -- infra/dev/nginx ||
-    ! git -C "${REPO_ROOT}" diff --cached --quiet -- infra/dev/nginx ||
-    [[ -n "$(git -C "${REPO_ROOT}" ls-files --others --exclude-standard -- apps/esan_gbos fixtures/gate1 infra/dev/nginx)" ]]; then
-    echo "Final image precondition failed: app, Gate 1 fixtures, and runtime template must be tracked and clean." >&2
+  if ! git -C "${REPO_ROOT}" diff --quiet -- "${FINAL_INPUT_PATHS[@]}" ||
+    ! git -C "${REPO_ROOT}" diff --cached --quiet -- "${FINAL_INPUT_PATHS[@]}" ||
+    [[ -n "$(
+      git -C "${REPO_ROOT}" ls-files --others --exclude-standard -- "${FINAL_INPUT_PATHS[@]}"
+    )" ]]; then
+    echo "Final image precondition failed: all final image inputs must be tracked and clean." >&2
     exit 65
   fi
   FINAL_CONTEXT="${BUILD_ROOT}/final-context"
   mkdir -p -- "${FINAL_CONTEXT}"
   (
     cd "${REPO_ROOT}"
-    git archive "${ESAN_COMMIT}" apps/esan_gbos fixtures/gate1 infra/dev/nginx
+    git archive "${ESAN_COMMIT}" "${FINAL_INPUT_PATHS[@]}"
   ) |
     tar -x -C "${FINAL_CONTEXT}"
   ARCHIVED_SOURCE_ROOT="${FINAL_CONTEXT}"
