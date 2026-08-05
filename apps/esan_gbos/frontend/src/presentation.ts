@@ -98,6 +98,8 @@ const SOURCING_LANES = [
   ["Collecting", "收集中"],
   ["Evaluating", "评估中"],
   ["Selected", "已选定"],
+  ["Closed", "已关闭"],
+  ["Cancelled", "已取消"],
 ] as const;
 
 export const flattenSourcingBoardPayload = (

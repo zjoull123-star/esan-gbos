@@ -44,10 +44,19 @@ def get_board(team: str | None = None) -> dict[str, Any]:
             "modified",
         ],
         order_by="modified desc",
-        page_length=100,
+        page_length=500,
     )
     lanes: dict[str, list[dict[str, Any]]] = {
-        status: [] for status in ("Draft", "Invited", "Collecting", "Evaluating", "Selected")
+        status: []
+        for status in (
+            "Draft",
+            "Invited",
+            "Collecting",
+            "Evaluating",
+            "Selected",
+            "Closed",
+            "Cancelled",
+        )
     }
     for row in events:
         status = str(row["business_status"])

@@ -45,6 +45,8 @@ WORK_FIELDS = [
     "business_status",
     "review_status",
     "revision",
+    "reference_doctype",
+    "reference_name",
     "modified",
 ]
 
@@ -69,17 +71,44 @@ def list(
             cursor_value = decode_cursor(cursor)
         except CursorError as error:
             raise BFFError("invalid_cursor", str(error)) from error
-        safe_filters["modified"] = ["<=", cursor_value[0]]
 
-    rows = frappe.get_list(
-        "GBOS Work Item",
-        filters=safe_filters,
-        fields=WORK_FIELDS,
-        order_by="modified desc, name desc",
-        page_length=size + 25,
-    )
     if cursor_value:
-        rows = [row for row in rows if (str(row["modified"]), str(row["name"])) < cursor_value]
+        same_timestamp_filters = {
+            **safe_filters,
+            "modified": cursor_value[0],
+            "name": ["<", cursor_value[1]],
+        }
+        rows = frappe.get_list(
+            "GBOS Work Item",
+            filters=same_timestamp_filters,
+            fields=WORK_FIELDS,
+            order_by="name desc",
+            page_length=size + 1,
+        )
+        remaining = size + 1 - len(rows)
+        if remaining > 0:
+            older_filters = {
+                **safe_filters,
+                "modified": ["<", cursor_value[0]],
+            }
+            rows.extend(
+                frappe.get_list(
+                    "GBOS Work Item",
+                    filters=older_filters,
+                    fields=WORK_FIELDS,
+                    order_by="modified desc, name desc",
+                    page_length=remaining,
+                )
+            )
+    else:
+        rows = frappe.get_list(
+            "GBOS Work Item",
+            filters=safe_filters,
+            fields=WORK_FIELDS,
+            order_by="modified desc, name desc",
+            page_length=size + 1,
+        )
+
     has_more = len(rows) > size
     rows = rows[:size]
     next_cursor = (

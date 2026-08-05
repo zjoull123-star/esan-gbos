@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Mapping
+from datetime import datetime
 
 
 class CursorError(ValueError):
@@ -19,14 +20,19 @@ def encode_cursor(modified: str, name: str) -> str:
 
 def decode_cursor(cursor: str) -> tuple[str, str]:
     try:
+        if len(cursor) > 512:
+            raise ValueError
         padded = cursor + "=" * (-len(cursor) % 4)
         value = json.loads(base64.urlsafe_b64decode(padded).decode())
         if (
             not isinstance(value, list)
             or len(value) != 2
             or not all(isinstance(item, str) and item for item in value)
+            or len(value[0]) > 64
+            or len(value[1]) > 140
         ):
             raise ValueError
+        datetime.fromisoformat(value[0])
         return value[0], value[1]
     except (ValueError, TypeError, UnicodeError, json.JSONDecodeError) as error:
         raise CursorError("invalid cursor") from error

@@ -23,6 +23,15 @@ def test_invalid_cursor_is_rejected() -> None:
         decode_cursor("not-a-cursor")
 
 
+def test_cursor_rejects_oversized_or_invalid_components() -> None:
+    with pytest.raises(CursorError, match="invalid cursor"):
+        decode_cursor("x" * 513)
+    with pytest.raises(CursorError, match="invalid cursor"):
+        decode_cursor(encode_cursor("not-a-timestamp", "WRK-01"))
+    with pytest.raises(CursorError, match="invalid cursor"):
+        decode_cursor(encode_cursor("2026-08-06 12:00:00", "W" * 141))
+
+
 def test_work_filters_use_a_fixed_allowlist() -> None:
     assert validate_work_filters(
         {"team": "TEM-01", "business_status": "Open", "priority": "High"}
@@ -43,3 +52,18 @@ def test_all_fixture_backed_query_dtos_expose_origin_for_demo_labelling() -> Non
 
     for module in ("party.py", "work_item.py", "sample.py", "sourcing.py"):
         assert '"origin"' in (api_root / module).read_text(encoding="utf-8")
+
+
+def test_work_item_query_exposes_governed_reference_for_detail_navigation() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "apps"
+        / "esan_gbos"
+        / "esan_gbos"
+        / "api"
+        / "v1"
+        / "work_item.py"
+    ).read_text(encoding="utf-8")
+
+    assert '"reference_doctype"' in source
+    assert '"reference_name"' in source

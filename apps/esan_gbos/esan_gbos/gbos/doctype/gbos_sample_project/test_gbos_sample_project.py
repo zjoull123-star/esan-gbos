@@ -6,7 +6,7 @@ from frappe.tests import IntegrationTestCase
 from esan_gbos.api.v1.audit import run_idempotent
 from esan_gbos.api.v1.common import BFFError
 from esan_gbos.api.v1.sample import create_project
-from esan_gbos.api.v1.sourcing import create_from_demand
+from esan_gbos.api.v1.sourcing import create_from_demand, get_board
 from esan_gbos.api.v1.work_item import list as list_work_items
 from esan_gbos.api.v1.work_item import transition
 from esan_gbos.permissions import has_gbos_permission
@@ -161,6 +161,45 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
             pluck="name",
         )
         self.assertEqual(hidden, [])
+
+    def test_work_item_cursor_does_not_drop_equal_modified_rows(self) -> None:
+        names = []
+        for index in range(60):
+            work = frappe.get_doc(
+                {
+                    "doctype": "GBOS Work Item",
+                    "title": f"Equal timestamp work {index:02d}",
+                    "team": self.team.name,
+                    "business_status": "Open",
+                    "review_status": "Pending",
+                }
+            ).insert(ignore_permissions=True)
+            names.append(work.name)
+        for name in names:
+            frappe.db.set_value(
+                "GBOS Work Item",
+                name,
+                "modified",
+                "2026-08-06 12:00:00.000001",
+                update_modified=False,
+            )
+
+        frappe.set_user(self.member)
+        seen: list[str] = []
+        cursor = None
+        while True:
+            page = list_work_items(
+                filters={"team": self.team.name},
+                cursor=cursor,
+                page_size=10,
+            )
+            seen.extend(row["name"] for row in page["data"])
+            cursor = page["meta"]["next_cursor"]
+            if not cursor:
+                break
+
+        self.assertEqual(len(seen), 60)
+        self.assertEqual(set(seen), set(names))
 
     def test_crm_records_use_the_same_team_scope(self) -> None:
         organization = frappe.get_doc(
@@ -344,6 +383,57 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
         event.save()
         self.assertEqual(event.business_status, "Selected")
         self.assertEqual(event.selected_supplier, "Synthetic Selection Candidate")
+
+    def test_sourcing_board_includes_terminal_lanes_and_consistent_total(self) -> None:
+        demand = frappe.get_doc(
+            {
+                "doctype": "GBOS Demand Signal",
+                "title": "Gate 1 sourcing board demand",
+                "team": self.team.name,
+                "business_status": "Draft",
+                "review_status": "Pending",
+            }
+        ).insert(ignore_permissions=True)
+        statuses = (
+            "Draft",
+            "Invited",
+            "Collecting",
+            "Evaluating",
+            "Selected",
+            "Closed",
+            "Cancelled",
+        )
+        for status in statuses:
+            values = {
+                "doctype": "GBOS Sourcing Event",
+                "title": f"Gate 1 board {status}",
+                "team": self.team.name,
+                "demand_signal": demand.name,
+                "origin": "Fixture",
+                "business_status": status,
+                "review_status": "Pending",
+            }
+            if status in {"Selected", "Closed"}:
+                values["selected_supplier"] = f"Synthetic {status} supplier"
+                values["candidates"] = [
+                    {
+                        "supplier_name": f"Synthetic {status} supplier",
+                        "candidate_status": "Selected",
+                    }
+                ]
+            event = frappe.get_doc(values)
+            event.flags.gbos_fixture_seed = True
+            event.insert(ignore_permissions=True)
+
+        frappe.set_user(self.buyer)
+        board = get_board(team=self.team.name)["data"]
+
+        self.assertEqual(board["total"], len(statuses))
+        self.assertEqual(set(board["lanes"]), set(statuses))
+        self.assertEqual(
+            sum(len(records) for records in board["lanes"].values()),
+            board["total"],
+        )
 
     def test_business_member_cannot_change_team_membership(self) -> None:
         frappe.set_user(self.member)

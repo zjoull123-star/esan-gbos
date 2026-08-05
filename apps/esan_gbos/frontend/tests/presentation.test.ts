@@ -40,11 +40,13 @@ describe("BFF presentation adapters", () => {
         Collecting: [],
         Evaluating: [],
         Selected: [],
+        Closed: [{ name: "SRC-3", title: "已完成询源" }],
+        Cancelled: [{ name: "SRC-4", title: "已取消询源" }],
       },
-      total: 2,
+      total: 4,
     });
 
-    expect(result.total).toBe(2);
+    expect(result.total).toBe(4);
     expect(result.records).toEqual([
       expect.objectContaining({
         name: "SRC-1",
@@ -55,6 +57,16 @@ describe("BFF presentation adapters", () => {
         name: "SRC-2",
         sourcing_lane: "Invited",
         presentation_section: "已邀请",
+      }),
+      expect.objectContaining({
+        name: "SRC-3",
+        sourcing_lane: "Closed",
+        presentation_section: "已关闭",
+      }),
+      expect.objectContaining({
+        name: "SRC-4",
+        sourcing_lane: "Cancelled",
+        presentation_section: "已取消",
       }),
     ]);
   });

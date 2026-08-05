@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import DemoBanner from "@/components/DemoBanner.vue";
 import EvidenceCard from "@/components/EvidenceCard.vue";
+import RecordGrid from "@/components/RecordGrid.vue";
 import StatePanel from "@/components/StatePanel.vue";
 import { isFixturePayload } from "@/presentation";
 
@@ -77,5 +78,30 @@ describe("多语言证据与演示数据", () => {
     expect(wrapper.text()).toContain("不得用于真实业务决定");
     expect(isFixturePayload({ items: [{ origin: "Fixture" }] })).toBe(true);
     expect(isFixturePayload({ origin: "Manual" })).toBe(false);
+  });
+
+  it("工作项引用和详情分组生成受控客户或样品链接", () => {
+    const wrapper = mount(RecordGrid, {
+      props: {
+        records: [
+          {
+            name: "WRK-1",
+            title: "客户跟进",
+            reference_doctype: "GBOS Party Profile",
+            reference_name: "PTY-1",
+          },
+          {
+            name: "SAM-1",
+            title: "第一轮样品",
+            presentation_section: "样品项目",
+          },
+        ],
+      },
+    });
+
+    expect(wrapper.findAll("a.text-link").map((link) => link.attributes("href"))).toEqual([
+      "/gbos/party/PTY-1",
+      "/gbos/sample/SAM-1",
+    ]);
   });
 });

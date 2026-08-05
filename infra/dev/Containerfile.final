@@ -45,5 +45,5 @@ COPY --from=app-assets --chown=frappe:frappe \
     /home/frappe/frappe-bench/apps/esan_gbos/esan_gbos/public/frontend/ \
     /home/frappe/frappe-bench/apps/esan_gbos/esan_gbos/public/frontend/
 COPY --from=app-assets --chown=frappe:frappe \
-    /home/frappe/frappe-bench/assets/ \
+    /home/frappe/frappe-bench/sites/assets/ \
     /home/frappe/frappe-bench/assets/

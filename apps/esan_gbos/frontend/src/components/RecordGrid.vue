@@ -87,6 +87,22 @@ const detailLink = (record: Record<string, unknown>) => {
   if (project) {
     return `/gbos/sample/${encodeURIComponent(project)}`;
   }
+  const referenceDoctype = textField(record, "reference_doctype");
+  const referenceName = textField(record, "reference_name");
+  if (referenceDoctype === "GBOS Party Profile" && referenceName) {
+    return `/gbos/party/${encodeURIComponent(referenceName)}`;
+  }
+  if (referenceDoctype === "GBOS Sample Project" && referenceName) {
+    return `/gbos/sample/${encodeURIComponent(referenceName)}`;
+  }
+  const section = textField(record, "presentation_section");
+  const name = textField(record, "name");
+  if (section === "客户档案" && name) {
+    return `/gbos/party/${encodeURIComponent(name)}`;
+  }
+  if (section === "样品项目" && name) {
+    return `/gbos/sample/${encodeURIComponent(name)}`;
+  }
   return undefined;
 };
 </script>

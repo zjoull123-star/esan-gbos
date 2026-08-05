@@ -74,9 +74,8 @@ def run_idempotent[Result: dict[str, Any]](
             ),
         }
     )
-    audit.flags._name = name
     try:
-        audit.insert(ignore_permissions=True)
+        audit.insert(ignore_permissions=True, set_name=name)
     except frappe.DuplicateEntryError as error:
         existing = _load(name)
         if existing and existing["payload_hash"] == digest and existing["output"]:

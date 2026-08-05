@@ -241,6 +241,7 @@ def test_custom_image_builder_verifies_every_source_ref() -> None:
     assert "pnpm run build" in final_containerfile
     assert "apps/esan_gbos/frontend/dist/" in final_containerfile
     assert "apps/esan_gbos/esan_gbos/public/frontend/" in final_containerfile
+    assert "/home/frappe/frappe-bench/sites/assets/" in final_containerfile
     assert "infra/dev/nginx/frappe.conf.template" in final_containerfile
     backend_stage = final_containerfile.split("FROM ${UPSTREAM_IMAGE} AS final", 1)[1]
     assert "bench build" not in backend_stage
