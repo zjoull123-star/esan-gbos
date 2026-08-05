@@ -1,0 +1,46 @@
+.DS_Store
+.idea/
+.vscode/
+.worktrees/
+
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+coverage/
+.vite/
+playwright-report/
+test-results/
+
+# Frappe / Bench runtime
+sites/
+logs/
+config/
+env/
+apps.txt
+currentsite.txt
+
+# Local evidence and generated outputs
+artifacts/
+outputs/
+*.log
+*.sqlite
+
