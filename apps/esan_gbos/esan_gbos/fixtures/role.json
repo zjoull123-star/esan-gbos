@@ -1,0 +1,13 @@
+[
+  {"doctype": "Role", "name": "GBOS Admin", "role_name": "GBOS Admin", "desk_access": 1},
+  {"doctype": "Role", "name": "Integration Admin", "role_name": "Integration Admin", "desk_access": 1},
+  {"doctype": "Role", "name": "Privacy/Audit", "role_name": "Privacy/Audit", "desk_access": 1},
+  {"doctype": "Role", "name": "CEO", "role_name": "CEO", "desk_access": 1},
+  {"doctype": "Role", "name": "Sales Manager", "role_name": "Sales Manager", "desk_access": 1},
+  {"doctype": "Role", "name": "Sales User", "role_name": "Sales User", "desk_access": 1},
+  {"doctype": "Role", "name": "Purchase Manager", "role_name": "Purchase Manager", "desk_access": 1},
+  {"doctype": "Role", "name": "Buyer", "role_name": "Buyer", "desk_access": 1},
+  {"doctype": "Role", "name": "Product/R&D", "role_name": "Product/R&D", "desk_access": 1},
+  {"doctype": "Role", "name": "Reviewer", "role_name": "Reviewer", "desk_access": 1},
+  {"doctype": "Role", "name": "Finance Readonly", "role_name": "Finance Readonly", "desk_access": 1}
+]

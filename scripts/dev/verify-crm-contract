@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+export PATH="${HOME}/.orbstack/bin:${PATH}"
+
+python3 - "${REPO_ROOT}/docs/compat/crm-doctype-contract.json" <<'PY'
+import json
+import pathlib
+import sys
+
+contract = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert contract["source"] == {
+    "app": "crm",
+    "tag": "v1.81.0",
+    "commit": "f6016eab20936ea15e5f450ec8dff9880f4dffe9",
+    "method": "frappe.get_meta + frappe.get_all",
+}
+doctypes = contract["doctypes"]
+assert set(doctypes) == {
+    "CRM Organization",
+    "Contact",
+    "CRM Lead",
+    "CRM Deal",
+    "CRM Contacts",
+}
+assert doctypes["CRM Organization"]["fields"]["organization_name"]["unique"] is True
+assert doctypes["Contact"]["fields"]["email_id"] == {
+    "fieldtype": "Data",
+    "options": "Email",
+}
+assert doctypes["CRM Lead"]["fields"]["status"] == {
+    "fieldtype": "Link",
+    "options": "CRM Lead Status",
+    "reqd": True,
+}
+assert doctypes["CRM Deal"]["fields"]["contacts"] == {
+    "fieldtype": "Table",
+    "options": "CRM Contacts",
+}
+assert doctypes["CRM Contacts"]["is_child_table"] is True
+assert contract["reference_values"]["CRM Lead Status"] == [
+    "Contacted",
+    "Converted",
+    "Junk",
+    "New",
+    "Nurture",
+    "Qualified",
+    "Unqualified",
+]
+assert contract["reference_values"]["CRM Deal Status"] == [
+    "Demo/Making",
+    "Lost",
+    "Negotiation",
+    "Proposal/Quotation",
+    "Qualification",
+    "Ready to Close",
+    "Won",
+]
+print("CRM v1.81.0 contract snapshot is structurally valid.")
+PY

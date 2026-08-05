@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+export PATH="${HOME}/.orbstack/bin:${PATH}"
+
+TRIVY_IMAGE="aquasec/trivy:0.73.0@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c"
+
+if (( $# == 0 )); then
+  docker run --rm \
+    -v "${REPO_ROOT}:/workspace:ro" \
+    -w /workspace \
+    "${TRIVY_IMAGE}" \
+    fs \
+    --scanners vuln,secret,misconfig \
+    --severity HIGH,CRITICAL \
+    --exit-code 1 \
+    .
+elif (( $# == 1 )); then
+  TARGET_DIGEST="$(docker image inspect "$1" --format '{{.Id}}')"
+  docker run --rm \
+    -v /var/run/docker.sock:/var/run/docker.sock:ro \
+    "${TRIVY_IMAGE}" \
+    image \
+    --scanners vuln,secret,misconfig \
+    --severity HIGH,CRITICAL \
+    --exit-code 1 \
+    "${TARGET_DIGEST}"
+else
+  echo "Usage: scripts/dev/security-scan [immutable-image-reference]" >&2
+  exit 64
+fi

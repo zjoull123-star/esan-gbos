@@ -1,0 +1,288 @@
+[
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.sales.1@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Sales 1",
+      "roles": [
+        {
+          "role": "Sales User"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.sales.1@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.sales.2@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Sales 2",
+      "roles": [
+        {
+          "role": "Sales User"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.sales.2@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.sales.3@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Sales 3",
+      "roles": [
+        {
+          "role": "Sales User"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.sales.3@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.sales.4@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Sales 4",
+      "roles": [
+        {
+          "role": "Sales User"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.sales.4@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.sales.5@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Sales 5",
+      "roles": [
+        {
+          "role": "Sales User"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.sales.5@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.sales.manager@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Sales Manager",
+      "roles": [
+        {
+          "role": "Sales Manager"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.sales.manager@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.purchase.manager@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Purchase Manager",
+      "roles": [
+        {
+          "role": "Purchase Manager"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.purchase.manager@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.buyer@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Buyer",
+      "roles": [
+        {
+          "role": "Buyer"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.buyer@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.product@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Product",
+      "roles": [
+        {
+          "role": "Product/R&D"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.product@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.reviewer.1@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Reviewer 1",
+      "roles": [
+        {
+          "role": "Reviewer"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.reviewer.1@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.reviewer.2@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Reviewer 2",
+      "roles": [
+        {
+          "role": "Reviewer"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.reviewer.2@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.ceo@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic CEO",
+      "roles": [
+        {
+          "role": "CEO"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.ceo@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "User",
+    "fields": {
+      "email": "synthetic.audit@example.invalid",
+      "enabled": 1,
+      "first_name": "Synthetic Privacy Audit",
+      "roles": [
+        {
+          "role": "Privacy/Audit"
+        }
+      ],
+      "send_welcome_email": 0,
+      "user_type": "System User"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "synthetic.audit@example.invalid",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  }
+]

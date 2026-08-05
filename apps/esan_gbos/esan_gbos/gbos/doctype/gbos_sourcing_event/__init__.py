@@ -1,0 +1,1 @@
+"""GBOS Sourcing Event DocType."""

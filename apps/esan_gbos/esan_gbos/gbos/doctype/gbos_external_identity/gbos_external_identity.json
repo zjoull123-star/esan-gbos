@@ -1,0 +1,23 @@
+{
+  "doctype": "DocType",
+  "name": "GBOS External Identity",
+  "module": "GBOS",
+  "engine": "InnoDB",
+  "track_changes": 1,
+  "field_order": ["team", "identity_provider", "external_subject", "identity_type", "user", "party_profile", "origin", "origin_reference", "business_status", "review_status", "revision", "last_request_id"],
+  "fields": [
+    {"fieldname": "team", "label": "Team", "fieldtype": "Link", "options": "GBOS Team", "reqd": 1},
+    {"fieldname": "identity_provider", "label": "Identity Provider", "fieldtype": "Data", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "external_subject", "label": "External Subject", "fieldtype": "Data", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "identity_type", "label": "Identity Type", "fieldtype": "Select", "options": "User\nParty\nChannel", "reqd": 1},
+    {"fieldname": "user", "label": "User", "fieldtype": "Link", "options": "User"},
+    {"fieldname": "party_profile", "label": "Party Profile", "fieldtype": "Link", "options": "GBOS Party Profile"},
+    {"fieldname": "origin", "label": "Origin", "fieldtype": "Select", "options": "Manual\nFixture\nIntegration\nAI", "default": "Integration", "reqd": 1},
+    {"fieldname": "origin_reference", "label": "Origin Reference", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "business_status", "label": "Business Status", "fieldtype": "Select", "options": "Active\nRevoked\nArchived", "default": "Active", "reqd": 1},
+    {"fieldname": "review_status", "label": "Review Status", "fieldtype": "Select", "options": "AI Draft\nPending\nApproved\nRejected\nSuperseded", "default": "Pending", "reqd": 1},
+    {"fieldname": "revision", "label": "Revision", "fieldtype": "Int", "default": "0", "read_only": 1},
+    {"fieldname": "last_request_id", "label": "Last Request ID", "fieldtype": "Data", "read_only": 1}
+  ],
+  "permissions": [{"role": "GBOS Admin", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1}]
+}

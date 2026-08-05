@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/v1/evidence-ref.schema.json",
+  "title": "EvidenceRef",
+  "description": "Tamper-evident pointer to the exact source span supporting a fact or action.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "observation_event_id",
+    "raw_sha256",
+    "object_ref",
+    "media_type",
+    "locator",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "evidence_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "observation_event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "raw_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "object_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "media_type": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 255
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "message_start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "message_end": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "time_start_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "time_end_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "message_start",
+            "message_end"
+          ]
+        },
+        {
+          "required": [
+            "time_start_ms",
+            "time_end_ms"
+          ]
+        },
+        {
+          "required": [
+            "page"
+          ]
+        }
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,49 @@
+ARG UPSTREAM_IMAGE
+ARG UPSTREAM_BUILDER_IMAGE
+
+FROM ${UPSTREAM_BUILDER_IMAGE} AS app-assets
+
+USER frappe
+COPY --chown=frappe:frappe apps/esan_gbos /home/frappe/frappe-bench/apps/esan_gbos
+WORKDIR /home/frappe/frappe-bench
+RUN test -f apps/esan_gbos/pyproject.toml \
+    && test -f apps/esan_gbos/esan_gbos/hooks.py \
+    && test -f apps/esan_gbos/frontend/pnpm-lock.yaml \
+    && ./env/bin/pip install --no-deps -e apps/esan_gbos
+RUN mkdir -p /home/frappe/.local/bin \
+    && corepack enable --install-directory /home/frappe/.local/bin
+ENV PATH="/home/frappe/.local/bin:${PATH}"
+WORKDIR /home/frappe/frappe-bench/apps/esan_gbos/frontend
+RUN pnpm install --frozen-lockfile \
+    && pnpm run build
+WORKDIR /home/frappe/frappe-bench
+RUN mkdir -p apps/esan_gbos/esan_gbos/public/frontend/ \
+    && cp -a apps/esan_gbos/frontend/dist/. apps/esan_gbos/esan_gbos/public/frontend/ \
+    && bench build --app esan_gbos
+
+FROM ${UPSTREAM_IMAGE} AS final
+
+ARG ESAN_SOURCE_COMMIT
+ARG ESAN_SOURCE_SHA256
+LABEL org.opencontainers.image.revision="${ESAN_SOURCE_COMMIT}"
+LABEL com.esan.gbos.app-source-sha256="${ESAN_SOURCE_SHA256}"
+
+USER root
+COPY infra/dev/nginx/frappe.conf.template /templates/nginx/frappe.conf.template
+
+USER frappe
+COPY --chown=frappe:frappe apps/esan_gbos /home/frappe/frappe-bench/apps/esan_gbos
+COPY --chown=frappe:frappe fixtures/gate1 /home/frappe/frappe-bench/fixtures/gate1
+
+RUN test -f apps/esan_gbos/pyproject.toml \
+    && test -f apps/esan_gbos/esan_gbos/hooks.py \
+    && test -f fixtures/gate1/manifest.json \
+    && test -f fixtures/gate1/frappe_payload.json \
+    && ./env/bin/pip install --no-deps -e apps/esan_gbos
+
+COPY --from=app-assets --chown=frappe:frappe \
+    /home/frappe/frappe-bench/apps/esan_gbos/esan_gbos/public/frontend/ \
+    /home/frappe/frappe-bench/apps/esan_gbos/esan_gbos/public/frontend/
+COPY --from=app-assets --chown=frappe:frappe \
+    /home/frappe/frappe-bench/assets/ \
+    /home/frappe/frappe-bench/assets/

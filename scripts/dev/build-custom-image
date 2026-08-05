@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+export PATH="${HOME}/.orbstack/bin:${PATH}"
+
+FRAPPE_URL=https://github.com/frappe/frappe
+FRAPPE_TAG=v16.30.0
+FRAPPE_COMMIT=9523516cac25992bc2cd810e1015df8994c257f5
+ERPNEXT_URL=https://github.com/frappe/erpnext
+ERPNEXT_TAG=v16.31.0
+ERPNEXT_COMMIT=68ea583a1fbd1c533004cabc4294213e9a58716e
+CRM_URL=https://github.com/frappe/crm
+CRM_TAG=v1.81.0
+CRM_COMMIT=f6016eab20936ea15e5f450ec8dff9880f4dffe9
+FRAPPE_DOCKER_URL=https://github.com/frappe/frappe_docker
+FRAPPE_DOCKER_TAG=v3.2.2
+FRAPPE_DOCKER_COMMIT=3061850feface8fbbad15b5dc08a110c596107cb
+
+STAGE=
+IMAGE=
+ESAN_COMMIT=
+
+usage() {
+  echo "Usage:" >&2
+  echo "  scripts/dev/build-custom-image --stage upstream [--image name:tag]" >&2
+  echo "  scripts/dev/build-custom-image --stage final --esan-commit MONOREPO_SHA [--image name:tag]" >&2
+}
+
+while (( $# > 0 )); do
+  case "$1" in
+    --stage)
+      STAGE="${2:-}"
+      shift
+      ;;
+    --image)
+      IMAGE="${2:-}"
+      shift
+      ;;
+    --esan-commit)
+      ESAN_COMMIT="${2:-}"
+      shift
+      ;;
+    *)
+      usage
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+case "${STAGE}" in
+  upstream)
+    IMAGE="${IMAGE:-esan-gbos-upstream:gate0}"
+    ;;
+  final)
+    IMAGE="${IMAGE:-esan-gbos-final:gate1}"
+    if [[ ! "${ESAN_COMMIT}" =~ ^[a-f0-9]{40}$ ]]; then
+      echo "Final stage requires the exact 40-character monorepo commit containing apps/esan_gbos." >&2
+      usage
+      exit 64
+    fi
+    ;;
+  *)
+    usage
+    exit 64
+    ;;
+esac
+
+verify_tag() {
+  local name="$1"
+  local url="$2"
+  local tag="$3"
+  local expected="$4"
+  local refs actual
+
+  refs="$(git ls-remote "${url}" "refs/tags/${tag}" "refs/tags/${tag}^{}")"
+  actual="$(awk '
+    /\^\{\}$/ { peeled=$1 }
+    !/\^\{\}$/ { direct=$1 }
+    END { if (peeled != "") print peeled; else print direct }
+  ' <<<"${refs}")"
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "${name} ${tag} resolved to ${actual:-missing}; expected ${expected}." >&2
+    exit 65
+  fi
+  echo "Verified ${name} ${tag} at ${expected}."
+}
+
+verify_tag frappe "${FRAPPE_URL}" "${FRAPPE_TAG}" "${FRAPPE_COMMIT}"
+verify_tag erpnext "${ERPNEXT_URL}" "${ERPNEXT_TAG}" "${ERPNEXT_COMMIT}"
+verify_tag crm "${CRM_URL}" "${CRM_TAG}" "${CRM_COMMIT}"
+verify_tag frappe_docker "${FRAPPE_DOCKER_URL}" "${FRAPPE_DOCKER_TAG}" "${FRAPPE_DOCKER_COMMIT}"
+
+BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/esan-gbos-image.XXXXXX")"
+trap 'rm -rf -- "${BUILD_ROOT}"' EXIT
+
+git clone --quiet --depth 1 --branch "${FRAPPE_DOCKER_TAG}" \
+  "${FRAPPE_DOCKER_URL}" "${BUILD_ROOT}/frappe_docker"
+if [[ "$(git -C "${BUILD_ROOT}/frappe_docker" rev-parse HEAD)" != "${FRAPPE_DOCKER_COMMIT}" ]]; then
+  echo "frappe_docker checkout did not match the verified commit." >&2
+  exit 65
+fi
+
+APP_MANIFEST="${BUILD_ROOT}/apps.json"
+cp -- "${REPO_ROOT}/infra/dev/apps.upstream.json" "${APP_MANIFEST}"
+
+build_status=1
+UPSTREAM_IMAGE="esan-gbos-upstream:gate0"
+if [[ "${STAGE}" == "upstream" ]]; then
+  UPSTREAM_IMAGE="${IMAGE}"
+fi
+for attempt in 1 2; do
+  echo "Build attempt ${attempt}/2 for ${UPSTREAM_IMAGE} (upstream, linux/arm64)."
+  if docker buildx build \
+    --platform linux/arm64 \
+    --file "${BUILD_ROOT}/frappe_docker/images/custom/Containerfile" \
+    --build-arg "FRAPPE_PATH=${FRAPPE_URL}" \
+    --build-arg "FRAPPE_BRANCH=${FRAPPE_TAG}" \
+    --secret id=apps_json,src="${APP_MANIFEST}" \
+    --provenance=true \
+    --load \
+    --tag "${UPSTREAM_IMAGE}" \
+    "${BUILD_ROOT}/frappe_docker"; then
+    build_status=0
+    break
+  fi
+  echo "Exact-version build attempt ${attempt} failed; retrying once without changing inputs." >&2
+done
+if (( build_status != 0 )); then
+  echo "Exact-version image build failed twice." >&2
+  exit "${build_status}"
+fi
+
+if [[ "${STAGE}" == "final" ]]; then
+  APP_ROOT="${REPO_ROOT}/apps/esan_gbos"
+  FIXTURE_ROOT="${REPO_ROOT}/fixtures/gate1"
+  NGINX_TEMPLATE="${REPO_ROOT}/infra/dev/nginx/frappe.conf.template"
+  if [[ ! -f "${APP_ROOT}/pyproject.toml" ||
+    ! -f "${APP_ROOT}/esan_gbos/hooks.py" ||
+    ! -f "${FIXTURE_ROOT}/manifest.json" ||
+    ! -f "${FIXTURE_ROOT}/frappe_payload.json" ||
+    ! -f "${NGINX_TEMPLATE}" ]]; then
+    echo "Final image precondition failed: app, fixtures, or runtime template is missing." >&2
+    exit 66
+  fi
+  if [[ "$(git -C "${REPO_ROOT}" rev-parse HEAD)" != "${ESAN_COMMIT}" ]]; then
+    echo "Final image precondition failed: --esan-commit does not match repository HEAD." >&2
+    exit 65
+  fi
+  git -C "${REPO_ROOT}" ls-files --error-unmatch \
+    apps/esan_gbos/pyproject.toml \
+    apps/esan_gbos/esan_gbos/hooks.py \
+    fixtures/gate1/manifest.json \
+    fixtures/gate1/frappe_payload.json \
+    infra/dev/nginx/frappe.conf.template >/dev/null
+  if ! git -C "${REPO_ROOT}" diff --quiet -- apps/esan_gbos ||
+    ! git -C "${REPO_ROOT}" diff --cached --quiet -- apps/esan_gbos ||
+    ! git -C "${REPO_ROOT}" diff --quiet -- fixtures/gate1 ||
+    ! git -C "${REPO_ROOT}" diff --cached --quiet -- fixtures/gate1 ||
+    ! git -C "${REPO_ROOT}" diff --quiet -- infra/dev/nginx ||
+    ! git -C "${REPO_ROOT}" diff --cached --quiet -- infra/dev/nginx ||
+    [[ -n "$(git -C "${REPO_ROOT}" ls-files --others --exclude-standard -- apps/esan_gbos fixtures/gate1 infra/dev/nginx)" ]]; then
+    echo "Final image precondition failed: app, Gate 1 fixtures, and runtime template must be tracked and clean." >&2
+    exit 65
+  fi
+  FINAL_CONTEXT="${BUILD_ROOT}/final-context"
+  mkdir -p -- "${FINAL_CONTEXT}"
+  (
+    cd "${REPO_ROOT}"
+    git archive "${ESAN_COMMIT}" apps/esan_gbos fixtures/gate1 infra/dev/nginx
+  ) |
+    tar -x -C "${FINAL_CONTEXT}"
+  ARCHIVED_SOURCE_ROOT="${FINAL_CONTEXT}"
+  ESAN_SOURCE_SHA256="$(
+    python3 - "${ARCHIVED_SOURCE_ROOT}" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+digest = hashlib.sha256()
+for path in sorted(item for item in root.rglob("*") if item.is_file()):
+    digest.update(path.relative_to(root).as_posix().encode())
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+print(digest.hexdigest())
+PY
+  )"
+  UPSTREAM_BUILDER_IMAGE="esan-gbos-upstream-builder:gate1"
+  docker buildx build \
+    --platform linux/arm64 \
+    --file "${BUILD_ROOT}/frappe_docker/images/custom/Containerfile" \
+    --target builder \
+    --build-arg "FRAPPE_PATH=${FRAPPE_URL}" \
+    --build-arg "FRAPPE_BRANCH=${FRAPPE_TAG}" \
+    --secret id=apps_json,src="${APP_MANIFEST}" \
+    --provenance=true \
+    --load \
+    --tag "${UPSTREAM_BUILDER_IMAGE}" \
+    "${BUILD_ROOT}/frappe_docker"
+  docker buildx build \
+    --platform linux/arm64 \
+    --file "${REPO_ROOT}/infra/dev/Containerfile.final" \
+    --build-arg "UPSTREAM_IMAGE=${UPSTREAM_IMAGE}" \
+    --build-arg "UPSTREAM_BUILDER_IMAGE=${UPSTREAM_BUILDER_IMAGE}" \
+    --build-arg "ESAN_SOURCE_COMMIT=${ESAN_COMMIT}" \
+    --build-arg "ESAN_SOURCE_SHA256=${ESAN_SOURCE_SHA256}" \
+    --provenance=true \
+    --load \
+    --tag "${IMAGE}" \
+    "${FINAL_CONTEXT}"
+fi
+
+docker image inspect "${IMAGE}" \
+  --format 'image={{index .RepoTags 0}} platform={{.Os}}/{{.Architecture}} created={{.Created}} digest={{.Id}}'
+docker run --rm "${IMAGE}" bench version

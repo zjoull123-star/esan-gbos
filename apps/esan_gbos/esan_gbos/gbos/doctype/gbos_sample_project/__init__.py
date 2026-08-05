@@ -1,0 +1,1 @@
+"""GBOS Sample Project DocType."""

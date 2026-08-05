@@ -1,0 +1,24 @@
+{
+  "doctype": "DocType",
+  "name": "GBOS External Crosswalk",
+  "module": "GBOS",
+  "engine": "InnoDB",
+  "track_changes": 1,
+  "field_order": ["team", "external_system", "account_set", "object_type", "external_id", "target_doctype", "target_name", "origin", "origin_reference", "business_status", "review_status", "revision", "last_request_id"],
+  "fields": [
+    {"fieldname": "team", "label": "Team", "fieldtype": "Link", "options": "GBOS Team", "reqd": 1},
+    {"fieldname": "external_system", "label": "External System", "fieldtype": "Data", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "account_set", "label": "Account Set", "fieldtype": "Data", "reqd": 1},
+    {"fieldname": "object_type", "label": "Object Type", "fieldtype": "Data", "reqd": 1},
+    {"fieldname": "external_id", "label": "External ID", "fieldtype": "Data", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "target_doctype", "label": "Target DocType", "fieldtype": "Link", "options": "DocType", "reqd": 1},
+    {"fieldname": "target_name", "label": "Target Name", "fieldtype": "Dynamic Link", "options": "target_doctype", "reqd": 1},
+    {"fieldname": "origin", "label": "Origin", "fieldtype": "Select", "options": "Manual\nFixture\nIntegration\nAI", "default": "Integration", "reqd": 1},
+    {"fieldname": "origin_reference", "label": "Origin Reference", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "business_status", "label": "Business Status", "fieldtype": "Select", "options": "Active\nStale\nArchived", "default": "Active", "reqd": 1},
+    {"fieldname": "review_status", "label": "Review Status", "fieldtype": "Select", "options": "AI Draft\nPending\nApproved\nRejected\nSuperseded", "default": "Pending", "reqd": 1},
+    {"fieldname": "revision", "label": "Revision", "fieldtype": "Int", "default": "0", "read_only": 1},
+    {"fieldname": "last_request_id", "label": "Last Request ID", "fieldtype": "Data", "read_only": 1}
+  ],
+  "permissions": [{"role": "GBOS Admin", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1}]
+}

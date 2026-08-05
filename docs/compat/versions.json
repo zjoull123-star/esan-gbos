@@ -1,0 +1,101 @@
+{
+  "schema_version": "1.0",
+  "verified_at": "2026-08-06T00:00:00Z",
+  "tooling": {
+    "orbstack": "2.2.2",
+    "docker": "29.4.0",
+    "compose": "5.1.2",
+    "buildx": "0.33.0",
+    "host_architecture": "arm64"
+  },
+  "upstreams": {
+    "frappe": {
+      "tag": "v16.30.0",
+      "source_branch": "version-16",
+      "commit": "9523516cac25992bc2cd810e1015df8994c257f5",
+      "license": "MIT",
+      "release_url": "https://github.com/frappe/frappe/releases/tag/v16.30.0"
+    },
+    "erpnext": {
+      "tag": "v16.31.0",
+      "source_branch": "version-16",
+      "commit": "68ea583a1fbd1c533004cabc4294213e9a58716e",
+      "license": "GPL-3.0",
+      "release_url": "https://github.com/frappe/erpnext/releases/tag/v16.31.0"
+    },
+    "frappe_crm": {
+      "tag": "v1.81.0",
+      "source_branch": "main",
+      "commit": "f6016eab20936ea15e5f450ec8dff9880f4dffe9",
+      "license": "AGPL-3.0",
+      "release_url": "https://github.com/frappe/crm/releases/tag/v1.81.0"
+    },
+    "frappe_docker": {
+      "tag": "v3.2.2",
+      "source_branch": "main",
+      "commit": "3061850feface8fbbad15b5dc08a110c596107cb",
+      "license": "MIT",
+      "release_url": "https://github.com/frappe/frappe_docker/releases/tag/v3.2.2"
+    }
+  },
+  "runtime": {
+    "python": "3.14.2",
+    "node": "24.13.0",
+    "mariadb": "11.8",
+    "postgres": "17-bookworm",
+    "pgvector": "0.8.2",
+    "redis": "6.2-alpine",
+    "architecture": "linux/arm64"
+  },
+  "images": {
+    "erpnext": {
+      "tag": "frappe/erpnext:v16.31.0",
+      "index_digest": "sha256:473407805828fd0afa0df15ae72c17a0030113e0cb0ea24be0ec0d91d822b392",
+      "linux_arm64_digest": "sha256:3212eaee8bb6d921e8713d8e2c23eef5aaa0cfc2a7697a803886cae0d311c83f"
+    },
+    "mariadb": {
+      "tag": "mariadb:11.8",
+      "index_digest": "sha256:d9f7eb2637296652f24b484afd5d246f759f49f5babcadc6a9e344c9acb75fbf",
+      "linux_arm64_digest": "sha256:099e7fa5025fb430773b26da1adbbc183b792aa903adedac6292c615712ad1e6"
+    },
+    "postgres": {
+      "tag": "pgvector/pgvector:0.8.2-pg17-bookworm",
+      "index_digest": "sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966",
+      "linux_arm64_digest": "sha256:88b17bc7a7dd6ef73d46c1b15aaa5936d50acb24e4a78713e134c579bf359e25"
+    },
+    "redis": {
+      "tag": "redis:6.2-alpine",
+      "index_digest": "sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23",
+      "linux_arm64_digest": "sha256:ef0234ae359f2550f773accc0b4207ae213475eccaa0b2dd17c2710abb8c1998"
+    }
+  },
+  "local_evidence": {
+    "upstream_image": {
+      "tag": "esan-gbos-upstream:gate0",
+      "digest": "sha256:b69f0001225523ec52ceb6d80fc696c34f24c560a0d15c5ebc53e803eb5286ec",
+      "created": "2026-08-06T03:00:09+08:00",
+      "platform": "linux/arm64",
+      "backend_python": "3.14.2",
+      "node_scope": "builder-only",
+      "bench_version": {
+        "crm": "1.81.0",
+        "erpnext": "16.31.0",
+        "frappe": "16.30.0"
+      },
+      "fresh_site": "gbos.localhost",
+      "installed_apps": [
+        "frappe",
+        "erpnext",
+        "crm"
+      ],
+      "consecutive_migrations_exit_codes": [
+        0,
+        0
+      ]
+    }
+  },
+  "gate_status": {
+    "upstream_three_app_runtime": "verified-local",
+    "final_four_app_runtime": "pending-gate1"
+  }
+}

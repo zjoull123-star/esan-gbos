@@ -1,0 +1,535 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ESAN GBOS BFF",
+    "version": "1.0.0",
+    "description": "Gate 1 的固定查询与命令接口。查询只接受 GET，状态变化只接受 POST。"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "当前 Frappe site"
+    }
+  ],
+  "paths": {
+    "/api/method/esan_gbos.api.v1.party.get_360": {
+      "get": {
+        "operationId": "party.get_360",
+        "summary": "读取客户 360",
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "party",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.work_item.list": {
+      "get": {
+        "operationId": "work_item.list",
+        "summary": "分页读取工作项",
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "filters",
+            "in": "query",
+            "required": false,
+            "description": "JSON object；只允许 team、business_status、assigned_to、priority、due_date。",
+            "schema": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 25
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.sample.get_status": {
+      "get": {
+        "operationId": "sample.get_status",
+        "summary": "读取样品项目状态",
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.sourcing.get_board": {
+      "get": {
+        "operationId": "sourcing.get_board",
+        "summary": "读取询源看板",
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.sample.create_project": {
+      "post": {
+        "operationId": "sample.create_project",
+        "summary": "创建样品项目",
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "team",
+                  "title",
+                  "expected_revision",
+                  "idempotency_key"
+                ],
+                "properties": {
+                  "team": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "expected_revision": {
+                    "const": 0
+                  },
+                  "idempotency_key": {
+                    "$ref": "#/components/schemas/IdempotencyKey"
+                  },
+                  "party_profile": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "product_brief": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "deal": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "origin": {
+                    "type": "string",
+                    "const": "Manual",
+                    "default": "Manual"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.sample.record_feedback": {
+      "post": {
+        "operationId": "sample.record_feedback",
+        "summary": "记录客户样品反馈",
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "project",
+                  "summary",
+                  "expected_revision",
+                  "idempotency_key"
+                ],
+                "properties": {
+                  "project": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  },
+                  "expected_revision": {
+                    "$ref": "#/components/schemas/Revision"
+                  },
+                  "idempotency_key": {
+                    "$ref": "#/components/schemas/IdempotencyKey"
+                  },
+                  "rating": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "received_on": {
+                    "type": "string",
+                    "format": "date"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.sourcing.create_from_demand": {
+      "post": {
+        "operationId": "sourcing.create_from_demand",
+        "summary": "从确认需求创建询源事件",
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "demand",
+                  "expected_revision",
+                  "idempotency_key"
+                ],
+                "properties": {
+                  "demand": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "expected_revision": {
+                    "$ref": "#/components/schemas/Revision"
+                  },
+                  "idempotency_key": {
+                    "$ref": "#/components/schemas/IdempotencyKey"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.work_item.transition": {
+      "post": {
+        "operationId": "work_item.transition",
+        "summary": "按 revision 与状态机迁移工作项",
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "to_status",
+                  "expected_revision",
+                  "idempotency_key"
+                ],
+                "properties": {
+                  "name": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "to_status": {
+                    "type": "string",
+                    "enum": [
+                      "In Progress",
+                      "Blocked",
+                      "Done",
+                      "Cancelled"
+                    ]
+                  },
+                  "expected_revision": {
+                    "$ref": "#/components/schemas/Revision"
+                  },
+                  "idempotency_key": {
+                    "$ref": "#/components/schemas/IdempotencyKey"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "FrappeSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "sid"
+      },
+      "FrappeCsrf": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Frappe-CSRF-Token",
+        "description": "Frappe session 对 POST 请求签发的 CSRF token。"
+      }
+    },
+    "schemas": {
+      "DocumentName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "Revision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "IdempotencyKey": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 256
+      },
+      "SuccessEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {},
+          "meta": {
+            "type": "object",
+            "required": [
+              "request_id",
+              "schema_version"
+            ],
+            "properties": {
+              "request_id": {
+                "type": "string"
+              },
+              "schema_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "original_request_id": {
+                "type": "string"
+              },
+              "next_cursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "page_size": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message",
+              "request_id",
+              "details"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "authentication_required",
+                  "permission_denied",
+                  "method_not_allowed",
+                  "invalid_dto",
+                  "invalid_query",
+                  "invalid_cursor",
+                  "not_found",
+                  "scope_mismatch",
+                  "revision_conflict",
+                  "invalid_transition",
+                  "idempotency_conflict",
+                  "request_in_progress",
+                  "validation_error",
+                  "internal_error"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Success": {
+        "description": "成功",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SuccessEnvelope"
+            }
+          }
+        }
+      },
+      "Error": {
+        "description": "统一错误",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      }
+    }
+  }
+}

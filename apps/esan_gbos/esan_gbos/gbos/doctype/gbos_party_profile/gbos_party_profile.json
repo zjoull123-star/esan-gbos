@@ -1,0 +1,24 @@
+{
+  "doctype": "DocType",
+  "name": "GBOS Party Profile",
+  "module": "GBOS",
+  "engine": "InnoDB",
+  "track_changes": 1,
+  "title_field": "party_name",
+  "field_order": ["party_name", "team", "crm_organization", "contact", "crm_lead", "crm_deal", "origin", "origin_reference", "business_status", "review_status", "revision", "last_request_id"],
+  "fields": [
+    {"fieldname": "party_name", "label": "Party Name", "fieldtype": "Data", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "team", "label": "Team", "fieldtype": "Link", "options": "GBOS Team", "reqd": 1, "in_standard_filter": 1},
+    {"fieldname": "crm_organization", "label": "CRM Organization", "fieldtype": "Link", "options": "CRM Organization"},
+    {"fieldname": "contact", "label": "Contact", "fieldtype": "Link", "options": "Contact"},
+    {"fieldname": "crm_lead", "label": "CRM Lead", "fieldtype": "Link", "options": "CRM Lead"},
+    {"fieldname": "crm_deal", "label": "CRM Deal", "fieldtype": "Link", "options": "CRM Deal"},
+    {"fieldname": "origin", "label": "Origin", "fieldtype": "Select", "options": "Manual\nFixture\nIntegration\nAI", "default": "Manual", "reqd": 1},
+    {"fieldname": "origin_reference", "label": "Origin Reference", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "business_status", "label": "Business Status", "fieldtype": "Select", "options": "Active\nInactive\nArchived", "default": "Active", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "review_status", "label": "Review Status", "fieldtype": "Select", "options": "AI Draft\nPending\nApproved\nRejected\nSuperseded", "default": "Pending", "reqd": 1},
+    {"fieldname": "revision", "label": "Revision", "fieldtype": "Int", "default": "0", "read_only": 1},
+    {"fieldname": "last_request_id", "label": "Last Request ID", "fieldtype": "Data", "read_only": 1}
+  ],
+  "permissions": [{"role": "GBOS Admin", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1}]
+}

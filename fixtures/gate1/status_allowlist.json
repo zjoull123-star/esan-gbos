@@ -1,0 +1,107 @@
+{
+  "business_status": {
+    "GBOS Demand Signal": [
+      "Draft",
+      "Confirmed",
+      "Sourcing",
+      "Fulfilled",
+      "Cancelled"
+    ],
+    "GBOS Party Profile": [
+      "Active",
+      "Inactive",
+      "Archived"
+    ],
+    "GBOS Product Brief": [
+      "Draft",
+      "Active",
+      "Archived"
+    ],
+    "GBOS Review Case": [
+      "Pending",
+      "Approved",
+      "Rejected",
+      "Superseded"
+    ],
+    "GBOS Sample Feedback": [
+      "Draft",
+      "Received",
+      "Archived"
+    ],
+    "GBOS Sample Iteration": [
+      "Draft",
+      "Active",
+      "Completed",
+      "Cancelled"
+    ],
+    "GBOS Sample Project": [
+      "Draft",
+      "Designing",
+      "Sampling",
+      "Sent",
+      "Feedback",
+      "Approved",
+      "Rejected",
+      "Cancelled"
+    ],
+    "GBOS Sample Shipment": [
+      "Draft",
+      "In Transit",
+      "Delivered",
+      "Cancelled"
+    ],
+    "GBOS Sourcing Event": [
+      "Draft",
+      "Invited",
+      "Collecting",
+      "Evaluating",
+      "Selected",
+      "Closed",
+      "Cancelled"
+    ],
+    "GBOS Team": [
+      "Active",
+      "Inactive",
+      "Archived"
+    ],
+    "GBOS Work Item": [
+      "Open",
+      "In Progress",
+      "Blocked",
+      "Done",
+      "Cancelled"
+    ]
+  },
+  "crm_status": {
+    "CRM Deal": [
+      "Qualification",
+      "Proposal/Quotation",
+      "Negotiation",
+      "Ready to Close",
+      "Won",
+      "Lost"
+    ],
+    "CRM Lead": [
+      "New",
+      "Contacted",
+      "Qualified",
+      "Converted",
+      "Nurture",
+      "Unqualified",
+      "Junk"
+    ]
+  },
+  "origin": [
+    "Manual",
+    "Fixture",
+    "Integration",
+    "AI"
+  ],
+  "review_status": [
+    "AI Draft",
+    "Pending",
+    "Approved",
+    "Rejected",
+    "Superseded"
+  ]
+}

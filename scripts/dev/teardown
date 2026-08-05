@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+export PATH="${HOME}/.orbstack/bin:${PATH}"
+
+COMPOSE_FILE="${REPO_ROOT}/infra/dev/compose.yml"
+ENV_FILE="${REPO_ROOT}/infra/dev/.env"
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+  echo "infra/dev/.env is missing; nothing to stop." >&2
+  exit 0
+fi
+
+# Named volumes are deliberately preserved for the next local bootstrap.
+docker compose \
+  --env-file "${ENV_FILE}" \
+  -f "${COMPOSE_FILE}" \
+  --profile core \
+  --profile observer \
+  down --remove-orphans

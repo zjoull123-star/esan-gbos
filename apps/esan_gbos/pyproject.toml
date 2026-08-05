@@ -1,0 +1,35 @@
+[project]
+name = "esan_gbos"
+authors = [
+    { name = "ESAN", email = "engineering@example.invalid" },
+]
+description = "Governed front-office workflows for ESAN GBOS"
+requires-python = ">=3.14"
+readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["license.txt"]
+dynamic = ["version"]
+dependencies = []
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = { attr = "esan_gbos.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["esan_gbos*"]
+
+[tool.bench.frappe-dependencies]
+frappe = ">=16.30.0,<17.0.0"
+erpnext = ">=16.31.0,<17.0.0"
+crm = ">=1.81.0,<2.0.0"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

@@ -1,0 +1,12 @@
+[
+  {
+    "url": "https://github.com/frappe/erpnext",
+    "branch": "v16.31.0",
+    "commit": "68ea583a1fbd1c533004cabc4294213e9a58716e"
+  },
+  {
+    "url": "https://github.com/frappe/crm",
+    "branch": "v1.81.0",
+    "commit": "f6016eab20936ea15e5f450ec8dff9880f4dffe9"
+  }
+]

@@ -1,0 +1,192 @@
+from __future__ import annotations
+
+from collections.abc import Collection
+
+_BUSINESS_DOCTYPES = frozenset(
+    {
+        "GBOS Party Profile",
+        "GBOS Product Brief",
+        "GBOS Sample Project",
+        "GBOS Sample Iteration",
+        "GBOS Sample Shipment",
+        "GBOS Sample Feedback",
+        "GBOS Demand Signal",
+        "GBOS Sourcing Event",
+        "GBOS Work Item",
+        "GBOS Review Case",
+    }
+)
+_INTEGRATION_DOCTYPES = frozenset({"GBOS External Identity", "GBOS External Crosswalk"})
+_ALL_PARENT_DOCTYPES = _BUSINESS_DOCTYPES | _INTEGRATION_DOCTYPES | {"GBOS Team"}
+
+_SALES_DOCTYPES = frozenset(
+    {
+        "GBOS Party Profile",
+        "GBOS Product Brief",
+        "GBOS Sample Project",
+        "GBOS Sample Iteration",
+        "GBOS Sample Shipment",
+        "GBOS Sample Feedback",
+        "GBOS Demand Signal",
+        "GBOS Work Item",
+    }
+)
+_PRODUCT_DOCTYPES = frozenset(
+    {
+        "GBOS Party Profile",
+        "GBOS Product Brief",
+        "GBOS Sample Project",
+        "GBOS Sample Iteration",
+        "GBOS Sample Shipment",
+        "GBOS Sample Feedback",
+        "GBOS Demand Signal",
+        "GBOS Work Item",
+    }
+)
+_PURCHASE_READ_DOCTYPES = frozenset(
+    {
+        "GBOS Demand Signal",
+        "GBOS Sourcing Event",
+        "GBOS Work Item",
+    }
+)
+_PURCHASE_WRITE_DOCTYPES = frozenset(
+    {
+        "GBOS Sourcing Event",
+        "GBOS Work Item",
+    }
+)
+_TEAM_READ = {
+    "Sales Manager": _SALES_DOCTYPES | {"GBOS Review Case", "GBOS Team"},
+    "Sales User": _SALES_DOCTYPES | {"GBOS Review Case", "GBOS Team"},
+    "Purchase Manager": _PURCHASE_READ_DOCTYPES | {"GBOS Review Case", "GBOS Team"},
+    "Buyer": _PURCHASE_READ_DOCTYPES | {"GBOS Review Case", "GBOS Team"},
+    "Product/R&D": _PRODUCT_DOCTYPES | {"GBOS Review Case", "GBOS Team"},
+}
+_TEAM_WRITE = {
+    "Sales Manager": _SALES_DOCTYPES,
+    "Sales User": _SALES_DOCTYPES,
+    "Purchase Manager": _PURCHASE_WRITE_DOCTYPES,
+    "Buyer": _PURCHASE_WRITE_DOCTYPES,
+    "Product/R&D": _PRODUCT_DOCTYPES,
+}
+_CRM_DOCTYPES = frozenset({"CRM Organization", "Contact", "CRM Lead", "CRM Deal"})
+_CRM_TEAM_READ = frozenset({"Sales Manager", "Sales User"})
+_CRM_TEAM_WRITE = frozenset({"Sales Manager", "Sales User"})
+_PRODUCT_CRM_READ = frozenset({"CRM Organization", "CRM Deal"})
+
+
+def role_has_doctype_permission(
+    role: str,
+    doctype: str,
+    permission_type: str,
+) -> bool:
+    """Return the coarse DocPerm capability before record-level scope is applied."""
+    if doctype not in _ALL_PARENT_DOCTYPES:
+        return False
+    if role == "GBOS Admin":
+        return permission_type in {"read", "write", "create", "delete"}
+    if role == "CEO":
+        return permission_type == "read" and doctype in (_BUSINESS_DOCTYPES | {"GBOS Team"})
+    if role == "Integration Admin":
+        return permission_type in {"read", "write", "create"} and doctype in _INTEGRATION_DOCTYPES
+    if role == "Reviewer":
+        if permission_type == "read":
+            return doctype in _BUSINESS_DOCTYPES
+        return permission_type == "write" and doctype == "GBOS Review Case"
+    if permission_type == "read":
+        return doctype in _TEAM_READ.get(role, frozenset())
+    if permission_type in {"write", "create"}:
+        return doctype in _TEAM_WRITE.get(role, frozenset())
+    return False
+
+
+def can_access_record(
+    *,
+    roles: Collection[str],
+    doctype: str,
+    permission_type: str,
+    is_team_member: bool,
+    is_assigned_reviewer: bool = False,
+    is_assigned_review_subject: bool = False,
+) -> bool:
+    assigned_roles = frozenset(roles)
+
+    if doctype not in _ALL_PARENT_DOCTYPES:
+        return False
+    if permission_type == "read":
+        if "GBOS Admin" in assigned_roles:
+            return True
+        if "CEO" in assigned_roles and doctype in _BUSINESS_DOCTYPES | {"GBOS Team"}:
+            return True
+        if "Integration Admin" in assigned_roles and doctype in _INTEGRATION_DOCTYPES:
+            return True
+        if "Reviewer" in assigned_roles and (
+            (doctype == "GBOS Review Case" and is_assigned_reviewer)
+            or (doctype in _BUSINESS_DOCTYPES and is_assigned_review_subject)
+        ):
+            return True
+        return is_team_member and any(
+            doctype in _TEAM_READ.get(role, frozenset()) for role in assigned_roles
+        )
+    if permission_type == "approve":
+        return (
+            doctype == "GBOS Review Case" and is_assigned_reviewer and "Reviewer" in assigned_roles
+        )
+    if permission_type == "write" and doctype == "GBOS Review Case":
+        return "GBOS Admin" in assigned_roles or (
+            is_assigned_reviewer and "Reviewer" in assigned_roles
+        )
+    if permission_type in {"write", "create"}:
+        if "GBOS Admin" in assigned_roles:
+            return True
+        if "Integration Admin" in assigned_roles and doctype in _INTEGRATION_DOCTYPES:
+            return True
+        return is_team_member and any(
+            doctype in _TEAM_WRITE.get(role, frozenset()) for role in assigned_roles
+        )
+    if permission_type == "delete":
+        return "GBOS Admin" in assigned_roles
+    return False
+
+
+def can_access_crm_record(
+    *,
+    roles: Collection[str],
+    doctype: str,
+    permission_type: str,
+    is_team_member: bool,
+) -> bool:
+    if doctype not in _CRM_DOCTYPES:
+        return False
+    assigned_roles = frozenset(roles)
+    if permission_type == "read":
+        return bool(
+            assigned_roles & {"GBOS Admin", "CEO"}
+            or (is_team_member and assigned_roles & _CRM_TEAM_READ)
+            or (is_team_member and "Product/R&D" in assigned_roles and doctype in _PRODUCT_CRM_READ)
+        )
+    if permission_type in {"write", "create"}:
+        return bool(
+            "GBOS Admin" in assigned_roles or (is_team_member and assigned_roles & _CRM_TEAM_WRITE)
+        )
+    if permission_type == "delete":
+        return "GBOS Admin" in assigned_roles
+    return False
+
+
+def role_has_crm_doctype_permission(
+    role: str,
+    doctype: str,
+    permission_type: str,
+) -> bool:
+    """Return the coarse CRM DocPerm capability before team scope is applied."""
+    if doctype not in _CRM_DOCTYPES:
+        return False
+    if role == "GBOS Admin":
+        return permission_type in {"read", "write", "create", "delete"}
+    if role == "CEO":
+        return permission_type == "read"
+    if role in _CRM_TEAM_WRITE:
+        return permission_type in {"read", "write", "create"}
+    return role == "Product/R&D" and permission_type == "read" and doctype in _PRODUCT_CRM_READ

@@ -1,0 +1,1 @@
+"""Synthetic Kingdee connector fixtures."""

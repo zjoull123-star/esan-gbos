@@ -1,0 +1,1 @@
+"""GBOS Product Brief DocType."""

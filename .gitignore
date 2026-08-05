@@ -29,6 +29,7 @@ coverage/
 .vite/
 playwright-report/
 test-results/
+.playwright-cli/
 
 # Frappe / Bench runtime
 sites/
@@ -43,4 +44,3 @@ artifacts/
 outputs/
 *.log
 *.sqlite
-

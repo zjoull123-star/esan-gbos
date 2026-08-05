@@ -1,0 +1,1 @@
+"""GBOS Sample Feedback DocType."""

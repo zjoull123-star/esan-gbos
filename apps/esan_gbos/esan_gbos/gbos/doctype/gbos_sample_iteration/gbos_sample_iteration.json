@@ -1,0 +1,23 @@
+{
+  "doctype": "DocType",
+  "name": "GBOS Sample Iteration",
+  "module": "GBOS",
+  "engine": "InnoDB",
+  "track_changes": 1,
+  "field_order": ["team", "sample_project", "iteration_number", "summary", "started_on", "completed_on", "origin", "origin_reference", "business_status", "review_status", "revision", "last_request_id"],
+  "fields": [
+    {"fieldname": "team", "label": "Team", "fieldtype": "Link", "options": "GBOS Team", "reqd": 1},
+    {"fieldname": "sample_project", "label": "Sample Project", "fieldtype": "Link", "options": "GBOS Sample Project", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "iteration_number", "label": "Iteration Number", "fieldtype": "Int", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "summary", "label": "Summary", "fieldtype": "Text"},
+    {"fieldname": "started_on", "label": "Started On", "fieldtype": "Date"},
+    {"fieldname": "completed_on", "label": "Completed On", "fieldtype": "Date"},
+    {"fieldname": "origin", "label": "Origin", "fieldtype": "Select", "options": "Manual\nFixture\nIntegration\nAI", "default": "Manual", "reqd": 1},
+    {"fieldname": "origin_reference", "label": "Origin Reference", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "business_status", "label": "Business Status", "fieldtype": "Select", "options": "Draft\nActive\nCompleted\nCancelled", "default": "Draft", "reqd": 1},
+    {"fieldname": "review_status", "label": "Review Status", "fieldtype": "Select", "options": "AI Draft\nPending\nApproved\nRejected\nSuperseded", "default": "Pending", "reqd": 1},
+    {"fieldname": "revision", "label": "Revision", "fieldtype": "Int", "default": "0", "read_only": 1},
+    {"fieldname": "last_request_id", "label": "Last Request ID", "fieldtype": "Data", "read_only": 1}
+  ],
+  "permissions": [{"role": "GBOS Admin", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1}]
+}

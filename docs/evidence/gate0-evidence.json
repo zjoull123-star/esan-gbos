@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06",
+  "scope": "local-disposable-upstream-only",
+  "status": "partial",
+  "environment": {
+    "orbstack": "2.2.2",
+    "docker": "29.4.0",
+    "compose": "5.1.2",
+    "buildx": "0.33.0",
+    "architecture": "arm64"
+  },
+  "verified": {
+    "image": "esan-gbos-upstream:gate0",
+    "image_digest": "sha256:b69f0001225523ec52ceb6d80fc696c34f24c560a0d15c5ebc53e803eb5286ec",
+    "image_created": "2026-08-06T03:00:09+08:00",
+    "platform": "linux/arm64",
+    "runtime_python": "3.14.2",
+    "node_scope": "builder-only",
+    "bench_version": {
+      "frappe": "16.30.0",
+      "erpnext": "16.31.0",
+      "crm": "1.81.0"
+    },
+    "site": "gbos.localhost",
+    "installed_apps": [
+      "frappe",
+      "erpnext",
+      "crm"
+    ],
+    "migration_exit_codes": [
+      0,
+      0
+    ],
+    "backend_health": "healthy-after-host-header-fix",
+    "frontend_health": "healthy-after-curl-healthcheck-recreation"
+  },
+  "findings": [
+    {
+      "id": "build-network-hang",
+      "classification": "transient-network",
+      "result": "exact-input-retry-succeeded"
+    },
+    {
+      "id": "duckdb-sync-cleanup-warning",
+      "classification": "upstream-warning",
+      "result": "open-follow-up"
+    }
+  ],
+  "pending": {
+    "gate": "Gate 1",
+    "final_installed_apps": [
+      "frappe",
+      "erpnext",
+      "crm",
+      "esan_gbos"
+    ],
+    "required": [
+      "final_image_digest",
+      "fresh_install",
+      "two_migrations",
+      "security_scan",
+      "license_inventory",
+      "cyclonedx_sbom",
+      "playwright"
+    ]
+  },
+  "repository_ruleset": {
+    "availability": "blocked-by-private-plan-capability",
+    "read_only_api_result": "HTTP 403",
+    "fallback": "main-agent-only-merge-and-required-local-ci-evidence",
+    "mutation_performed": false
+  }
+}

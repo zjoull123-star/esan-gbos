@@ -1,0 +1,76 @@
+name: Frappe App Install Smoke (manual prerequisite)
+
+on:
+  workflow_dispatch:
+    inputs:
+      custom_image:
+        description: Immutable final image containing crm and esan_gbos (repository@sha256:digest)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  preconditions:
+    name: Validate explicit custom-app inputs
+    runs-on: ubuntu-latest
+    env:
+      CUSTOM_IMAGE: ${{ inputs.custom_image }}
+    steps:
+      - name: Require an immutable final image
+        run: |
+          [[ "${CUSTOM_IMAGE}" =~ ^[a-zA-Z0-9._/-]+(:[a-zA-Z0-9._-]+)?@sha256:[a-f0-9]{64}$ ]]
+
+  frappe-app-install-smoke:
+    name: Fresh four-app install and double migration
+    needs: preconditions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ERPNEXT_IMAGE: ${{ inputs.custom_image }}
+      GBOS_IMAGE_STAGE: final
+      APP_LIST: erpnext,crm,esan_gbos
+      SITE_NAME: gbos-smoke.localhost
+      DB_ROOT_PASSWORD: SYNTHETIC-ci-db-root-7d3d8399
+      ADMIN_PASSWORD: SYNTHETIC-ci-admin-e29b4dc1
+      OBSERVER_POSTGRES_PASSWORD: SYNTHETIC-ci-observer-5fe821a6
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Create a fresh site with the final four-app gate
+        run: docker compose -f infra/dev/compose.yml --profile core up -d --wait
+      - name: Run two consecutive migrations
+        run: |
+          docker compose -f infra/dev/compose.yml exec -T backend \
+            bench --site "${SITE_NAME}" migrate
+          docker compose -f infra/dev/compose.yml exec -T backend \
+            bench --site "${SITE_NAME}" migrate
+      - name: Verify the exact four installed apps
+        run: |
+          docker compose -f infra/dev/compose.yml exec -T backend \
+            bench --site "${SITE_NAME}" list-apps --format json > installed-apps.json
+          python - <<'PY'
+          import json
+
+          with open("installed-apps.json", encoding="utf-8") as handle:
+              apps_by_site = json.load(handle)
+          apps = apps_by_site["gbos-smoke.localhost"]
+          assert apps == ["frappe", "erpnext", "crm", "esan_gbos"], apps
+          PY
+      - name: Scan the final image
+        run: scripts/dev/security-scan "${ERPNEXT_IMAGE}"
+      - name: Generate final-image licenses and SBOM
+        run: scripts/dev/license-sbom "${RUNNER_TEMP}/final-image-sbom" "${ERPNEXT_IMAGE}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: final-image-gate-evidence
+          path: |
+            installed-apps.json
+            ${{ runner.temp }}/final-image-sbom/licenses.json
+            ${{ runner.temp }}/final-image-sbom/sbom.cdx.json
+            ${{ runner.temp }}/final-image-sbom/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - name: Stop containers while preserving named volumes
+        if: always()
+        run: docker compose -f infra/dev/compose.yml --profile core down --remove-orphans

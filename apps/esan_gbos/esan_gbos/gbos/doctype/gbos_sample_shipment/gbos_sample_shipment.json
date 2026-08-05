@@ -1,0 +1,24 @@
+{
+  "doctype": "DocType",
+  "name": "GBOS Sample Shipment",
+  "module": "GBOS",
+  "engine": "InnoDB",
+  "track_changes": 1,
+  "field_order": ["team", "sample_project", "sample_iteration", "carrier", "tracking_number", "shipped_on", "delivered_on", "origin", "origin_reference", "business_status", "review_status", "revision", "last_request_id"],
+  "fields": [
+    {"fieldname": "team", "label": "Team", "fieldtype": "Link", "options": "GBOS Team", "reqd": 1},
+    {"fieldname": "sample_project", "label": "Sample Project", "fieldtype": "Link", "options": "GBOS Sample Project", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "sample_iteration", "label": "Sample Iteration", "fieldtype": "Link", "options": "GBOS Sample Iteration"},
+    {"fieldname": "carrier", "label": "Carrier", "fieldtype": "Data"},
+    {"fieldname": "tracking_number", "label": "Tracking Number", "fieldtype": "Data"},
+    {"fieldname": "shipped_on", "label": "Shipped On", "fieldtype": "Date"},
+    {"fieldname": "delivered_on", "label": "Delivered On", "fieldtype": "Date"},
+    {"fieldname": "origin", "label": "Origin", "fieldtype": "Select", "options": "Manual\nFixture\nIntegration\nAI", "default": "Manual", "reqd": 1},
+    {"fieldname": "origin_reference", "label": "Origin Reference", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "business_status", "label": "Business Status", "fieldtype": "Select", "options": "Draft\nIn Transit\nDelivered\nCancelled", "default": "Draft", "reqd": 1},
+    {"fieldname": "review_status", "label": "Review Status", "fieldtype": "Select", "options": "AI Draft\nPending\nApproved\nRejected\nSuperseded", "default": "Pending", "reqd": 1},
+    {"fieldname": "revision", "label": "Revision", "fieldtype": "Int", "default": "0", "read_only": 1},
+    {"fieldname": "last_request_id", "label": "Last Request ID", "fieldtype": "Data", "read_only": 1}
+  ],
+  "permissions": [{"role": "GBOS Admin", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1}]
+}
