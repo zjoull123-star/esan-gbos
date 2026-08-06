@@ -723,6 +723,7 @@ def _make_records(seed: int) -> tuple[OrderedDict[str, list[dict[str, Any]]], li
         work = work_ids[index]
         review = review_ids[index]
         reviewer = reviewer_ids[index % len(reviewer_ids)]
+        sourcing_status = "Selected" if index % 4 == 0 else "Evaluating"
         candidate_rows: list[dict[str, Any]] = []
         for offset in range(3):
             candidate_id = _id("GBOS-CANDIDATE", index * 3 + offset)
@@ -734,7 +735,11 @@ def _make_records(seed: int) -> tuple[OrderedDict[str, list[dict[str, Any]]], li
                     "quoted_price": 10.0 + offset,
                     "currency": "CNY",
                     "lead_time_days": 12 + offset,
-                    "candidate_status": "Selected" if offset == 0 else "Shortlisted",
+                    "candidate_status": (
+                        "Selected"
+                        if sourcing_status == "Selected" and offset == 0
+                        else "Shortlisted"
+                    ),
                     "notes": "Synthetic candidate row; no supplier relationship is implied",
                 },
             )
@@ -851,14 +856,14 @@ def _make_records(seed: int) -> tuple[OrderedDict[str, list[dict[str, Any]]], li
                 sourcing,
                 _gbos_fields(
                     "GBOS Sourcing Event",
-                    "Selected" if index % 4 == 0 else "Evaluating",
+                    sourcing_status,
                     team=team,
                     review_status=_cycle(REVIEW_STATUSES, index + 6),
                     title=f"Synthetic Sourcing Event {index + 1:04d}",
                     demand_signal=demand,
                     candidates=candidate_rows,
                     selected_supplier=candidate_rows[0]["fields"]["supplier_name"]
-                    if index % 4 == 0
+                    if sourcing_status == "Selected"
                     else None,
                     owner_user=reviewer,
                 ),

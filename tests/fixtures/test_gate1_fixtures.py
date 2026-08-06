@@ -301,6 +301,22 @@ def test_frappe_payload_strips_envelope_metadata_and_embeds_child_rows() -> None
         assert set(record) <= allowed
 
 
+def test_sourcing_fixture_selection_matches_the_server_state_rule() -> None:
+    for event in records_by_doctype()["GBOS Sourcing Event"]:
+        fields = record_fields(event)
+        selected_rows = [
+            candidate
+            for candidate in fields["candidates"]
+            if record_fields(candidate)["candidate_status"] == "Selected"
+        ]
+        if fields["business_status"] in {"Selected", "Closed"}:
+            assert len(selected_rows) == 1
+            assert fields["selected_supplier"] == record_fields(selected_rows[0])["supplier_name"]
+        else:
+            assert fields.get("selected_supplier") is None
+            assert selected_rows == []
+
+
 def test_kingdee_mock_exposes_only_read_methods_and_validates_payload() -> None:
     from fixtures.kingdee.gate1.mock import (
         READ_ONLY_METHODS,

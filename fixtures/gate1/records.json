@@ -83452,7 +83452,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0004",
             "lead_time_days": 12,
@@ -83528,7 +83528,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0007",
             "lead_time_days": 12,
@@ -83604,7 +83604,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0010",
             "lead_time_days": 12,
@@ -83756,7 +83756,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0016",
             "lead_time_days": 12,
@@ -83832,7 +83832,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0019",
             "lead_time_days": 12,
@@ -83908,7 +83908,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0022",
             "lead_time_days": 12,
@@ -84060,7 +84060,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0028",
             "lead_time_days": 12,
@@ -84136,7 +84136,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0031",
             "lead_time_days": 12,
@@ -84212,7 +84212,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0034",
             "lead_time_days": 12,
@@ -84364,7 +84364,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0040",
             "lead_time_days": 12,
@@ -84440,7 +84440,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0043",
             "lead_time_days": 12,
@@ -84516,7 +84516,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0046",
             "lead_time_days": 12,
@@ -84668,7 +84668,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0052",
             "lead_time_days": 12,
@@ -84744,7 +84744,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0055",
             "lead_time_days": 12,
@@ -84820,7 +84820,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0058",
             "lead_time_days": 12,
@@ -84972,7 +84972,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0064",
             "lead_time_days": 12,
@@ -85048,7 +85048,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0067",
             "lead_time_days": 12,
@@ -85124,7 +85124,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0070",
             "lead_time_days": 12,
@@ -85276,7 +85276,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0076",
             "lead_time_days": 12,
@@ -85352,7 +85352,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0079",
             "lead_time_days": 12,
@@ -85428,7 +85428,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0082",
             "lead_time_days": 12,
@@ -85580,7 +85580,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0088",
             "lead_time_days": 12,
@@ -85656,7 +85656,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0091",
             "lead_time_days": 12,
@@ -85732,7 +85732,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0094",
             "lead_time_days": 12,
@@ -85884,7 +85884,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0100",
             "lead_time_days": 12,
@@ -85960,7 +85960,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0103",
             "lead_time_days": 12,
@@ -86036,7 +86036,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0106",
             "lead_time_days": 12,
@@ -86188,7 +86188,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0112",
             "lead_time_days": 12,
@@ -86264,7 +86264,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0115",
             "lead_time_days": 12,
@@ -86340,7 +86340,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0118",
             "lead_time_days": 12,
@@ -86492,7 +86492,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0124",
             "lead_time_days": 12,
@@ -86568,7 +86568,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0127",
             "lead_time_days": 12,
@@ -86644,7 +86644,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0130",
             "lead_time_days": 12,
@@ -86796,7 +86796,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0136",
             "lead_time_days": 12,
@@ -86872,7 +86872,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0139",
             "lead_time_days": 12,
@@ -86948,7 +86948,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0142",
             "lead_time_days": 12,
@@ -87100,7 +87100,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0148",
             "lead_time_days": 12,
@@ -87176,7 +87176,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0151",
             "lead_time_days": 12,
@@ -87252,7 +87252,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0154",
             "lead_time_days": 12,
@@ -87404,7 +87404,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0160",
             "lead_time_days": 12,
@@ -87480,7 +87480,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0163",
             "lead_time_days": 12,
@@ -87556,7 +87556,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0166",
             "lead_time_days": 12,
@@ -87708,7 +87708,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0172",
             "lead_time_days": 12,
@@ -87784,7 +87784,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0175",
             "lead_time_days": 12,
@@ -87860,7 +87860,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0178",
             "lead_time_days": 12,
@@ -88012,7 +88012,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0184",
             "lead_time_days": 12,
@@ -88088,7 +88088,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0187",
             "lead_time_days": 12,
@@ -88164,7 +88164,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0190",
             "lead_time_days": 12,
@@ -88316,7 +88316,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0196",
             "lead_time_days": 12,
@@ -88392,7 +88392,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0199",
             "lead_time_days": 12,
@@ -88468,7 +88468,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0202",
             "lead_time_days": 12,
@@ -88620,7 +88620,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0208",
             "lead_time_days": 12,
@@ -88696,7 +88696,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0211",
             "lead_time_days": 12,
@@ -88772,7 +88772,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0214",
             "lead_time_days": 12,
@@ -88924,7 +88924,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0220",
             "lead_time_days": 12,
@@ -89000,7 +89000,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0223",
             "lead_time_days": 12,
@@ -89076,7 +89076,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0226",
             "lead_time_days": 12,
@@ -89228,7 +89228,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0232",
             "lead_time_days": 12,
@@ -89304,7 +89304,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0235",
             "lead_time_days": 12,
@@ -89380,7 +89380,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0238",
             "lead_time_days": 12,
@@ -89532,7 +89532,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0244",
             "lead_time_days": 12,
@@ -89608,7 +89608,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0247",
             "lead_time_days": 12,
@@ -89684,7 +89684,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0250",
             "lead_time_days": 12,
@@ -89836,7 +89836,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0256",
             "lead_time_days": 12,
@@ -89912,7 +89912,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0259",
             "lead_time_days": 12,
@@ -89988,7 +89988,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0262",
             "lead_time_days": 12,
@@ -90140,7 +90140,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0268",
             "lead_time_days": 12,
@@ -90216,7 +90216,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0271",
             "lead_time_days": 12,
@@ -90292,7 +90292,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0274",
             "lead_time_days": 12,
@@ -90444,7 +90444,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0280",
             "lead_time_days": 12,
@@ -90520,7 +90520,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0283",
             "lead_time_days": 12,
@@ -90596,7 +90596,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0286",
             "lead_time_days": 12,
@@ -90748,7 +90748,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0292",
             "lead_time_days": 12,
@@ -90824,7 +90824,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0295",
             "lead_time_days": 12,
@@ -90900,7 +90900,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0298",
             "lead_time_days": 12,
@@ -91052,7 +91052,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0304",
             "lead_time_days": 12,
@@ -91128,7 +91128,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0307",
             "lead_time_days": 12,
@@ -91204,7 +91204,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0310",
             "lead_time_days": 12,
@@ -91356,7 +91356,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0316",
             "lead_time_days": 12,
@@ -91432,7 +91432,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0319",
             "lead_time_days": 12,
@@ -91508,7 +91508,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0322",
             "lead_time_days": 12,
@@ -91660,7 +91660,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0328",
             "lead_time_days": 12,
@@ -91736,7 +91736,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0331",
             "lead_time_days": 12,
@@ -91812,7 +91812,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0334",
             "lead_time_days": 12,
@@ -91964,7 +91964,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0340",
             "lead_time_days": 12,
@@ -92040,7 +92040,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0343",
             "lead_time_days": 12,
@@ -92116,7 +92116,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0346",
             "lead_time_days": 12,
@@ -92268,7 +92268,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0352",
             "lead_time_days": 12,
@@ -92344,7 +92344,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0355",
             "lead_time_days": 12,
@@ -92420,7 +92420,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0358",
             "lead_time_days": 12,
@@ -92572,7 +92572,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0364",
             "lead_time_days": 12,
@@ -92648,7 +92648,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0367",
             "lead_time_days": 12,
@@ -92724,7 +92724,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0370",
             "lead_time_days": 12,
@@ -92876,7 +92876,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0376",
             "lead_time_days": 12,
@@ -92952,7 +92952,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0379",
             "lead_time_days": 12,
@@ -93028,7 +93028,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0382",
             "lead_time_days": 12,
@@ -93180,7 +93180,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0388",
             "lead_time_days": 12,
@@ -93256,7 +93256,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0391",
             "lead_time_days": 12,
@@ -93332,7 +93332,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0394",
             "lead_time_days": 12,
@@ -93484,7 +93484,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0400",
             "lead_time_days": 12,
@@ -93560,7 +93560,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0403",
             "lead_time_days": 12,
@@ -93636,7 +93636,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0406",
             "lead_time_days": 12,
@@ -93788,7 +93788,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0412",
             "lead_time_days": 12,
@@ -93864,7 +93864,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0415",
             "lead_time_days": 12,
@@ -93940,7 +93940,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0418",
             "lead_time_days": 12,
@@ -94092,7 +94092,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0424",
             "lead_time_days": 12,
@@ -94168,7 +94168,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0427",
             "lead_time_days": 12,
@@ -94244,7 +94244,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0430",
             "lead_time_days": 12,
@@ -94396,7 +94396,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0436",
             "lead_time_days": 12,
@@ -94472,7 +94472,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0439",
             "lead_time_days": 12,
@@ -94548,7 +94548,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0442",
             "lead_time_days": 12,
@@ -94700,7 +94700,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0448",
             "lead_time_days": 12,
@@ -94776,7 +94776,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0451",
             "lead_time_days": 12,
@@ -94852,7 +94852,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0454",
             "lead_time_days": 12,
@@ -95004,7 +95004,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0460",
             "lead_time_days": 12,
@@ -95080,7 +95080,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0463",
             "lead_time_days": 12,
@@ -95156,7 +95156,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0466",
             "lead_time_days": 12,
@@ -95308,7 +95308,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0472",
             "lead_time_days": 12,
@@ -95384,7 +95384,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0475",
             "lead_time_days": 12,
@@ -95460,7 +95460,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0478",
             "lead_time_days": 12,
@@ -95612,7 +95612,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0484",
             "lead_time_days": 12,
@@ -95688,7 +95688,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0487",
             "lead_time_days": 12,
@@ -95764,7 +95764,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0490",
             "lead_time_days": 12,
@@ -95916,7 +95916,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0496",
             "lead_time_days": 12,
@@ -95992,7 +95992,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0499",
             "lead_time_days": 12,
@@ -96068,7 +96068,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0502",
             "lead_time_days": 12,
@@ -96220,7 +96220,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0508",
             "lead_time_days": 12,
@@ -96296,7 +96296,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0511",
             "lead_time_days": 12,
@@ -96372,7 +96372,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0514",
             "lead_time_days": 12,
@@ -96524,7 +96524,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0520",
             "lead_time_days": 12,
@@ -96600,7 +96600,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0523",
             "lead_time_days": 12,
@@ -96676,7 +96676,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0526",
             "lead_time_days": 12,
@@ -96828,7 +96828,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0532",
             "lead_time_days": 12,
@@ -96904,7 +96904,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0535",
             "lead_time_days": 12,
@@ -96980,7 +96980,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0538",
             "lead_time_days": 12,
@@ -97132,7 +97132,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0544",
             "lead_time_days": 12,
@@ -97208,7 +97208,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0547",
             "lead_time_days": 12,
@@ -97284,7 +97284,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0550",
             "lead_time_days": 12,
@@ -97436,7 +97436,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0556",
             "lead_time_days": 12,
@@ -97512,7 +97512,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0559",
             "lead_time_days": 12,
@@ -97588,7 +97588,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0562",
             "lead_time_days": 12,
@@ -97740,7 +97740,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0568",
             "lead_time_days": 12,
@@ -97816,7 +97816,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0571",
             "lead_time_days": 12,
@@ -97892,7 +97892,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0574",
             "lead_time_days": 12,
@@ -98044,7 +98044,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0580",
             "lead_time_days": 12,
@@ -98120,7 +98120,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0583",
             "lead_time_days": 12,
@@ -98196,7 +98196,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0586",
             "lead_time_days": 12,
@@ -98348,7 +98348,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0592",
             "lead_time_days": 12,
@@ -98424,7 +98424,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0595",
             "lead_time_days": 12,
@@ -98500,7 +98500,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0598",
             "lead_time_days": 12,
@@ -98652,7 +98652,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0604",
             "lead_time_days": 12,
@@ -98728,7 +98728,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0607",
             "lead_time_days": 12,
@@ -98804,7 +98804,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0610",
             "lead_time_days": 12,
@@ -98956,7 +98956,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0616",
             "lead_time_days": 12,
@@ -99032,7 +99032,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0619",
             "lead_time_days": 12,
@@ -99108,7 +99108,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0622",
             "lead_time_days": 12,
@@ -99260,7 +99260,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0628",
             "lead_time_days": 12,
@@ -99336,7 +99336,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0631",
             "lead_time_days": 12,
@@ -99412,7 +99412,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0634",
             "lead_time_days": 12,
@@ -99564,7 +99564,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0640",
             "lead_time_days": 12,
@@ -99640,7 +99640,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0643",
             "lead_time_days": 12,
@@ -99716,7 +99716,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0646",
             "lead_time_days": 12,
@@ -99868,7 +99868,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0652",
             "lead_time_days": 12,
@@ -99944,7 +99944,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0655",
             "lead_time_days": 12,
@@ -100020,7 +100020,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0658",
             "lead_time_days": 12,
@@ -100172,7 +100172,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0664",
             "lead_time_days": 12,
@@ -100248,7 +100248,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0667",
             "lead_time_days": 12,
@@ -100324,7 +100324,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0670",
             "lead_time_days": 12,
@@ -100476,7 +100476,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0676",
             "lead_time_days": 12,
@@ -100552,7 +100552,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0679",
             "lead_time_days": 12,
@@ -100628,7 +100628,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0682",
             "lead_time_days": 12,
@@ -100780,7 +100780,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0688",
             "lead_time_days": 12,
@@ -100856,7 +100856,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0691",
             "lead_time_days": 12,
@@ -100932,7 +100932,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0694",
             "lead_time_days": 12,
@@ -101084,7 +101084,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0700",
             "lead_time_days": 12,
@@ -101160,7 +101160,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0703",
             "lead_time_days": 12,
@@ -101236,7 +101236,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0706",
             "lead_time_days": 12,
@@ -101388,7 +101388,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0712",
             "lead_time_days": 12,
@@ -101464,7 +101464,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0715",
             "lead_time_days": 12,
@@ -101540,7 +101540,7 @@
           "demo": true,
           "doctype": "GBOS Sourcing Candidate",
           "fields": {
-            "candidate_status": "Selected",
+            "candidate_status": "Shortlisted",
             "currency": "CNY",
             "external_supplier_id": "KD-SYNTH-SUPPLIER-0718",
             "lead_time_days": 12,
