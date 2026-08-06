@@ -1,0 +1,101 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06T19:56:00Z",
+  "scope": "gate6-local-release-recovery-privacy-and-operations-controls",
+  "overall_status": "accepted_for_local_controls_only",
+  "formal_security_owner_review": "pending_external_review",
+  "scanner": {
+    "name": "Trivy",
+    "version": "0.73.0",
+    "image": "aquasec/trivy:0.73.0@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c",
+    "database_updated_at": "2026-08-06T13:26:59.911565102Z",
+    "database_sha256": "bcd78f506eee5af415d6419644001d162188e2e3f0504b48e50be577a5b55121",
+    "exact_image": "sha256:3b103472b2057ca365ff62e71efa02932fabef4151aba67768ab001ac79dd6f8",
+    "repository_high_or_critical": 0,
+    "repository_secret_findings": 0,
+    "repository_misconfiguration_high_or_critical": 0,
+    "image_unwaived_high_or_critical": 0,
+    "local_only_waiver_entries": 57,
+    "local_only_waiver_purls": 103,
+    "waiver_expiry": "2026-09-30T00:00:00Z",
+    "production_effect": "blocked_pending_remediation_or_independent_security_owner_approval",
+    "repository_report_sha256": "f06cdba3aa8c63e44eab808293b302cd1652b11f16a638efe5500b2ebe8c7375",
+    "image_report_sha256": "ed82223ad585283729efb61fb09651af2b527020f7363b33ce515f0945580e87"
+  },
+  "gitleaks": {
+    "image": "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f",
+    "working_tree_bytes_scanned": 18024514,
+    "history_commits_scanned": 43,
+    "history_bytes_scanned": 13184084,
+    "leaks_found": 0,
+    "supported_pattern_scan_findings": 0
+  },
+  "supply_chain": {
+    "license_inventory_sha256": "760b8faca107f1cd352a32ec643c87aee654ba92403ef3710dda061dee868a63",
+    "cyclonedx_sbom_sha256": "8079ea18229cb5b0c234be43b89db53f4725bc9a5fe3c90ddee014d36852e3b2",
+    "sbom_component_count": 1560,
+    "github_actions_pinned_by_commit": true
+  },
+  "security_boundaries": {
+    "production_mutation_authorized": false,
+    "production_manifest_issued": false,
+    "live_kingdee_enabled": false,
+    "kingdee_writer_tools": 0,
+    "production_channels_enabled": false,
+    "real_model_calls_enabled": false,
+    "external_sends_enabled": false,
+    "runtime_git_present": false,
+    "runtime_curl_present": false
+  },
+  "risks": [
+    {
+      "risk_id": "G6-SUPPLY-01",
+      "severity": "high",
+      "title": "Time-bounded local-only dependency waivers are mistaken for production approval",
+      "status": "production_blocker",
+      "owner": "Security Owner",
+      "evidence_refs": [
+        "security/trivy-gate01-ignore.yaml",
+        "docs/governance/security-exceptions-gate01.md"
+      ]
+    },
+    {
+      "risk_id": "G6-EXTERNAL-02",
+      "severity": "critical",
+      "title": "Local synthetic controls are promoted without Kingdee, cloud, privacy, UAT or human approval evidence",
+      "status": "controlled_by_fail_closed_no_go",
+      "owner": "Release Owner",
+      "evidence_refs": [
+        "docs/evidence/gate6/release-decision.json",
+        "docs/evidence/gate6/release-manifest-status.json"
+      ]
+    },
+    {
+      "risk_id": "G6-RECOVERY-03",
+      "severity": "high",
+      "title": "A local backup/restore smoke test is treated as regional production DR proof",
+      "status": "production_blocker",
+      "owner": "Site Reliability",
+      "evidence_refs": [
+        "docs/evidence/gate6/runtime-validation.json",
+        "docs/runbooks/regional-disaster.md"
+      ]
+    },
+    {
+      "risk_id": "G6-PRIVACY-04",
+      "severity": "high",
+      "title": "Synthetic privacy workflows are treated as a legal or cross-border approval",
+      "status": "production_blocker",
+      "owner": "Privacy and Legal",
+      "evidence_refs": [
+        "docs/governance/gate6/privacy-checklist.json",
+        "docs/governance/gate6/privacy-operations.md"
+      ]
+    }
+  ],
+  "limitations": [
+    "No penetration test or formal Security Owner approval was performed.",
+    "No production secret store, cloud network, regional backup target or production identity was exercised.",
+    "Zero unwaived scanner findings does not override the explicit production-blocking waiver policy."
+  ]
+}

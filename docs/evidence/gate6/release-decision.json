@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "decision_id": "G6-local-20260807",
+  "decision_id": "G6-local-20260807-final",
   "evaluated_at": "2026-08-06T19:56:00Z",
   "release_candidate": {
     "source_commit": "dd46e5393b714c09fb5b902d4d09f5ba9e05d3cb",
@@ -15,7 +15,9 @@
       "external": false,
       "owner": "Engineering",
       "evidence_refs": [
-        "docs/evidence/gate6/gate6-evidence.json"
+        "tests/release",
+        "tests/ops",
+        "tests/governance"
       ]
     },
     "local_runtime": {
@@ -60,7 +62,7 @@
       "external": true,
       "owner": "Privacy and Legal",
       "evidence_refs": [
-        "docs/external-deps.md"
+        "docs/governance/gate6/privacy-checklist.json"
       ]
     },
     "uat": {
@@ -78,9 +80,10 @@
       "external": false,
       "owner": "Site Reliability",
       "evidence_refs": [
-        "docs/evidence/gate6/runtime-validation.json"
+        "docs/evidence/gate6/runtime-validation.json",
+        "tests/ops"
       ],
-      "note": "Local synthetic drill controls only; regional proof remains external."
+      "note": "Local synthetic backup and restore parity is verified; regional production DR proof remains an external release input."
     },
     "operations": {
       "status": "go",
@@ -88,9 +91,10 @@
       "external": false,
       "owner": "Site Reliability",
       "evidence_refs": [
+        "tests/ops",
         "docs/runbooks"
       ],
-      "note": "Local machine-checkable controls only."
+      "note": "Machine-checkable local policies and runbooks exist; no production monitoring system was changed."
     },
     "production_authorization": {
       "status": "blocked_external_input",
@@ -114,19 +118,19 @@
       "code": "live_kingdee_canary",
       "owner": "ERP Integration",
       "status": "blocked_external_input",
-      "evidence_required": "Startup, authentication, metadata and business-query evidence from the restricted account."
+      "evidence_required": "Restricted AI_ReadOnly startup, authentication, metadata and business-query evidence."
     },
     {
       "code": "singapore_preproduction",
       "owner": "Platform and Security",
       "status": "blocked_external_input",
-      "evidence_required": "Approved Tencent Cloud account, quota and preproduction validation package."
+      "evidence_required": "Approved Tencent Cloud account, quota, security design and preproduction validation package."
     },
     {
       "code": "security_owner_approval",
       "owner": "Security Owner",
       "status": "pending_external_review",
-      "evidence_required": "Formal review of release controls and all time-bounded dependency exceptions."
+      "evidence_required": "Formal review of release controls and the remaining time-bounded dependency exceptions."
     },
     {
       "code": "privacy_cross_border_approval",
@@ -138,7 +142,7 @@
       "code": "business_owner_uat",
       "owner": "Business Owner",
       "status": "blocked_external_input",
-      "evidence_required": "Signed UAT result from the approved pilot group."
+      "evidence_required": "Signed UAT result from the approved pilot group using authorized data."
     },
     {
       "code": "production_authorization",
@@ -157,7 +161,9 @@
   },
   "evidence_refs": [
     "docs/evidence/gate6/gate6-evidence.json",
-    "docs/evidence/gate6/release-decision.json",
+    "docs/evidence/gate6/runtime-validation.json",
+    "docs/evidence/gate6/security-review.json",
+    "docs/evidence/gate6/release-manifest-status.json",
     "docs/external-deps.md"
   ]
 }

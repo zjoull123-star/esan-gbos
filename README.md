@@ -6,7 +6,7 @@ Contact、Lead 和 Deal；金蝶仍是订单、库存与财务权威系统。
 
 ## 当前交付边界
 
-本仓库已完成 Gate 0–5 的本地、合成数据技术实现：
+本仓库已完成 Gate 0–6 的本地、合成数据技术实现：
 
 - 冻结的 Frappe v16、ERPNext v16、Frappe CRM v1 兼容基线；
 - `esan_gbos` Frappe App、13 个父 DocType 与 2 个 Child DocType；
@@ -15,11 +15,13 @@ Contact、Lead 和 Deal；金蝶仍是订单、库存与财务权威系统。
 - 观察事件、不可变证据、事实提案与最小 Context Service；
 - 持久 Agent Runtime、Action Guard、Decision 和人工审核链路；
 - 受治理 Metrics API、CEO 驾驶舱和只读 Kingdee Adapter 边界；
+- 发布清单契约、失败关闭预检、dry-run 发布/回滚计划和双人授权边界；
+- SLO/告警、备份恢复、DR/事件响应 runbook 与隐私治理契约；
 - 中文响应式 PWA、确定性合成 fixtures、本地 Compose、CI、安全与 Gate 证据。
 
 以下能力保持关闭或不存在：真实金蝶连接及任何金蝶写入、生产渠道采集、
 真实 AI 模型调用、自动外发、自动报价、正式订单创建、腾讯云部署和生产
-发布。Observer profile 承载 Gate 3–5 的 PostgreSQL 本地验证，但仍不是
+发布。Observer profile 承载 Gate 3–6 的 PostgreSQL 本地验证，但仍不是
 核心 CRM/PWA 的启动依赖。
 
 Gate 5 的 CEO 页面读取受治理 Metrics API，但当前来源仍是确定性合成数据；
@@ -29,7 +31,7 @@ Gate 5 的 CEO 页面读取受治理 Metrics API，但当前来源仍是确定�
 |---|---|
 | Gate 0–4 | 本地技术证据完成 |
 | Gate 5 | `technical_local_go`；真实金蝶、预生产、隐私/安全审核和 UAT 阻塞 |
-| Gate 6 | 待完成本地发布控制；生产始终以独立 Go/No-Go 证据为准 |
+| Gate 6 | `technical_local_go` / `production_no_go`；本地发布与恢复控制完成，外部和人工门禁阻塞生产 |
 
 ## 后续路线
 
@@ -44,8 +46,9 @@ Gate 5 的 CEO 页面读取受治理 Metrics API，但当前来源仍是确定�
 - Gate 4：已完成本地 Agent Runtime、Context/Decision、Action Guard 和人工审核。
 - Gate 5：已完成本地 Metrics API、CEO 驾驶舱和金蝶只读边界；实连与预生产
   保持 `blocked_external_input`。
-- Gate 6：建设生产拓扑、预检、监控、恢复、隐私和发布 Go/No-Go 资产；没有
-  外部证据时只能形成 `technical_local_go` 与 `production_no_go`。
+- Gate 6：已完成本地生产拓扑模板、预检、监控、恢复、隐私和发布 Go/No-Go
+  资产；因为外部证据缺失，当前结论严格保持 `technical_local_go` 与
+  `production_no_go`。
 
 Gate 0/1 证据中的旧 downstream planning note 是当时的历史快照，不再作为
 Gate 2–6 的执行顺序；证据文件和校验和保持不变。
@@ -77,7 +80,7 @@ Compose 会固定 Frappe site header。
 scripts/dev/bootstrap --upstream-only
 ```
 
-这不是 Gate 1 四 App 结果。Observer/PostgreSQL profile 仅在需要 Gate 3–5
+这不是 Gate 1 四 App 结果。Observer/PostgreSQL profile 仅在需要 Gate 3–6
 数据面和迁移验证时显式启用：
 
 ```bash
@@ -147,6 +150,11 @@ scripts/dev/license-sbom /tmp/esan-gbos-sbom esan-gbos-final:gate1
 
 Gate 5 精确镜像可将上述镜像引用替换为 `esan-gbos-final:gate5`。Gate 0/1
 遗留的限时、本地专用漏洞豁免即使扫描被抑制，仍不能作为生产批准。
+
+Gate 6 精确镜像为 `esan-gbos-final:gate6`。Gate 6 的 release 工具只执行离线
+校验并输出 dry-run 计划；仓库没有生产执行器。当前生产 release manifest
+状态为 `not_issued`，详见
+[Gate 6 证据](docs/evidence/gate6/gate6-summary.md)。
 
 Trivy 对全部未豁免 High/Critical 结果失败关闭；仓库只保留摘要、校验和和
 CI 链接，原始日志与大型 SBOM 作为短期 artifact 保存。

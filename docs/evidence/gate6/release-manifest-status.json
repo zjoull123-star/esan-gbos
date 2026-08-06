@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "production_release_manifest_status",
+  "evaluated_at": "2026-08-06T19:56:00Z",
+  "status": "not_issued",
+  "reason_code": "blocked_external_input",
+  "source_commit": "dd46e5393b714c09fb5b902d4d09f5ba9e05d3cb",
+  "image_digest": "sha256:3b103472b2057ca365ff62e71efa02932fabef4151aba67768ab001ac79dd6f8",
+  "contract_ref": "contracts/gate6/release-manifest.schema.json",
+  "production_mutation_authorized": false,
+  "approvals": [],
+  "missing_entry_inputs": [
+    "live_kingdee_canary",
+    "singapore_preproduction",
+    "security_owner_approval",
+    "privacy_cross_border_approval",
+    "business_owner_uat",
+    "production_authorization"
+  ],
+  "note": "The immutable production manifest contract and fail-closed validators exist, but no production manifest instance is issued because mandatory external evidence and human approvals are absent."
+}

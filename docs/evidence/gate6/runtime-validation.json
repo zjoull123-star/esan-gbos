@@ -1,0 +1,125 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06T19:56:00Z",
+  "scope": "gate6-local-synthetic-release-controls-and-recovery",
+  "status": "pass",
+  "implementation_commit": "dd46e5393b714c09fb5b902d4d09f5ba9e05d3cb",
+  "toolchain": {
+    "python": "3.14.2",
+    "node": "24.13.0",
+    "pnpm": "11.9.0",
+    "package_manager_invocation": "corepack pnpm"
+  },
+  "final_image": {
+    "platform": "linux/arm64",
+    "digest": "sha256:3b103472b2057ca365ff62e71efa02932fabef4151aba67768ab001ac79dd6f8",
+    "revision_label": "dd46e5393b714c09fb5b902d4d09f5ba9e05d3cb",
+    "app_source_sha256_label": "37cd2cfc8860fc5934b3c12c3f328fea16c73b3ad7508029f2229fc8442e9093",
+    "runtime_git_present": false,
+    "runtime_curl_present": false
+  },
+  "frappe_runtime": {
+    "site": "gbos.localhost",
+    "apps": {
+      "frappe": "16.30.0",
+      "erpnext": "16.31.0",
+      "crm": "1.81.0",
+      "esan_gbos": "0.1.0"
+    },
+    "migration_runs_after_exact_image": 2,
+    "app_tests_passed": 34,
+    "app_tests_failed": 0,
+    "service_state": "healthy_or_running",
+    "observer_profile_enabled": true
+  },
+  "fresh_site": {
+    "site": "gbos-gate6-smoke.localhost",
+    "created_from_blank": true,
+    "apps": [
+      "frappe",
+      "erpnext",
+      "crm",
+      "esan_gbos"
+    ],
+    "migration_runs": 2,
+    "status": "pass"
+  },
+  "postgres": {
+    "server_major": 17,
+    "pgvector": "0.8.2",
+    "repeated_migration_runs_per_gate": 2,
+    "integration_tests": {
+      "gate3_passed": 7,
+      "gate4_passed": 3,
+      "gate5_passed": 2,
+      "failed": 0
+    }
+  },
+  "frontend": {
+    "lint": "pass",
+    "typecheck": "pass",
+    "production_build": "pass",
+    "unit_tests_passed": 77,
+    "playwright_tests_passed": 6,
+    "viewports": [
+      375,
+      768,
+      1440
+    ],
+    "critical_or_serious_axe_findings": 0,
+    "sensitive_api_cache_entries": 0,
+    "test_mode": "local deterministic frontend harness"
+  },
+  "http_auth_boundary": {
+    "base_url": "http://127.0.0.1:8080",
+    "guest_ceo_route_status": 403,
+    "guest_metrics_status": 401,
+    "guest_metrics_error_code": "authentication_required"
+  },
+  "backup_restore": {
+    "frappe": {
+      "source_site": "gbos.localhost",
+      "restore_site": "gbos-gate6-restore.localhost",
+      "database_backup_sha256": "3d4191195e8d918c33b46b3a459fc1307f5a4ae16bda03b18754fb52dd3f7534",
+      "public_files_backup_sha256": "340fc1ad34b42397d5a5d63d2f9e1e58b0866ac66d33b9fde526ea0347c1c870",
+      "private_files_backup_sha256": "d834669df23023b5c50937cb313989953d382ea54c0953ded248e31258d1206e",
+      "site_config_backup_sha256": "a7e7a2658475e19e41b2a2d4360a0f943a8f7c4eda82653cad11a5c8389bf9cd",
+      "source_doctype_count": 871,
+      "restored_doctype_count": 871,
+      "apps_match": true,
+      "post_restore_migrate": "pass"
+    },
+    "postgres": {
+      "source_database": "gbos_observer",
+      "restore_database": "gbos_gate6_restore",
+      "dump_sha256": "0d4854a665f9d07adeab290936428bc641f811db882be7952e60bb97ce0aa2b3",
+      "source_table_count": 19,
+      "restored_table_count": 19,
+      "source_migration_count": 9,
+      "restored_migration_count": 9,
+      "status": "pass"
+    },
+    "scope_limit": "Local synthetic restore parity only; this is not regional production PITR or DR evidence."
+  },
+  "operations": {
+    "slo_definitions": 10,
+    "alert_definitions": 16,
+    "runbooks": 12,
+    "policy_validation": "pass",
+    "release_preflight_mode": "offline_fail_closed",
+    "release_plan_mode": "dry_run_only",
+    "live_release_executor_present": false
+  },
+  "supply_chain": {
+    "license_inventory_sha256": "760b8faca107f1cd352a32ec643c87aee654ba92403ef3710dda061dee868a63",
+    "cyclonedx_sbom_sha256": "8079ea18229cb5b0c234be43b89db53f4725bc9a5fe3c90ddee014d36852e3b2",
+    "cyclonedx_version": "1.7",
+    "sbom_component_count": 1560,
+    "raw_artifact_policy": "temporary local or CI artifact only; compact hashes are committed"
+  },
+  "warnings": [
+    "Frappe migration reports a non-fatal upstream DuckDB cleanup warning.",
+    "Local restore parity does not prove a Tencent Cloud Singapore backup, PITR or regional disaster-recovery objective.",
+    "The frontend browser suite uses deterministic fixtures; no real customer, channel, Kingdee or production data was used."
+  ]
+}

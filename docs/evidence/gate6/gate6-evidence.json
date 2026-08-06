@@ -1,0 +1,199 @@
+{
+  "schema_version": "1.0",
+  "gate": 6,
+  "captured_at": "2026-08-06T19:56:00Z",
+  "scope": "local-synthetic-release-recovery-operations-and-privacy-controls",
+  "status": "technical_local_go",
+  "production_status": "no_go",
+  "evidence_level": "local-runtime-synthetic-only",
+  "implementation_commit": "dd46e5393b714c09fb5b902d4d09f5ba9e05d3cb",
+  "image_digest": "sha256:3b103472b2057ca365ff62e71efa02932fabef4151aba67768ab001ac79dd6f8",
+  "production_mutation_authorized": false,
+  "production_approvers": [],
+  "delivered_controls": {
+    "immutable_release_manifest_contract": true,
+    "offline_fail_closed_preflight": true,
+    "dry_run_release_and_rollback_plan": true,
+    "live_release_executor": false,
+    "single_tenant_topology": true,
+    "site_per_tenant_template": true,
+    "slo_definitions": 10,
+    "alert_definitions": 16,
+    "runbooks": 12,
+    "privacy_contracts": 7,
+    "synthetic_privacy_examples": 6,
+    "two_person_production_authorization_required": true
+  },
+  "test_inventory": [
+    {
+      "path": "tests",
+      "command": "uv run --frozen pytest",
+      "status": "pass",
+      "passed": 942,
+      "failed": 0,
+      "skipped": 12
+    },
+    {
+      "path": "tests/integration/test_gate3_postgres.py",
+      "command": "scripts/dev/test-gate3-integration",
+      "status": "pass",
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "tests/integration/test_gate4_postgres.py",
+      "command": "scripts/dev/test-gate4-integration",
+      "status": "pass",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "tests/integration/test_gate5_metrics_postgres.py",
+      "command": "scripts/dev/test-gate5-integration",
+      "status": "pass",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "Frappe esan_gbos app",
+      "command": "bench --site gbos.localhost run-tests --app esan_gbos",
+      "status": "pass",
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "apps/esan_gbos/frontend",
+      "command": "corepack pnpm run lint && typecheck && test:unit && build",
+      "status": "pass",
+      "passed": 77,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "apps/esan_gbos/frontend/e2e",
+      "command": "corepack pnpm run test:e2e",
+      "status": "pass",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "tests/acceptance/test_gate6_evidence.py",
+      "command": "uv run --frozen pytest tests/acceptance/test_gate6_evidence.py",
+      "status": "pass",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "control_results": {
+    "release_preflight_and_authorization": {
+      "status": "pass",
+      "test_refs": [
+        "tests/release/test_preflight.py",
+        "tests/release/test_plan.py",
+        "tests/contracts/test_gate6_decision_contract.py"
+      ],
+      "evidence_refs": [
+        "contracts/gate6/release-manifest.schema.json",
+        "contracts/gate6/gate6-decision.schema.json",
+        "docs/evidence/gate6/release-decision.json"
+      ]
+    },
+    "backup_restore_and_dr_controls": {
+      "status": "pass",
+      "test_refs": [
+        "tests/ops/test_gate6_ops.py"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate6/runtime-validation.json",
+        "docs/runbooks/backup-restore.md",
+        "docs/runbooks/regional-disaster.md"
+      ]
+    },
+    "monitoring_and_incident_response": {
+      "status": "pass",
+      "test_refs": [
+        "tests/ops/test_gate6_ops.py",
+        "tests/infra/test_gate6_ci.py"
+      ],
+      "evidence_refs": [
+        "infra/observability/slo-alert-policy.json",
+        "docs/runbooks/incident-response.md"
+      ]
+    },
+    "privacy_and_cross_border_fail_closed": {
+      "status": "pass",
+      "test_refs": [
+        "tests/governance/test_gate6_privacy_contracts.py",
+        "tests/governance/test_gate6_privacy_procedures.py"
+      ],
+      "evidence_refs": [
+        "contracts/gate6/privacy-cross-border-approval.schema.json",
+        "docs/governance/gate6/privacy-checklist.json"
+      ]
+    },
+    "exact_image_and_supply_chain": {
+      "status": "pass",
+      "test_refs": [
+        "tests/infra/test_gate6_ci.py",
+        "tests/acceptance/test_gate6_evidence.py"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate6/runtime-validation.json",
+        "docs/evidence/gate6/security-review.json"
+      ]
+    }
+  },
+  "live_capabilities": {
+    "kingdee": false,
+    "cloud": false,
+    "production_channels": false,
+    "real_ai_models": false,
+    "external_sends": false
+  },
+  "external_activity": {
+    "real_kingdee_calls": 0,
+    "kingdee_mutations": 0,
+    "cloud_deployments": 0,
+    "production_deployments": 0,
+    "production_credentials_loaded": 0,
+    "external_messages": 0
+  },
+  "entry_gate_status": {
+    "code": "go",
+    "local_runtime": "go",
+    "backup_dr_local": "go",
+    "operations_local": "go",
+    "live_kingdee_canary": "blocked_external_input",
+    "singapore_preproduction": "blocked_external_input",
+    "security_owner_review": "pending_external_review",
+    "privacy_and_cross_border_review": "blocked_external_input",
+    "business_owner_uat": "blocked_external_input",
+    "production_authorization": "blocked_external_input"
+  },
+  "go_no_go": {
+    "gate6_technical_local": "go",
+    "kingdee_live": "blocked_external_input",
+    "preproduction": "blocked_external_input",
+    "production": "no_go"
+  },
+  "pending_evidence": [
+    "Restricted Kingdee AI_ReadOnly startup, authentication, metadata and business-query canary evidence",
+    "Tencent Cloud Singapore account, quota, security design and preproduction validation",
+    "Formal Security Owner review and production treatment for time-bounded dependency exceptions",
+    "Privacy and Legal approval for real personal data and cross-border processing",
+    "Business-owner UAT using an approved pilot scope",
+    "Two distinct authorized production approvers after all mandatory areas are Go"
+  ],
+  "limitations": [
+    "All runtime, privacy, release and recovery evidence uses local deterministic or synthetic data.",
+    "The immutable production release manifest contract exists, but no production manifest instance was issued.",
+    "The exact image has zero unwaived High/Critical findings, while 57 local-only waiver entries covering 103 exact PURLs remain production blockers.",
+    "No real Kingdee, Tencent Cloud, production channel, personal data, external message or production credential was used."
+  ]
+}
