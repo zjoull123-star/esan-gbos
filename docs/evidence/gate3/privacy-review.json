@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06T16:27:37Z",
+  "scope": "gate3-local-synthetic-data-only",
+  "overall_status": "accepted_for_synthetic_data_only",
+  "primary_technical_review": {
+    "status": "completed",
+    "reviewer_role": "Codex primary implementation reviewer",
+    "reviewed_at": "2026-08-06T16:27:37Z",
+    "decision": "Accept local processing of explicitly synthetic fixtures. This decision does not establish a lawful basis for real personal information or cross-border transfer."
+  },
+  "human_review": {
+    "status": "pending",
+    "reviewer_role": "Privacy and Legal Owner",
+    "reviewed_at": null,
+    "decision": null
+  },
+  "real_personal_data_processed": false,
+  "cross_border_transfer_performed": false,
+  "controls": [
+    {
+      "control_id": "G3-PRIV-01",
+      "title": "Synthetic-only manifest and no production credential",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/integration/test_gate3_http_api.py::test_observer_http_rejects_non_synthetic_manifest_before_storage",
+        "tests/contracts/test_gate3_runtime_contracts.py::test_gate3_examples_validate"
+      ]
+    },
+    {
+      "control_id": "G3-PRIV-02",
+      "title": "Purpose, classification, consent basis and retention class are mandatory",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/contracts/test_gate3_runtime_contracts.py::test_manual_import_manifest_carries_event_identity_and_is_synthetic_only",
+        "tests/observer/test_observer_core.py::test_pending_review_import_stores_evidence_but_never_processes"
+      ]
+    },
+    {
+      "control_id": "G3-PRIV-03",
+      "title": "Withdrawal, legal hold and deletion receipt",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_legal_hold_blocks_deletion_then_leaves_minimal_tombstone"
+      ]
+    },
+    {
+      "control_id": "G3-PRIV-04",
+      "title": "Metadata-only API and no raw body in audit output",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/integration/test_gate3_http_api.py::test_context_http_enforces_scope_and_returns_metadata_only",
+        "tests/observer/test_observer_core.py::test_audit_log_contains_only_redacted_structured_metadata"
+      ]
+    }
+  ],
+  "not_started": [
+    "Real data subject notice and consent workflow",
+    "Provider/channel data-processing agreement",
+    "Cross-border transfer legal mechanism and impact assessment",
+    "Production privacy request export/delete propagation",
+    "Cloud object storage retention and legal-hold enforcement",
+    "Human Privacy and Legal Owner approval"
+  ],
+  "limitations": [
+    "Unit-tested lifecycle behavior is not evidence of production deletion across all future stores, caches, vectors, exports and backups.",
+    "No real phone, email, message, recording, contact or customer data was processed.",
+    "No deployment to Singapore or any other cross-border transfer occurred."
+  ]
+}

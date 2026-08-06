@@ -1,0 +1,133 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06T16:27:37Z",
+  "scope": "gate3-local-synthetic-runtime",
+  "overall_status": "accepted_for_local_synthetic_runtime",
+  "primary_technical_review": {
+    "status": "completed",
+    "reviewer_role": "Codex primary implementation reviewer",
+    "reviewed_at": "2026-08-06T16:27:37Z",
+    "decision": "Accept the synthetic manual-import, Observer PostgreSQL and proposal-only Context path for local Gate 4 implementation. No external or production capability is authorized."
+  },
+  "human_review": {
+    "status": "pending",
+    "reviewer_role": "GBOS Security Owner",
+    "reviewed_at": null,
+    "decision": null
+  },
+  "risks": [
+    {
+      "risk_id": "G3-AUTH-01",
+      "title": "Forged, stale or replayed manual import creates stored evidence",
+      "severity": "high",
+      "owner": "Observer Security",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_hmac_covers_full_request_and_rejects_replay",
+        "tests/observer/test_observer_core.py::test_hmac_rejects_stale_timestamp",
+        "tests/integration/test_gate3_http_api.py::test_observer_http_signature_covers_provider_event_id_before_storage"
+      ],
+      "evidence_refs": [
+        "services/observer/observer/security.py",
+        "docs/evidence/gate3/observer-validation.json"
+      ]
+    },
+    {
+      "risk_id": "G3-TENANT-02",
+      "title": "Cross-site event, evidence or proposal access bypasses tenant scope",
+      "severity": "high",
+      "owner": "Context and Data Security",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/integration/test_gate3_postgres.py::test_gate3_context_rls_and_proposal_constraint_fail_closed",
+        "tests/integration/test_gate3_postgres.py::test_gate3_runtime_roles_are_non_privileged_and_schema_isolated",
+        "tests/observer/test_observer_core.py::test_content_addressed_store_is_immutable_verified_and_site_isolated"
+      ],
+      "evidence_refs": [
+        "services/observer/migrations/001_gate3_observer.sql",
+        "services/context/migrations/001_gate3_context.sql"
+      ]
+    },
+    {
+      "risk_id": "G3-UPLOAD-03",
+      "title": "Untrusted upload escapes storage root or activates an unsupported parser",
+      "severity": "high",
+      "owner": "Observer Security",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_manual_import_fails_closed_for_other_connectors_paths_and_archives",
+        "tests/integration/test_gate3_http_api.py::test_observer_http_rejects_non_synthetic_manifest_before_storage"
+      ],
+      "evidence_refs": [
+        "services/observer/observer/application.py",
+        "services/observer/observer/evidence_store.py"
+      ]
+    },
+    {
+      "risk_id": "G3-PROMPT-04",
+      "title": "Prompt-injection text enables a tool, model, Kingdee or external side effect",
+      "severity": "high",
+      "owner": "AI Platform Security",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_deterministic_processing_is_proposal_only_and_has_zero_capabilities",
+        "tests/context/test_context_publisher.py::test_publisher_never_emits_gate4_objects"
+      ],
+      "evidence_refs": [
+        "contracts/gate3/capabilities-v1.json",
+        "services/observer/observer/processing.py"
+      ]
+    },
+    {
+      "risk_id": "G3-CONTEXT-05",
+      "title": "Observer publishes proposal records to an untrusted external Context URL",
+      "severity": "high",
+      "owner": "Context Platform Security",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/context/test_context_client.py::test_http_context_repository_rejects_non_loopback_or_credentialed_urls",
+        "tests/context/test_context_client.py::test_http_context_repository_maps_conflict_and_rejects_mismatched_metadata"
+      ],
+      "evidence_refs": [
+        "services/context/context_service/client.py",
+        "docs/evidence/gate3/observer-validation.json"
+      ]
+    },
+    {
+      "risk_id": "G3-MALWARE-06",
+      "title": "A non-inert attachment requires malware scanning or sandbox execution",
+      "severity": "medium",
+      "owner": "Security Engineering",
+      "status": "controlled_by_disabled_capability",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_manual_import_fails_closed_for_other_connectors_paths_and_archives"
+      ],
+      "evidence_refs": [
+        "services/observer/observer/application.py",
+        "docs/external-deps.md"
+      ],
+      "notes": "Gate 3 accepts only bounded UTF-8 text and JSON fixtures. Malware scanning remains not_started and is required before broader media support."
+    },
+    {
+      "risk_id": "G3-EGRESS-07",
+      "title": "Host-local runtime lacks a production-grade service egress policy",
+      "severity": "medium",
+      "owner": "Platform Security",
+      "status": "controlled_by_disabled_capability",
+      "test_refs": [
+        "tests/infra/test_gate3_runtime_infrastructure.py::test_example_environment_keeps_every_external_gate3_capability_disabled",
+        "tests/context/test_context_client.py::test_http_context_repository_rejects_non_loopback_or_credentialed_urls"
+      ],
+      "evidence_refs": [
+        "infra/dev/compose.yml",
+        "contracts/gate3/capabilities-v1.json"
+      ],
+      "notes": "Application paths are disabled or loopback-only. A dedicated service container and production network policy remain Gate 5/6 work."
+    }
+  ],
+  "limitations": [
+    "No real channel, model provider, Kingdee, cloud endpoint or production credential was tested.",
+    "No general malware scanner or sandbox exists; unsupported media stays disabled.",
+    "Human Security Owner review remains pending and blocks every external or real-data capability."
+  ]
+}

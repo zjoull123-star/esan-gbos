@@ -1,0 +1,370 @@
+{
+  "schema_version": "1.0",
+  "gate": 3,
+  "captured_at": "2026-08-06T16:27:37Z",
+  "scope": "local-synthetic-fixture-manual-import-only",
+  "status": "pass",
+  "evidence_level": "local-runtime-synthetic-only",
+  "implementation_commit": {
+    "value": "d7f28317c2c14677381b0912b8c6c0fcaf519138",
+    "status": "final"
+  },
+  "environment": {
+    "kind": "local_disposable",
+    "architecture": "arm64",
+    "tool_versions": {
+      "python": "3.14.2",
+      "uv": "0.9.28",
+      "node": "24.13.0",
+      "docker_client": "29.4.0",
+      "postgresql": "17",
+      "pgvector": "0.8.2"
+    },
+    "runtime_boundaries": [
+      "Observer and Context bind only to 127.0.0.1.",
+      "PostgreSQL is published on 127.0.0.1 and also attached to the internal Gate 3 service network.",
+      "Only synthetic manual_import text or JSON fixtures are accepted.",
+      "Real connectors, model providers, Frappe bridge, Kingdee and external sends are disabled."
+    ],
+    "image_digests": {
+      "postgres_pgvector": "pgvector/pgvector@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966"
+    }
+  },
+  "immutable_inputs": {
+    "implementation_plan": "docs/superpowers/plans/2026-08-06-gate3-gate4-local-runtime.md",
+    "capability_ledger": "contracts/gate3/capabilities-v1.json",
+    "manual_import_contract": "contracts/gate3/manual-import-manifest.schema.json",
+    "context_contract": "contracts/gate3/context-runtime-v1.openapi.json",
+    "historical_gate01_manifest_sha256": "a6a86c5dcb39d5d57b27e3cf7b444f71700bd74db362a74af6b2816186982cea",
+    "historical_gate2_manifest_sha256": "3c7ae8b498ab81903a13e379feba0648a9e4e6b2b41da290f65792b9e02e7428"
+  },
+  "test_inventory": [
+    {
+      "path": "tests/contracts",
+      "command": ".venv/bin/pytest -q tests/contracts",
+      "status": "pass",
+      "passed": 184,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "tests/observer",
+      "command": ".venv/bin/pytest -q tests/observer",
+      "status": "pass",
+      "passed": 24,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "tests/context",
+      "command": ".venv/bin/pytest -q tests/context",
+      "status": "pass",
+      "passed": 36,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "tests/infra/test_gate3_runtime_infrastructure.py tests/integration/test_gate3_http_api.py",
+      "command": ".venv/bin/pytest -q tests/infra/test_gate3_runtime_infrastructure.py tests/integration/test_gate3_http_api.py",
+      "status": "pass",
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "tests/integration/test_gate3_postgres.py",
+      "command": "scripts/dev/test-gate3-integration",
+      "status": "pass",
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "deselected": 8
+    },
+    {
+      "path": "tests/acceptance/test_gate3_evidence.py",
+      "command": ".venv/bin/pytest -q tests/acceptance/test_gate3_evidence.py",
+      "status": "pass",
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "tests",
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/pytest -p no:cacheprovider -q",
+      "status": "pass",
+      "passed": 478,
+      "failed": 0,
+      "skipped": 7
+    }
+  ],
+  "control_results": {
+    "service_identity_signature": {
+      "status": "pass",
+      "owner": "Observer Platform",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_hmac_covers_full_request_and_rejects_replay",
+        "tests/integration/test_gate3_http_api.py::test_observer_http_signature_covers_provider_event_id_before_storage"
+      ],
+      "evidence_refs": [
+        "contracts/gate3/manual-import-manifest.schema.json",
+        "docs/evidence/gate3/observer-validation.json"
+      ],
+      "observations": {
+        "unsigned_or_tampered_side_effects": 0,
+        "replayed_nonce_side_effects": 0
+      }
+    },
+    "idempotency_replay_ordering": {
+      "status": "pass",
+      "owner": "Observer Platform",
+      "test_refs": [
+        "tests/observer/test_postgres_observer_repository.py::test_fallback_dedup_is_site_connector_digest_and_utc_minute_scoped",
+        "tests/integration/test_gate3_postgres.py::test_gate3_postgres_observer_repository_closes_rls_dedup_and_checkpoint_loop"
+      ],
+      "evidence_refs": [
+        "services/observer/migrations/002_gate3_observer_runtime.sql",
+        "docs/evidence/gate3/observer-validation.json"
+      ],
+      "observations": {
+        "duplicate_business_effects": 0,
+        "checkpoint_regressions": 0,
+        "outside_window_dead_letters": 1
+      }
+    },
+    "site_purpose_consent": {
+      "status": "pass",
+      "owner": "Privacy and Context",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_pending_review_import_stores_evidence_but_never_processes",
+        "tests/integration/test_gate3_postgres.py::test_gate3_context_rls_and_proposal_constraint_fail_closed"
+      ],
+      "evidence_refs": [
+        "docs/governance/data-governance.md",
+        "docs/evidence/gate3/privacy-review.json"
+      ],
+      "observations": {
+        "cross_site_reads": 0,
+        "pending_review_proposals": 0
+      }
+    },
+    "object_integrity_immutability": {
+      "status": "pass",
+      "owner": "Observer Storage",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_content_addressed_store_is_immutable_verified_and_site_isolated",
+        "tests/integration/test_gate3_postgres.py::test_gate3_observer_http_runtime_persists_signed_import_with_app_role"
+      ],
+      "evidence_refs": [
+        "services/observer/observer/evidence_store.py",
+        "docs/evidence/gate3/observer-validation.json"
+      ],
+      "observations": {
+        "hash_mismatches_accepted": 0,
+        "cross_site_object_reads": 0
+      }
+    },
+    "locator_replay": {
+      "status": "pass",
+      "owner": "Observer Storage",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_byte_locator_is_zero_based_half_open_and_bounded"
+      ],
+      "evidence_refs": [
+        "contracts/evidence-ref.schema.json",
+        "services/observer/observer/models.py"
+      ],
+      "observations": {
+        "out_of_bounds_locators_accepted": 0
+      }
+    },
+    "retention_deletion_legal_hold": {
+      "status": "pass",
+      "owner": "Privacy and Records",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_legal_hold_blocks_deletion_then_leaves_minimal_tombstone"
+      ],
+      "evidence_refs": [
+        "docs/governance/data-governance.md",
+        "services/observer/observer/lifecycle.py"
+      ],
+      "observations": {
+        "deletions_during_active_hold": 0,
+        "deletion_receipts_after_release": 1
+      }
+    },
+    "upload_safety": {
+      "status": "pass",
+      "owner": "Observer Security",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_manual_import_fails_closed_for_other_connectors_paths_and_archives",
+        "tests/integration/test_gate3_http_api.py::test_observer_http_rejects_non_synthetic_manifest_before_storage"
+      ],
+      "evidence_refs": [
+        "services/observer/observer/application.py",
+        "docs/evidence/gate3/security-review.json"
+      ],
+      "observations": {
+        "accepted_media_types": 2,
+        "archive_or_unsafe_path_acceptances": 0
+      }
+    },
+    "log_redaction": {
+      "status": "pass",
+      "owner": "Observer Security",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_audit_log_contains_only_redacted_structured_metadata"
+      ],
+      "evidence_refs": [
+        "services/observer/observer/models.py",
+        "docs/evidence/gate3/security-review.json"
+      ],
+      "observations": {
+        "raw_body_occurrences": 0,
+        "credential_occurrences": 0
+      }
+    },
+    "tool_free_processing": {
+      "status": "pass",
+      "owner": "AI Platform",
+      "test_refs": [
+        "tests/observer/test_observer_core.py::test_deterministic_processing_is_proposal_only_and_has_zero_capabilities",
+        "tests/context/test_context_publisher.py::test_publisher_never_emits_gate4_objects"
+      ],
+      "evidence_refs": [
+        "contracts/gate3/capabilities-v1.json",
+        "services/observer/observer/processing.py"
+      ],
+      "observations": {
+        "tool_calls": 0,
+        "model_calls": 0,
+        "kingdee_calls": 0,
+        "external_sends": 0
+      }
+    },
+    "context_publication": {
+      "status": "pass",
+      "owner": "Context Platform",
+      "test_refs": [
+        "tests/context/test_context_publisher.py::test_publisher_maps_to_valid_gate3_records_and_persists_evidence_first",
+        "tests/integration/test_gate3_postgres.py::test_gate3_observer_http_runtime_persists_signed_import_with_app_role"
+      ],
+      "evidence_refs": [
+        "services/context/context_service/publisher.py",
+        "docs/evidence/gate3/observer-validation.json"
+      ],
+      "observations": {
+        "observer_events": 1,
+        "context_evidence_records": 1,
+        "fact_proposals": 1,
+        "entity_resolution_proposals": 1
+      }
+    },
+    "postgres_rls_backup_restore": {
+      "status": "pass",
+      "owner": "Platform and Data",
+      "test_refs": [
+        "tests/integration/test_gate3_postgres.py::test_gate3_migrations_run_twice_and_enable_forced_rls",
+        "tests/integration/test_gate3_postgres.py::test_gate3_runtime_roles_are_non_privileged_and_schema_isolated",
+        "tests/integration/test_gate3_postgres.py::test_gate3_backup_restore_smoke"
+      ],
+      "evidence_refs": [
+        "scripts/dev/test-gate3-integration",
+        "docs/evidence/gate3/observer-validation.json"
+      ],
+      "observations": {
+        "migration_ledger_entries": 3,
+        "forced_rls_tables": 21,
+        "non_privileged_app_roles": 2,
+        "backup_restore_smokes": 1
+      }
+    }
+  },
+  "zero_external_activity": {
+    "method": [
+      "Capability-ledger and runtime health assertions keep every external connector, provider, Kingdee, Frappe bridge and send path disabled.",
+      "The deterministic processor exposes counters and tests assert zero model, tool, Kingdee, network and send calls.",
+      "The Context HTTP client rejects non-loopback, credentialed or path-bearing URLs.",
+      "Repository secret scan and static boundary tests found no production credentials or Gate 3 Kingdee path."
+    ],
+    "allowed_internal_destinations": [
+      "127.0.0.1:5432",
+      "127.0.0.1:8092"
+    ],
+    "external_network_calls": 0,
+    "kingdee_calls": 0,
+    "model_provider_calls": 0,
+    "production_credentials_loaded": 0,
+    "external_messages": 0,
+    "business_writes": 0
+  },
+  "capability_ledger": {
+    "manual_import_local": {
+      "status": "pass",
+      "evidence": "Signed synthetic text fixture completed the local Observer and PostgreSQL path."
+    },
+    "context_proposal_write": {
+      "status": "pass",
+      "evidence": "The same synthetic event produced one Context Evidence, one proposed Fact and one Entity Resolution Proposal."
+    },
+    "external_channel_canary": {
+      "status": "not_started",
+      "evidence": "No provider test account, webhook or production channel was used."
+    },
+    "real_model_provider": {
+      "status": "not_started",
+      "evidence": "Only the deterministic local processor ran; no provider credential or call exists."
+    },
+    "kingdee": {
+      "status": "not_started",
+      "evidence": "No Kingdee process, credential, metadata request, business query or writer was used."
+    },
+    "cloud_runtime": {
+      "status": "not_started",
+      "evidence": "No Tencent Cloud or other cloud resource was created or contacted."
+    },
+    "production": {
+      "status": "not_applicable",
+      "evidence": "Gate 3 local synthetic evidence cannot authorize production."
+    }
+  },
+  "security_review": {
+    "artifact": "docs/evidence/gate3/security-review.json",
+    "technical_status": "accepted_for_local_synthetic_runtime",
+    "human_review": {
+      "status": "pending",
+      "reviewer_role": "GBOS Security Owner"
+    }
+  },
+  "privacy_review": {
+    "artifact": "docs/evidence/gate3/privacy-review.json",
+    "technical_status": "accepted_for_synthetic_data_only",
+    "human_review": {
+      "status": "pending",
+      "reviewer_role": "Privacy and Legal Owner"
+    }
+  },
+  "go_no_go": {
+    "technical_local_go": "go",
+    "external_channel_canary": "not_started",
+    "gate4_local_start": "go",
+    "real_model": "no_go",
+    "kingdee": "no_go",
+    "cloud": "no_go",
+    "production": "no_go"
+  },
+  "limitations": [
+    "The runtime accepts synthetic text and JSON fixtures only; it does not prove a provider channel, attachment malware scanner, ASR or real model.",
+    "The local content-addressed filesystem is not cloud object storage and has no production KMS, replication or retention enforcement.",
+    "Observer and Context run as host Python processes; a dedicated digest-pinned service image and container egress policy remain unimplemented.",
+    "PostgreSQL is loopback-published for local integration. Application allow-lists were tested, but host-level egress isolation is not a production control.",
+    "The Starlette TestClient emits one upstream httpx deprecation warning; it does not change the verified business behavior.",
+    "Formal security and privacy owner reviews remain pending and block every real-data or external capability."
+  ],
+  "pending_evidence": [
+    "Provider test account, platform authorization, real webhook signature and external-channel canary.",
+    "Malware scanner or sandbox evidence for non-inert attachments.",
+    "Real model provider DPA, regional routing, credential and evaluation evidence.",
+    "Cloud object storage, KMS, service image, runtime network policy and production observability.",
+    "Human Security Owner and Privacy/Legal Owner decisions."
+  ]
+}

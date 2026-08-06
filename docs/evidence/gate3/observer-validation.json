@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06T16:27:37Z",
+  "scope": "gate3-local-synthetic-observer-context-runtime",
+  "status": "pass",
+  "implementation_commit": "d7f28317c2c14677381b0912b8c6c0fcaf519138",
+  "contracts": {
+    "json_schema_draft": "2020-12",
+    "contract_tests": {
+      "status": "pass",
+      "passed": 184,
+      "failed": 0
+    },
+    "manual_import_synthetic_required": true,
+    "context_output_kinds": [
+      "evidence_record",
+      "fact_proposal",
+      "entity_resolution_proposal"
+    ],
+    "gate4_output_kinds": []
+  },
+  "runtime": {
+    "observer_health": {
+      "status": "ok",
+      "runtime_enabled": true,
+      "connectors": [
+        "manual_import"
+      ]
+    },
+    "context_health": {
+      "status": "ok",
+      "proposal_only": true,
+      "agent_runtime": false
+    },
+    "live_synthetic_flow": {
+      "http_status": 200,
+      "ingestion_status": "stored",
+      "context_publication_status": "published",
+      "context_record_count": 3,
+      "database_observation_count": 1,
+      "database_evidence_count": 1,
+      "database_fact_proposal_count": 1,
+      "database_entity_resolution_proposal_count": 1,
+      "raw_content_recorded_in_artifact": false
+    }
+  },
+  "postgres": {
+    "image": "pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966",
+    "server_major": 17,
+    "vector_extension": "0.8.2",
+    "migration_runs": 2,
+    "migration_ledger_entries": 3,
+    "forced_rls_tables": 21,
+    "application_roles": {
+      "gbos_observer_app": {
+        "superuser": false,
+        "bypass_rls": false
+      },
+      "gbos_context_app": {
+        "superuser": false,
+        "bypass_rls": false
+      }
+    },
+    "schema_isolation": {
+      "observer_role_context_usage": false,
+      "context_role_observer_usage": false
+    },
+    "backup_restore_smoke": {
+      "status": "pass",
+      "restored_schema_table_count_minimum": 22
+    }
+  },
+  "processing": {
+    "processor": "deterministic-test-processor-v1",
+    "proposal_only": true,
+    "network_calls": 0,
+    "tool_calls": 0,
+    "model_calls": 0,
+    "kingdee_calls": 0,
+    "external_sends": 0
+  },
+  "commands": [
+    "scripts/dev/test-gate3-integration",
+    ".venv/bin/pytest -q tests/observer tests/context tests/integration/test_gate3_http_api.py",
+    ".venv/bin/ruff check .",
+    ".venv/bin/ruff format --check .",
+    ".venv/bin/mypy apps/esan_gbos/esan_gbos/domain services/observer/contract_check.py services/observer/observer services/context/context_service fixtures/gate1/generate.py fixtures/kingdee/gate1/mock.py fixtures/kingdee/gate2/adapter.py",
+    "scripts/dev/secret-scan"
+  ],
+  "limitations": [
+    "The live runtime and database flow used synthetic text only.",
+    "The service processes were host-local Python, not a dedicated digest-pinned service image.",
+    "No external channel, real model, Kingdee, Frappe business write, cloud or production capability was exercised."
+  ]
+}
