@@ -68569,7 +68569,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -68637,7 +68637,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -68705,7 +68705,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -68773,7 +68773,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -68841,7 +68841,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -68909,7 +68909,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -68977,7 +68977,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69045,7 +69045,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69113,7 +69113,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69181,7 +69181,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69249,7 +69249,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69317,7 +69317,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69385,7 +69385,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69453,7 +69453,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69521,7 +69521,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69589,7 +69589,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69657,7 +69657,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69725,7 +69725,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69793,7 +69793,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69861,7 +69861,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69929,7 +69929,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -69997,7 +69997,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70065,7 +70065,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70133,7 +70133,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70201,7 +70201,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70269,7 +70269,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70337,7 +70337,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70405,7 +70405,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70473,7 +70473,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70541,7 +70541,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70609,7 +70609,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70677,7 +70677,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70745,7 +70745,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70813,7 +70813,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70881,7 +70881,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -70949,7 +70949,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71017,7 +71017,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71085,7 +71085,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71153,7 +71153,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71221,7 +71221,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71289,7 +71289,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71357,7 +71357,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71425,7 +71425,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71493,7 +71493,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71561,7 +71561,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71629,7 +71629,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71697,7 +71697,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71765,7 +71765,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71833,7 +71833,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71901,7 +71901,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -71969,7 +71969,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -72037,7 +72037,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -72105,7 +72105,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -72173,7 +72173,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -72241,7 +72241,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -72309,7 +72309,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -72377,7 +72377,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -72445,7 +72445,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -72513,7 +72513,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",
@@ -72581,7 +72581,7 @@
   {
     "assigned_reviewer": "synthetic.reviewer.1@example.invalid",
     "business_status": "Approved",
-    "decided_at": "2026-08-06T00:00:00Z",
+    "decided_at": "2026-08-06 00:00:00",
     "decision_note": "Synthetic human-review outcome",
     "doctype": "GBOS Review Case",
     "last_request_id": "req-gate1-synthetic-0001",

@@ -21,6 +21,7 @@ from typing import Any
 
 SEED = 20260806
 DEMO_TIME = "2026-08-06T00:00:00Z"
+FRAPPE_DATETIME = "2026-08-06 00:00:00"
 SITE_ID = "gbos.localhost"
 FIXTURE_SOURCE = "gate1-synthetic"
 PARTY_COUNT = 500
@@ -901,7 +902,7 @@ def _make_records(seed: int) -> tuple[OrderedDict[str, list[dict[str, Any]]], li
                     subject_doctype="GBOS Work Item",
                     subject_name=work,
                     decision_note="Synthetic human-review outcome",
-                    decided_at=DEMO_TIME if index % 4 == 0 else None,
+                    decided_at=FRAPPE_DATETIME if index % 4 == 0 else None,
                 ),
             )
         )

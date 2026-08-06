@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -231,6 +231,15 @@ def test_fixture_business_dates_are_valid_iso_calendar_dates() -> None:
             value = record_fields(record).get(field_name)
             if value is not None:
                 assert date.fromisoformat(value).isoformat() == value
+
+
+def test_fixture_business_datetimes_use_frappe_database_format() -> None:
+    for record in records_by_doctype()["GBOS Review Case"]:
+        value = record_fields(record).get("decided_at")
+        if value is not None:
+            assert (
+                datetime.strptime(value, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S") == value
+            )
 
 
 def test_crm_payload_uses_only_frozen_v1_fields_and_statuses() -> None:
