@@ -45,6 +45,8 @@ jobs:
             docker pull --platform linux/amd64 "${PROVIDED_IMAGE}"
             RESOLVED_IMAGE="${PROVIDED_IMAGE}"
           else
+            docker buildx create --name gbos-ci --driver docker-container --use
+            docker buildx inspect --bootstrap
             SOURCE_COMMIT="$(git rev-parse HEAD)"
             scripts/dev/build-custom-image \
               --stage final \
@@ -116,4 +118,6 @@ jobs:
           retention-days: 14
       - name: Stop containers while preserving named volumes
         if: always()
-        run: docker compose -f infra/dev/compose.yml --profile core down --remove-orphans
+        run: |
+          docker compose -f infra/dev/compose.yml --profile core down --remove-orphans
+          docker buildx rm gbos-ci >/dev/null 2>&1 || true
