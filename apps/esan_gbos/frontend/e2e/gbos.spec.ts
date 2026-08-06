@@ -111,7 +111,6 @@ const openWorkspace = async (
 };
 
 const axeViolations = async (page: Page) => {
-  await page.addScriptTag({ content: axe.source });
   return page.evaluate(async () => {
     const host = globalThis as typeof globalThis & {
       axe?: {
@@ -132,6 +131,7 @@ const axeViolations = async (page: Page) => {
 };
 
 test.beforeEach(async ({ page }, testInfo) => {
+  await page.addInitScript({ content: axe.source });
   if (isHarness(testInfo)) {
     await prepareHarness(page);
   } else {

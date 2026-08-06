@@ -8,7 +8,10 @@ app_license = "AGPL-3.0"
 required_apps = ["erpnext", "crm"]
 after_install = "esan_gbos.install.after_install"
 after_migrate = "esan_gbos.install.after_migrate"
-after_request = ["esan_gbos.api.v1.http.normalize_bff_pre_dispatch_error"]
+after_request = [
+    "esan_gbos.api.v1.http.normalize_bff_pre_dispatch_error",
+    "esan_gbos.security.add_gbos_pwa_security_headers",
+]
 
 website_route_rules = [
     {"from_route": "/gbos/<path:app_path>", "to_route": "gbos"},

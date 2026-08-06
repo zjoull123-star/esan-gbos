@@ -104,7 +104,8 @@ def test_product_brief_links_forward_to_crm_deal() -> None:
 def test_hooks_enforce_server_side_permissions_and_transaction_guards() -> None:
     hooks = (PACKAGE_ROOT / "hooks.py").read_text(encoding="utf-8")
 
-    assert 'after_request = ["esan_gbos.api.v1.http.normalize_bff_pre_dispatch_error"]' in hooks
+    assert "esan_gbos.api.v1.http.normalize_bff_pre_dispatch_error" in hooks
+    assert "esan_gbos.security.add_gbos_pwa_security_headers" in hooks
     assert "permission_query_conditions" in hooks
     assert "has_permission" in hooks
     assert '"GBOS Review Case": "esan_gbos.permissions.review_case_permission_query"' in hooks
@@ -120,6 +121,22 @@ def test_hooks_enforce_server_side_permissions_and_transaction_guards() -> None:
     assert '"Payment Entry"' in hooks
     assert '"Stock Entry"' in hooks
     assert '"GL Entry"' in hooks
+
+
+def test_gbos_pwa_security_headers_are_scoped_and_deny_unsafe_defaults() -> None:
+    source = (PACKAGE_ROOT / "security.py").read_text(encoding="utf-8")
+
+    assert 'request_path == "/gbos" or request_path.startswith("/gbos/")' in source
+    assert '"Content-Security-Policy"' in source
+    assert '"Permissions-Policy"' in source
+    assert "\"default-src 'self'\"" in source
+    assert "\"object-src 'none'\"" in source
+    assert "\"base-uri 'self'\"" in source
+    assert "\"frame-ancestors 'self'\"" in source
+    assert "\"script-src 'self'\"" in source
+    assert "\"connect-src 'self' ws: wss:\"" in source
+    assert '"camera=(), microphone=(), geolocation=()"' in source
+    assert "upgrade-insecure-requests" not in source
 
 
 def test_hooks_route_every_gbos_spa_path_to_the_authenticated_shell() -> None:
