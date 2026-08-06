@@ -1,0 +1,139 @@
+{
+  "policy_version": "1.0.0",
+  "gate": 5,
+  "protocol_target": "2026-07-28",
+  "required_scope": "kingdee-read",
+  "available_scopes": [
+    "kingdee-read"
+  ],
+  "synthetic_enabled": true,
+  "live_enabled": false,
+  "live_entry_status": "blocked_external_input",
+  "allowed_destinations": [],
+  "max_rows": 50,
+  "max_offset": 10000,
+  "max_timeout_ms": 10000,
+  "required_request_keys": [
+    "request_id",
+    "site_id",
+    "account_set_ref",
+    "processing_purpose",
+    "scope",
+    "tool_name",
+    "limit",
+    "offset",
+    "timeout_ms"
+  ],
+  "optional_request_keys": [
+    "fields",
+    "filters",
+    "order_by"
+  ],
+  "forbidden_request_keys": [
+    "sql",
+    "url",
+    "host",
+    "method",
+    "form",
+    "form_id",
+    "doctype",
+    "token",
+    "authorization",
+    "password",
+    "cookie"
+  ],
+  "forbidden_operation_tokens": [
+    "create",
+    "update",
+    "save",
+    "submit",
+    "audit",
+    "unaudit",
+    "delete",
+    "payment",
+    "write",
+    "execute",
+    "push"
+  ],
+  "tools": [
+    {
+      "name": "kingdee.metadata.get",
+      "logical_object": "metadata",
+      "mutates": false,
+      "allowed_fields": []
+    },
+    {
+      "name": "kingdee.material.get",
+      "logical_object": "material",
+      "mutates": false,
+      "allowed_fields": [
+        "material_number",
+        "material_name",
+        "document_status"
+      ]
+    },
+    {
+      "name": "kingdee.customer.get",
+      "logical_object": "customer",
+      "mutates": false,
+      "allowed_fields": [
+        "customer_number",
+        "customer_name",
+        "document_status"
+      ]
+    },
+    {
+      "name": "kingdee.supplier.get",
+      "logical_object": "supplier",
+      "mutates": false,
+      "allowed_fields": [
+        "supplier_number",
+        "supplier_name",
+        "document_status"
+      ]
+    },
+    {
+      "name": "kingdee.sales_order.get",
+      "logical_object": "sales_order",
+      "mutates": false,
+      "allowed_fields": [
+        "order_number",
+        "customer_number",
+        "order_date",
+        "total_amount"
+      ]
+    },
+    {
+      "name": "kingdee.purchase_order.get",
+      "logical_object": "purchase_order",
+      "mutates": false,
+      "allowed_fields": [
+        "order_number",
+        "supplier_number",
+        "order_date",
+        "total_amount"
+      ]
+    },
+    {
+      "name": "kingdee.inventory.get",
+      "logical_object": "inventory",
+      "mutates": false,
+      "allowed_fields": [
+        "material_number",
+        "warehouse_number",
+        "base_quantity"
+      ]
+    },
+    {
+      "name": "kingdee.receivable.get",
+      "logical_object": "receivable",
+      "mutates": false,
+      "allowed_fields": [
+        "bill_number",
+        "customer_number",
+        "due_date",
+        "open_amount"
+      ]
+    }
+  ]
+}

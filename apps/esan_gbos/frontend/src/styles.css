@@ -329,6 +329,225 @@ nav {
   letter-spacing: 0.08em;
 }
 
+.metrics-cockpit {
+  min-width: 0;
+}
+
+.metrics-source-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.85rem;
+  margin-bottom: 1.25rem;
+  padding: 1rem 1.15rem;
+  border: 2px solid #6e9d80;
+  border-radius: 1rem;
+  color: #174331;
+  background: #e8f5ec;
+}
+
+.metrics-source-banner--synthetic {
+  border-color: #d19a1d;
+  color: #62420c;
+  background: #fff2bd;
+}
+
+.metrics-source-banner strong {
+  padding: 0.25rem 0.55rem;
+  border-radius: 0.45rem;
+  color: white;
+  background: var(--forest);
+  letter-spacing: 0.04em;
+}
+
+.metrics-source-banner__meta {
+  width: 100%;
+  color: inherit;
+  font-size: 0.78rem;
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
+
+.metrics-source-banner--synthetic strong {
+  background: #8a5d0c;
+}
+
+.metric-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
+  gap: 1.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.metric-grid > li {
+  min-width: 0;
+}
+
+.metric-card {
+  height: 100%;
+  min-width: 0;
+  padding: clamp(1rem, 2.5vw, 1.5rem);
+  border: 1px solid var(--line);
+  border-top: 0.35rem solid #3e9868;
+  border-radius: 1.1rem;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+
+.metric-card--unavailable {
+  border-top-color: var(--coral);
+}
+
+.metric-card__header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.metric-card__header > div {
+  min-width: 0;
+}
+
+.metric-card h2 {
+  margin: 0.25rem 0 0;
+  color: var(--forest);
+  font-size: 1.3rem;
+  overflow-wrap: anywhere;
+}
+
+.metric-status {
+  flex: 0 0 auto;
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  color: #225e48;
+  background: #dcefe3;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.metric-status--unavailable {
+  color: #8d2f21;
+  background: #fde1d9;
+}
+
+.metric-value {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 1.25rem 0;
+}
+
+.metric-value strong {
+  color: var(--forest);
+  font-family: Georgia, "Songti SC", serif;
+  font-size: clamp(2.2rem, 7vw, 4rem);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.metric-value span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.metric-unavailable {
+  display: grid;
+  gap: 0.45rem;
+  margin: 1.25rem 0;
+  padding: 1rem;
+  border: 1px solid #d78b7b;
+  border-radius: 0.75rem;
+  color: #7d2b20;
+  background: #fff3ef;
+}
+
+.metric-unavailable span {
+  overflow-wrap: anywhere;
+}
+
+.metric-unavailable code {
+  margin-inline-start: 0.35rem;
+}
+
+.metric-facts {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.metric-facts > div {
+  min-width: 0;
+  padding: 0.7rem;
+  border-radius: 0.65rem;
+  background: #f5f3ec;
+}
+
+.metric-facts dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.metric-facts dd {
+  margin: 0.25rem 0 0;
+  font-size: 0.88rem;
+  font-weight: 650;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.metric-lineage {
+  margin-top: 1rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+
+.metric-lineage summary {
+  cursor: pointer;
+  color: #225e48;
+  font-weight: 800;
+}
+
+.metric-lineage ol {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.8rem 0 0;
+  padding-inline-start: 1.4rem;
+}
+
+.metric-lineage li {
+  padding: 0.7rem;
+  border-radius: 0.6rem;
+  background: var(--forest-soft);
+}
+
+.metric-lineage li > * {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.metric-lineage li span {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.metric-lineage code {
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+}
+
 .record-grid {
   display: grid;
   min-width: 0;
@@ -569,6 +788,15 @@ footer {
   .demo-banner {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .metrics-source-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .metric-facts {
+    grid-template-columns: 1fr;
   }
 
   .state-panel {

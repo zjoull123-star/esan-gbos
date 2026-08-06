@@ -1,0 +1,12 @@
+{
+  "dataset": "gate5-governed-metrics",
+  "schema_version": "3.0",
+  "synthetic": true,
+  "demo": true,
+  "source": "deterministic Gate 2 synthetic Kingdee projection rows",
+  "dashboard_sha256": "e2cab9e855513ec4689f110c8dd81cf00b148d582f27f15e34f83bb5d0b4cc9c",
+  "metric_count": 3,
+  "network_calls": 0,
+  "kingdee_calls": 0,
+  "credentials_loaded": 0
+}

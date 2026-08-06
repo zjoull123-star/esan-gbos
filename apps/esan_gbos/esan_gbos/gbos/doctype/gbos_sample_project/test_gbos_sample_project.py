@@ -12,6 +12,7 @@ from esan_gbos.api.v1.sample import create_project
 from esan_gbos.api.v1.sourcing import create_from_demand, get_board
 from esan_gbos.api.v1.work_item import list as list_work_items
 from esan_gbos.api.v1.work_item import transition
+from esan_gbos.api.v3.metrics import dashboard as metrics_dashboard
 from esan_gbos.permissions import has_gbos_permission
 
 TEST_USERS = (
@@ -23,6 +24,7 @@ TEST_USERS = (
     "gbos-buyer@example.invalid",
     "gbos-purchase-manager@example.invalid",
     "gbos-product@example.invalid",
+    "gbos-ceo@example.invalid",
 )
 
 # This suite creates every dependency explicitly.  Letting Frappe synthesize
@@ -47,6 +49,7 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
         self.buyer = self._user(TEST_USERS[5], "Buyer")
         self.purchase_manager = self._user(TEST_USERS[6], "Purchase Manager")
         self.product = self._user(TEST_USERS[7], "Product/R&D")
+        self.ceo = self._user(TEST_USERS[8], "CEO")
         self.team = frappe.get_doc(
             {
                 "doctype": "GBOS Team",
@@ -93,6 +96,39 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
                 "review_status": "Pending",
             }
         ).insert(ignore_permissions=True)
+
+    def test_ceo_reads_only_visibly_synthetic_governed_metrics(self) -> None:
+        frappe.set_user(self.ceo)
+
+        result = metrics_dashboard()
+
+        self.assertTrue(result["data"]["synthetic"])
+        self.assertEqual(result["data"]["source_mode"], "synthetic")
+        self.assertEqual(len(result["data"]["metrics"]), 3)
+        for metric in result["data"]["metrics"]:
+            self.assertEqual(metric["status"], "available")
+            self.assertEqual(metric["freshness"]["status"], "fresh")
+            self.assertEqual(metric["coverage"]["status"], "sufficient")
+            self.assertEqual(metric["reconciliation"]["status"], "passed")
+            self.assertTrue(metric["governed_sources"])
+
+    def test_non_executive_cannot_read_governed_metrics(self) -> None:
+        frappe.set_user(self.member)
+
+        result = metrics_dashboard()
+
+        self.assertEqual(result["error"]["code"], "permission_denied")
+        self.assertEqual(frappe.local.response["http_status_code"], 403)
+
+    def test_production_never_falls_back_to_synthetic_metrics(self) -> None:
+        frappe.set_user(self.ceo)
+
+        with patch.dict("os.environ", {"GBOS_PRODUCTION_ENABLED": "true"}):
+            result = metrics_dashboard()
+
+        self.assertEqual(result["error"]["code"], "internal_error")
+        self.assertEqual(frappe.local.response["http_status_code"], 503)
+        self.assertNotIn("data", result)
 
     def test_illegal_transition_is_rejected_server_side(self) -> None:
         work = self._work_item()

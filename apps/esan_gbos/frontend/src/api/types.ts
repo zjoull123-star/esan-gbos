@@ -153,3 +153,91 @@ export interface ReviewDecisionCommand {
   policy_version: string;
   expected_case_payload_hash?: string;
 }
+
+export type MetricSourceMode = "synthetic" | "live";
+export type MetricStatus = "available" | "unavailable";
+export type MetricUnavailableReason =
+  | "stale"
+  | "insufficient_coverage"
+  | "reconciliation_failed"
+  | "source_unavailable"
+  | "definition_unavailable"
+  | "ungoverned_source";
+
+export interface MetricWindow {
+  type: "rolling" | "calendar" | "point_in_time";
+  grain: "hour" | "day" | "week" | "month" | "quarter" | "year" | "instant";
+  start: string;
+  end: string;
+}
+
+export interface MetricFreshness {
+  status: "fresh" | "stale" | "unknown";
+  age_seconds: number;
+  slo_seconds: number;
+}
+
+export interface MetricCoverage {
+  status: "sufficient" | "insufficient" | "unknown";
+  ratio: number;
+  included_count: number;
+  total_count: number;
+}
+
+export interface MetricReconciliation {
+  status: "passed" | "failed" | "not_run";
+  checked_at: string;
+  reference: string;
+  variance: number;
+}
+
+export interface MetricSourceLineage {
+  source_system: string;
+  source_record_refs: string[];
+  retrieved_at: string;
+  transformation_version: string;
+  evidence_status: "synthetic" | "unverified" | "verified" | "partial";
+}
+
+interface MetricBase {
+  schema_version: "3.0";
+  metric_key: string;
+  display_name: string;
+  definition_version: string;
+  site_id: string;
+  as_of: string;
+  queried_at: string;
+  window: MetricWindow;
+  freshness: MetricFreshness;
+  coverage: MetricCoverage;
+  reconciliation: MetricReconciliation;
+  source_lineage: MetricSourceLineage[];
+  source_mode: MetricSourceMode;
+  synthetic: boolean;
+  governed_sources: boolean;
+}
+
+export interface AvailableMetric extends MetricBase {
+  status: "available";
+  value: number;
+  unit: string;
+  unavailable_reason?: never;
+}
+
+export interface UnavailableMetric extends MetricBase {
+  status: "unavailable";
+  value?: never;
+  unit?: never;
+  unavailable_reason: MetricUnavailableReason;
+}
+
+export type GovernedMetric = AvailableMetric | UnavailableMetric;
+
+export interface MetricDashboardPayload {
+  schema_version: "3.0";
+  site_id: string;
+  source_mode: MetricSourceMode;
+  synthetic: boolean;
+  generated_at: string;
+  metrics: GovernedMetric[];
+}

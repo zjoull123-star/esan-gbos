@@ -1,0 +1,59 @@
+{
+  "schema_version": "3.0",
+  "site_id": "gbos.localhost",
+  "source_mode": "synthetic",
+  "synthetic": true,
+  "generated_at": "2026-08-06T16:05:00Z",
+  "metrics": [
+    {
+      "schema_version": "3.0",
+      "metric_key": "sales.order_value",
+      "display_name": "销售订单金额",
+      "definition_version": "1.0.0",
+      "site_id": "gbos.localhost",
+      "status": "available",
+      "value": 20600,
+      "unit": "CNY",
+      "as_of": "2026-08-06T16:00:00Z",
+      "queried_at": "2026-08-06T16:05:00Z",
+      "window": {
+        "type": "calendar",
+        "grain": "month",
+        "start": "2026-08-01T00:00:00Z",
+        "end": "2026-09-01T00:00:00Z"
+      },
+      "freshness": {
+        "status": "fresh",
+        "age_seconds": 300,
+        "slo_seconds": 86400
+      },
+      "coverage": {
+        "status": "sufficient",
+        "ratio": 1,
+        "included_count": 2,
+        "total_count": 2
+      },
+      "reconciliation": {
+        "status": "passed",
+        "checked_at": "2026-08-06T16:01:00Z",
+        "reference": "recon-sales-synthetic-202608",
+        "variance": 0
+      },
+      "source_lineage": [
+        {
+          "source_system": "kingdee-gate5-synthetic",
+          "source_record_refs": [
+            "sales_order-synthetic-0001",
+            "sales_order-synthetic-0002"
+          ],
+          "retrieved_at": "2026-08-06T16:00:00Z",
+          "transformation_version": "metrics-projection-v1",
+          "evidence_status": "synthetic"
+        }
+      ],
+      "source_mode": "synthetic",
+      "synthetic": true,
+      "governed_sources": true
+    }
+  ]
+}

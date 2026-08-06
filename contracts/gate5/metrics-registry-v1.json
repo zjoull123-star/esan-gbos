@@ -1,0 +1,77 @@
+{
+  "registry_version": "1.0.0",
+  "gate": 5,
+  "official_interface": "Metrics API",
+  "runtime_enabled": true,
+  "synthetic_mode_enabled": true,
+  "live_mode_enabled": false,
+  "llm_calculation_allowed": false,
+  "arbitrary_query_allowed": false,
+  "allowed_query_keys": [
+    "metric_key",
+    "window_start",
+    "window_end"
+  ],
+  "metrics": [
+    {
+      "schema_version": "3.0",
+      "metric_key": "sales.order_value",
+      "display_name": "销售订单金额",
+      "description": "选定自然月内受治理销售订单投影金额合计。",
+      "definition_version": "1.0.0",
+      "owner": "finance-operations",
+      "source_object": "sales_order",
+      "value_field": "total_amount",
+      "unit": "CNY",
+      "aggregation": "sum",
+      "window": {
+        "type": "calendar",
+        "grain": "month"
+      },
+      "freshness_slo_seconds": 86400,
+      "minimum_coverage_ratio": 1,
+      "reconciliation_tolerance": 0.01,
+      "data_classification": "Confidential"
+    },
+    {
+      "schema_version": "3.0",
+      "metric_key": "inventory.on_hand_quantity",
+      "display_name": "库存现存量",
+      "description": "受治理库存投影的基准单位即时余额。",
+      "definition_version": "1.0.0",
+      "owner": "supply-chain",
+      "source_object": "inventory",
+      "value_field": "base_quantity",
+      "unit": "base_unit",
+      "aggregation": "balance",
+      "window": {
+        "type": "point_in_time",
+        "grain": "instant"
+      },
+      "freshness_slo_seconds": 86400,
+      "minimum_coverage_ratio": 1,
+      "reconciliation_tolerance": 0,
+      "data_classification": "Confidential"
+    },
+    {
+      "schema_version": "3.0",
+      "metric_key": "receivables.balance",
+      "display_name": "应收余额",
+      "description": "受治理应收投影的未结算余额。",
+      "definition_version": "1.0.0",
+      "owner": "finance-operations",
+      "source_object": "receivable",
+      "value_field": "open_amount",
+      "unit": "CNY",
+      "aggregation": "balance",
+      "window": {
+        "type": "point_in_time",
+        "grain": "instant"
+      },
+      "freshness_slo_seconds": 86400,
+      "minimum_coverage_ratio": 1,
+      "reconciliation_tolerance": 0.01,
+      "data_classification": "Restricted"
+    }
+  ]
+}

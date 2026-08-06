@@ -23,7 +23,7 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra --import-mode=importlib"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [

@@ -1,0 +1,402 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate5/metric-response.schema.json",
+  "title": "Gate5MetricResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "metric_key",
+    "display_name",
+    "definition_version",
+    "site_id",
+    "status",
+    "as_of",
+    "queried_at",
+    "window",
+    "freshness",
+    "coverage",
+    "reconciliation",
+    "source_lineage",
+    "source_mode",
+    "synthetic",
+    "governed_sources"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "3.0"
+    },
+    "metric_key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.]{2,79}$"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "definition_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "site_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{0,139}$"
+    },
+    "status": {
+      "enum": [
+        "available",
+        "unavailable"
+      ]
+    },
+    "value": {
+      "type": "number"
+    },
+    "unit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "unavailable_reason": {
+      "enum": [
+        "stale",
+        "insufficient_coverage",
+        "reconciliation_failed",
+        "source_unavailable",
+        "definition_unavailable",
+        "ungoverned_source"
+      ]
+    },
+    "as_of": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "queried_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "window": {
+      "$ref": "#/$defs/window"
+    },
+    "freshness": {
+      "$ref": "#/$defs/freshness"
+    },
+    "coverage": {
+      "$ref": "#/$defs/coverage"
+    },
+    "reconciliation": {
+      "$ref": "#/$defs/reconciliation"
+    },
+    "source_lineage": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/lineage"
+      }
+    },
+    "source_mode": {
+      "enum": [
+        "synthetic",
+        "live"
+      ]
+    },
+    "synthetic": {
+      "type": "boolean"
+    },
+    "governed_sources": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "grain",
+        "start",
+        "end"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "calendar",
+            "point_in_time",
+            "rolling"
+          ]
+        },
+        "grain": {
+          "enum": [
+            "instant",
+            "hour",
+            "day",
+            "week",
+            "month",
+            "quarter",
+            "year"
+          ]
+        },
+        "start": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "age_seconds",
+        "slo_seconds"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "fresh",
+            "stale",
+            "unknown"
+          ]
+        },
+        "age_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "slo_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "ratio",
+        "included_count",
+        "total_count"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "sufficient",
+            "insufficient",
+            "unknown"
+          ]
+        },
+        "ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "included_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "checked_at",
+        "reference",
+        "variance"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "not_run"
+          ]
+        },
+        "checked_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "variance": {
+          "type": "number"
+        }
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_system",
+        "source_record_refs",
+        "retrieved_at",
+        "transformation_version",
+        "evidence_status"
+      ],
+      "properties": {
+        "source_system": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "source_record_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "maxLength": 256
+          }
+        },
+        "retrieved_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "transformation_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "evidence_status": {
+          "enum": [
+            "synthetic",
+            "verified",
+            "unverified",
+            "partial"
+          ]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "available"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "value",
+          "unit"
+        ],
+        "properties": {
+          "freshness": {
+            "properties": {
+              "status": {
+                "const": "fresh"
+              }
+            }
+          },
+          "coverage": {
+            "properties": {
+              "status": {
+                "const": "sufficient"
+              }
+            }
+          },
+          "reconciliation": {
+            "properties": {
+              "status": {
+                "const": "passed"
+              }
+            }
+          },
+          "governed_sources": {
+            "const": true
+          }
+        },
+        "not": {
+          "required": [
+            "unavailable_reason"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "unavailable"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "unavailable_reason"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "value"
+              ]
+            },
+            {
+              "required": [
+                "unit"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source_mode": {
+            "const": "synthetic"
+          }
+        },
+        "required": [
+          "source_mode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "synthetic": {
+            "const": true
+          },
+          "source_lineage": {
+            "items": {
+              "properties": {
+                "evidence_status": {
+                  "const": "synthetic"
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "synthetic": {
+            "const": false
+          }
+        }
+      }
+    }
+  ]
+}

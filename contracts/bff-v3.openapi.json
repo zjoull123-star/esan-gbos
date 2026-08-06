@@ -1,0 +1,92 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ESAN GBOS Governed Metrics BFF",
+    "version": "3.0.0",
+    "description": "Read-only CEO metrics surface. Synthetic and live modes must never mix."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "paths": {
+    "/api/method/esan_gbos.api.v3.metrics.dashboard": {
+      "get": {
+        "operationId": "metrics.dashboard",
+        "summary": "Read the governed CEO metrics dashboard",
+        "x-gbos-mutates": false,
+        "security": [
+          {
+            "frappeSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Governed dashboard envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "frappeSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "sid"
+      }
+    },
+    "schemas": {
+      "SuccessEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "./gate5/metrics-dashboard.schema.json"
+          },
+          "meta": {
+            "type": "object",
+            "required": [
+              "request_id",
+              "schema_version"
+            ],
+            "properties": {
+              "request_id": {
+                "type": "string"
+              },
+              "schema_version": {
+                "const": "1.0"
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "Stable GBOS error envelope"
+      }
+    }
+  }
+}

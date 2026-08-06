@@ -9,10 +9,12 @@ import type {
   SampleFeedbackCommand,
   SourcingCreateCommand,
   SuccessEnvelope,
+  MetricDashboardPayload,
   WorkItemListQuery,
   WorkItemTransitionCommand,
 } from "./types";
 import { readGbosBootstrap } from "@/bootstrap";
+import { parseMetricDashboard } from "./metrics";
 
 export const BFF_ENDPOINTS = {
   party360: "/api/method/esan_gbos.api.v1.party.get_360",
@@ -29,6 +31,10 @@ export const BFF_V2_ENDPOINTS = {
   reviewList: "/api/method/esan_gbos.api.v2.review_case.list",
   reviewGet: "/api/method/esan_gbos.api.v2.review_case.get",
   reviewDecide: "/api/method/esan_gbos.api.v2.review_case.decide",
+} as const;
+
+export const BFF_V3_ENDPOINTS = {
+  metricsDashboard: "/api/method/esan_gbos.api.v3.metrics.dashboard",
 } as const;
 
 type ClientErrorCode =
@@ -234,6 +240,8 @@ export const createBffClient = (dependencies: BffDependencies = {}) => {
         cache: "no-store",
         headers: {
           Accept: "application/json",
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
           ...init.headers,
         },
       });
@@ -316,6 +324,19 @@ export const createBffClient = (dependencies: BffDependencies = {}) => {
         BFF_V2_ENDPOINTS.reviewDecide,
         command as unknown as Record<string, unknown>,
       ),
+    getMetricDashboard: async () => {
+      const response = await get<unknown>(BFF_V3_ENDPOINTS.metricsDashboard);
+      const dashboard = parseMetricDashboard(response.data);
+      if (!dashboard) {
+        throw new BffError("invalid_response", {
+          requestId: response.meta.request_id,
+        });
+      }
+      return {
+        ...response,
+        data: dashboard,
+      } satisfies SuccessEnvelope<MetricDashboardPayload>;
+    },
   };
 };
 

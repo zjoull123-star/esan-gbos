@@ -104,6 +104,109 @@ const syntheticReviewEnvelope = {
   },
 };
 
+const syntheticMetricEnvelope = {
+  message: {
+    data: {
+      schema_version: "3.0",
+      site_id: "gbos.localhost",
+      source_mode: "synthetic",
+      synthetic: true,
+      generated_at: "2026-08-06T02:31:00Z",
+      metrics: [
+        {
+          schema_version: "3.0",
+          metric_key: "sales.order_value",
+          display_name: "销售订单金额",
+          definition_version: "0.1.0",
+          site_id: "gbos.localhost",
+          status: "available",
+          value: 125000,
+          unit: "CNY",
+          as_of: "2026-08-06T02:30:00Z",
+          queried_at: "2026-08-06T02:31:00Z",
+          window: {
+            type: "calendar",
+            grain: "month",
+            start: "2026-08-01T00:00:00Z",
+            end: "2026-09-01T00:00:00Z",
+          },
+          freshness: { status: "fresh", age_seconds: 60, slo_seconds: 86400 },
+          coverage: {
+            status: "sufficient",
+            ratio: 1,
+            included_count: 4,
+            total_count: 4,
+          },
+          reconciliation: {
+            status: "passed",
+            checked_at: "2026-08-06T02:30:30Z",
+            reference: "reconciliation-SYNTH-001",
+            variance: 0,
+          },
+          source_lineage: [
+            {
+              source_system: "synthetic_kingdee_projection",
+              source_record_refs: ["sales-order-projection-SYNTH-001"],
+              retrieved_at: "2026-08-06T02:30:00Z",
+              transformation_version: "metrics-projection-v1",
+              evidence_status: "synthetic",
+            },
+          ],
+          source_mode: "synthetic",
+          synthetic: true,
+          governed_sources: true,
+        },
+        {
+          schema_version: "3.0",
+          metric_key: "receivables.balance",
+          display_name: "应收余额",
+          definition_version: "0.1.0",
+          site_id: "gbos.localhost",
+          status: "unavailable",
+          unavailable_reason: "reconciliation_failed",
+          as_of: "2026-08-06T02:30:00Z",
+          queried_at: "2026-08-06T02:31:00Z",
+          window: {
+            type: "point_in_time",
+            grain: "instant",
+            start: "2026-08-06T02:30:00Z",
+            end: "2026-08-06T02:30:00Z",
+          },
+          freshness: { status: "fresh", age_seconds: 60, slo_seconds: 86400 },
+          coverage: {
+            status: "sufficient",
+            ratio: 1,
+            included_count: 3,
+            total_count: 3,
+          },
+          reconciliation: {
+            status: "failed",
+            checked_at: "2026-08-06T02:30:30Z",
+            reference: "reconciliation-SYNTH-002",
+            variance: 10,
+          },
+          source_lineage: [
+            {
+              source_system: "synthetic_kingdee_projection",
+              source_record_refs: ["receivable-projection-SYNTH-001"],
+              retrieved_at: "2026-08-06T02:30:00Z",
+              transformation_version: "metrics-projection-v1",
+              evidence_status: "synthetic",
+            },
+          ],
+          source_mode: "synthetic",
+          synthetic: true,
+          governed_sources: true,
+        },
+      ],
+    },
+    meta: {
+      request_id: "req-e2e-metrics",
+      schema_version: "1.0",
+    },
+  },
+};
+
 const isHarness = (testInfo: TestInfo) =>
   testInfo.project.name === "frontend-harness";
 
@@ -124,7 +227,9 @@ const prepareHarness = async (page: Page) => {
   });
   await page.route("**/api/method/**", async (route) => {
     const url = route.request().url();
-    const envelope = url.includes("review_case.list")
+    const envelope = url.includes("api.v3.metrics.dashboard")
+      ? syntheticMetricEnvelope
+      : url.includes("review_case.list")
       ? syntheticReviewEnvelope
       : url.includes("sourcing.get_board")
         ? syntheticSourcingEnvelope
@@ -188,9 +293,30 @@ test.beforeEach(async ({ page }, testInfo) => {
 test("五个角色工作台无 axe 违规", async ({ page }, testInfo) => {
   for (const [path, heading] of workspaces) {
     await openWorkspace(page, testInfo, path, heading);
-    await expect(page.getByText("演示数据")).toBeVisible();
+    await expect(page.getByText(/演示/u).first()).toBeVisible();
     expect(await axeViolations(page), `${path} axe violations`).toEqual([]);
   }
+});
+
+test("CEO cockpit 显示治理质量与来源且不可用指标没有正式数值", async ({
+  page,
+}, testInfo) => {
+  await openWorkspace(page, testInfo, "/gbos/ceo", "经营总览");
+  await expect(page.getByText("演示 / 合成数据", { exact: true })).toBeVisible();
+
+  const available = page.locator("[data-metric-key='sales.order_value']");
+  await expect(available.getByText("125,000", { exact: true })).toBeVisible();
+  await expect(available.getByText("CNY", { exact: true })).toBeVisible();
+  await expect(available.getByText(/^新鲜 ·/u)).toBeVisible();
+  await expect(available.getByText(/100%/u)).toBeVisible();
+  await expect(available.getByText(/已通过/u)).toBeVisible();
+  await available.getByText(/查看来源链路/u).click();
+  await expect(available.getByText("synthetic_kingdee_projection")).toBeVisible();
+
+  const unavailable = page.locator("[data-metric-key='receivables.balance']");
+  await expect(unavailable.getByText("不显示正式数值", { exact: true })).toBeVisible();
+  await expect(unavailable.locator("[data-official-value]")).toHaveCount(0);
+  await expect(unavailable.getByText(/reconciliation_failed/u)).toBeVisible();
 });
 
 test("SPA 内销售切换采购会重新读取采购数据", async ({ page }, testInfo) => {
@@ -206,7 +332,7 @@ test("SPA 内销售切换采购会重新读取采购数据", async ({ page }, te
 });
 
 test("375、768、1440 无横向溢出", async ({ page }, testInfo) => {
-  await openWorkspace(page, testInfo, "/gbos/sales", "销售协同");
+  await openWorkspace(page, testInfo, "/gbos/ceo", "经营总览");
   for (const width of [375, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     const dimensions = await page.evaluate(() => ({
