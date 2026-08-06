@@ -295,6 +295,16 @@ def test_bootstrap_is_final_by_default_with_explicit_upstream_escape_hatch() -> 
     assert "Final runtime source must be tracked and clean" in bootstrap
     assert "ls-files --others --exclude-standard" in bootstrap
     assert "FINAL_INPUT_PATHS" in bootstrap
+    assert "OBSERVER_ENABLED=false" in bootstrap
+    assert "OBSERVER_ENABLED=true" in bootstrap
+    assert "--profile core" in bootstrap
+    assert "--profile observer" in bootstrap
+    assert "up -d --wait observer-postgres" in bootstrap
+    assert "run --rm observer-contract-check" in bootstrap
+    assert bootstrap.index("up -d --wait observer-postgres") < bootstrap.index(
+        "run --rm observer-contract-check"
+    )
+    assert '"${PROFILES[@]}"' not in bootstrap
 
 
 def test_custom_image_builder_verifies_every_source_ref() -> None:
@@ -507,6 +517,10 @@ def test_ci_has_required_jobs_and_immutable_actions() -> None:
     assert workflow.count("astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9") == 4
     assert workflow.count("actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38") == 1
     assert workflow.count("actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f") == 8
+    assert "ubuntu-latest" not in workflow
+    assert "ubuntu-latest" not in smoke_workflow
+    assert workflow.count("runs-on: ubuntu-24.04") == 8
+    assert smoke_workflow.count("runs-on: ubuntu-24.04") == 1
     assert smoke_workflow.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803") == 1
     assert (
         smoke_workflow.count("actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f")

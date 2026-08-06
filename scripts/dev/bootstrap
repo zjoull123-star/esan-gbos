@@ -8,13 +8,13 @@ export PATH="${HOME}/.orbstack/bin:${PATH}"
 COMPOSE_FILE="${REPO_ROOT}/infra/dev/compose.yml"
 ENV_FILE="${REPO_ROOT}/infra/dev/.env"
 ENV_EXAMPLE="${REPO_ROOT}/infra/dev/.env.example"
-PROFILES=(--profile core)
+OBSERVER_ENABLED=false
 IMAGE_STAGE=final
 
 while (( $# > 0 )); do
   case "$1" in
     --observer)
-      PROFILES+=(--profile observer)
+      OBSERVER_ENABLED=true
       ;;
     --upstream-only)
       IMAGE_STAGE=upstream
@@ -74,12 +74,23 @@ if [[ "${IMAGE_STAGE}" == "final" ]]; then
   fi
 fi
 
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${PROFILES[@]}" config --quiet
+docker compose \
+  --env-file "${ENV_FILE}" \
+  -f "${COMPOSE_FILE}" \
+  --profile core \
+  config --quiet
+if [[ "${OBSERVER_ENABLED}" == "true" ]]; then
+  docker compose \
+    --env-file "${ENV_FILE}" \
+    -f "${COMPOSE_FILE}" \
+    --profile observer \
+    config --quiet
+fi
 TARGET_IMAGE="$(
   docker compose \
     --env-file "${ENV_FILE}" \
     -f "${COMPOSE_FILE}" \
-    "${PROFILES[@]}" \
+    --profile core \
     config --format json |
     python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["backend"]["image"])'
 )"
@@ -120,5 +131,17 @@ fi
 docker compose \
   --env-file "${ENV_FILE}" \
   -f "${COMPOSE_FILE}" \
-  "${PROFILES[@]}" \
+  --profile core \
   up -d --wait
+if [[ "${OBSERVER_ENABLED}" == "true" ]]; then
+  docker compose \
+    --env-file "${ENV_FILE}" \
+    -f "${COMPOSE_FILE}" \
+    --profile observer \
+    up -d --wait observer-postgres
+  docker compose \
+    --env-file "${ENV_FILE}" \
+    -f "${COMPOSE_FILE}" \
+    --profile observer \
+    run --rm observer-contract-check
+fi
