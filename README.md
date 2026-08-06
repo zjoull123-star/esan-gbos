@@ -13,7 +13,9 @@ Contact、Lead 和 Deal；金蝶仍是订单、库存与财务权威系统。
 - 销售 → 产品需求 → 样品 → 反馈 → 需求 → 询源 → 工作项/审核闭环；
 - 版本化 BFF、团队级权限、revision、幂等与服务端状态机；
 - 观察事件、不可变证据、事实提案与最小 Context Service；
-- 持久 Agent Runtime、Action Guard、Decision 和人工审核链路；
+- 持久 Agent Runtime、Action Guard、Decision 和人工审核链路；Gate 4
+  现包含仅限本地合成数据的确定性 Sales、Purchase、Product、CEO 四个原型，
+  其中 Product profile 显式映射到 `product_sample` 队列类型；
 - 受治理 Metrics API、CEO 驾驶舱和只读 Kingdee Adapter 边界；
 - 发布清单契约、失败关闭预检、dry-run 发布/回滚计划和双人授权边界；
 - SLO/告警、备份恢复、DR/事件响应 runbook 与隐私治理契约；
@@ -44,6 +46,9 @@ Gate 5 的 CEO 页面读取受治理 Metrics API，但当前来源仍是确定�
 - Gate 2：已冻结 Agent、Context、Metrics 和金蝶字段/接口契约与 mock；零实连。
 - Gate 3：已完成本地观察、不可变证据、事实提案和最小 Context Service。
 - Gate 4：已完成本地 Agent Runtime、Context/Decision、Action Guard 和人工审核。
+  [Gate 4 CEO 原型缺口关闭证据](docs/evidence/gate4-closure/gate4-closure-summary.md)
+  仅证明四个确定性合成原型的技术边界，不代表真实 CEO Agent、正式 KPI、
+  模型调用、金蝶实连或生产能力。
 - Gate 5：已完成本地 Metrics API、CEO 驾驶舱和金蝶只读边界；实连与预生产
   保持 `blocked_external_input`。
 - Gate 6：已完成本地生产拓扑模板、预检、监控、恢复、隐私和发布 Go/No-Go

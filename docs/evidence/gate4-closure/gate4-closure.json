@@ -1,0 +1,232 @@
+{
+  "schema_version": "1.0",
+  "gate": 4,
+  "closure_id": "gate4-synthetic-ceo-agent",
+  "captured_at": "2026-08-06T20:53:14Z",
+  "status": "technical_local_go",
+  "evidence_level": "local-synthetic-current-state-only",
+  "implementation_commit": "f341948986d2426abb873940c2d10960cc82ea9b",
+  "implementation_source_sha256": "6e532884a028e86bba7810393279c1a10b367818647255fda545c0b37b6dbf26",
+  "agent_profiles": [
+    "sales",
+    "purchase",
+    "product",
+    "ceo"
+  ],
+  "durable_queue_contract_types": [
+    "sales",
+    "purchase",
+    "product_sample",
+    "ceo"
+  ],
+  "profile_queue_mapping": {
+    "sales": "sales",
+    "purchase": "purchase",
+    "product": "product_sample",
+    "ceo": "ceo"
+  },
+  "ceo_prototype": {
+    "processing_purpose": "metric_reporting",
+    "action_type": "internal.ai_draft.propose",
+    "source_mode": "synthetic_agent_context",
+    "synthetic": true,
+    "is_official_metric": false,
+    "is_official_forecast": false,
+    "requires_human_review": true
+  },
+  "required_boundaries": {
+    "action_guard": true,
+    "evidence_fact_decision_lineage": true,
+    "human_review": true,
+    "durable_runtime": true
+  },
+  "human_review_semantics": {
+    "requires_human_review_is_metadata_only": true,
+    "review_case_created": false,
+    "approved_command_issued": false
+  },
+  "external_activity": {
+    "network_calls": 0,
+    "model_api_calls": 0,
+    "tool_calls": 0,
+    "external_messages": 0,
+    "kingdee_calls": 0,
+    "kingdee_mutations": 0,
+    "formal_business_writes": 0,
+    "cloud_deployments": 0,
+    "production_credentials_loaded": 0
+  },
+  "go_no_go": {
+    "gate4_technical_local": "go",
+    "real_model": "no_go",
+    "kingdee_live": "blocked_external_input",
+    "cloud": "no_go",
+    "production": "no_go"
+  },
+  "historical_evidence": {
+    "path": "docs/evidence/gate4",
+    "sha256sum_manifest_sha256": "2df12cda3e442bbe68880e555583affe7e4f483096fd369e2c37bf34ef843b64",
+    "modified": false
+  },
+  "control_results": {
+    "action_guard_fail_closed": {
+      "status": "pass",
+      "test_refs": [
+        "tests/action_guard/test_policy.py"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate4/gate4-evidence.json",
+        "services/action_guard/policy.py"
+      ]
+    },
+    "durable_idempotent_queue": {
+      "status": "pass",
+      "test_refs": [
+        "tests/integration/test_gate4_postgres.py",
+        "tests/agent_runtime/test_models_and_protocol.py::test_in_memory_repository_accepts_ceo_metric_reporting_task"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate4/gate4-evidence.json",
+        "services/agent_runtime/migrations/001_gate4_agent_runtime.sql",
+        "contracts/agent-task.schema.json"
+      ]
+    },
+    "exact_context_decision_trace": {
+      "status": "pass",
+      "test_refs": [
+        "tests/context/test_gate4_decision.py",
+        "tests/integration/test_gate4_postgres.py"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate4/gate4-evidence.json",
+        "contracts/gate4/decision-trace-response.schema.json"
+      ]
+    },
+    "human_review_command_boundary": {
+      "status": "pass",
+      "test_refs": [
+        "apps/esan_gbos/esan_gbos/gbos/doctype/gbos_review_case/test_gbos_review_case.py"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate4/gate4-evidence.json",
+        "contracts/bff-v2.openapi.json"
+      ]
+    },
+    "responsive_accessible_review_pwa": {
+      "status": "pass",
+      "test_refs": [
+        "apps/esan_gbos/frontend/e2e/gbos.spec.ts"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate4/runtime-validation.json"
+      ]
+    },
+    "site_isolation_and_role_separation": {
+      "status": "pass",
+      "test_refs": [
+        "tests/integration/test_gate4_postgres.py"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate4/runtime-validation.json"
+      ]
+    },
+    "synthetic_ceo_prototype": {
+      "status": "pass",
+      "test_refs": [
+        "tests/agent_runtime/test_agents.py::test_ceo_agent_emits_synthetic_internal_observation_without_official_metrics",
+        "tests/agent_runtime/test_agents.py::test_ceo_agent_detects_hostile_metric_and_commercial_instructions_without_echoing_them",
+        "tests/agent_runtime/test_agents.py::test_ceo_agent_rejects_unknown_refs_tools_and_formal_actions",
+        "tests/agent_runtime/test_agents.py::test_ceo_agent_is_byte_stable",
+        "tests/agent_runtime/test_models_and_protocol.py::test_in_memory_repository_accepts_ceo_metric_reporting_task"
+      ],
+      "evidence_refs": [
+        "services/agent_runtime/agents.py",
+        "contracts/gate4/action-proposal.schema.json",
+        "contracts/agent-task.schema.json"
+      ]
+    }
+  },
+  "test_inventory": [
+    {
+      "id": "repository_pytest",
+      "command": "uv run --frozen pytest --ignore=tests/acceptance/test_gate4_closure.py",
+      "status": "pass",
+      "passed": 955,
+      "failed": 0,
+      "skipped": 12
+    },
+    {
+      "id": "gate4_postgres",
+      "command": "scripts/dev/test-gate4-integration",
+      "status": "pass",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "python_static",
+      "command": "uv run --frozen ruff check . && uv run --frozen ruff format --check . && uv run --frozen mypy apps/esan_gbos/esan_gbos/domain services/observer/contract_check.py services/observer/observer services/context/context_service services/action_guard services/agent_runtime services/metrics services/kingdee_adapter fixtures/gate1/generate.py fixtures/kingdee/gate1/mock.py fixtures/kingdee/gate2/adapter.py",
+      "status": "pass",
+      "passed": 61,
+      "failed": 0,
+      "skipped": 0,
+      "count_basis": "Mypy source files; Ruff check and Ruff format check also passed."
+    },
+    {
+      "id": "frontend_unit_build",
+      "command": "corepack pnpm --dir apps/esan_gbos/frontend install --frozen-lockfile && corepack pnpm --dir apps/esan_gbos/frontend run lint && corepack pnpm --dir apps/esan_gbos/frontend run typecheck && corepack pnpm --dir apps/esan_gbos/frontend run test:unit && corepack pnpm --dir apps/esan_gbos/frontend run build",
+      "status": "pass",
+      "passed": 77,
+      "failed": 0,
+      "skipped": 0,
+      "count_basis": "Vitest tests; install, lint, typecheck and production build also passed."
+    },
+    {
+      "id": "frontend_e2e",
+      "command": "corepack pnpm --dir apps/esan_gbos/frontend run test:e2e",
+      "status": "pass",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "secret_scan",
+      "command": "scripts/dev/secret-scan",
+      "status": "pass",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "count_basis": "One repository scan command; no supported secret patterns detected."
+    },
+    {
+      "id": "closure_acceptance",
+      "command": "uv run --frozen pytest tests/acceptance/test_gate4_closure.py -q",
+      "status": "pass",
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "closure_checksum",
+      "command": "(cd docs/evidence/gate4-closure && shasum -a 256 -c SHA256SUMS)",
+      "status": "pass",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "count_basis": "Two compact closure files."
+    }
+  ],
+  "verification_notes": {
+    "gate4_postgres_post_fix_consecutive_runs": 3,
+    "gate4_postgres_each_run_passed": 3,
+    "gate4_postgres_restart_run_included": true,
+    "ceo_frontend_surface_added": false,
+    "ceo_route_remains_gate5_metrics_only": true
+  },
+  "limitations": [
+    "This closes only the missing deterministic synthetic CEO prototype in Gate 4.",
+    "The Gate 5 governed cockpit remains a Metrics API surface and is not an output of this prototype.",
+    "requires_human_review is proposal metadata only and did not create a Review Case or issue an ApprovedCommand.",
+    "This evidence creates no real-model, Kingdee, cloud, external-send or production authorization."
+  ]
+}
