@@ -25,6 +25,16 @@ TEST_USERS = (
     "gbos-product@example.invalid",
 )
 
+# This suite creates every dependency explicitly.  Letting Frappe synthesize
+# linked User records recursively pulls ERPNext Company/Item fixtures, which
+# correctly collide with the GBOS V1 transaction guard.
+IGNORE_TEST_RECORD_DEPENDENCIES = [
+    "GBOS Team",
+    "GBOS Party Profile",
+    "GBOS Product Brief",
+    "User",
+]
+
 
 class TestGBOSGateOneDomain(IntegrationTestCase):
     def setUp(self) -> None:
