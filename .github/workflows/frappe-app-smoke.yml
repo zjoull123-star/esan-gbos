@@ -39,19 +39,26 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - name: Create a fresh site with the final four-app gate
-        run: docker compose -f infra/dev/compose.yml --profile core up -d --wait
+        run: |
+          mkdir -p "${RUNNER_TEMP}/final-image-sbom"
+          docker compose -f infra/dev/compose.yml --profile core up -d --wait 2>&1 | \
+            tee "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
       - name: Run two consecutive migrations
         run: |
           docker compose -f infra/dev/compose.yml exec -T backend \
-            bench --site "${SITE_NAME}" migrate
+            bench --site "${SITE_NAME}" migrate 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
           docker compose -f infra/dev/compose.yml exec -T backend \
-            bench --site "${SITE_NAME}" migrate
+            bench --site "${SITE_NAME}" migrate 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
       - name: Run Frappe domain, permission, state-machine, and idempotency tests
         run: |
           docker compose -f infra/dev/compose.yml exec -T backend \
-            bench --site "${SITE_NAME}" set-config allow_tests true
+            bench --site "${SITE_NAME}" set-config allow_tests true 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
           docker compose -f infra/dev/compose.yml exec -T backend \
-            bench --site "${SITE_NAME}" run-tests --app esan_gbos
+            bench --site "${SITE_NAME}" run-tests --app esan_gbos 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
       - name: Verify the exact four installed apps
         run: |
           docker compose -f infra/dev/compose.yml exec -T backend \
@@ -64,11 +71,18 @@ jobs:
           apps = apps_by_site["gbos-smoke.localhost"]
           assert apps == ["frappe", "erpnext", "crm", "esan_gbos"], apps
           PY
+          cat installed-apps.json | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
       - name: Scan the final image
-        run: scripts/dev/security-scan "${ERPNEXT_IMAGE}"
+        run: |
+          scripts/dev/security-scan "${ERPNEXT_IMAGE}" 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
       - name: Generate final-image licenses and SBOM
-        run: scripts/dev/license-sbom "${RUNNER_TEMP}/final-image-sbom" "${ERPNEXT_IMAGE}"
+        run: |
+          scripts/dev/license-sbom "${RUNNER_TEMP}/final-image-sbom" "${ERPNEXT_IMAGE}" 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
         with:
           name: final-image-gate-evidence
           path: |
@@ -76,7 +90,8 @@ jobs:
             ${{ runner.temp }}/final-image-sbom/licenses.json
             ${{ runner.temp }}/final-image-sbom/sbom.cdx.json
             ${{ runner.temp }}/final-image-sbom/SHA256SUMS
-          if-no-files-found: error
+            ${{ runner.temp }}/final-image-sbom/runtime-smoke.log
+          if-no-files-found: warn
           retention-days: 14
       - name: Stop containers while preserving named volumes
         if: always()

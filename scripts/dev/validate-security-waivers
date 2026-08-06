@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+export PATH="${HOME}/.orbstack/bin:${PATH}"
+
+WAIVER_FILE="${REPO_ROOT}/security/trivy-gate01-ignore.yaml"
+
+python3 - "${WAIVER_FILE}" <<'PY'
+from __future__ import annotations
+
+import datetime as dt
+import json
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    policy = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"Invalid Gate 0/1 waiver file: {exc}") from exc
+
+if set(policy) != {"vulnerabilities"}:
+    raise SystemExit("Gate 0/1 waiver file may contain only the vulnerabilities key.")
+
+entries = policy["vulnerabilities"]
+if not isinstance(entries, list) or not entries:
+    raise SystemExit("Gate 0/1 waiver list must be non-empty.")
+
+allowed_keys = {"id", "purls", "expired_at", "statement"}
+identifier_pattern = re.compile(r"^(?:CVE-\d{4}-\d+|GHSA-[a-z0-9-]+)$")
+now = dt.datetime.now(dt.timezone.utc)
+maximum_expiry = dt.datetime(2026, 9, 30, tzinfo=dt.timezone.utc)
+seen_ids: set[str] = set()
+seen_pairs: set[tuple[str, str]] = set()
+purl_count = 0
+
+for index, entry in enumerate(entries):
+    if not isinstance(entry, dict) or set(entry) != allowed_keys:
+        raise SystemExit(f"Waiver entry {index} must contain exactly {sorted(allowed_keys)}.")
+
+    identifier = entry["id"]
+    if not isinstance(identifier, str) or not identifier_pattern.fullmatch(identifier):
+        raise SystemExit(f"Waiver entry {index} has an invalid vulnerability ID.")
+    if identifier in seen_ids:
+        raise SystemExit(f"Waiver ID is duplicated: {identifier}")
+    seen_ids.add(identifier)
+
+    purls = entry["purls"]
+    if not isinstance(purls, list) or not purls:
+        raise SystemExit(f"Waiver {identifier} must have at least one exact PURL.")
+    for purl in purls:
+        if (
+            not isinstance(purl, str)
+            or not purl.startswith("pkg:")
+            or "@" not in purl
+            or "*" in purl
+        ):
+            raise SystemExit(f"Waiver {identifier} contains a non-exact PURL.")
+        pair = (identifier, purl)
+        if pair in seen_pairs:
+            raise SystemExit(f"Waiver pair is duplicated: {identifier} {purl}")
+        seen_pairs.add(pair)
+        purl_count += 1
+
+    expiry_text = entry["expired_at"]
+    if not isinstance(expiry_text, str) or not expiry_text.endswith("Z"):
+        raise SystemExit(f"Waiver {identifier} expiry must be UTC RFC3339.")
+    try:
+        expiry = dt.datetime.fromisoformat(expiry_text.removesuffix("Z") + "+00:00")
+    except ValueError as exc:
+        raise SystemExit(f"Waiver {identifier} expiry is invalid.") from exc
+    if expiry <= now:
+        raise SystemExit(f"Waiver {identifier} expired at {expiry_text}.")
+    if expiry > maximum_expiry:
+        raise SystemExit(
+            f"Waiver {identifier} exceeds the Gate 0/1 maximum expiry "
+            f"{maximum_expiry.isoformat()}."
+        )
+
+    statement = entry["statement"]
+    if (
+        not isinstance(statement, str)
+        or len(statement) < 80
+        or "Gate 0/1" not in statement
+        or "Gate 5/6" not in statement
+    ):
+        raise SystemExit(f"Waiver {identifier} lacks a complete Gate scope statement.")
+
+print(
+    f"Validated {len(entries)} Gate 0/1 vulnerability waivers "
+    f"covering {purl_count} exact PURLs; all expire by 2026-09-30T00:00:00Z."
+)
+PY

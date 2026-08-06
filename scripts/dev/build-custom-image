@@ -22,6 +22,7 @@ FINAL_INPUT_PATHS=(
   apps/esan_gbos
   fixtures/gate1
   infra/dev/nginx
+  infra/dev/realtime-runtime
   infra/dev/Containerfile.final
   infra/dev/apps.upstream.json
   scripts/dev/build-custom-image
@@ -179,6 +180,8 @@ if [[ "${STAGE}" == "final" ]]; then
     ! -f "${APP_ROOT}/esan_gbos/hooks.py" ||
     ! -f "${FIXTURE_ROOT}/manifest.json" ||
     ! -f "${FIXTURE_ROOT}/frappe_payload.json" ||
+    ! -f "${REPO_ROOT}/infra/dev/realtime-runtime/package.json" ||
+    ! -f "${REPO_ROOT}/infra/dev/realtime-runtime/package-lock.json" ||
     ! -f "${NGINX_TEMPLATE}" ]]; then
     echo "Final image precondition failed: app, fixtures, or runtime template is missing." >&2
     exit 66
@@ -192,6 +195,8 @@ if [[ "${STAGE}" == "final" ]]; then
     apps/esan_gbos/esan_gbos/hooks.py \
     fixtures/gate1/manifest.json \
     fixtures/gate1/frappe_payload.json \
+    infra/dev/realtime-runtime/package.json \
+    infra/dev/realtime-runtime/package-lock.json \
     infra/dev/nginx/frappe.conf.template >/dev/null
   if ! git -C "${REPO_ROOT}" diff --quiet -- "${FINAL_INPUT_PATHS[@]}" ||
     ! git -C "${REPO_ROOT}" diff --cached --quiet -- "${FINAL_INPUT_PATHS[@]}" ||

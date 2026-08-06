@@ -1,6 +1,17 @@
 ARG UPSTREAM_IMAGE=esan-gbos-upstream:gate0
 ARG UPSTREAM_BUILDER_IMAGE=esan-gbos-upstream-builder:gate1
 
+FROM ${UPSTREAM_BUILDER_IMAGE} AS realtime-runtime
+
+USER frappe
+WORKDIR /tmp/realtime-runtime
+COPY --chown=frappe:frappe infra/dev/realtime-runtime/package.json \
+    infra/dev/realtime-runtime/package-lock.json ./
+RUN test "$(node --version)" = "v24.13.0" \
+    && npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+    && npm ls --omit=dev \
+    && npm cache clean --force
+
 FROM ${UPSTREAM_BUILDER_IMAGE} AS app-assets
 
 USER frappe
@@ -21,7 +32,7 @@ RUN mkdir -p /home/frappe/.local/bin \
 ENV PATH="/home/frappe/.local/bin:${PATH}"
 WORKDIR /home/frappe/frappe-bench/apps/esan_gbos/frontend
 RUN test "$(pnpm --version)" = "11.9.0" \
-    && pnpm install --frozen-lockfile \
+    && CI=true pnpm install --frozen-lockfile \
     && pnpm run build
 WORKDIR /home/frappe/frappe-bench
 RUN mkdir -p apps/esan_gbos/esan_gbos/public/frontend/ \
@@ -37,17 +48,37 @@ LABEL org.opencontainers.image.revision="${ESAN_SOURCE_COMMIT}"
 LABEL com.esan.gbos.app-source-sha256="${ESAN_SOURCE_SHA256}"
 
 USER root
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get purge -y --auto-remove vim vim-common vim-runtime xxd \
+    && rm -rf /var/lib/apt/lists/*
 COPY infra/dev/nginx/frappe.conf.template /templates/nginx/frappe.conf.template
+COPY --from=realtime-runtime \
+    /home/frappe/.nvm/versions/node/v24.13.0/bin/node \
+    /usr/local/bin/node
+COPY --from=realtime-runtime \
+    /home/frappe/.nvm/versions/node/v24.13.0/LICENSE \
+    /usr/local/share/licenses/node/LICENSE
+RUN chmod 0755 /usr/local/bin/node \
+    && find /home/frappe/frappe-bench/apps -type d -name node_modules \
+        -prune -exec rm -rf -- '{}' + \
+    && rm -rf /home/frappe/.nvm
 
 USER frappe
 COPY --chown=frappe:frappe apps/esan_gbos /home/frappe/frappe-bench/apps/esan_gbos
 COPY --chown=frappe:frappe fixtures/gate1 /home/frappe/frappe-bench/fixtures/gate1
+COPY --from=realtime-runtime --chown=frappe:frappe \
+    /tmp/realtime-runtime/node_modules/ \
+    /home/frappe/frappe-bench/node_modules/
 
 RUN test -f apps/esan_gbos/pyproject.toml \
     && test -f apps/esan_gbos/esan_gbos/hooks.py \
     && test -f fixtures/gate1/manifest.json \
     && test -f fixtures/gate1/frappe_payload.json \
-    && ./env/bin/pip install --no-deps -e apps/esan_gbos
+    && ./env/bin/pip install --no-deps -e apps/esan_gbos \
+    && find apps/esan_gbos -type d -name node_modules \
+        -prune -exec rm -rf -- '{}' +
 RUN if ! grep -Fxq esan_gbos sites/apps.txt; then \
         printf '\n%s\n' esan_gbos >> sites/apps.txt; \
     fi \

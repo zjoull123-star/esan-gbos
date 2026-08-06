@@ -55,6 +55,7 @@ if [[ "${IMAGE_STAGE}" == "final" ]]; then
     apps/esan_gbos
     fixtures/gate1
     infra/dev/nginx
+    infra/dev/realtime-runtime
     infra/dev/Containerfile.final
     infra/dev/apps.upstream.json
     scripts/dev/build-custom-image

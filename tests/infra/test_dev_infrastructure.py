@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import stat
 import subprocess
@@ -10,8 +11,11 @@ COMPOSE_FILE = REPO_ROOT / "infra" / "dev" / "compose.yml"
 ENV_EXAMPLE = REPO_ROOT / "infra" / "dev" / ".env.example"
 UPSTREAM_APPS = REPO_ROOT / "infra" / "dev" / "apps.upstream.json"
 FINAL_CONTAINERFILE = REPO_ROOT / "infra" / "dev" / "Containerfile.final"
+REALTIME_PACKAGE = REPO_ROOT / "infra" / "dev" / "realtime-runtime" / "package.json"
+REALTIME_LOCK = REPO_ROOT / "infra" / "dev" / "realtime-runtime" / "package-lock.json"
 FRONTEND_WORKSPACE = REPO_ROOT / "apps" / "esan_gbos" / "frontend" / "pnpm-workspace.yaml"
 GITLEAKS_CONFIG = REPO_ROOT / ".gitleaks.toml"
+TRIVY_WAIVERS = REPO_ROOT / "security" / "trivy-gate01-ignore.yaml"
 NGINX_TEMPLATE = REPO_ROOT / "infra" / "dev" / "nginx" / "frappe.conf.template"
 OBSERVER_CONTRACT_CHECK = REPO_ROOT / "services" / "observer" / "contract_check.py"
 SCRIPTS_DIR = REPO_ROOT / "scripts" / "dev"
@@ -200,6 +204,7 @@ def test_dev_scripts_are_executable_safe_and_shell_valid() -> None:
         "security-scan",
         "status",
         "teardown",
+        "validate-security-waivers",
         "verify-crm-contract",
     ):
         path = SCRIPTS_DIR / name
@@ -271,6 +276,7 @@ def test_custom_image_builder_verifies_every_source_ref() -> None:
         "FINAL_INPUT_PATHS",
         "infra/dev/Containerfile.final",
         "infra/dev/apps.upstream.json",
+        "infra/dev/realtime-runtime",
         "scripts/dev/build-custom-image",
     ):
         assert expected in builder
@@ -289,8 +295,42 @@ def test_custom_image_builder_verifies_every_source_ref() -> None:
     assert "infra/dev/nginx/frappe.conf.template" in final_containerfile
     backend_stage = final_containerfile.split("FROM ${UPSTREAM_IMAGE} AS final", 1)[1]
     assert "bench build" not in backend_stage
-    assert re.search(r"\bnode\b", backend_stage) is None
+    assert "pnpm install" not in backend_stage
+    assert "npm ci" not in backend_stage
     assert "\n    python3 -" in builder
+
+
+def test_final_runtime_prunes_build_tooling_and_uses_a_locked_realtime_bundle() -> None:
+    containerfile = read_required(FINAL_CONTAINERFILE)
+    runtime_package = read_required(REALTIME_PACKAGE)
+    runtime_lock = read_required(REALTIME_LOCK)
+
+    assert "FROM ${UPSTREAM_BUILDER_IMAGE} AS realtime-runtime" in containerfile
+    assert "realtime-runtime/package.json" in containerfile
+    assert "realtime-runtime/package-lock.json" in containerfile
+    assert "npm ci --omit=dev --ignore-scripts" in containerfile
+    assert "npm cache clean --force" in containerfile
+    assert "/usr/local/bin/node" in containerfile
+    assert "/home/frappe/frappe-bench/node_modules/" in containerfile
+    assert "rm -rf /home/frappe/.nvm" in containerfile
+    assert "find /home/frappe/frappe-bench/apps -type d -name node_modules" in containerfile
+    assert "find apps/esan_gbos -type d -name node_modules" in containerfile
+    assert "apt-get upgrade -y" in containerfile
+    assert "apt-get purge -y --auto-remove vim vim-common vim-runtime xxd" in containerfile
+
+    for dependency in ('"socket.io": "4.8.3"', '"@redis/client": "1.5.12"', '"cookie": "0.7.0"'):
+        assert dependency in runtime_package
+    assert '"ws": "8.21.2"' in runtime_package
+    assert '"lockfileVersion": 3' in runtime_lock
+    for resolved_version in (
+        '"node_modules/engine.io"',
+        '"version": "6.6.9"',
+        '"node_modules/socket.io-parser"',
+        '"version": "4.2.7"',
+        '"node_modules/ws"',
+        '"version": "8.21.2"',
+    ):
+        assert resolved_version in runtime_lock
 
 
 def test_final_image_registers_the_app_before_linking_frontend_assets() -> None:
@@ -336,10 +376,36 @@ def test_security_and_sbom_commands_are_reproducible_and_pinned() -> None:
     assert trivy in sbom
     assert "--severity HIGH,CRITICAL" in security
     assert "--ignore-unfixed" not in security
+    assert '"${SCRIPT_DIR}/validate-security-waivers"' in security
+    assert '"${WAIVER_FILE}:/policy/trivy-gate01-ignore.yaml:ro"' in security
+    assert "--ignorefile /policy/trivy-gate01-ignore.yaml" in security
+    assert "--show-suppressed" in security
+    assert "--skip-files usr/share/java/libintl-0.21.jar" in security
+    assert "**/*.jar" not in security
     assert "--format cyclonedx" in sbom
     assert "--scanners license" in sbom
     assert "docker image inspect" in security
     assert "docker image inspect" in sbom
+
+
+def test_gate01_security_waivers_are_narrow_expiring_and_machine_validated() -> None:
+    waivers = json.loads(read_required(TRIVY_WAIVERS))
+    entries = waivers["vulnerabilities"]
+
+    assert len(entries) == 57
+    assert sum(len(entry["purls"]) for entry in entries) == 103
+    assert len({entry["id"] for entry in entries}) == len(entries)
+    assert all(set(entry) == {"id", "purls", "expired_at", "statement"} for entry in entries)
+    assert all(entry["expired_at"] == "2026-09-30T00:00:00Z" for entry in entries)
+    assert all(entry["purls"] for entry in entries)
+    assert all(
+        purl.startswith("pkg:") and "@" in purl and "*" not in purl
+        for entry in entries
+        for purl in entry["purls"]
+    )
+    assert all("Gate 0/1" in entry["statement"] for entry in entries)
+    assert all("Gate 5/6" in entry["statement"] for entry in entries)
+    subprocess.run([str(SCRIPTS_DIR / "validate-security-waivers")], check=True)
 
 
 def test_ci_has_required_jobs_and_immutable_actions() -> None:
@@ -393,7 +459,7 @@ def test_ci_has_required_jobs_and_immutable_actions() -> None:
     assert workflow.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803") == 8
     assert workflow.count("astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9") == 4
     assert workflow.count("actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38") == 1
-    assert workflow.count("actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f") == 1
+    assert workflow.count("actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f") == 8
     assert smoke_workflow.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803") == 1
     assert (
         smoke_workflow.count("actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f")

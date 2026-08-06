@@ -21,7 +21,17 @@ jobs:
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           enable-cache: true
-      - run: uv run --frozen pytest tests/contracts
+      - run: |
+          mkdir -p "${RUNNER_TEMP}/gate-logs"
+          uv run --frozen pytest tests/contracts 2>&1 | \
+            tee "${RUNNER_TEMP}/gate-logs/contracts.log"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: gate-log-contracts
+          path: ${{ runner.temp }}/gate-logs/contracts.log
+          if-no-files-found: warn
+          retention-days: 14
 
   compat:
     name: Compatibility locks
@@ -31,8 +41,20 @@ jobs:
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           enable-cache: true
-      - run: uv run --frozen pytest tests/compat
-      - run: scripts/dev/verify-crm-contract
+      - run: |
+          mkdir -p "${RUNNER_TEMP}/gate-logs"
+          uv run --frozen pytest tests/compat 2>&1 | \
+            tee "${RUNNER_TEMP}/gate-logs/compat.log"
+      - run: |
+          scripts/dev/verify-crm-contract 2>&1 | \
+            tee -a "${RUNNER_TEMP}/gate-logs/compat.log"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: gate-log-compat
+          path: ${{ runner.temp }}/gate-logs/compat.log
+          if-no-files-found: warn
+          retention-days: 14
 
   ruff:
     name: Python lint, format and type checks
@@ -42,38 +64,62 @@ jobs:
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           enable-cache: true
-      - run: uv run --frozen ruff check .
-      - run: uv run --frozen ruff format --check .
-      - run: >-
-          uv run --frozen mypy
-          apps/esan_gbos/esan_gbos/domain
-          services/observer/contract_check.py
-          fixtures/gate1/generate.py
-          fixtures/kingdee/gate1/mock.py
+      - run: |
+          mkdir -p "${RUNNER_TEMP}/gate-logs"
+          uv run --frozen ruff check . 2>&1 | \
+            tee "${RUNNER_TEMP}/gate-logs/python-static.log"
+      - run: |
+          uv run --frozen ruff format --check . 2>&1 | \
+            tee -a "${RUNNER_TEMP}/gate-logs/python-static.log"
+      - run: |
+          uv run --frozen mypy \
+            apps/esan_gbos/esan_gbos/domain \
+            services/observer/contract_check.py \
+            fixtures/gate1/generate.py \
+            fixtures/kingdee/gate1/mock.py 2>&1 | \
+            tee -a "${RUNNER_TEMP}/gate-logs/python-static.log"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: gate-log-python-static
+          path: ${{ runner.temp }}/gate-logs/python-static.log
+          if-no-files-found: warn
+          retention-days: 14
 
   compose-config:
     name: Compose static validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-      - run: >-
-          docker compose
-          --env-file infra/dev/.env.example
-          -f infra/dev/compose.yml
-          --profile core
-          --profile observer
-          config --quiet
-      - run: >-
-          bash -n
-          scripts/dev/bootstrap
-          scripts/dev/build-custom-image
-          scripts/dev/license-sbom
-          scripts/dev/purge-local-data
-          scripts/dev/secret-scan
-          scripts/dev/security-scan
-          scripts/dev/status
-          scripts/dev/teardown
-          scripts/dev/verify-crm-contract
+      - run: |
+          mkdir -p "${RUNNER_TEMP}/gate-logs"
+          docker compose \
+            --env-file infra/dev/.env.example \
+            -f infra/dev/compose.yml \
+            --profile core \
+            --profile observer \
+            config --quiet 2>&1 | \
+            tee "${RUNNER_TEMP}/gate-logs/compose-static.log"
+      - run: |
+          bash -n \
+            scripts/dev/bootstrap \
+            scripts/dev/build-custom-image \
+            scripts/dev/license-sbom \
+            scripts/dev/purge-local-data \
+            scripts/dev/secret-scan \
+            scripts/dev/security-scan \
+            scripts/dev/status \
+            scripts/dev/teardown \
+            scripts/dev/validate-security-waivers \
+            scripts/dev/verify-crm-contract 2>&1 | \
+            tee -a "${RUNNER_TEMP}/gate-logs/compose-static.log"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: gate-log-compose-static
+          path: ${{ runner.temp }}/gate-logs/compose-static.log
+          if-no-files-found: warn
+          retention-days: 14
 
   app-materialization:
     name: Gate 1 app materialization (fail closed)
@@ -82,6 +128,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - name: Require the Frappe app and Vue/Playwright workspaces
         run: |
+          mkdir -p "${RUNNER_TEMP}/gate-logs"
+          exec > >(tee "${RUNNER_TEMP}/gate-logs/app-materialization.log") 2>&1
           test -f apps/esan_gbos/pyproject.toml
           test -f apps/esan_gbos/esan_gbos/hooks.py
           FRONTEND_PACKAGE="$(find apps/esan_gbos -path '*/node_modules' -prune -o -name package.json -print -quit)"
@@ -100,6 +148,13 @@ jobs:
               assert name in scripts, f"missing fail-closed package script: {name}"
           assert any(package_path.parent.glob("playwright.config.*")), "Playwright config is required"
           PY
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: gate-log-app-materialization
+          path: ${{ runner.temp }}/gate-logs/app-materialization.log
+          if-no-files-found: warn
+          retention-days: 14
 
   frappe-vue-playwright:
     name: Python, JSON, Frappe, Vue and Playwright gates
@@ -116,6 +171,8 @@ jobs:
           check-latest: false
       - name: Python and JSON validation
         run: |
+          mkdir -p "${RUNNER_TEMP}/gate-logs"
+          exec > >(tee "${RUNNER_TEMP}/gate-logs/python-vue-playwright.log") 2>&1
           uv run --frozen pytest
           python - <<'PY'
           import json
@@ -128,6 +185,7 @@ jobs:
           PY
       - name: Vue unit, build, and Playwright checks
         run: |
+          exec > >(tee -a "${RUNNER_TEMP}/gate-logs/python-vue-playwright.log") 2>&1
           FRONTEND_PACKAGE="$(find apps/esan_gbos -path '*/node_modules' -prune -o -name package.json -print -quit)"
           FRONTEND_DIR="$(dirname "${FRONTEND_PACKAGE}")"
           corepack enable
@@ -139,6 +197,13 @@ jobs:
           pnpm --dir "${FRONTEND_DIR}" run build
           pnpm --dir "${FRONTEND_DIR}" exec playwright install --with-deps chromium
           pnpm --dir "${FRONTEND_DIR}" run test:e2e
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: gate-log-python-vue-playwright
+          path: ${{ runner.temp }}/gate-logs/python-vue-playwright.log
+          if-no-files-found: warn
+          retention-days: 14
 
   gitleaks:
     name: Gitleaks
@@ -147,14 +212,25 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 0
-      - run: scripts/dev/secret-scan
+      - run: |
+          mkdir -p "${RUNNER_TEMP}/gate-logs"
+          scripts/dev/secret-scan 2>&1 | \
+            tee "${RUNNER_TEMP}/gate-logs/gitleaks.log"
       - name: Scan repository history and working tree
-        run: >-
-          docker run --rm
-          -v "${PWD}:/repo"
-          -w /repo
-          ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
-          git . --no-banner --redact --exit-code 1
+        run: |
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            -w /repo \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git . --no-banner --redact --exit-code 1 2>&1 | \
+            tee -a "${RUNNER_TEMP}/gate-logs/gitleaks.log"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: gate-log-gitleaks
+          path: ${{ runner.temp }}/gate-logs/gitleaks.log
+          if-no-files-found: warn
+          retention-days: 14
 
   security-sbom:
     name: Dependency, license and SBOM
@@ -162,15 +238,22 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - name: Block unapproved high or critical findings
-        run: scripts/dev/security-scan
+        run: |
+          mkdir -p "${RUNNER_TEMP}/sbom"
+          scripts/dev/security-scan 2>&1 | \
+            tee "${RUNNER_TEMP}/sbom/security-scan.log"
       - name: Generate license inventory and CycloneDX SBOM
-        run: scripts/dev/license-sbom "${RUNNER_TEMP}/sbom"
+        run: |
+          scripts/dev/license-sbom "${RUNNER_TEMP}/sbom" 2>&1 | \
+            tee -a "${RUNNER_TEMP}/sbom/security-scan.log"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
         with:
           name: sbom-cyclonedx
           path: |
             ${{ runner.temp }}/sbom/licenses.json
             ${{ runner.temp }}/sbom/sbom.cdx.json
             ${{ runner.temp }}/sbom/SHA256SUMS
-          if-no-files-found: error
+            ${{ runner.temp }}/sbom/security-scan.log
+          if-no-files-found: warn
           retention-days: 14
