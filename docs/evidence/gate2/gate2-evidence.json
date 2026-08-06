@@ -1,0 +1,130 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06",
+  "scope": "design-schema-mock-gate2",
+  "status": "partial",
+  "evidence_level": "design-and-mock-only",
+  "implementation_commit": {
+    "value": "PENDING_MAIN_AGENT_FINALIZATION",
+    "status": "placeholder"
+  },
+  "immutable_inputs": {
+    "roadmap": "docs/superpowers/specs/2026-08-06-gbos-v4-agent-context-roadmap-design.md",
+    "implementation_plan": "docs/superpowers/plans/2026-08-06-gate2-contract-freeze.md",
+    "historical_evidence_manifest": "docs/evidence/SHA256SUMS"
+  },
+  "test_inventory": [
+    {
+      "path": "tests/contracts",
+      "command": "/Users/ericesan/Documents/GBOS/.venv/bin/pytest tests/contracts -q",
+      "status": "not_run",
+      "count": null
+    },
+    {
+      "path": "tests/fixtures/test_gate2_kingdee.py",
+      "command": "/Users/ericesan/Documents/GBOS/.venv/bin/pytest tests/fixtures/test_gate2_kingdee.py -q",
+      "status": "not_run",
+      "count": null
+    },
+    {
+      "path": "tests/governance/test_gate2_design.py",
+      "command": "/Users/ericesan/Documents/GBOS/.venv/bin/pytest tests/governance/test_gate2_design.py -q",
+      "status": "pass",
+      "count": 6
+    },
+    {
+      "path": "tests/acceptance/test_gate2_evidence.py",
+      "command": "/Users/ericesan/Documents/GBOS/.venv/bin/pytest tests/acceptance/test_gate2_evidence.py -q",
+      "status": "pass",
+      "count": 7
+    },
+    {
+      "path": "tests",
+      "command": "/Users/ericesan/Documents/GBOS/.venv/bin/pytest -q",
+      "status": "not_run",
+      "count": null
+    }
+  ],
+  "zero_external_activity": {
+    "method": "Gate 2 source-boundary and deterministic mock tests; final result pending main-agent full verification",
+    "command": "/Users/ericesan/Documents/GBOS/.venv/bin/pytest tests/fixtures/test_gate2_kingdee.py tests/governance/test_gate2_design.py -q",
+    "network": {
+      "status": "not_run",
+      "observed_calls": 0
+    },
+    "credentials": {
+      "status": "not_run",
+      "loaded": 0
+    },
+    "real_business_queries": {
+      "status": "not_applicable",
+      "observed_calls": 0
+    },
+    "external_writers": {
+      "status": "not_applicable",
+      "observed_calls": 0
+    }
+  },
+  "historical_evidence": {
+    "manifest_sha256": "a6a86c5dcb39d5d57b27e3cf7b444f71700bd74db362a74af6b2816186982cea",
+    "verification_command": "shasum -a 256 docs/evidence/SHA256SUMS && (cd docs/evidence && shasum -a 256 -c SHA256SUMS)",
+    "modified": false
+  },
+  "real_capabilities": {
+    "connector": {
+      "status": "not_started",
+      "evidence": "No provider selected or contacted; Gate 2 contains contract/mock work only.",
+      "next_gate": 3
+    },
+    "model": {
+      "status": "not_started",
+      "evidence": "No model provider, credential or invocation is in Gate 2 scope.",
+      "next_gate": 3
+    },
+    "channel": {
+      "status": "not_started",
+      "evidence": "No production channel account or ingestion is enabled.",
+      "next_gate": 3
+    },
+    "kingdee": {
+      "status": "not_started",
+      "evidence": "Only synthetic read projections are allowed; no real account set or request.",
+      "next_gate": 5
+    },
+    "cloud": {
+      "status": "not_started",
+      "evidence": "No cloud environment, service or deployment was used.",
+      "next_gate": 5
+    },
+    "runtime": {
+      "status": "not_started",
+      "evidence": "Agent, Context/Decision, Metrics and MCP production services were not started.",
+      "next_gate": 4
+    },
+    "production": {
+      "status": "not_applicable",
+      "evidence": "Gate 2 cannot authorize a production release.",
+      "next_gate": 6
+    }
+  },
+  "security_review": {
+    "artifact": "docs/evidence/gate2/security-review.json",
+    "status": "pending_human_review"
+  },
+  "contract_validation": {
+    "artifact": "docs/evidence/gate2/contract-validation.json",
+    "status": "not_run"
+  },
+  "known_limits": [
+    "Implementation commit, complete test counts and final checksums await main-agent finalization.",
+    "Schema and synthetic mock evidence does not prove any connector, model, channel, Kingdee or service runtime.",
+    "Capacity values are design assumptions, not measured SLO or production capacity.",
+    "Runtime authorization, privacy, security, recovery, UAT and production evidence remain in Gates 3 through 6."
+  ],
+  "go_no_go": {
+    "gate2": "conditional-go-after-finalization",
+    "gate3": "no-go-until-gate2-finalization",
+    "runtime": "no-go",
+    "production": "no-go"
+  }
+}

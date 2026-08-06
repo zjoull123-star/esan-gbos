@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate2/common.schema.json",
+  "title": "GBOS Gate 2 Common Definitions",
+  "description": "Shared wire-shape definitions for Gate 2 aggregate contracts.",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "SchemaVersion": {
+      "const": "2.0"
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "SiteId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+    },
+    "Version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "EvidenceRefs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/Identifier"
+      }
+    },
+    "ReviewStatus": {
+      "type": "string",
+      "enum": [
+        "unreviewed",
+        "pending_review",
+        "human_reviewed",
+        "rule_reviewed"
+      ]
+    },
+    "DataClassification": {
+      "type": "string",
+      "enum": [
+        "Public",
+        "Internal",
+        "Confidential",
+        "Restricted"
+      ]
+    },
+    "ProcessingPurpose": {
+      "type": "string",
+      "enum": [
+        "business_operations",
+        "observation_processing",
+        "entity_resolution",
+        "customer_service",
+        "sales_follow_up",
+        "procurement_coordination",
+        "product_sample_management",
+        "risk_review",
+        "metric_reporting",
+        "audit_compliance"
+      ]
+    },
+    "ValidTime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start"
+      ],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "end": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "SourceLineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_system",
+        "source_record_refs",
+        "retrieved_at",
+        "transformation_version",
+        "evidence_status"
+      ],
+      "properties": {
+        "source_system": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "source_record_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          }
+        },
+        "retrieved_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "transformation_version": {
+          "$ref": "#/$defs/Version"
+        },
+        "evidence_status": {
+          "type": "string",
+          "enum": [
+            "synthetic",
+            "unverified",
+            "verified",
+            "partial"
+          ]
+        }
+      }
+    },
+    "ActionType": {
+      "type": "string",
+      "enum": [
+        "internal.ai_draft.create",
+        "internal.review_case.create",
+        "internal.work_item.transition"
+      ]
+    },
+    "MetricWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "grain"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "rolling",
+            "calendar",
+            "point_in_time"
+          ]
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3660
+        },
+        "grain": {
+          "type": "string",
+          "enum": [
+            "hour",
+            "day",
+            "week",
+            "month",
+            "quarter",
+            "year",
+            "instant"
+          ]
+        },
+        "start": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "end": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "Freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "age_seconds",
+        "slo_seconds"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "fresh",
+            "stale",
+            "unknown"
+          ]
+        },
+        "age_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "slo_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "Coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "ratio",
+        "included_count",
+        "total_count"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "sufficient",
+            "insufficient",
+            "unknown"
+          ]
+        },
+        "ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "included_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "ReconciliationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "checked_at",
+        "reference"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "not_run"
+          ]
+        },
+        "checked_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "variance": {
+          "type": "number"
+        }
+      }
+    }
+  }
+}

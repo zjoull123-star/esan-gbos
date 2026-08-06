@@ -1,0 +1,31 @@
+{
+  "schema_version": "2.0",
+  "evidence_record_id": "evidence-record-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "processing_purpose": "business_operations",
+  "evidence_ref": {
+    "schema_version": "1.0",
+    "evidence_id": "evidence-SYNTH-001",
+    "observation_event_id": "01K20B8BV5C6P4YFAT8YQ3D4S5",
+    "raw_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "object_ref": "cos://synthetic/evidence-SYNTH-001",
+    "media_type": "text/plain",
+    "locator": {
+      "message_start": 0,
+      "message_end": 42
+    },
+    "created_at": "2026-08-06T01:00:03Z"
+  },
+  "source_lineage": {
+    "source_system": "synthetic_observer",
+    "source_record_refs": [
+      "01K20B8BV5C6P4YFAT8YQ3D4S5"
+    ],
+    "retrieved_at": "2026-08-06T01:00:03Z",
+    "transformation_version": "gate2-fixture-v1",
+    "evidence_status": "synthetic"
+  },
+  "data_classification": "Restricted",
+  "review_status": "human_reviewed",
+  "recorded_at": "2026-08-06T01:00:04Z"
+}

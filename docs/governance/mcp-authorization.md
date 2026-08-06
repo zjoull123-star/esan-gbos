@@ -79,6 +79,19 @@ Gate 证据按能力分开：
 
 任一对应证据缺失时，该 scope 保持 `No-Go`。
 
+## Gate 2 capability state
+
+| Capability | Gate 2 state | Network calls | credentials loaded | Earliest activation |
+|---|---|---:|---:|---|
+| MCP protocol/schema validation | local design/mock-only | 0 | 0 | Gate 2 |
+| `gbos-read` | disabled/mock-only | 0 | 0 | Gate 4 after authorization evidence |
+| `gbos-propose` | disabled/mock-only | 0 | 0 | Gate 4 after human-review evidence |
+| `metrics-read` | disabled/mock-only | 0 | 0 | Gate 5 after governed Metrics evidence |
+| `kingdee-read` | disabled/mock-only | 0 | 0 | Gate 5 after least-privilege canary approval |
+
+Gate 2 不启动 MCP server，不发现真实远程工具，不读取 token/secret，不连接
+任何业务 host。此表是设计开关状态，不是运行时安全或供应商可用性证据。
+
 参考：
 
 - [MCP 2026-07-28 specification](https://modelcontextprotocol.io/specification/2026-07-28)

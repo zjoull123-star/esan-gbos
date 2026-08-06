@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06",
+  "scope": "gate2-contract-schema-and-synthetic-examples",
+  "status": "not_run",
+  "json_schema_draft": "2020-12",
+  "network_allowed": false,
+  "credentials_allowed": false,
+  "commands": [
+    "/Users/ericesan/Documents/GBOS/.venv/bin/pytest tests/contracts -q",
+    "/Users/ericesan/Documents/GBOS/.venv/bin/pytest tests/fixtures/test_gate2_kingdee.py -q"
+  ],
+  "results": [
+    {
+      "name": "gate2_contracts_and_examples",
+      "status": "not_run",
+      "passed": null,
+      "failed": null
+    },
+    {
+      "name": "gate2_kingdee_synthetic_projection",
+      "status": "not_run",
+      "passed": null,
+      "failed": null
+    }
+  ],
+  "claims": {
+    "local_schema_registry_only": true,
+    "synthetic_examples_only": true,
+    "real_connector_validated": false,
+    "real_kingdee_metadata_validated": false,
+    "runtime_service_validated": false
+  },
+  "limitations": [
+    "This preliminary artifact is finalized only after the main agent runs the complete contract and fixture suites.",
+    "Passing schema/example tests cannot establish provider compatibility, live authentication, business data correctness or runtime availability."
+  ]
+}

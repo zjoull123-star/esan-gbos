@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate2/metric-response.schema.json",
+  "title": "MetricResponse",
+  "description": "A governed KPI result that fails closed when freshness, coverage or reconciliation is insufficient.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "metric_key",
+    "definition_version",
+    "site_id",
+    "status",
+    "as_of",
+    "queried_at",
+    "window",
+    "freshness",
+    "coverage",
+    "reconciliation",
+    "source_lineage"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "metric_key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.]{2,79}$"
+    },
+    "definition_version": {
+      "$ref": "common.schema.json#/$defs/Version"
+    },
+    "site_id": {
+      "$ref": "common.schema.json#/$defs/SiteId"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "available",
+        "unavailable"
+      ]
+    },
+    "value": {
+      "type": "number"
+    },
+    "unit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "unavailable_reason": {
+      "type": "string",
+      "enum": [
+        "stale",
+        "insufficient_coverage",
+        "reconciliation_failed",
+        "source_unavailable",
+        "definition_unavailable"
+      ]
+    },
+    "as_of": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "queried_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "window": {
+      "$ref": "common.schema.json#/$defs/MetricWindow"
+    },
+    "freshness": {
+      "$ref": "common.schema.json#/$defs/Freshness"
+    },
+    "coverage": {
+      "$ref": "common.schema.json#/$defs/Coverage"
+    },
+    "reconciliation": {
+      "$ref": "common.schema.json#/$defs/ReconciliationResult"
+    },
+    "source_lineage": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "common.schema.json#/$defs/SourceLineage"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "available"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "value",
+          "unit"
+        ],
+        "properties": {
+          "freshness": {
+            "properties": {
+              "status": {
+                "const": "fresh"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "coverage": {
+            "properties": {
+              "status": {
+                "const": "sufficient"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "reconciliation": {
+            "properties": {
+              "status": {
+                "const": "passed"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        },
+        "not": {
+          "required": [
+            "unavailable_reason"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "unavailable"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "unavailable_reason"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "value"
+              ]
+            },
+            {
+              "required": [
+                "unit"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

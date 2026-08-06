@@ -1,0 +1,21 @@
+{
+  "schema_version": "2.0",
+  "conflict_id": "conflict-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "fact_version_refs": [
+    "verified-fact-SYNTH-001:v1",
+    "verified-fact-SYNTH-002:v1"
+  ],
+  "status": "resolved",
+  "evidence_refs": [
+    "evidence-SYNTH-001",
+    "evidence-SYNTH-002"
+  ],
+  "detected_at": "2026-08-06T01:11:00Z",
+  "recorded_at": "2026-08-06T01:11:01Z",
+  "review_status": "human_reviewed",
+  "resolved_by": "reviewer@example.invalid",
+  "resolution_basis": "The later source was explicitly confirmed by the synthetic reviewer.",
+  "resolution_decision_ref": "decision-SYNTH-001",
+  "resolved_at": "2026-08-06T01:20:00Z"
+}

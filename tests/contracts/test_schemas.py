@@ -3,32 +3,75 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urldefrag
 
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import ValidationError
+from referencing import Registry, Resource
+from referencing.exceptions import NoSuchResource
 
 CONTRACTS_DIR = Path(__file__).parents[2] / "contracts"
-SCHEMA_FILES = (
-    "canonical-observation-event.schema.json",
-    "evidence-ref.schema.json",
-    "extracted-fact.schema.json",
-    "draft-mutation.schema.json",
-    "approved-command.schema.json",
-    "connector-checkpoint.schema.json",
-)
+SCHEMA_FILES = tuple(path.name for path in sorted(CONTRACTS_DIR.glob("*.schema.json")))
+
+
+def _schemas() -> dict[str, dict[str, Any]]:
+    return {
+        path.name: json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(CONTRACTS_DIR.glob("*.schema.json"))
+    }
+
+
+def schema_registry() -> Registry[Any]:
+    registry: Registry[Any] = Registry()
+    for schema in _schemas().values():
+        registry = registry.with_resource(schema["$id"], Resource.from_contents(schema))
+    return registry
 
 
 def load_validator(filename: str) -> Draft202012Validator:
     schema = json.loads((CONTRACTS_DIR / filename).read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
-    return Draft202012Validator(schema, format_checker=FormatChecker())
+    return Draft202012Validator(
+        schema,
+        registry=schema_registry(),
+        format_checker=FormatChecker(),
+    )
 
 
 @pytest.mark.parametrize("filename", SCHEMA_FILES)
 def test_contract_is_valid_json_schema_2020_12(filename: str) -> None:
     validator = load_validator(filename)
     assert validator.META_SCHEMA["$id"].endswith("/draft/2020-12/schema")
+
+
+def _walk_refs(value: object) -> list[str]:
+    if isinstance(value, dict):
+        refs = [value["$ref"]] if isinstance(value.get("$ref"), str) else []
+        return refs + [ref for item in value.values() for ref in _walk_refs(item)]
+    if isinstance(value, list):
+        return [ref for item in value for ref in _walk_refs(item)]
+    return []
+
+
+def test_every_schema_has_a_unique_stable_id_and_local_references() -> None:
+    schemas = _schemas()
+    ids = [schema["$id"] for schema in schemas.values()]
+
+    assert len(ids) == len(set(ids))
+    assert all(
+        schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        for schema in schemas.values()
+    )
+    registry = schema_registry()
+    for schema in schemas.values():
+        resolver = registry.resolver(schema["$id"])
+        for ref in _walk_refs(schema):
+            try:
+                resolver.lookup(ref)
+            except NoSuchResource as exc:
+                uri, _ = urldefrag(ref)
+                pytest.fail(f"unresolved local schema reference {uri!r}: {exc}")
 
 
 VALID_CONTRACTS: tuple[tuple[str, dict[str, Any]], ...] = (

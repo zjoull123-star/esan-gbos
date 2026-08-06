@@ -1,0 +1,111 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06",
+  "scope": "gate2-design-schema-mock",
+  "overall_status": "pending_human_review",
+  "runtime_security_claim": "not_applicable",
+  "human_review": {
+    "status": "pending",
+    "reviewer_role": "GBOS Security Owner",
+    "reviewed_at": null,
+    "decision": null
+  },
+  "risks": [
+    {
+      "risk_id": "G2-TM-01",
+      "threat_model_id": "TM-01",
+      "title": "MCP or Kingdee input expands into unauthorized query or writer",
+      "severity": "high",
+      "owner": "ERP Integration and Security",
+      "status": "controlled_by_disabled_capability",
+      "test_refs": [
+        "tests/contracts/test_gate2_contracts.py::test_action_contracts_reject_external_and_kingdee_writes",
+        "tests/fixtures/test_gate2_kingdee.py::test_gate2_adapter_rejects_every_writer_shaped_operation",
+        "tests/fixtures/test_gate2_kingdee.py::test_gate2_adapter_runtime_tripwire_observes_zero_network_credentials_and_subprocess"
+      ],
+      "evidence_refs": [
+        "docs/governance/mcp-authorization.md",
+        "docs/governance/gate2-data-flow-and-capacity.md"
+      ],
+      "human_review": {
+        "status": "pending",
+        "reviewer_role": "GBOS Security Owner",
+        "reviewed_at": null,
+        "notes": "Gate 2 contains no live MCP/Kingdee capability; runtime controls require Gate 5 evidence."
+      }
+    },
+    {
+      "risk_id": "G2-TM-06",
+      "threat_model_id": "TM-06",
+      "title": "Cross-site data or evidence reference escapes its tenant boundary",
+      "severity": "high",
+      "owner": "Context and Security",
+      "status": "controlled_by_disabled_capability",
+      "test_refs": [
+        "tests/governance/test_gate2_design.py::test_gate2_data_flow_names_four_truths_and_service_boundaries",
+        "tests/governance/test_gate2_design.py::test_gate2_capacity_assumptions_are_bounded_and_fail_closed"
+      ],
+      "evidence_refs": [
+        "docs/governance/gate2-data-flow-and-capacity.md",
+        "docs/governance/threat-model.md"
+      ],
+      "human_review": {
+        "status": "pending",
+        "reviewer_role": "GBOS Security Owner",
+        "reviewed_at": null,
+        "notes": "Design requires site_id and fail-closed validation; runtime isolation remains Gate 3/4."
+      }
+    },
+    {
+      "risk_id": "G2-TM-10",
+      "threat_model_id": "TM-10",
+      "title": "Unreviewed facts or stale data appear as official metrics",
+      "severity": "high",
+      "owner": "Analytics and Finance Governance",
+      "status": "controlled_by_disabled_capability",
+      "test_refs": [
+        "tests/contracts/test_gate2_contracts.py::test_metric_definition_requires_governance_fields",
+        "tests/contracts/test_gate2_contracts.py::test_metric_response_unavailable_requires_reason_and_forbids_value",
+        "tests/contracts/test_gate2_semantics.py::test_metrics_registry_entries_validate_and_are_uniquely_versioned"
+      ],
+      "evidence_refs": [
+        "docs/governance/gate2-data-flow-and-capacity.md",
+        "docs/governance/gate2-test-strategy.md"
+      ],
+      "human_review": {
+        "status": "pending",
+        "reviewer_role": "Finance Metric Owner",
+        "reviewed_at": null,
+        "notes": "Metrics runtime is not started; Gate 5 must prove definition, lineage, freshness, coverage and reconciliation."
+      }
+    },
+    {
+      "risk_id": "G2-TM-11",
+      "threat_model_id": "TM-11",
+      "title": "Agent lease, retry or budget failure causes duplicate or unbounded work",
+      "severity": "medium",
+      "owner": "AI Platform",
+      "status": "deferred_to_later_gate",
+      "test_refs": [
+        "tests/contracts/test_gate2_contracts.py::test_agent_task_requires_lease_pair_for_active_status",
+        "tests/contracts/test_gate2_contracts.py::test_agent_task_rejects_invalid_budget_attempt_and_priority_bounds",
+        "tests/contracts/test_gate2_contracts.py::test_agent_timeline_is_monotonic_and_unique_as_cross_record_invariant"
+      ],
+      "evidence_refs": [
+        "docs/governance/gate2-test-strategy.md",
+        "docs/governance/threat-model.md"
+      ],
+      "human_review": {
+        "status": "pending",
+        "reviewer_role": "AI Platform Owner",
+        "reviewed_at": null,
+        "notes": "Gate 4 owns concurrency, lease recovery, retry, budget and dead-letter runtime proof."
+      }
+    }
+  ],
+  "limitations": [
+    "No live connector, model, channel, Kingdee, cloud or production runtime was security-tested.",
+    "Pending human review prevents this artifact from being interpreted as a closed runtime security review.",
+    "Gate 0/1 vulnerability exceptions remain governed by their separate historical artifact."
+  ]
+}

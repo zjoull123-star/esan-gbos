@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "projection_id": "projection-gate2-customer-request-gate2-synthetic-0001",
+  "site_id": "gbos.localhost",
+  "account_set_ref": "account-set-synthetic-gate2",
+  "logical_object": "customer",
+  "tool_name": "kingdee.customer.get",
+  "source_system": "kingdee-gate2-synthetic",
+  "mode": "mock_only",
+  "synthetic": true,
+  "dictionary_version": "0.1.0",
+  "allowlist_version": "0.1.0",
+  "crosswalk_status": "synthetic_only",
+  "evidence_status": "synthetic_fixture_only",
+  "query_time": "2026-08-06T00:00:00Z",
+  "rows": [
+    {
+      "record_ref": "customer-synthetic-0001",
+      "synthetic": true,
+      "values": {
+        "customer_number": "CUS-SYNTH-0001",
+        "customer_name": "Synthetic Customer One",
+        "document_status": "synthetic-approved"
+      }
+    }
+  ],
+  "page": {
+    "limit": 1,
+    "offset": 0,
+    "returned_rows": 1,
+    "has_more": true
+  },
+  "controls": {
+    "network_allowed": false,
+    "network_calls": 0,
+    "credentials_allowed": false,
+    "credentials_accessed": false,
+    "subprocess_calls": 0
+  }
+}

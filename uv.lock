@@ -47,6 +47,7 @@ dev = [
     { name = "jsonschema", extra = ["format"] },
     { name = "mypy" },
     { name = "pytest" },
+    { name = "referencing" },
     { name = "ruff" },
 ]
 
@@ -57,6 +58,7 @@ dev = [
     { name = "jsonschema", extras = ["format"], specifier = ">=4.25,<5" },
     { name = "mypy", specifier = ">=1.17,<2" },
     { name = "pytest", specifier = ">=8.4,<9" },
+    { name = "referencing", specifier = ">=0.36,<1" },
     { name = "ruff", specifier = ">=0.12,<1" },
 ]
 

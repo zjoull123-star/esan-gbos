@@ -1,0 +1,724 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ESAN GBOS Gate 2 Service Contracts",
+    "version": "1.0.0",
+    "description": "Design-only typed boundaries for Agent, Context, Decision, Action, Metrics and synthetic Kingdee read projections."
+  },
+  "x-gbos-gate": 2,
+  "x-runtime-enabled": false,
+  "x-network-allowed": false,
+  "x-real-credentials-allowed": false,
+  "x-production-capability": false,
+  "x-gbos-security-design": {
+    "status": "design_only",
+    "runtime_enforcement_enabled": false,
+    "per_operation_scope_required": true,
+    "site_header_required": true,
+    "request_id_header_required": true,
+    "purpose_header_required": true,
+    "required_audience": "gbos-services",
+    "resource_binding_required": true,
+    "token_passthrough_allowed": false,
+    "explicit_user_authorization_required": true
+  },
+  "paths": {
+    "/v1/agent/tasks": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        }
+      ],
+      "post": {
+        "operationId": "createAgentTask",
+        "tags": [
+          "Agent"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "gbos-propose"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentTask"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A typed durable task envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTask"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/agent/tasks/{task_id}/timeline": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        }
+      ],
+      "get": {
+        "operationId": "listAgentTaskTimeline",
+        "tags": [
+          "Agent"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "gbos-read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ordered timeline events; monotonicity is enforced by the service.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTimelineList"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/context/evidence/{evidence_record_id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getEvidenceRecord",
+        "tags": [
+          "Context"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "gbos-read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/EvidenceRecordId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A governed evidence aggregate around an immutable pointer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceRecord"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/context/facts/{fact_id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getVerifiedBusinessFact",
+        "tags": [
+          "Context"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "gbos-read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FactId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A confirmed, versioned fact with evidence and decision lineage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifiedBusinessFact"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/decisions/{decision_id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getDecisionRecord",
+        "tags": [
+          "Decision"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "gbos-read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DecisionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A traceable decision over explicit fact versions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionRecord"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/actions/proposals": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        }
+      ],
+      "post": {
+        "operationId": "createActionProposal",
+        "tags": [
+          "Action"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "gbos-propose"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionProposal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A non-executable internal action proposal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionProposal"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/actions/{action_proposal_id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getActionChain",
+        "tags": [
+          "Action"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "gbos-read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ActionProposalId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The typed proposal, review, execution and verification chain.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionChain"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/metrics/{metric_key}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getMetric",
+        "tags": [
+          "Metrics"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "metrics-read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MetricKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An available or fail-closed unavailable governed metric.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/kingdee/read-projections/query": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        }
+      ],
+      "post": {
+        "operationId": "queryKingdeeReadProjection",
+        "tags": [
+          "KingdeeRead"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "kingdee-read"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KingdeeReadQuery"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A deterministic synthetic read projection; Gate 2 has no transport.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KingdeeReadProjection"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "OAuth2": {
+        "type": "oauth2",
+        "description": "Design-only OAuth2 shape. Gate 2 has no authorization server or runtime enforcement.",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://identity.invalid/oauth/authorize",
+            "tokenUrl": "https://identity.invalid/oauth/token",
+            "scopes": {
+              "gbos-read": "Read governed GBOS Agent, Context, Decision and Action records.",
+              "gbos-propose": "Propose Agent tasks and internal Action proposals.",
+              "metrics-read": "Read governed Metrics API responses.",
+              "kingdee-read": "Read Gate 5+ allow-listed Kingdee projections."
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "SiteIdHeader": {
+        "name": "X-GBOS-Site-ID",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+        }
+      },
+      "RequestIdHeader": {
+        "name": "X-Request-ID",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "ProcessingPurposeHeader": {
+        "name": "X-GBOS-Purpose",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "business_operations",
+            "observation_processing",
+            "entity_resolution",
+            "customer_service",
+            "sales_follow_up",
+            "procurement_coordination",
+            "product_sample_management",
+            "risk_review",
+            "metric_reporting",
+            "audit_compliance"
+          ]
+        }
+      },
+      "TaskId": {
+        "name": "task_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "EvidenceRecordId": {
+        "name": "evidence_record_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "FactId": {
+        "name": "fact_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "DecisionId": {
+        "name": "decision_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "ActionProposalId": {
+        "name": "action_proposal_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "MetricKey": {
+        "name": "metric_key",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.]{2,79}$"
+        }
+      }
+    },
+    "schemas": {
+      "AgentTask": {
+        "$ref": "../agent-task.schema.json"
+      },
+      "AgentTimelineEvent": {
+        "$ref": "../agent-timeline-event.schema.json"
+      },
+      "AgentTimelineList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/AgentTimelineEvent"
+        }
+      },
+      "EvidenceRecord": {
+        "$ref": "../evidence-record.schema.json"
+      },
+      "VerifiedBusinessFact": {
+        "$ref": "../verified-business-fact.schema.json"
+      },
+      "DecisionRecord": {
+        "$ref": "../decision-record.schema.json"
+      },
+      "ActionProposal": {
+        "$ref": "../action-proposal.schema.json"
+      },
+      "ActionApproval": {
+        "$ref": "../action-approval.schema.json"
+      },
+      "ActionExecution": {
+        "$ref": "../action-execution.schema.json"
+      },
+      "ActionVerification": {
+        "$ref": "../action-verification.schema.json"
+      },
+      "ActionChain": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "proposal"
+        ],
+        "properties": {
+          "proposal": {
+            "$ref": "#/components/schemas/ActionProposal"
+          },
+          "approval": {
+            "$ref": "#/components/schemas/ActionApproval"
+          },
+          "execution": {
+            "$ref": "#/components/schemas/ActionExecution"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/ActionVerification"
+          }
+        }
+      },
+      "MetricResponse": {
+        "$ref": "../metric-response.schema.json"
+      },
+      "KingdeeReadQuery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tool_name",
+          "request_id",
+          "site_id",
+          "account_set_ref",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "tool_name": {
+            "type": "string",
+            "enum": [
+              "kingdee.material.get",
+              "kingdee.customer.get",
+              "kingdee.supplier.get",
+              "kingdee.sales_order.get",
+              "kingdee.purchase_order.get",
+              "kingdee.inventory.get",
+              "kingdee.receivable.get"
+            ]
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^request-[a-z0-9_-]*synthetic[a-z0-9_-]*$"
+          },
+          "site_id": {
+            "type": "string",
+            "const": "gbos.localhost"
+          },
+          "account_set_ref": {
+            "type": "string",
+            "const": "account-set-synthetic-gate2"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "KingdeeReadProjection": {
+        "$ref": "../kingdee-read-projection.schema.json"
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid_request",
+              "not_found",
+              "policy_denied",
+              "unavailable"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "A fail-closed typed error.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    }
+  }
+}

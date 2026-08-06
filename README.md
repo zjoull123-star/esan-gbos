@@ -111,7 +111,8 @@ uv run --frozen mypy \
   apps/esan_gbos/esan_gbos/domain \
   services/observer/contract_check.py \
   fixtures/gate1/generate.py \
-  fixtures/kingdee/gate1/mock.py
+  fixtures/kingdee/gate1/mock.py \
+  fixtures/kingdee/gate2/adapter.py
 ```
 
 前端检查：

@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "projection_id": "projection-gate2-inventory-request-gate2-synthetic-0001",
+  "site_id": "gbos.localhost",
+  "account_set_ref": "account-set-synthetic-gate2",
+  "logical_object": "inventory",
+  "tool_name": "kingdee.inventory.get",
+  "source_system": "kingdee-gate2-synthetic",
+  "mode": "mock_only",
+  "synthetic": true,
+  "dictionary_version": "0.1.0",
+  "allowlist_version": "0.1.0",
+  "crosswalk_status": "synthetic_only",
+  "evidence_status": "synthetic_fixture_only",
+  "query_time": "2026-08-06T00:00:00Z",
+  "rows": [
+    {
+      "record_ref": "inventory-synthetic-0001",
+      "synthetic": true,
+      "values": {
+        "material_number": "MAT-SYNTH-0001",
+        "warehouse_number": "WH-SYNTH-0001",
+        "base_quantity": 1200.0
+      }
+    }
+  ],
+  "page": {
+    "limit": 1,
+    "offset": 0,
+    "returned_rows": 1,
+    "has_more": true
+  },
+  "controls": {
+    "network_allowed": false,
+    "network_calls": 0,
+    "credentials_allowed": false,
+    "credentials_accessed": false,
+    "subprocess_calls": 0
+  }
+}

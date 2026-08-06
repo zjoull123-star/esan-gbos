@@ -1,0 +1,264 @@
+{
+  "dictionary_version": "0.1.0",
+  "gate": 2,
+  "mode": "design_only",
+  "synthetic": true,
+  "candidate_metadata_authority": "gate5_live_metadata_only",
+  "objects": [
+    {
+      "logical_object": "material",
+      "candidate_form": {
+        "value": "BD_MATERIAL",
+        "verification_status": "gate5_metadata_required"
+      },
+      "fields": [
+        {
+          "logical_name": "material_number",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FNumber",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "material_name",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FName",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "document_status",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FDocumentStatus",
+            "verification_status": "gate5_metadata_required"
+          }
+        }
+      ]
+    },
+    {
+      "logical_object": "customer",
+      "candidate_form": {
+        "value": "BD_Customer",
+        "verification_status": "gate5_metadata_required"
+      },
+      "fields": [
+        {
+          "logical_name": "customer_number",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FNumber",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "customer_name",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FName",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "document_status",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FDocumentStatus",
+            "verification_status": "gate5_metadata_required"
+          }
+        }
+      ]
+    },
+    {
+      "logical_object": "supplier",
+      "candidate_form": {
+        "value": "BD_Supplier",
+        "verification_status": "gate5_metadata_required"
+      },
+      "fields": [
+        {
+          "logical_name": "supplier_number",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FNumber",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "supplier_name",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FName",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "document_status",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FDocumentStatus",
+            "verification_status": "gate5_metadata_required"
+          }
+        }
+      ]
+    },
+    {
+      "logical_object": "sales_order",
+      "candidate_form": {
+        "value": "SAL_SaleOrder",
+        "verification_status": "gate5_metadata_required"
+      },
+      "fields": [
+        {
+          "logical_name": "order_number",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FBillNo",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "customer_number",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FCustId.FNumber",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "order_date",
+          "data_type": "date",
+          "candidate_field": {
+            "value": "FDate",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "total_amount",
+          "data_type": "number",
+          "candidate_field": {
+            "value": "FBillAllAmount",
+            "verification_status": "gate5_metadata_required"
+          }
+        }
+      ]
+    },
+    {
+      "logical_object": "purchase_order",
+      "candidate_form": {
+        "value": "PUR_PurchaseOrder",
+        "verification_status": "gate5_metadata_required"
+      },
+      "fields": [
+        {
+          "logical_name": "order_number",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FBillNo",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "supplier_number",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FProviderId.FNumber",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "order_date",
+          "data_type": "date",
+          "candidate_field": {
+            "value": "FDate",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "total_amount",
+          "data_type": "number",
+          "candidate_field": {
+            "value": "FAllAmount",
+            "verification_status": "gate5_metadata_required"
+          }
+        }
+      ]
+    },
+    {
+      "logical_object": "inventory",
+      "candidate_form": {
+        "value": "STK_Inventory",
+        "verification_status": "gate5_metadata_required"
+      },
+      "fields": [
+        {
+          "logical_name": "material_number",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FMaterialId.FNumber",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "warehouse_number",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FStockId.FNumber",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "base_quantity",
+          "data_type": "number",
+          "candidate_field": {
+            "value": "FBaseQty",
+            "verification_status": "gate5_metadata_required"
+          }
+        }
+      ]
+    },
+    {
+      "logical_object": "receivable",
+      "candidate_form": {
+        "value": "AR_RECEIVEBILL",
+        "verification_status": "gate5_metadata_required"
+      },
+      "fields": [
+        {
+          "logical_name": "bill_number",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FBillNo",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "customer_number",
+          "data_type": "string",
+          "candidate_field": {
+            "value": "FCUSTOMERID.FNumber",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "due_date",
+          "data_type": "date",
+          "candidate_field": {
+            "value": "FENDDATE",
+            "verification_status": "gate5_metadata_required"
+          }
+        },
+        {
+          "logical_name": "open_amount",
+          "data_type": "number",
+          "candidate_field": {
+            "value": "FNOTSETTLEAMOUNTFOR",
+            "verification_status": "gate5_metadata_required"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "schema_version": "2.0",
+  "metric_key": "receivables.balance",
+  "definition_version": "0.1.0",
+  "site_id": "gbos.localhost",
+  "status": "unavailable",
+  "unavailable_reason": "reconciliation_failed",
+  "as_of": "2026-08-06T02:30:00Z",
+  "queried_at": "2026-08-06T02:31:00Z",
+  "window": {
+    "type": "point_in_time",
+    "grain": "instant"
+  },
+  "freshness": {
+    "status": "fresh",
+    "age_seconds": 60,
+    "slo_seconds": 86400
+  },
+  "coverage": {
+    "status": "sufficient",
+    "ratio": 1,
+    "included_count": 3,
+    "total_count": 3
+  },
+  "reconciliation": {
+    "status": "failed",
+    "checked_at": "2026-08-06T02:30:30Z",
+    "reference": "reconciliation-SYNTH-002",
+    "variance": 10
+  },
+  "source_lineage": [
+    {
+      "source_system": "synthetic_kingdee_projection",
+      "source_record_refs": [
+        "receivable-projection-SYNTH-001"
+      ],
+      "retrieved_at": "2026-08-06T02:30:00Z",
+      "transformation_version": "metrics-projection-v1",
+      "evidence_status": "synthetic"
+    }
+  ]
+}

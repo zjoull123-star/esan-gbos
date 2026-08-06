@@ -1,0 +1,14 @@
+{
+  "schema_version": "2.0",
+  "action_verification_id": "action-verification-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "execution_ref": "action-execution-SYNTH-001",
+  "status": "verified",
+  "evidence_refs": [
+    "evidence-SYNTH-003"
+  ],
+  "verified_by": "reviewer@example.invalid",
+  "verified_at": "2026-08-06T01:33:00Z",
+  "result_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "correlation_id": "corr-SYNTH-001"
+}

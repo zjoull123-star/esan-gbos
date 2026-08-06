@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate2/verified-business-fact.schema.json",
+  "title": "VerifiedBusinessFact",
+  "description": "A versioned business fact confirmed from an ExtractedFact proposal by a decision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fact_id",
+    "site_id",
+    "proposal_ref",
+    "proposal_version",
+    "subject_ref",
+    "predicate",
+    "value",
+    "fact_version",
+    "status",
+    "evidence_refs",
+    "confirmation_decision_ref",
+    "valid_time",
+    "recorded_at",
+    "review_status",
+    "source_lineage"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "fact_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "common.schema.json#/$defs/SiteId"
+    },
+    "proposal_ref": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "proposal_version": {
+      "$ref": "common.schema.json#/$defs/Version"
+    },
+    "subject_ref": {
+      "$ref": "https://contracts.esan.example/gbos/v1/extracted-fact.schema.json#/properties/subject_ref"
+    },
+    "predicate": {
+      "$ref": "https://contracts.esan.example/gbos/v1/extracted-fact.schema.json#/properties/predicate"
+    },
+    "value": {
+      "$ref": "https://contracts.esan.example/gbos/v1/extracted-fact.schema.json#/properties/value"
+    },
+    "fact_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "superseded"
+      ]
+    },
+    "evidence_refs": {
+      "$ref": "common.schema.json#/$defs/EvidenceRefs"
+    },
+    "confirmation_decision_ref": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "supersedes_fact_version_ref": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "valid_time": {
+      "$ref": "common.schema.json#/$defs/ValidTime"
+    },
+    "recorded_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "review_status": {
+      "enum": [
+        "human_reviewed",
+        "rule_reviewed"
+      ]
+    },
+    "source_lineage": {
+      "$ref": "common.schema.json#/$defs/SourceLineage"
+    }
+  }
+}

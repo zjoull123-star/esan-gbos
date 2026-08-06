@@ -42,3 +42,23 @@
 - 发现控制失效时先暂停相关连接器、模型或导出开关，保留证据并升级
   owner；不要通过隐藏错误或降级版本来报告绿色状态。
 - 风险接受、例外和残余风险必须有负责人、范围、到期日和回滚条件。
+
+### Gate 2 机器可读处置记录
+
+Gate 2 的 [security-review.json](../evidence/gate2/security-review.json)
+对每个处置强制保存 `risk_id`、`severity`、`owner`、`status`、
+`test_refs`、`evidence_refs` 和 `human_review`。`human_review` 至少包含
+reviewer role、状态与时间；未完成人审时必须明确为 pending。
+
+状态只描述当前 Gate 的处置：
+
+- `controlled_by_disabled_capability`：真实连接/模型/渠道/运行时未启动，
+  对应风险被 Gate 边界阻断，但不表示运行时已经安全。
+- `design_verified`：结构化负向测试验证了 schema/mock 设计控制。
+- `deferred_to_later_gate`：后续 Gate owner 和证据已指定，当前不能放行能力。
+- `open`：没有可接受处置，阻断相应 Gate。
+
+不得把风险 ID、控制名称或 “pass/closed” **字符串**存在当成关闭证据。
+Critical/High 至少需要实际 `test_refs`、`evidence_refs` 和人审字段；如果
+真实能力未启动，只能记录由 disabled boundary 控制，不能声称通过了
+runtime security review。

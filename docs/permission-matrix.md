@@ -1,4 +1,4 @@
-# 权限矩阵（Gate 0/1）
+# 权限矩阵（Gate 0–2）
 
 默认拒绝；所有动作受 `site_id`、数据分类、目的、会话有效期和审计策略
 约束。矩阵定义工程权限，不是对人员是否具备法定授权的结论。
@@ -25,6 +25,26 @@ Legend: **允许** = 仅在列出的条件下；**审批** = 可提交申请但�
 | Reviewer | 仅被分配的 Review Case 及关联只读上下文 | 可按目的查看关联证据，禁止任意浏览 | 可批准/拒绝/标记 superseded | 可签发获授权 ApprovedCommand；不能直接修改业务主体或写 Kingdee | 不改权限/连接；可批准受控导出 |
 | Finance Readonly | Gate 5 只读获治理批准的财务指标/投影及来源时间 | 拒绝原始通信 | 只读相关审核结果 | 仅 Metrics API/只读投影；Kingdee 拒绝写 | 拒绝配置和业务写；财务导出需审批 |
 
+## 服务身份
+
+服务身份不是业务用户，也不能继承 System Manager。所有服务调用均须
+**每请求**验证 issuer、`audience`、`site_id`、`purpose`、最小 `scope`、
+数据分类、资源和过期时间；服务不能把上游 token 直接传给下游，也不能读取
+不属于自身连接的明文凭据。Gate 2 均未启动下列服务身份，只冻结未来边界。
+
+| 服务身份 | 最早 Gate | 允许范围 | 永久或当前拒绝 |
+|---|---:|---|---|
+| `observer-ingest` | 3 | 当前 site 的获批 connector 事件、checkpoint、隔离区及 EvidenceRef | 不确认事实、不创建 Decision/Action/DraftMutation；无业务数据库和 Kingdee 权限 |
+| `context-service` | 3 | 当前 site 的证据、Fact Proposal、实体解析提案、双时间与 provenance；Gate 4 才可保存经决策确认的事实 | 不直连 Frappe/MariaDB；不执行 ApprovedCommand、正式指标或外部副作用 |
+| `agent-runtime` | 4 | 在预算、purpose、分类与工具白名单内读取最小 Context，并提出内部 Action/AI Draft/Work Item | 不直连 Frappe/MariaDB；不外发、不报价、不改 Won/Lost、不建订单；无 Kingdee 权限 |
+| `gbos-bff-service` | 4 | 在委托用户、Review Case、revision、幂等键和 Action Guard 均有效时执行白名单 GBOS 内部命令 | 不浏览 Restricted 原文；不代理任意 DocType/SQL；无 Kingdee 写工具 |
+| `metrics-service` | 5 | 读取已治理 workflow/read projection 并返回带 definition、lineage、freshness、coverage、reconciliation 的指标 | 不读取未确认 Fact/AI Draft，不执行任意 SQL，不把模型估算作为正式 KPI |
+| `kingdee-adapter` | 5 | 使用独立受限身份和 `kingdee-read` scope 查询 metadata 与白名单只读投影 | 无 Kingdee 写工具；不接受 raw Form/字段/SQL/URL，不共享用户或模型 token |
+
+任何服务身份新增 scope、跨 site 访问或外部出站目标，均需要重新更新本矩阵、
+威胁模型、负向测试和变更审批。服务身份不能审批自己的提案，也不能将
+`controlled_by_disabled_capability` 解释为运行时安全已经通过。
+
 ## 不可绕过的限制
 
 - AI、Observer、Support 和 Kingdee connector 没有正式写入或批准工具。
@@ -42,8 +62,14 @@ Legend: **允许** = 仅在列出的条件下；**审批** = 可提交申请但�
 - 角色只在其 `site_id` 生效。跨 site、跨分类或批量导出按紧急流程单独
   审批，不能通过 API 参数伪造绕过。
 
-## 待验证证据
+## 证据状态
 
-Gate 1 需要角色矩阵的正向/负向测试、跨 site 访问拒绝、草稿禁止字段、
-命令幂等/版本检查、break-glass 审计和浏览器缓存检查。文档存在不等于
-这些运行时证据已经通过。
+Gate 1 已通过角色正向/负向、团队隔离、草稿禁止字段、命令幂等/revision、
+浏览器缓存和业务闭环测试；其历史证据受
+[`docs/evidence/SHA256SUMS`](evidence/SHA256SUMS) 保护。break-glass 的真实
+组织演练以及上述服务身份的运行时鉴权仍未开始。
+
+Gate 2 仅验证服务身份、scope、purpose 和默认拒绝的设计契约，所有服务身份
+均未启动。Gate 3–5 必须分别补齐跨 site、audience/resource、token 重放、
+撤销、数据分类、出站控制和审计脱敏的运行证据；文档存在不等于这些未来
+运行时证据已经通过。

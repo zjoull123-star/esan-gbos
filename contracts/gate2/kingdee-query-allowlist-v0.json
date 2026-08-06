@@ -1,0 +1,88 @@
+{
+  "allowlist_version": "0.1.0",
+  "gate": 2,
+  "mode": "mock_only",
+  "network_allowed": false,
+  "credentials_allowed": false,
+  "max_rows": 50,
+  "allowed_request_keys": [
+    "request_id",
+    "site_id",
+    "account_set_ref",
+    "limit",
+    "offset"
+  ],
+  "forbidden_request_keys": [
+    "form",
+    "form_id",
+    "field",
+    "fields",
+    "field_keys",
+    "filter",
+    "filters",
+    "order",
+    "order_by",
+    "sql",
+    "doctype",
+    "url",
+    "host",
+    "method"
+  ],
+  "forbidden_operation_tokens": [
+    "create",
+    "update",
+    "save",
+    "submit",
+    "audit",
+    "unaudit",
+    "delete",
+    "payment",
+    "write",
+    "execute",
+    "push"
+  ],
+  "tools": [
+    {
+      "name": "kingdee.material.get",
+      "logical_object": "material",
+      "mode": "mock_only",
+      "runtime_enabled": false
+    },
+    {
+      "name": "kingdee.customer.get",
+      "logical_object": "customer",
+      "mode": "mock_only",
+      "runtime_enabled": false
+    },
+    {
+      "name": "kingdee.supplier.get",
+      "logical_object": "supplier",
+      "mode": "mock_only",
+      "runtime_enabled": false
+    },
+    {
+      "name": "kingdee.sales_order.get",
+      "logical_object": "sales_order",
+      "mode": "mock_only",
+      "runtime_enabled": false
+    },
+    {
+      "name": "kingdee.purchase_order.get",
+      "logical_object": "purchase_order",
+      "mode": "mock_only",
+      "runtime_enabled": false
+    },
+    {
+      "name": "kingdee.inventory.get",
+      "logical_object": "inventory",
+      "mode": "mock_only",
+      "runtime_enabled": false
+    },
+    {
+      "name": "kingdee.receivable.get",
+      "logical_object": "receivable",
+      "mode": "mock_only",
+      "runtime_enabled": false
+    }
+  ]
+}

@@ -1,0 +1,281 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate2/agent-task.schema.json",
+  "title": "AgentTask",
+  "description": "A durable, budgeted, leased and traceable agent work item.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "site_id",
+    "processing_purpose",
+    "agent_type",
+    "subject",
+    "status",
+    "due_at",
+    "priority",
+    "budget",
+    "attempt",
+    "max_attempts",
+    "versions",
+    "input_evidence_refs",
+    "causation_id",
+    "correlation_id",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "task_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "common.schema.json#/$defs/SiteId"
+    },
+    "processing_purpose": {
+      "$ref": "common.schema.json#/$defs/ProcessingPurpose"
+    },
+    "agent_type": {
+      "type": "string",
+      "enum": [
+        "channel_observer",
+        "entity_resolution",
+        "sales",
+        "purchase",
+        "product_sample",
+        "ceo"
+      ]
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "ref"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "ref": {
+          "$ref": "common.schema.json#/$defs/Identifier"
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "leased",
+        "running",
+        "recheck",
+        "succeeded",
+        "failed",
+        "dead_letter",
+        "cancelled"
+      ]
+    },
+    "due_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "recheck_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "token_limit",
+        "cost_limit_usd",
+        "time_limit_seconds"
+      ],
+      "properties": {
+        "token_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000
+        },
+        "cost_limit_usd": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "time_limit_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800
+        }
+      }
+    },
+    "lease_owner": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "lease_expires_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "max_attempts": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "model",
+        "prompt",
+        "tools"
+      ],
+      "properties": {
+        "policy": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "model": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "prompt": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "tools": {
+          "$ref": "common.schema.json#/$defs/Version"
+        }
+      }
+    },
+    "input_evidence_refs": {
+      "$ref": "common.schema.json#/$defs/EvidenceRefs"
+    },
+    "output_artifact_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/Identifier"
+      }
+    },
+    "failure_classification": {
+      "type": "string",
+      "enum": [
+        "budget_exhausted",
+        "policy_denied",
+        "tool_failure",
+        "invalid_output",
+        "dependency",
+        "internal"
+      ]
+    },
+    "parent_task_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "causation_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "correlation_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "created_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "updated_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    }
+  },
+  "dependentRequired": {
+    "lease_owner": [
+      "lease_expires_at"
+    ],
+    "lease_expires_at": [
+      "lease_owner"
+    ]
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "leased",
+              "running"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "lease_owner",
+          "lease_expires_at"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "succeeded",
+              "failed",
+              "dead_letter",
+              "cancelled"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "lease_owner"
+              ]
+            },
+            {
+              "required": [
+                "lease_expires_at"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "failed",
+              "dead_letter"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "failure_classification"
+        ]
+      }
+    }
+  ]
+}

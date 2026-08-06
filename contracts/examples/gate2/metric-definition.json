@@ -1,0 +1,36 @@
+{
+  "schema_version": "2.0",
+  "metric_key": "sales.order_value",
+  "display_name": "Sales order value",
+  "description": "Sum of governed sales order value for the selected calendar window.",
+  "definition_version": "0.1.0",
+  "owner": "finance-operations",
+  "unit": "CNY",
+  "aggregation": "sum",
+  "window": {
+    "type": "calendar",
+    "grain": "month"
+  },
+  "source_lineage": [
+    {
+      "source_system": "synthetic_kingdee_projection",
+      "source_record_refs": [
+        "sales-order-projection-SYNTH-001"
+      ],
+      "retrieved_at": "2026-08-06T02:30:00Z",
+      "transformation_version": "metrics-projection-v1",
+      "evidence_status": "synthetic"
+    }
+  ],
+  "exclusions": [
+    "Cancelled synthetic orders"
+  ],
+  "reconciliation": {
+    "method": "Compare aggregate with the governed source projection total.",
+    "owner": "finance-operations",
+    "tolerance": 0.01
+  },
+  "freshness_slo_seconds": 86400,
+  "effective_at": "2026-08-06T00:00:00Z",
+  "data_classification": "Confidential"
+}

@@ -11,10 +11,13 @@ and
 
 ## Contracts
 
+### Frozen Gate 0/1 primitives
+
 - `CanonicalObservationEvent`: immutable, channel-neutral ingestion envelope.
 - `EvidenceRef`: tamper-evident pointer to a source message, recording span, or
   document page.
-- `ExtractedFact`: typed statement with confidence, provenance, and evidence.
+- `ExtractedFact`: typed Fact Proposal with confidence, provenance, and
+  evidence. It remains a proposal and is not a verified business fact.
 - `DraftMutation`: policy-constrained create/update that can only produce an
   internal `AI Draft`.
 - `ApprovedCommand`: human-authorized, idempotent internal state transition.
@@ -23,6 +26,43 @@ and
   declares its concrete response DTO and the real Frappe HTTP wire wrapper
   (`{"message": {"data": ..., "meta": ...}}` or
   `{"message": {"error": ...}}`).
+
+The six `*.schema.json` primitives above remain at schema version `1.0`.
+Gate 2 does not add required fields to them.
+
+### Gate 2 aggregate contracts
+
+- `common.schema.json`: shared definitions for identifiers, temporal fields,
+  evidence, lineage, metrics and the internal Action allow-list.
+- `EvidenceRecord`: governed aggregate around a nested v1 `EvidenceRef`.
+  `EvidenceRef` remains the immutable pointer.
+- `VerifiedBusinessFact`: confirmed, versioned fact tied to evidence and the
+  decision that confirmed it.
+- `ConflictRecord`: retained fact-version conflict with explicit resolution
+  metadata.
+- `DecisionRecord`: versioned human/rule decision over named fact versions.
+- `ActionProposal`, `ActionApproval`, `ActionExecution`, and
+  `ActionVerification`: distinct records in the internal Action lifecycle.
+  `ActionApproval` is a review outcome, not an `ApprovedCommand`; execution
+  must reference both.
+- `AgentTask` and `AgentTimelineEvent`: durable budget/lease/retry work and its
+  append-only audit timeline.
+- `MetricDefinition` and `MetricResponse`: governed KPI definition and
+  available/unavailable response with freshness, coverage, reconciliation and
+  source lineage.
+- `KingdeeReadProjection`: separately owned synthetic read-only projection
+  envelope. Gate 2 performs no real Kingdee query.
+
+Gate 2 semantic manifests are under `contracts/gate2/`:
+
+- `contract-evolution-matrix.json` freezes reuse/extend/new decisions.
+- `context-ontology-v0.json` freezes Context node/relation allow-lists and
+  provenance constraints for a PostgreSQL projection.
+- `metrics-registry-v0.json` contains governed synthetic metric definitions.
+- `services-v1.openapi.json` describes typed, versioned design-only service
+  operations. It is not a running service.
+
+Canonical synthetic examples are under `contracts/examples/gate2/`.
 
 ## Cross-record uniqueness
 
@@ -37,6 +77,10 @@ The schemas validate wire shapes. Storage adapters must additionally enforce:
 
 The observation store owns event/checkpoint uniqueness. Frappe owns
 idempotency for business commands and External Crosswalk uniqueness.
+Agent Timeline monotonicity, aggregate uniqueness, Action stage ordering, and
+`attempt <= max_attempts` are cross-record or cross-field service/storage
+invariants exercised by Python tests; the individual JSON Schemas do not claim
+to enforce them.
 
 ## Trust boundary
 
@@ -47,24 +91,19 @@ idempotency for business commands and External Crosswalk uniqueness.
   authenticated human, Review Case, expected revision, and payload digest.
 - No schema or scope in Gate 0/1 enables a Kingdee write.
 
-## Gate 2 planned contract evolution
+## Gate 2 capability boundary
 
-Gate 2 must add or extend contracts for:
-
-- durable Agent Task, lease/budget/retry and Agent Timeline;
-- Evidence Record aggregation, Fact Proposal/version, Conflict and Decision;
-- Action Proposal/Approval/Execution/Verification;
-- Metrics response, definition version, source, `as_of`, freshness, coverage,
-  reconciliation and unavailable reason;
-- Kingdee white-listed read projection, query budget and Crosswalk.
-
-Before adding a schema, Gate 2 must map it to the existing six contracts and
-prove that it is not a semantic duplicate. These are planned contracts, not
-Gate 0/1 runtime capabilities. Gate 2–4 Kingdee adapters remain mock-only and
-must make zero real network calls.
+These frozen documents are design contracts, not Gate 0/1 runtime
+capabilities. They do not start Agent, Context, Decision, Metrics, MCP or
+Kingdee services. Gate 2–4 Kingdee adapters remain mock-only and must make zero
+real network or credential calls. No Action contract admits an external side
+effect or Kingdee mutation.
 
 Run contract validation with:
 
 ```bash
 uv run --group dev pytest tests/contracts
 ```
+
+The validators build a local `referencing.Registry` from repository
+`*.schema.json` files. Remote schema retrieval is not configured or permitted.

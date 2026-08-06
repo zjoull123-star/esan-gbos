@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate2/evidence-record.schema.json",
+  "title": "EvidenceRecord",
+  "description": "A governed aggregate around an immutable EvidenceRef pointer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_record_id",
+    "site_id",
+    "processing_purpose",
+    "evidence_ref",
+    "source_lineage",
+    "data_classification",
+    "review_status",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "evidence_record_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "common.schema.json#/$defs/SiteId"
+    },
+    "processing_purpose": {
+      "$ref": "common.schema.json#/$defs/ProcessingPurpose"
+    },
+    "evidence_ref": {
+      "$ref": "https://contracts.esan.example/gbos/v1/evidence-ref.schema.json"
+    },
+    "source_lineage": {
+      "$ref": "common.schema.json#/$defs/SourceLineage"
+    },
+    "data_classification": {
+      "$ref": "common.schema.json#/$defs/DataClassification"
+    },
+    "review_status": {
+      "$ref": "common.schema.json#/$defs/ReviewStatus"
+    },
+    "recorded_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    }
+  }
+}

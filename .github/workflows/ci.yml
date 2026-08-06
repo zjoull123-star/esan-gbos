@@ -76,7 +76,8 @@ jobs:
             apps/esan_gbos/esan_gbos/domain \
             services/observer/contract_check.py \
             fixtures/gate1/generate.py \
-            fixtures/kingdee/gate1/mock.py 2>&1 | \
+            fixtures/kingdee/gate1/mock.py \
+            fixtures/kingdee/gate2/adapter.py 2>&1 | \
             tee -a "${RUNNER_TEMP}/gate-logs/python-static.log"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()

@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/v1/kingdee-read-projection.schema.json",
+  "title": "KingdeeReadProjection",
+  "description": "A governed, read-only Kingdee projection envelope. Gate 2 instances are deterministic synthetic mocks and do not establish live capability.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "projection_id",
+    "site_id",
+    "account_set_ref",
+    "logical_object",
+    "tool_name",
+    "source_system",
+    "mode",
+    "synthetic",
+    "dictionary_version",
+    "allowlist_version",
+    "crosswalk_status",
+    "evidence_status",
+    "query_time",
+    "rows",
+    "page",
+    "controls"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "projection_id": {
+      "type": "string",
+      "pattern": "^projection-gate2-[a-z0-9_-]+$",
+      "maxLength": 256
+    },
+    "site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140
+    },
+    "account_set_ref": {
+      "type": "string",
+      "pattern": "^account-set-synthetic-[a-z0-9_-]+$",
+      "maxLength": 256
+    },
+    "logical_object": {
+      "type": "string",
+      "enum": [
+        "material",
+        "customer",
+        "supplier",
+        "sales_order",
+        "purchase_order",
+        "inventory",
+        "receivable"
+      ]
+    },
+    "tool_name": {
+      "type": "string",
+      "enum": [
+        "kingdee.material.get",
+        "kingdee.customer.get",
+        "kingdee.supplier.get",
+        "kingdee.sales_order.get",
+        "kingdee.purchase_order.get",
+        "kingdee.inventory.get",
+        "kingdee.receivable.get"
+      ]
+    },
+    "source_system": {
+      "const": "kingdee-gate2-synthetic"
+    },
+    "mode": {
+      "const": "mock_only"
+    },
+    "synthetic": {
+      "const": true
+    },
+    "dictionary_version": {
+      "const": "0.1.0"
+    },
+    "allowlist_version": {
+      "const": "0.1.0"
+    },
+    "crosswalk_status": {
+      "const": "synthetic_only"
+    },
+    "evidence_status": {
+      "const": "synthetic_fixture_only"
+    },
+    "query_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rows": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "record_ref",
+          "synthetic",
+          "values"
+        ],
+        "properties": {
+          "record_ref": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*-synthetic-[0-9]{4}$",
+            "maxLength": 256
+          },
+          "synthetic": {
+            "const": true
+          },
+          "values": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {
+              "pattern": "^[a-z][a-z0-9_]{1,79}$"
+            },
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "integer",
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "limit",
+        "offset",
+        "returned_rows",
+        "has_more"
+      ],
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "returned_rows": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      }
+    },
+    "controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network_allowed",
+        "network_calls",
+        "credentials_allowed",
+        "credentials_accessed",
+        "subprocess_calls"
+      ],
+      "properties": {
+        "network_allowed": {
+          "const": false
+        },
+        "network_calls": {
+          "const": 0
+        },
+        "credentials_allowed": {
+          "const": false
+        },
+        "credentials_accessed": {
+          "const": false
+        },
+        "subprocess_calls": {
+          "const": 0
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "kingdee.material.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "logical_object": {
+            "const": "material"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "kingdee.customer.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "logical_object": {
+            "const": "customer"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "kingdee.supplier.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "logical_object": {
+            "const": "supplier"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "kingdee.sales_order.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "logical_object": {
+            "const": "sales_order"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "kingdee.purchase_order.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "logical_object": {
+            "const": "purchase_order"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "kingdee.inventory.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "logical_object": {
+            "const": "inventory"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "kingdee.receivable.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "logical_object": {
+            "const": "receivable"
+          }
+        }
+      }
+    }
+  ]
+}

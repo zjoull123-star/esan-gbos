@@ -1,0 +1,123 @@
+{
+  "schema_version": "2.0",
+  "gate": 2,
+  "entries": [
+    {
+      "concept": "Canonical Observation",
+      "contract": "CanonicalObservationEvent",
+      "strategy": "reuse",
+      "rationale": "The frozen v1 channel-neutral ingestion envelope remains authoritative."
+    },
+    {
+      "concept": "Evidence Pointer",
+      "contract": "EvidenceRef",
+      "strategy": "reuse",
+      "rationale": "EvidenceRef remains the immutable pointer to a source span and is not an aggregate record."
+    },
+    {
+      "concept": "Fact Proposal",
+      "contract": "ExtractedFact",
+      "strategy": "reuse",
+      "rationale": "ExtractedFact already expresses a proposed, evidence-backed model statement."
+    },
+    {
+      "concept": "AI Draft Mutation",
+      "contract": "DraftMutation",
+      "strategy": "reuse",
+      "rationale": "The frozen v1 draft-only mutation remains constrained to internal AI Draft records."
+    },
+    {
+      "concept": "Approved Internal Command",
+      "contract": "ApprovedCommand",
+      "strategy": "reuse",
+      "rationale": "The frozen v1 command remains the human-authorized internal execution boundary."
+    },
+    {
+      "concept": "Connector Checkpoint",
+      "contract": "ConnectorCheckpoint",
+      "strategy": "reuse",
+      "rationale": "The frozen v1 cursor, replay and connector lease contract remains sufficient."
+    },
+    {
+      "concept": "Evidence Record",
+      "contract": "EvidenceRecord",
+      "strategy": "new",
+      "rationale": "A governed aggregate is needed around, but does not replace, the EvidenceRef pointer."
+    },
+    {
+      "concept": "Verified Business Fact",
+      "contract": "VerifiedBusinessFact",
+      "strategy": "new",
+      "rationale": "Confirmed versioned facts are semantically distinct from ExtractedFact proposals."
+    },
+    {
+      "concept": "Conflict Record",
+      "contract": "ConflictRecord",
+      "strategy": "new",
+      "rationale": "Conflicting fact versions must be retained and explicitly resolved."
+    },
+    {
+      "concept": "Decision Record",
+      "contract": "DecisionRecord",
+      "strategy": "new",
+      "rationale": "Decision inputs, operator, basis, outcome and effective time need a traceable record."
+    },
+    {
+      "concept": "Action Proposal",
+      "contract": "ActionProposal",
+      "strategy": "new",
+      "rationale": "A proposal precedes human review and cannot execute an ApprovedCommand."
+    },
+    {
+      "concept": "Action Approval",
+      "contract": "ActionApproval",
+      "strategy": "new",
+      "semantically_distinct_from": [
+        "ApprovedCommand"
+      ],
+      "rationale": "Approval records the human review outcome; ApprovedCommand remains the separate executable internal command."
+    },
+    {
+      "concept": "Action Execution",
+      "contract": "ActionExecution",
+      "strategy": "new",
+      "rationale": "Execution lifecycle and outcome are distinct from proposal, approval and command authorization."
+    },
+    {
+      "concept": "Action Verification",
+      "contract": "ActionVerification",
+      "strategy": "new",
+      "rationale": "Post-execution evidence is required before an action chain can be considered verified."
+    },
+    {
+      "concept": "Agent Task",
+      "contract": "AgentTask",
+      "strategy": "new",
+      "rationale": "Durable agent work needs budget, lease, retry, version and causal metadata."
+    },
+    {
+      "concept": "Agent Timeline Event",
+      "contract": "AgentTimelineEvent",
+      "strategy": "new",
+      "rationale": "Append-only lifecycle events provide task recovery and audit history."
+    },
+    {
+      "concept": "Metric Definition",
+      "contract": "MetricDefinition",
+      "strategy": "new",
+      "rationale": "Official KPI ownership, window, unit, lineage, exclusions and reconciliation need governance."
+    },
+    {
+      "concept": "Metric Response",
+      "contract": "MetricResponse",
+      "strategy": "new",
+      "rationale": "Official values must carry definition version, freshness, coverage, reconciliation and lineage."
+    },
+    {
+      "concept": "Kingdee Read Projection",
+      "contract": "KingdeeReadProjection",
+      "strategy": "new",
+      "rationale": "A synthetic, governed read envelope is needed without enabling a generic form, SQL or writer surface."
+    }
+  ]
+}

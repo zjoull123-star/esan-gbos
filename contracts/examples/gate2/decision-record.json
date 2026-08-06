@@ -1,0 +1,19 @@
+{
+  "schema_version": "2.0",
+  "decision_id": "decision-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "decision_version": "1.0",
+  "decision_type": "human",
+  "input_fact_versions": [
+    "verified-fact-SYNTH-001:v1"
+  ],
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "operator": "reviewer@example.invalid",
+  "decision_basis": "Synthetic evidence was reviewed and accepted for contract validation.",
+  "outcome": "Confirm the requested quantity fact.",
+  "effective_at": "2026-08-06T01:20:00Z",
+  "recorded_at": "2026-08-06T01:20:01Z",
+  "review_status": "human_reviewed"
+}

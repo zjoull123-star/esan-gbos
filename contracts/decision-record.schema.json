@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate2/decision-record.schema.json",
+  "title": "DecisionRecord",
+  "description": "A traceable human or rule decision over explicit fact versions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision_id",
+    "site_id",
+    "decision_version",
+    "decision_type",
+    "input_fact_versions",
+    "evidence_refs",
+    "operator",
+    "decision_basis",
+    "outcome",
+    "effective_at",
+    "recorded_at",
+    "review_status"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "decision_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "common.schema.json#/$defs/SiteId"
+    },
+    "decision_version": {
+      "$ref": "common.schema.json#/$defs/Version"
+    },
+    "decision_type": {
+      "type": "string",
+      "enum": [
+        "human",
+        "rule"
+      ]
+    },
+    "input_fact_versions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/Identifier"
+      }
+    },
+    "evidence_refs": {
+      "$ref": "common.schema.json#/$defs/EvidenceRefs"
+    },
+    "operator": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 320
+    },
+    "rule_version": {
+      "$ref": "common.schema.json#/$defs/Version"
+    },
+    "model_version": {
+      "$ref": "common.schema.json#/$defs/Version"
+    },
+    "decision_basis": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "outcome": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "effective_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "recorded_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "review_status": {
+      "enum": [
+        "human_reviewed",
+        "rule_reviewed"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision_type": {
+            "const": "rule"
+          }
+        },
+        "required": [
+          "decision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "rule_version"
+        ]
+      }
+    }
+  ]
+}

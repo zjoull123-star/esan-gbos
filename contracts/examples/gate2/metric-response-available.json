@@ -1,0 +1,45 @@
+{
+  "schema_version": "2.0",
+  "metric_key": "sales.order_value",
+  "definition_version": "0.1.0",
+  "site_id": "gbos.localhost",
+  "status": "available",
+  "value": 125000,
+  "unit": "CNY",
+  "as_of": "2026-08-06T02:30:00Z",
+  "queried_at": "2026-08-06T02:31:00Z",
+  "window": {
+    "type": "calendar",
+    "grain": "month",
+    "start": "2026-08-01T00:00:00Z",
+    "end": "2026-09-01T00:00:00Z"
+  },
+  "freshness": {
+    "status": "fresh",
+    "age_seconds": 60,
+    "slo_seconds": 86400
+  },
+  "coverage": {
+    "status": "sufficient",
+    "ratio": 1,
+    "included_count": 4,
+    "total_count": 4
+  },
+  "reconciliation": {
+    "status": "passed",
+    "checked_at": "2026-08-06T02:30:30Z",
+    "reference": "reconciliation-SYNTH-001",
+    "variance": 0
+  },
+  "source_lineage": [
+    {
+      "source_system": "synthetic_kingdee_projection",
+      "source_record_refs": [
+        "sales-order-projection-SYNTH-001"
+      ],
+      "retrieved_at": "2026-08-06T02:30:00Z",
+      "transformation_version": "metrics-projection-v1",
+      "evidence_status": "synthetic"
+    }
+  ]
+}

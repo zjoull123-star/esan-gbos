@@ -1,0 +1,14 @@
+{
+  "schema_version": "2.0",
+  "action_approval_id": "action-approval-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "proposal_ref": "action-proposal-SYNTH-001",
+  "action_type": "internal.work_item.transition",
+  "status": "approved",
+  "human_reviewer": "reviewer@example.invalid",
+  "review_case_ref": "GBRC-SYNTH-001",
+  "payload_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "decision_basis": "Synthetic human approval for contract validation only.",
+  "reviewed_at": "2026-08-06T01:31:00Z",
+  "correlation_id": "corr-SYNTH-001"
+}

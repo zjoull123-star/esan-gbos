@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate2/action-verification.schema.json",
+  "title": "ActionVerification",
+  "description": "Post-execution verification tied to evidence and an execution record.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "action_verification_id",
+    "site_id",
+    "execution_ref",
+    "status",
+    "evidence_refs",
+    "verified_by",
+    "verified_at",
+    "result_digest",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "action_verification_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "common.schema.json#/$defs/SiteId"
+    },
+    "execution_ref": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "verified",
+        "failed",
+        "requires_review"
+      ]
+    },
+    "evidence_refs": {
+      "$ref": "common.schema.json#/$defs/EvidenceRefs"
+    },
+    "verified_by": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 320
+    },
+    "verified_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "result_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "correlation_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    }
+  }
+}

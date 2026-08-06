@@ -1,0 +1,325 @@
+{
+  "ontology_version": "0.1.0",
+  "gate": 2,
+  "storage_projection": "postgresql",
+  "dedicated_graph_runtime_enabled": false,
+  "node_types": [
+    "Customer",
+    "Supplier",
+    "Contact",
+    "InternalUser",
+    "CommunicationEvent",
+    "Requirement",
+    "Opportunity",
+    "Product",
+    "ProductSpecification",
+    "SampleRequest",
+    "Quotation",
+    "SalesOrder",
+    "PurchaseRequirement",
+    "SupplierQuotation",
+    "PurchaseOrder",
+    "Shipment",
+    "Receivable",
+    "RiskSignal",
+    "Evidence",
+    "Decision",
+    "ActionProposal",
+    "ActionExecution"
+  ],
+  "relation_types": [
+    "WORKS_AT",
+    "COMMUNICATED_WITH",
+    "EXPRESSES_REQUIREMENT",
+    "RELATES_TO",
+    "REQUESTED_SAMPLE",
+    "QUOTED_IN",
+    "CONVERTED_TO",
+    "SUPPLIED_BY",
+    "DEPENDS_ON",
+    "IMPACTS",
+    "SUPPORTED_BY",
+    "CONTRADICTS",
+    "SUPERSEDES",
+    "DERIVED_FROM",
+    "CAUSED",
+    "INFLUENCED",
+    "APPROVED_BY",
+    "EXECUTED_AS"
+  ],
+  "relation_definitions": [
+    {
+      "relation_type": "WORKS_AT",
+      "source_types": [
+        "Contact",
+        "InternalUser"
+      ],
+      "target_types": [
+        "Customer",
+        "Supplier"
+      ]
+    },
+    {
+      "relation_type": "COMMUNICATED_WITH",
+      "source_types": [
+        "Contact",
+        "InternalUser"
+      ],
+      "target_types": [
+        "Contact",
+        "InternalUser"
+      ]
+    },
+    {
+      "relation_type": "EXPRESSES_REQUIREMENT",
+      "source_types": [
+        "Customer",
+        "Contact",
+        "CommunicationEvent"
+      ],
+      "target_types": [
+        "Requirement"
+      ]
+    },
+    {
+      "relation_type": "RELATES_TO",
+      "source_types": [
+        "CommunicationEvent",
+        "Requirement",
+        "Opportunity",
+        "RiskSignal",
+        "Evidence",
+        "Decision",
+        "ActionProposal"
+      ],
+      "target_types": [
+        "Customer",
+        "Supplier",
+        "Contact",
+        "Product",
+        "Opportunity",
+        "SalesOrder",
+        "PurchaseOrder",
+        "Shipment",
+        "Receivable"
+      ]
+    },
+    {
+      "relation_type": "REQUESTED_SAMPLE",
+      "source_types": [
+        "Customer",
+        "Contact",
+        "Opportunity"
+      ],
+      "target_types": [
+        "SampleRequest"
+      ]
+    },
+    {
+      "relation_type": "QUOTED_IN",
+      "source_types": [
+        "Product",
+        "ProductSpecification",
+        "SampleRequest",
+        "Opportunity"
+      ],
+      "target_types": [
+        "Quotation",
+        "SupplierQuotation"
+      ]
+    },
+    {
+      "relation_type": "CONVERTED_TO",
+      "source_types": [
+        "Opportunity",
+        "Quotation",
+        "SupplierQuotation",
+        "PurchaseRequirement"
+      ],
+      "target_types": [
+        "SalesOrder",
+        "PurchaseOrder"
+      ]
+    },
+    {
+      "relation_type": "SUPPLIED_BY",
+      "source_types": [
+        "Product",
+        "ProductSpecification"
+      ],
+      "target_types": [
+        "Supplier"
+      ]
+    },
+    {
+      "relation_type": "DEPENDS_ON",
+      "source_types": [
+        "Requirement",
+        "Opportunity",
+        "Product",
+        "ProductSpecification",
+        "SampleRequest",
+        "PurchaseRequirement",
+        "SalesOrder",
+        "PurchaseOrder",
+        "Shipment"
+      ],
+      "target_types": [
+        "Requirement",
+        "Product",
+        "ProductSpecification",
+        "SampleRequest",
+        "PurchaseRequirement",
+        "PurchaseOrder",
+        "Shipment"
+      ]
+    },
+    {
+      "relation_type": "IMPACTS",
+      "source_types": [
+        "RiskSignal",
+        "Requirement",
+        "Shipment",
+        "Receivable"
+      ],
+      "target_types": [
+        "Opportunity",
+        "SalesOrder",
+        "PurchaseOrder",
+        "Shipment",
+        "Receivable"
+      ]
+    },
+    {
+      "relation_type": "SUPPORTED_BY",
+      "source_types": [
+        "Requirement",
+        "Opportunity",
+        "ProductSpecification",
+        "RiskSignal",
+        "Decision",
+        "ActionProposal"
+      ],
+      "target_types": [
+        "Evidence"
+      ]
+    },
+    {
+      "relation_type": "CONTRADICTS",
+      "source_types": [
+        "Evidence",
+        "Requirement",
+        "ProductSpecification",
+        "Decision"
+      ],
+      "target_types": [
+        "Evidence",
+        "Requirement",
+        "ProductSpecification",
+        "Decision"
+      ]
+    },
+    {
+      "relation_type": "SUPERSEDES",
+      "source_types": [
+        "Evidence",
+        "Requirement",
+        "ProductSpecification",
+        "Decision",
+        "ActionProposal"
+      ],
+      "target_types": [
+        "Evidence",
+        "Requirement",
+        "ProductSpecification",
+        "Decision",
+        "ActionProposal"
+      ]
+    },
+    {
+      "relation_type": "DERIVED_FROM",
+      "source_types": [
+        "Evidence",
+        "Requirement",
+        "RiskSignal",
+        "Decision",
+        "ActionProposal"
+      ],
+      "target_types": [
+        "Evidence",
+        "CommunicationEvent",
+        "Requirement",
+        "Decision"
+      ]
+    },
+    {
+      "relation_type": "CAUSED",
+      "source_types": [
+        "CommunicationEvent",
+        "Decision",
+        "ActionProposal",
+        "RiskSignal"
+      ],
+      "target_types": [
+        "Opportunity",
+        "RiskSignal",
+        "Decision",
+        "ActionProposal"
+      ]
+    },
+    {
+      "relation_type": "INFLUENCED",
+      "source_types": [
+        "CommunicationEvent",
+        "Requirement",
+        "Evidence",
+        "RiskSignal"
+      ],
+      "target_types": [
+        "Opportunity",
+        "Decision",
+        "ActionProposal"
+      ]
+    },
+    {
+      "relation_type": "APPROVED_BY",
+      "source_types": [
+        "Decision",
+        "ActionProposal"
+      ],
+      "target_types": [
+        "InternalUser"
+      ]
+    },
+    {
+      "relation_type": "EXECUTED_AS",
+      "source_types": [
+        "ActionProposal"
+      ],
+      "target_types": [
+        "ActionExecution"
+      ]
+    }
+  ],
+  "relation_constraints": {
+    "required_properties": [
+      "site_id",
+      "valid_time",
+      "recorded_at",
+      "source_system",
+      "evidence_refs",
+      "confidence",
+      "status"
+    ],
+    "vector_similarity_creates_formal_relation": false,
+    "uncertain_entity_merge": "review_case_required",
+    "cross_site_relations_allowed": false,
+    "provenance_alignment": "W3C PROV-O"
+  },
+  "runtime_semantics": {
+    "schema_validates_individual_record_shape": true,
+    "cross_record_uniqueness_enforced_by_storage": true,
+    "monotonic_timeline_enforced_by_service": true,
+    "action_stage_order_enforced_by_service": true
+  }
+}

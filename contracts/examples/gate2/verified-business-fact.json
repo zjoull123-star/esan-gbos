@@ -1,0 +1,36 @@
+{
+  "schema_version": "2.0",
+  "fact_id": "verified-fact-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "proposal_ref": "fact-SYNTH-001",
+  "proposal_version": "1.0",
+  "subject_ref": "opportunity-SYNTH-001",
+  "predicate": "requested_quantity",
+  "value": {
+    "type": "number",
+    "number": 1000,
+    "unit": "pcs"
+  },
+  "fact_version": 1,
+  "status": "confirmed",
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "confirmation_decision_ref": "decision-SYNTH-001",
+  "valid_time": {
+    "start": "2026-08-06T00:50:00Z",
+    "end": null
+  },
+  "recorded_at": "2026-08-06T01:10:00Z",
+  "review_status": "human_reviewed",
+  "source_lineage": {
+    "source_system": "context_decision_service",
+    "source_record_refs": [
+      "fact-SYNTH-001",
+      "decision-SYNTH-001"
+    ],
+    "retrieved_at": "2026-08-06T01:10:00Z",
+    "transformation_version": "fact-confirmation-v1",
+    "evidence_status": "synthetic"
+  }
+}

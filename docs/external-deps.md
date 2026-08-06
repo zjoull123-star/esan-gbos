@@ -28,3 +28,20 @@
 No row authorizes production. Changing an owner, status, gate, or evidence link
 requires a reviewed change and must not introduce credentials or raw business
 exports into the repository.
+
+## Gate 2 capability ledger
+
+该表只记录 Gate 2 的真实能力状态。`not_started` 表示后续 Gate 仍需单独
+实现和验证；`not_applicable` 表示该能力不属于 Gate 2 的可执行范围。
+
+| Capability | Gate 2 status | Owner | Required next evidence |
+|---|---|---|---|
+| real connector | `not_started` | Observer | Gate 3 provider authorization, replay, consent and isolation tests |
+| real model | `not_started` | AI governance | Gate 3/4 DPA, redaction, evaluation, budget and human-review evidence |
+| production channel | `not_started` | Observer/Privacy | Gate 3 approved channel, account and retention evidence |
+| Kingdee live access | `not_started` | ERP integration | Gate 5 least-privilege auth, metadata, read query and audit evidence |
+| cloud runtime | `not_started` | Platform/Security | Gate 5 Singapore preproduction security, privacy and recovery evidence |
+| production deployment | `not_applicable` | Release owner | Gate 6 Go/No-Go, monitoring, backup/DR, UAT and rollback evidence |
+
+Gate 2 只验证 design/schema/synthetic example/mock。所有真实凭据、网络、
+业务数据、外部 writer、云部署和 production 开关保持关闭。

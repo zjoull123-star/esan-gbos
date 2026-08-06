@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate2/agent-timeline-event.schema.json",
+  "title": "AgentTimelineEvent",
+  "description": "One append-only Agent Task lifecycle event; ordering is a cross-record invariant.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "timeline_event_id",
+    "task_id",
+    "site_id",
+    "sequence",
+    "event_type",
+    "occurred_at",
+    "actor_type",
+    "causation_id",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "timeline_event_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "task_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "common.schema.json#/$defs/SiteId"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "created",
+        "leased",
+        "started",
+        "recheck_scheduled",
+        "budget_updated",
+        "artifact_produced",
+        "succeeded",
+        "failed",
+        "dead_lettered",
+        "cancelled"
+      ]
+    },
+    "occurred_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "actor_type": {
+      "type": "string",
+      "enum": [
+        "system",
+        "worker",
+        "human",
+        "policy"
+      ]
+    },
+    "actor_ref": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "artifact_ref": {
+          "$ref": "common.schema.json#/$defs/Identifier"
+        },
+        "failure_classification": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "causation_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "correlation_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    }
+  }
+}

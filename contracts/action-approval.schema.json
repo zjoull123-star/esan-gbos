@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate2/action-approval.schema.json",
+  "title": "ActionApproval",
+  "description": "A human review outcome for an ActionProposal; it is not an ApprovedCommand.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "action_approval_id",
+    "site_id",
+    "proposal_ref",
+    "action_type",
+    "status",
+    "human_reviewer",
+    "review_case_ref",
+    "payload_digest",
+    "decision_basis",
+    "reviewed_at",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "action_approval_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "common.schema.json#/$defs/SiteId"
+    },
+    "proposal_ref": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "action_type": {
+      "$ref": "common.schema.json#/$defs/ActionType"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "rejected"
+      ]
+    },
+    "human_reviewer": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 320
+    },
+    "review_case_ref": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "payload_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "decision_basis": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "reviewed_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "correlation_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    }
+  }
+}

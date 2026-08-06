@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate2/conflict-record.schema.json",
+  "title": "ConflictRecord",
+  "description": "An explicit conflict between retained fact versions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "conflict_id",
+    "site_id",
+    "fact_version_refs",
+    "status",
+    "evidence_refs",
+    "detected_at",
+    "recorded_at",
+    "review_status"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "conflict_id": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "common.schema.json#/$defs/SiteId"
+    },
+    "fact_version_refs": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/Identifier"
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "resolved",
+        "dismissed"
+      ]
+    },
+    "evidence_refs": {
+      "$ref": "common.schema.json#/$defs/EvidenceRefs"
+    },
+    "detected_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "recorded_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "review_status": {
+      "$ref": "common.schema.json#/$defs/ReviewStatus"
+    },
+    "resolved_by": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 320
+    },
+    "resolution_basis": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "resolution_decision_ref": {
+      "$ref": "common.schema.json#/$defs/Identifier"
+    },
+    "resolved_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "resolved"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "resolved_by",
+          "resolution_basis",
+          "resolution_decision_ref",
+          "resolved_at"
+        ]
+      }
+    }
+  ]
+}

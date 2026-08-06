@@ -1,0 +1,17 @@
+{
+  "schema_version": "2.0",
+  "action_execution_id": "action-execution-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "proposal_ref": "action-proposal-SYNTH-001",
+  "approval_ref": "action-approval-SYNTH-001",
+  "approved_command_ref": "command-SYNTH-001",
+  "approval_status_snapshot": "approved",
+  "action_type": "internal.work_item.transition",
+  "payload_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "status": "succeeded",
+  "idempotency_key": "action-SYNTH-001",
+  "started_at": "2026-08-06T01:32:00Z",
+  "completed_at": "2026-08-06T01:32:01Z",
+  "output_artifact_ref": "artifact-SYNTH-001",
+  "correlation_id": "corr-SYNTH-001"
+}
