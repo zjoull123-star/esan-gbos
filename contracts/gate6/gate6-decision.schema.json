@@ -1,0 +1,516 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.esan.example/contracts/gate6/gate6-decision.schema.json",
+  "title": "GBOS Gate 6 Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision_id",
+    "evaluated_at",
+    "release_candidate",
+    "areas",
+    "decision",
+    "production_mutation_authorized",
+    "production_approvers",
+    "missing_entry_inputs",
+    "external_activity",
+    "evidence_refs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "decision_id": {
+      "type": "string",
+      "pattern": "^G6-[a-z0-9][a-z0-9-]{7,63}$"
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "release_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_commit",
+        "release_manifest_sha256",
+        "image_digest",
+        "environment"
+      ],
+      "properties": {
+        "source_commit": {
+          "$ref": "#/$defs/sha1"
+        },
+        "release_manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "image_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "environment": {
+          "enum": [
+            "local_validation",
+            "preproduction",
+            "production"
+          ]
+        }
+      }
+    },
+    "areas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "local_runtime",
+        "preproduction",
+        "kingdee_canary",
+        "security",
+        "privacy_cross_border",
+        "uat",
+        "backup_dr",
+        "operations",
+        "production_authorization"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/area"
+        },
+        "local_runtime": {
+          "$ref": "#/$defs/area"
+        },
+        "preproduction": {
+          "$ref": "#/$defs/area"
+        },
+        "kingdee_canary": {
+          "$ref": "#/$defs/area"
+        },
+        "security": {
+          "$ref": "#/$defs/area"
+        },
+        "privacy_cross_border": {
+          "$ref": "#/$defs/area"
+        },
+        "uat": {
+          "$ref": "#/$defs/area"
+        },
+        "backup_dr": {
+          "$ref": "#/$defs/area"
+        },
+        "operations": {
+          "$ref": "#/$defs/area"
+        },
+        "production_authorization": {
+          "$ref": "#/$defs/area"
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "technical_local",
+        "production",
+        "reason_code"
+      ],
+      "properties": {
+        "technical_local": {
+          "enum": [
+            "go",
+            "no_go"
+          ]
+        },
+        "production": {
+          "enum": [
+            "go",
+            "no_go"
+          ]
+        },
+        "reason_code": {
+          "enum": [
+            "all_mandatory_evidence_passed",
+            "blocked_external_input",
+            "technical_control_failed"
+          ]
+        }
+      }
+    },
+    "production_mutation_authorized": {
+      "type": "boolean"
+    },
+    "production_approvers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/approver"
+      }
+    },
+    "missing_entry_inputs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/missingInput"
+      }
+    },
+    "external_activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "real_kingdee_calls",
+        "kingdee_mutations",
+        "cloud_deployments",
+        "production_deployments",
+        "production_credentials_loaded",
+        "external_messages"
+      ],
+      "properties": {
+        "real_kingdee_calls": {
+          "$ref": "#/$defs/counter"
+        },
+        "kingdee_mutations": {
+          "$ref": "#/$defs/counter"
+        },
+        "cloud_deployments": {
+          "$ref": "#/$defs/counter"
+        },
+        "production_deployments": {
+          "$ref": "#/$defs/counter"
+        },
+        "production_credentials_loaded": {
+          "$ref": "#/$defs/counter"
+        },
+        "external_messages": {
+          "$ref": "#/$defs/counter"
+        }
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/evidenceRef"
+      }
+    }
+  },
+  "$defs": {
+    "sha1": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "counter": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "evidenceRef": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 512,
+      "pattern": "^(docs|contracts|tests|ci-artifact)[:/]"
+    },
+    "area": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "required",
+        "external",
+        "owner",
+        "evidence_refs"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "go",
+            "no_go",
+            "blocked_external_input",
+            "pending_external_review"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "external": {
+          "type": "boolean"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidenceRef"
+          }
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "goArea": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/area"
+        },
+        {
+          "properties": {
+            "status": {
+              "const": "go"
+            },
+            "required": {
+              "const": true
+            }
+          }
+        }
+      ]
+    },
+    "approver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor_ref",
+        "role",
+        "approved_at",
+        "approval_ref"
+      ],
+      "properties": {
+        "actor_ref": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "role": {
+          "enum": [
+            "Release Owner",
+            "Security Owner",
+            "Privacy Owner",
+            "Business Owner"
+          ]
+        },
+        "approved_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "approval_ref": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 256
+        }
+      }
+    },
+    "missingInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "owner",
+        "status",
+        "evidence_required"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "live_kingdee_canary",
+            "singapore_preproduction",
+            "security_owner_approval",
+            "privacy_cross_border_approval",
+            "business_owner_uat",
+            "production_authorization"
+          ]
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "status": {
+          "enum": [
+            "blocked_external_input",
+            "pending_external_review"
+          ]
+        },
+        "evidence_required": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 500
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "properties": {
+              "technical_local": {
+                "const": "go"
+              }
+            },
+            "required": [
+              "technical_local"
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "areas": {
+            "properties": {
+              "code": {
+                "properties": {
+                  "status": {
+                    "const": "go"
+                  }
+                }
+              },
+              "local_runtime": {
+                "properties": {
+                  "status": {
+                    "const": "go"
+                  }
+                }
+              },
+              "backup_dr": {
+                "properties": {
+                  "status": {
+                    "const": "go"
+                  }
+                }
+              },
+              "operations": {
+                "properties": {
+                  "status": {
+                    "const": "go"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "properties": {
+              "production": {
+                "const": "no_go"
+              }
+            },
+            "required": [
+              "production"
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "production_mutation_authorized": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "properties": {
+              "production": {
+                "const": "go"
+              }
+            },
+            "required": [
+              "production"
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "release_candidate": {
+            "properties": {
+              "environment": {
+                "const": "production"
+              }
+            }
+          },
+          "decision": {
+            "properties": {
+              "technical_local": {
+                "const": "go"
+              },
+              "reason_code": {
+                "const": "all_mandatory_evidence_passed"
+              }
+            }
+          },
+          "production_mutation_authorized": {
+            "const": true
+          },
+          "production_approvers": {
+            "minItems": 2
+          },
+          "missing_entry_inputs": {
+            "maxItems": 0
+          },
+          "areas": {
+            "properties": {
+              "code": {
+                "$ref": "#/$defs/goArea"
+              },
+              "local_runtime": {
+                "$ref": "#/$defs/goArea"
+              },
+              "preproduction": {
+                "$ref": "#/$defs/goArea"
+              },
+              "kingdee_canary": {
+                "$ref": "#/$defs/goArea"
+              },
+              "security": {
+                "$ref": "#/$defs/goArea"
+              },
+              "privacy_cross_border": {
+                "$ref": "#/$defs/goArea"
+              },
+              "uat": {
+                "$ref": "#/$defs/goArea"
+              },
+              "backup_dr": {
+                "$ref": "#/$defs/goArea"
+              },
+              "operations": {
+                "$ref": "#/$defs/goArea"
+              },
+              "production_authorization": {
+                "$ref": "#/$defs/goArea"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

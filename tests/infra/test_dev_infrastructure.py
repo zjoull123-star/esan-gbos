@@ -484,6 +484,7 @@ def test_ci_has_required_jobs_and_immutable_actions() -> None:
         "frappe-vue-playwright:",
         "gitleaks:",
         "security-sbom:",
+        "gate6-controls:",
     ):
         assert job in workflow
     assert "docker compose" in workflow
@@ -518,13 +519,13 @@ def test_ci_has_required_jobs_and_immutable_actions() -> None:
         "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
         "astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9",
     }
-    assert workflow.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803") == 8
-    assert workflow.count("astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9") == 4
+    assert workflow.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803") == 9
+    assert workflow.count("astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9") == 5
     assert workflow.count("actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38") == 1
-    assert workflow.count("actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f") == 8
+    assert workflow.count("actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f") == 9
     assert "ubuntu-latest" not in workflow
     assert "ubuntu-latest" not in smoke_workflow
-    assert workflow.count("runs-on: ubuntu-24.04") == 8
+    assert workflow.count("runs-on: ubuntu-24.04") == 9
     assert smoke_workflow.count("runs-on: ubuntu-24.04") == 1
     assert smoke_workflow.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803") == 1
     assert (

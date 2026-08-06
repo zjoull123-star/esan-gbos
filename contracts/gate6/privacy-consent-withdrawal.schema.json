@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.esan.dev/contracts/gate6/privacy-consent-withdrawal.schema.json",
+  "title": "GBOS Gate 6 consent withdrawal manifest",
+  "allOf": [
+    {
+      "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/core"
+    },
+    {
+      "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/standardLifecycle"
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "executed"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "withdrawal": {
+            "required": [
+              "processing_stop_at",
+              "ingestion_disabled",
+              "model_use_disabled",
+              "outbound_send_disabled",
+              "affected_evidence_refs",
+              "retained_exception_refs"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "required": [
+    "withdrawal"
+  ],
+  "properties": {
+    "operation": {
+      "const": "consent_withdrawal"
+    },
+    "withdrawal": {
+      "type": "object",
+      "required": [
+        "received_at"
+      ],
+      "properties": {
+        "received_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "processing_stop_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ingestion_disabled": {
+          "const": true
+        },
+        "model_use_disabled": {
+          "const": true
+        },
+        "outbound_send_disabled": {
+          "const": true
+        },
+        "affected_evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/reference"
+          }
+        },
+        "retained_exception_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/reference"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

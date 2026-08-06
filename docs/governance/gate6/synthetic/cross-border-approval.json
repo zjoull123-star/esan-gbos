@@ -1,0 +1,110 @@
+{
+  "manifest_id": "privacy:cross-border-synthetic-001",
+  "schema_version": "1.0.0",
+  "record_version": 1,
+  "operation": "cross_border_approval",
+  "fixture_mode": "synthetic_only",
+  "site_context": {
+    "site_id": "site-synthetic-a",
+    "tenant_id": "tenant-synthetic-a"
+  },
+  "data_domain": "customer_relationships",
+  "data_classes": [
+    "Confidential"
+  ],
+  "scope": {
+    "subject_ref": "subject:synthetic-transfer-scope-001",
+    "systems": [
+      "frappe",
+      "evidence_store",
+      "backup"
+    ],
+    "window_start": "2026-01-01T00:00:00Z",
+    "window_end": "2026-07-31T23:59:59Z"
+  },
+  "evidence_refs": [
+    "evidence:synthetic-transfer-inventory-001",
+    "assessment:pending-external-001"
+  ],
+  "approval_refs": [],
+  "state": "blocked_external_input",
+  "state_history": [
+    {
+      "state": "requested",
+      "at": "2026-08-01T09:00:00Z",
+      "actor_ref": "requester:privacy-program"
+    },
+    {
+      "state": "blocked_external_input",
+      "at": "2026-08-01T10:00:00Z",
+      "actor_ref": "reviewer:privacy-review"
+    }
+  ],
+  "actors": {
+    "requester": "requester:privacy-program",
+    "data_owner": "owner:crm-data-owner",
+    "privacy_reviewer": "reviewer:privacy-review",
+    "executor": "executor:platform-privacy-ops",
+    "auditor": "auditor:internal-audit",
+    "separation_of_duties_attested": true
+  },
+  "exceptions": [],
+  "audit": {
+    "event_version": 1,
+    "generated_at": "2026-08-01T10:01:00Z",
+    "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  "external_readiness": {
+    "formal_privacy_legal": "blocked_external_input",
+    "real_personal_data": "blocked_external_input",
+    "singapore_cross_border": "blocked_external_input"
+  },
+  "safe_summary": "Synthetic transfer inventory only pending external review and approval",
+  "cross_border": {
+    "purpose": "Synthetic preproduction service evaluation only",
+    "data_categories": [
+      "business_contact_pseudonymous",
+      "audit_metadata_synthetic"
+    ],
+    "recipient_processor": {
+      "recipient_ref": "processor:synthetic-cloud-service",
+      "processor_role": "processor",
+      "subprocessor_refs": [
+        "subprocessor:synthetic-object-store"
+      ]
+    },
+    "destination_jurisdiction": "SG",
+    "legal_mechanism_assessment": {
+      "mechanism": "pending_external_determination",
+      "assessment_ref": "assessment:pending-external-001",
+      "assessed_at": "2026-08-01T10:00:00Z",
+      "conclusion_status": "blocked_external_input"
+    },
+    "notice_or_applicable_basis": {
+      "basis_type": "pending_external_determination",
+      "notice_ref": "notice:synthetic-draft-001",
+      "basis_review_ref": "review:pending-external-basis-001"
+    },
+    "retention": {
+      "duration_days": 30,
+      "deletion_method": "verified_delete",
+      "review_at": "2026-08-15T00:00:00Z"
+    },
+    "security_controls": [
+      "encryption_in_transit",
+      "encryption_at_rest",
+      "tenant_isolation",
+      "least_privilege",
+      "access_audit",
+      "key_separation"
+    ],
+    "approvers": [
+      "approver:privacy-pending-lead",
+      "approver:security-pending-lead"
+    ],
+    "expires_at": "2026-09-01T00:00:00Z",
+    "review_at": "2026-08-15T00:00:00Z",
+    "expiry_status": "not_applicable_pending_external",
+    "local_fixture_is_legal_approval": false
+  }
+}

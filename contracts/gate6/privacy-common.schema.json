@@ -1,0 +1,515 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json",
+  "title": "GBOS Gate 6 privacy manifest common contract",
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^(?!.*(?:[Bb][Ee][Aa][Rr][Ee][Rr][ ]+[A-Za-z0-9._~+/=-]{8,}|sk-[A-Za-z0-9_-]{8,}|[Tt][Oo][Kk][Ee][Nn][ ]*[:=]|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}|\\+?[0-9][0-9 ()-]{7,}[0-9])).*$"
+    },
+    "reference": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{1,31}:[a-z0-9][a-z0-9._:-]{2,127}$"
+    },
+    "stateRecord": {
+      "type": "object",
+      "required": [
+        "state",
+        "at",
+        "actor_ref"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "requested",
+            "approved",
+            "executed",
+            "denied",
+            "blocked_external_input"
+          ]
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "actor_ref": {
+          "$ref": "#/$defs/reference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "standardLifecycle": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "requested"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "state_history": {
+                "minItems": 1,
+                "maxItems": 1,
+                "prefixItems": [
+                  {
+                    "properties": {
+                      "state": {
+                        "const": "requested"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "approved"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "approval_refs": {
+                "minItems": 1
+              },
+              "state_history": {
+                "minItems": 2,
+                "maxItems": 2,
+                "prefixItems": [
+                  {
+                    "properties": {
+                      "state": {
+                        "const": "requested"
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "state": {
+                        "const": "approved"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "executed"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "approval_refs": {
+                "minItems": 1
+              },
+              "state_history": {
+                "minItems": 3,
+                "maxItems": 3,
+                "prefixItems": [
+                  {
+                    "properties": {
+                      "state": {
+                        "const": "requested"
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "state": {
+                        "const": "approved"
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "state": {
+                        "const": "executed"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "blocked_external_input"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "approval_refs": {
+                "maxItems": 0
+              },
+              "state_history": {
+                "minItems": 2,
+                "maxItems": 2,
+                "prefixItems": [
+                  {
+                    "properties": {
+                      "state": {
+                        "const": "requested"
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "state": {
+                        "const": "blocked_external_input"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "core": {
+      "type": "object",
+      "required": [
+        "manifest_id",
+        "schema_version",
+        "record_version",
+        "operation",
+        "fixture_mode",
+        "site_context",
+        "data_domain",
+        "data_classes",
+        "scope",
+        "evidence_refs",
+        "approval_refs",
+        "state",
+        "state_history",
+        "actors",
+        "exceptions",
+        "audit",
+        "external_readiness",
+        "safe_summary"
+      ],
+      "properties": {
+        "manifest_id": {
+          "$ref": "#/$defs/reference"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "record_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "operation": {
+          "enum": [
+            "retention_policy",
+            "deletion_request",
+            "data_subject_request",
+            "consent_withdrawal",
+            "legal_hold",
+            "cross_border_approval"
+          ]
+        },
+        "fixture_mode": {
+          "enum": [
+            "synthetic_only",
+            "externally_verified"
+          ]
+        },
+        "site_context": {
+          "type": "object",
+          "required": [
+            "site_id",
+            "tenant_id"
+          ],
+          "properties": {
+            "site_id": {
+              "type": "string",
+              "pattern": "^site-[a-z0-9-]{3,63}$"
+            },
+            "tenant_id": {
+              "type": "string",
+              "pattern": "^tenant-[a-z0-9-]{3,63}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "data_domain": {
+          "enum": [
+            "customer_relationships",
+            "sales",
+            "purchasing",
+            "product",
+            "finance",
+            "communications",
+            "audit",
+            "identity_access"
+          ]
+        },
+        "data_classes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "Public",
+              "Internal",
+              "Confidential",
+              "Restricted"
+            ]
+          }
+        },
+        "scope": {
+          "type": "object",
+          "required": [
+            "subject_ref",
+            "systems",
+            "window_start",
+            "window_end"
+          ],
+          "properties": {
+            "subject_ref": {
+              "$ref": "#/$defs/reference"
+            },
+            "systems": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "frappe",
+                  "observer",
+                  "evidence_store",
+                  "search_index",
+                  "export_store",
+                  "queue",
+                  "backup"
+                ]
+              }
+            },
+            "window_start": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "window_end": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "additionalProperties": false
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "approval_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "state": {
+          "enum": [
+            "requested",
+            "approved",
+            "executed",
+            "denied",
+            "blocked_external_input"
+          ]
+        },
+        "state_history": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/stateRecord"
+          }
+        },
+        "actors": {
+          "type": "object",
+          "required": [
+            "requester",
+            "data_owner",
+            "privacy_reviewer",
+            "executor",
+            "auditor",
+            "separation_of_duties_attested"
+          ],
+          "properties": {
+            "requester": {
+              "type": "string",
+              "pattern": "^requester:[a-z0-9][a-z0-9._:-]{2,127}$"
+            },
+            "data_owner": {
+              "type": "string",
+              "pattern": "^owner:[a-z0-9][a-z0-9._:-]{2,127}$"
+            },
+            "privacy_reviewer": {
+              "type": "string",
+              "pattern": "^reviewer:[a-z0-9][a-z0-9._:-]{2,127}$"
+            },
+            "executor": {
+              "type": "string",
+              "pattern": "^executor:[a-z0-9][a-z0-9._:-]{2,127}$"
+            },
+            "auditor": {
+              "type": "string",
+              "pattern": "^auditor:[a-z0-9][a-z0-9._:-]{2,127}$"
+            },
+            "separation_of_duties_attested": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "exception_ref",
+              "safe_reason",
+              "review_at"
+            ],
+            "properties": {
+              "exception_ref": {
+                "$ref": "#/$defs/reference"
+              },
+              "safe_reason": {
+                "$ref": "#/$defs/safeText"
+              },
+              "approval_ref": {
+                "$ref": "#/$defs/reference"
+              },
+              "review_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "audit": {
+          "type": "object",
+          "required": [
+            "event_version",
+            "generated_at",
+            "sha256"
+          ],
+          "properties": {
+            "event_version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "generated_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "external_readiness": {
+          "type": "object",
+          "required": [
+            "formal_privacy_legal",
+            "real_personal_data",
+            "singapore_cross_border"
+          ],
+          "properties": {
+            "formal_privacy_legal": {
+              "enum": [
+                "blocked_external_input",
+                "verified_external_input"
+              ]
+            },
+            "real_personal_data": {
+              "enum": [
+                "blocked_external_input",
+                "verified_external_input"
+              ]
+            },
+            "singapore_cross_border": {
+              "enum": [
+                "blocked_external_input",
+                "verified_external_input"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "safe_summary": {
+          "$ref": "#/$defs/safeText"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "fixture_mode": {
+                "const": "synthetic_only"
+              }
+            },
+            "required": [
+              "fixture_mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "external_readiness": {
+                "properties": {
+                  "formal_privacy_legal": {
+                    "const": "blocked_external_input"
+                  },
+                  "real_personal_data": {
+                    "const": "blocked_external_input"
+                  },
+                  "singapore_cross_border": {
+                    "const": "blocked_external_input"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

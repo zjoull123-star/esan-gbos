@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.esan.dev/contracts/gate6/privacy-deletion-request.schema.json",
+  "title": "GBOS Gate 6 deletion request manifest",
+  "allOf": [
+    {
+      "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/core"
+    },
+    {
+      "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/standardLifecycle"
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": [
+              "approved",
+              "executed"
+            ]
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "required": [
+          "authorization",
+          "legal_hold_check"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "executed"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "required": [
+          "deletion_receipt"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "operation": {
+      "const": "deletion_request"
+    },
+    "authorization": {
+      "type": "object",
+      "required": [
+        "status",
+        "approval_ref",
+        "approved_at"
+      ],
+      "properties": {
+        "status": {
+          "const": "approved"
+        },
+        "approval_ref": {
+          "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/reference"
+        },
+        "approved_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "legal_hold_check": {
+      "type": "object",
+      "required": [
+        "status",
+        "checked_at",
+        "hold_refs"
+      ],
+      "properties": {
+        "status": {
+          "const": "clear"
+        },
+        "checked_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "hold_refs": {
+          "type": "array",
+          "maxItems": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "deletion_receipt": {
+      "type": "object",
+      "required": [
+        "executed_at",
+        "deleted_systems",
+        "failed_systems",
+        "receipt_ref"
+      ],
+      "properties": {
+        "executed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deleted_systems": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "failed_systems": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "receipt_ref": {
+          "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/reference"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

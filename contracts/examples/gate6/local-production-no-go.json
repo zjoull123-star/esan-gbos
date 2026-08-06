@@ -1,0 +1,162 @@
+{
+  "schema_version": "1.0",
+  "decision_id": "G6-local-20260807",
+  "evaluated_at": "2026-08-07T00:00:00Z",
+  "release_candidate": {
+    "source_commit": "0e0783bcc8e37ac461e999d4fd14a52c60c34ef6",
+    "release_manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "image_digest": "sha256:e604fef4a0eb0a22bff399c2057add9ca03d991627c454803a2d015b19e1eb1f",
+    "environment": "local_validation"
+  },
+  "areas": {
+    "code": {
+      "status": "go",
+      "required": true,
+      "external": false,
+      "owner": "Engineering",
+      "evidence_refs": [
+        "docs/evidence/gate5/gate5-summary.md"
+      ]
+    },
+    "local_runtime": {
+      "status": "go",
+      "required": true,
+      "external": false,
+      "owner": "Platform",
+      "evidence_refs": [
+        "docs/evidence/gate5/runtime-validation.json"
+      ]
+    },
+    "preproduction": {
+      "status": "blocked_external_input",
+      "required": true,
+      "external": true,
+      "owner": "Platform and Security",
+      "evidence_refs": [
+        "docs/external-deps.md"
+      ]
+    },
+    "kingdee_canary": {
+      "status": "blocked_external_input",
+      "required": true,
+      "external": true,
+      "owner": "ERP Integration",
+      "evidence_refs": [
+        "docs/evidence/gate5/gate5-summary.md"
+      ]
+    },
+    "security": {
+      "status": "pending_external_review",
+      "required": true,
+      "external": true,
+      "owner": "Security Owner",
+      "evidence_refs": [
+        "docs/evidence/gate5/security-review.json"
+      ]
+    },
+    "privacy_cross_border": {
+      "status": "blocked_external_input",
+      "required": true,
+      "external": true,
+      "owner": "Privacy and Legal",
+      "evidence_refs": [
+        "docs/external-deps.md"
+      ]
+    },
+    "uat": {
+      "status": "blocked_external_input",
+      "required": true,
+      "external": true,
+      "owner": "Business Owner",
+      "evidence_refs": [
+        "docs/external-deps.md"
+      ]
+    },
+    "backup_dr": {
+      "status": "go",
+      "required": true,
+      "external": false,
+      "owner": "Site Reliability",
+      "evidence_refs": [
+        "tests/ops"
+      ],
+      "note": "Local synthetic drill controls only; regional proof remains external."
+    },
+    "operations": {
+      "status": "go",
+      "required": true,
+      "external": false,
+      "owner": "Site Reliability",
+      "evidence_refs": [
+        "docs/runbooks"
+      ],
+      "note": "Local machine-checkable controls only."
+    },
+    "production_authorization": {
+      "status": "blocked_external_input",
+      "required": true,
+      "external": true,
+      "owner": "Release Owner",
+      "evidence_refs": [
+        "docs/external-deps.md"
+      ]
+    }
+  },
+  "decision": {
+    "technical_local": "go",
+    "production": "no_go",
+    "reason_code": "blocked_external_input"
+  },
+  "production_mutation_authorized": false,
+  "production_approvers": [],
+  "missing_entry_inputs": [
+    {
+      "code": "live_kingdee_canary",
+      "owner": "ERP Integration",
+      "status": "blocked_external_input",
+      "evidence_required": "Startup, authentication, metadata and business-query evidence from the restricted account."
+    },
+    {
+      "code": "singapore_preproduction",
+      "owner": "Platform and Security",
+      "status": "blocked_external_input",
+      "evidence_required": "Approved Tencent Cloud account, quota and preproduction validation package."
+    },
+    {
+      "code": "security_owner_approval",
+      "owner": "Security Owner",
+      "status": "pending_external_review",
+      "evidence_required": "Formal review of release controls and all time-bounded dependency exceptions."
+    },
+    {
+      "code": "privacy_cross_border_approval",
+      "owner": "Privacy and Legal",
+      "status": "blocked_external_input",
+      "evidence_required": "Applicable notice, basis, assessment, recipient and cross-border approval evidence."
+    },
+    {
+      "code": "business_owner_uat",
+      "owner": "Business Owner",
+      "status": "blocked_external_input",
+      "evidence_required": "Signed UAT result from the approved pilot group."
+    },
+    {
+      "code": "production_authorization",
+      "owner": "Release Owner",
+      "status": "blocked_external_input",
+      "evidence_required": "Two distinct authorized production approvers after every mandatory area is Go."
+    }
+  ],
+  "external_activity": {
+    "real_kingdee_calls": 0,
+    "kingdee_mutations": 0,
+    "cloud_deployments": 0,
+    "production_deployments": 0,
+    "production_credentials_loaded": 0,
+    "external_messages": 0
+  },
+  "evidence_refs": [
+    "docs/evidence/gate5/gate5-summary.md",
+    "docs/external-deps.md"
+  ]
+}

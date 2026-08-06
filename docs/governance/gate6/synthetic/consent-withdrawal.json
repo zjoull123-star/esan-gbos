@@ -1,0 +1,82 @@
+{
+  "manifest_id": "privacy:withdrawal-synthetic-001",
+  "schema_version": "1.0.0",
+  "record_version": 1,
+  "operation": "consent_withdrawal",
+  "fixture_mode": "synthetic_only",
+  "site_context": {
+    "site_id": "site-synthetic-a",
+    "tenant_id": "tenant-synthetic-a"
+  },
+  "data_domain": "communications",
+  "data_classes": [
+    "Restricted"
+  ],
+  "scope": {
+    "subject_ref": "subject:synthetic-withdrawal-001",
+    "systems": [
+      "frappe",
+      "observer",
+      "evidence_store",
+      "queue"
+    ],
+    "window_start": "2026-01-01T00:00:00Z",
+    "window_end": "2026-07-31T23:59:59Z"
+  },
+  "evidence_refs": [
+    "evidence:synthetic-withdrawal-request-001",
+    "evidence:synthetic-processing-stop-001"
+  ],
+  "approval_refs": [
+    "approval:synthetic-withdrawal-001"
+  ],
+  "state": "executed",
+  "state_history": [
+    {
+      "state": "requested",
+      "at": "2026-08-01T09:00:00Z",
+      "actor_ref": "requester:privacy-request-queue"
+    },
+    {
+      "state": "approved",
+      "at": "2026-08-01T09:30:00Z",
+      "actor_ref": "reviewer:privacy-review"
+    },
+    {
+      "state": "executed",
+      "at": "2026-08-01T09:35:00Z",
+      "actor_ref": "executor:privacy-ops"
+    }
+  ],
+  "actors": {
+    "requester": "requester:privacy-request-queue",
+    "data_owner": "owner:communications-owner",
+    "privacy_reviewer": "reviewer:privacy-review",
+    "executor": "executor:privacy-ops",
+    "auditor": "auditor:internal-audit",
+    "separation_of_duties_attested": true
+  },
+  "exceptions": [],
+  "audit": {
+    "event_version": 1,
+    "generated_at": "2026-08-01T09:36:00Z",
+    "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "external_readiness": {
+    "formal_privacy_legal": "blocked_external_input",
+    "real_personal_data": "blocked_external_input",
+    "singapore_cross_border": "blocked_external_input"
+  },
+  "safe_summary": "Synthetic consent withdrawal and processing stop validation only",
+  "withdrawal": {
+    "received_at": "2026-08-01T09:00:00Z",
+    "processing_stop_at": "2026-08-01T09:35:00Z",
+    "ingestion_disabled": true,
+    "model_use_disabled": true,
+    "outbound_send_disabled": true,
+    "affected_evidence_refs": [
+      "evidence:synthetic-affected-records-001"
+    ],
+    "retained_exception_refs": []
+  }
+}

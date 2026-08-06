@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.esan.dev/contracts/gate6/privacy-legal-hold.schema.json",
+  "title": "GBOS Gate 6 legal hold manifest",
+  "allOf": [
+    {
+      "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/core"
+    },
+    {
+      "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/standardLifecycle"
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "executed"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "hold": {
+            "required": [
+              "status",
+              "started_at",
+              "deletion_suspended",
+              "overwrite_suspended",
+              "evidence_snapshot_ref"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "required": [
+    "hold"
+  ],
+  "properties": {
+    "operation": {
+      "const": "legal_hold"
+    },
+    "hold": {
+      "type": "object",
+      "required": [
+        "hold_id",
+        "custodian_ref",
+        "review_at"
+      ],
+      "properties": {
+        "hold_id": {
+          "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/reference"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "released"
+          ]
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "released_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deletion_suspended": {
+          "const": true
+        },
+        "overwrite_suspended": {
+          "const": true
+        },
+        "custodian_ref": {
+          "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/reference"
+        },
+        "evidence_snapshot_ref": {
+          "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/reference"
+        },
+        "review_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

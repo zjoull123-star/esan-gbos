@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "policy_id": "gbos-gate6-slo-alerts-v1",
+  "evaluation_interval_seconds": 60,
+  "maintenance_window_defaults": {
+    "maximum_duration_minutes": 120,
+    "requires_change_id": true,
+    "preserve_events": true,
+    "critical_behavior": "never_suppress",
+    "noncritical_behavior": "suppress_page_preserve_event"
+  },
+  "required_runbooks": [
+    "docs/runbooks/incident-response.md",
+    "docs/runbooks/credential-rotation.md",
+    "docs/runbooks/compromised-connector.md",
+    "docs/runbooks/model-kill-switch.md",
+    "docs/runbooks/data-breach.md",
+    "docs/runbooks/privacy-request.md",
+    "docs/runbooks/support-access.md",
+    "docs/runbooks/audit-export.md",
+    "docs/runbooks/deployment-rollback.md",
+    "docs/runbooks/backup-restore.md",
+    "docs/runbooks/pitr.md",
+    "docs/runbooks/regional-disaster.md"
+  ],
+  "slos": [
+    {
+      "id": "api-availability",
+      "indicator": "successful_health_requests / total_health_requests",
+      "objective": 0.999,
+      "window": "30d",
+      "owner": "service-operations"
+    },
+    {
+      "id": "api-readiness",
+      "indicator": "ready_instances / desired_instances",
+      "objective": 0.999,
+      "window": "30d",
+      "owner": "service-operations"
+    },
+    {
+      "id": "api-latency",
+      "indicator": "requests_below_750ms / total_requests",
+      "objective": 0.99,
+      "window": "30d",
+      "owner": "service-operations"
+    },
+    {
+      "id": "api-error-rate",
+      "indicator": "non_5xx_requests / total_requests",
+      "objective": 0.995,
+      "window": "30d",
+      "owner": "service-operations"
+    },
+    {
+      "id": "queue-timeliness",
+      "indicator": "jobs_started_within_300s / jobs_enqueued",
+      "objective": 0.99,
+      "window": "7d",
+      "owner": "background-jobs"
+    },
+    {
+      "id": "database-availability",
+      "indicator": "successful_db_probes / total_db_probes",
+      "objective": 0.999,
+      "window": "30d",
+      "owner": "data-platform"
+    },
+    {
+      "id": "backup-recoverability",
+      "indicator": "fresh_integrity_verified_backups / required_backups",
+      "objective": 1.0,
+      "window": "24h",
+      "owner": "recovery-owner"
+    },
+    {
+      "id": "evidence-integrity",
+      "indicator": "verified_evidence_objects / evidence_objects",
+      "objective": 1.0,
+      "window": "24h",
+      "owner": "security-operations"
+    },
+    {
+      "id": "metric-freshness",
+      "indicator": "fresh_governed_metric_batches / published_metric_batches",
+      "objective": 0.99,
+      "window": "7d",
+      "owner": "analytics-platform"
+    },
+    {
+      "id": "audit-durability",
+      "indicator": "successful_audit_writes / attempted_audit_writes",
+      "objective": 1.0,
+      "window": "24h",
+      "owner": "security-operations"
+    }
+  ],
+  "alerts": [
+    {
+      "id": "service-health-or-readiness-failed",
+      "coverage": ["health_readiness"],
+      "severity": "critical",
+      "owner": "service-operations",
+      "condition": {"metric": "gbos_ready", "operator": "<", "threshold": 1, "for": "5m"},
+      "escalation": ["on-call-primary:0m", "incident-commander:10m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/incident-response.md"
+    },
+    {
+      "id": "request-latency-budget-burn",
+      "coverage": ["latency"],
+      "severity": "warning",
+      "owner": "service-operations",
+      "condition": {"metric": "http_request_p95_seconds", "operator": ">", "threshold": 0.75, "for": "10m"},
+      "escalation": ["on-call-primary:10m", "service-owner:30m"],
+      "maintenance_window": {"behavior": "suppress_page_preserve_event"},
+      "runbook": "docs/runbooks/incident-response.md"
+    },
+    {
+      "id": "request-error-rate-budget-burn",
+      "coverage": ["error_rate"],
+      "severity": "critical",
+      "owner": "service-operations",
+      "condition": {"metric": "http_5xx_ratio", "operator": ">", "threshold": 0.05, "for": "5m"},
+      "escalation": ["on-call-primary:0m", "incident-commander:10m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/incident-response.md"
+    },
+    {
+      "id": "service-resource-saturation",
+      "coverage": ["saturation"],
+      "severity": "warning",
+      "owner": "service-operations",
+      "condition": {"metric": "resource_saturation_ratio", "operator": ">", "threshold": 0.85, "for": "15m"},
+      "escalation": ["on-call-primary:15m", "service-owner:30m"],
+      "maintenance_window": {"behavior": "suppress_page_preserve_event"},
+      "runbook": "docs/runbooks/incident-response.md"
+    },
+    {
+      "id": "queue-depth-high",
+      "coverage": ["queue_depth"],
+      "severity": "warning",
+      "owner": "background-jobs",
+      "condition": {"metric": "queue_ready_jobs", "operator": ">", "threshold": 500, "for": "10m"},
+      "escalation": ["on-call-primary:10m", "background-jobs-owner:30m"],
+      "maintenance_window": {"behavior": "suppress_page_preserve_event"},
+      "runbook": "docs/runbooks/incident-response.md"
+    },
+    {
+      "id": "queue-oldest-job-stale",
+      "coverage": ["queue_age"],
+      "severity": "critical",
+      "owner": "background-jobs",
+      "condition": {"metric": "queue_oldest_job_age_seconds", "operator": ">", "threshold": 900, "for": "5m"},
+      "escalation": ["on-call-primary:0m", "incident-commander:15m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/incident-response.md"
+    },
+    {
+      "id": "dead-letter-present",
+      "coverage": ["dead_letters"],
+      "severity": "critical",
+      "owner": "background-jobs",
+      "condition": {"metric": "dead_letter_total", "operator": ">", "threshold": 0, "for": "1m"},
+      "escalation": ["on-call-primary:0m", "incident-commander:15m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/incident-response.md"
+    },
+    {
+      "id": "mariadb-unhealthy",
+      "coverage": ["mariadb"],
+      "severity": "critical",
+      "owner": "data-platform",
+      "condition": {"metric": "mariadb_probe_success", "operator": "<", "threshold": 1, "for": "2m"},
+      "escalation": ["database-on-call:0m", "incident-commander:10m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/backup-restore.md"
+    },
+    {
+      "id": "postgresql-unhealthy",
+      "coverage": ["postgresql"],
+      "severity": "critical",
+      "owner": "data-platform",
+      "condition": {"metric": "postgresql_probe_success", "operator": "<", "threshold": 1, "for": "2m"},
+      "escalation": ["database-on-call:0m", "incident-commander:10m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/backup-restore.md"
+    },
+    {
+      "id": "backup-age-rpo-breach",
+      "coverage": ["backup_age"],
+      "severity": "critical",
+      "owner": "recovery-owner",
+      "condition": {"metric": "backup_age_seconds", "operator": ">", "threshold": 3600, "for": "1m"},
+      "escalation": ["recovery-on-call:0m", "incident-commander:15m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/backup-restore.md"
+    },
+    {
+      "id": "backup-integrity-failed",
+      "coverage": ["backup_integrity"],
+      "severity": "critical",
+      "owner": "recovery-owner",
+      "condition": {"metric": "backup_integrity_verified", "operator": "<", "threshold": 1, "for": "1m"},
+      "escalation": ["recovery-on-call:0m", "security-operations:10m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/backup-restore.md"
+    },
+    {
+      "id": "evidence-integrity-failed",
+      "coverage": ["evidence_integrity"],
+      "severity": "critical",
+      "owner": "security-operations",
+      "condition": {"metric": "evidence_checksum_valid", "operator": "<", "threshold": 1, "for": "1m"},
+      "escalation": ["security-on-call:0m", "incident-commander:10m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/incident-response.md"
+    },
+    {
+      "id": "governed-metric-stale",
+      "coverage": ["metric_freshness"],
+      "severity": "warning",
+      "owner": "analytics-platform",
+      "condition": {"metric": "governed_metric_fresh", "operator": "<", "threshold": 1, "for": "5m"},
+      "escalation": ["analytics-on-call:10m", "analytics-owner:30m"],
+      "maintenance_window": {"behavior": "suppress_page_preserve_event"},
+      "runbook": "docs/runbooks/incident-response.md"
+    },
+    {
+      "id": "governed-metric-reconciliation-failed",
+      "coverage": ["metric_reconciliation"],
+      "severity": "critical",
+      "owner": "analytics-platform",
+      "condition": {"metric": "metric_reconciliation_passed", "operator": "<", "threshold": 1, "for": "1m"},
+      "escalation": ["analytics-on-call:0m", "incident-commander:15m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/incident-response.md"
+    },
+    {
+      "id": "connector-state-unsafe",
+      "coverage": ["connector_state"],
+      "severity": "critical",
+      "owner": "integration-security",
+      "condition": {"metric": "connector_policy_safe", "operator": "<", "threshold": 1, "for": "1m"},
+      "escalation": ["security-on-call:0m", "incident-commander:10m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/compromised-connector.md"
+    },
+    {
+      "id": "audit-write-failure",
+      "coverage": ["audit_failures"],
+      "severity": "critical",
+      "owner": "security-operations",
+      "condition": {"metric": "audit_write_failure_total", "operator": ">", "threshold": 0, "for": "1m"},
+      "escalation": ["security-on-call:0m", "incident-commander:10m"],
+      "maintenance_window": {"behavior": "never_suppress"},
+      "runbook": "docs/runbooks/audit-export.md"
+    }
+  ],
+  "redaction": {
+    "prohibited": [
+      "secrets",
+      "tokens",
+      "raw_communication_content",
+      "complete_phone_numbers",
+      "complete_email_addresses"
+    ],
+    "replacement_prefix": "[REDACTED_"
+  }
+}

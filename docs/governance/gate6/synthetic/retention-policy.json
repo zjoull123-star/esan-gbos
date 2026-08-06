@@ -1,0 +1,82 @@
+{
+  "manifest_id": "privacy:retention-synthetic-001",
+  "schema_version": "1.0.0",
+  "record_version": 1,
+  "operation": "retention_policy",
+  "fixture_mode": "synthetic_only",
+  "site_context": {
+    "site_id": "site-synthetic-a",
+    "tenant_id": "tenant-synthetic-a"
+  },
+  "data_domain": "customer_relationships",
+  "data_classes": [
+    "Internal",
+    "Confidential"
+  ],
+  "scope": {
+    "subject_ref": "subject:synthetic-retention-scope",
+    "systems": [
+      "frappe",
+      "observer",
+      "evidence_store",
+      "search_index",
+      "backup"
+    ],
+    "window_start": "2026-01-01T00:00:00Z",
+    "window_end": "2026-07-31T23:59:59Z"
+  },
+  "evidence_refs": [
+    "evidence:synthetic-retention-review-001"
+  ],
+  "approval_refs": [
+    "approval:synthetic-retention-001"
+  ],
+  "state": "executed",
+  "state_history": [
+    {
+      "state": "requested",
+      "at": "2026-08-01T09:00:00Z",
+      "actor_ref": "requester:privacy-program"
+    },
+    {
+      "state": "approved",
+      "at": "2026-08-01T10:00:00Z",
+      "actor_ref": "reviewer:privacy-review"
+    },
+    {
+      "state": "executed",
+      "at": "2026-08-01T11:00:00Z",
+      "actor_ref": "executor:privacy-ops"
+    }
+  ],
+  "actors": {
+    "requester": "requester:privacy-program",
+    "data_owner": "owner:crm-data-owner",
+    "privacy_reviewer": "reviewer:privacy-review",
+    "executor": "executor:privacy-ops",
+    "auditor": "auditor:internal-audit",
+    "separation_of_duties_attested": true
+  },
+  "exceptions": [],
+  "audit": {
+    "event_version": 1,
+    "generated_at": "2026-08-01T11:01:00Z",
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "external_readiness": {
+    "formal_privacy_legal": "blocked_external_input",
+    "real_personal_data": "blocked_external_input",
+    "singapore_cross_border": "blocked_external_input"
+  },
+  "safe_summary": "Synthetic retention policy workflow validation only",
+  "retention": {
+    "retention_class": "R1-operational",
+    "start_event": "case_closed",
+    "duration_days": 365,
+    "expiry_action": "delete",
+    "legal_hold_check_required": true,
+    "approved_at": "2026-08-01T10:00:00Z",
+    "executed_at": "2026-08-01T11:00:00Z",
+    "review_at": "2027-02-01T00:00:00Z"
+  }
+}

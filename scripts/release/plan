@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+release_script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+release_repo_root="$(CDPATH= cd -- "${release_script_dir}/../.." && pwd -P)"
+
+exec uv run --offline --project "${release_repo_root}" \
+  python "${release_script_dir}/plan.py" "$@"

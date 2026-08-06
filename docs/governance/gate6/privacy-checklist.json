@@ -1,0 +1,34 @@
+{
+  "checklist_version": "1.0.0",
+  "fixture_mode": "synthetic_only",
+  "status": "blocked_external_input",
+  "production_transfer_enabled": false,
+  "real_personal_data_used": false,
+  "items": [
+    {
+      "control": "schemas_and_synthetic_examples",
+      "status": "verified_local",
+      "evidence_ref": "test:gate6-privacy-contracts"
+    },
+    {
+      "control": "role_separation_and_state_transitions",
+      "status": "verified_local",
+      "evidence_ref": "test:gate6-privacy-negative-cases"
+    },
+    {
+      "control": "formal_privacy_legal_review",
+      "status": "blocked_external_input",
+      "evidence_ref": "external:formal-privacy-legal-required"
+    },
+    {
+      "control": "real_personal_data_validation",
+      "status": "blocked_external_input",
+      "evidence_ref": "external:real-personal-data-not-used"
+    },
+    {
+      "control": "singapore_cross_border_approval",
+      "status": "blocked_external_input",
+      "evidence_ref": "external:singapore-approval-required"
+    }
+  ]
+}

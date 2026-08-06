@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.esan.invalid/contracts/gate6/release-manifest.schema.json",
+  "title": "GBOS Gate 6 immutable release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release_id",
+    "operation",
+    "issued_at",
+    "expires_at",
+    "source",
+    "lockfiles",
+    "images",
+    "migrations",
+    "artifacts",
+    "flags",
+    "topology",
+    "rollback",
+    "approvals",
+    "environment"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "release_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{5,127}$"
+    },
+    "operation": { "enum": ["release", "rollback"] },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "dirty"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 3 },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "dirty": { "const": false }
+      }
+    },
+    "lockfiles": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/checksummedFile" }
+    },
+    "images": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/pinnedImage" },
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" }
+    },
+    "migrations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/safeMigration" }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sbom", "checksums"],
+      "properties": {
+        "sbom": { "$ref": "#/$defs/checksummedFile" },
+        "checksums": { "$ref": "#/$defs/checksummedFile" }
+      }
+    },
+    "flags": { "$ref": "#/$defs/disabledCapabilities" },
+    "topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sha256",
+        "primary_domain",
+        "tls_secret_ref",
+        "backup_target_ref"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "primary_domain": { "$ref": "#/$defs/domain" },
+        "tls_secret_ref": { "$ref": "#/$defs/secretRef" },
+        "backup_target_ref": {
+          "type": "string",
+          "pattern": "^(object|s3|gs|azure)://[^\\s]+$"
+        }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_release_id",
+        "target_source_commit",
+        "strategy",
+        "schema_policy",
+        "forward_fix_migrations"
+      ],
+      "properties": {
+        "target_release_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{5,127}$"
+        },
+        "target_source_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "strategy": { "const": "forward-fix" },
+        "schema_policy": { "const": "no-destructive-reversal" },
+        "forward_fix_migrations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/safeMigration" }
+        }
+      }
+    },
+    "approvals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["privacy", "production", "rollback"],
+      "properties": {
+        "privacy": { "$ref": "#/$defs/approval" },
+        "production": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/approval" }
+        },
+        "rollback": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/approval" }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "identity", "release_identity", "tenant_id"],
+      "properties": {
+        "name": { "const": "production" },
+        "identity": { "type": "string", "minLength": 1 },
+        "release_identity": { "type": "string", "minLength": 1 },
+        "tenant_id": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "pinnedImage": {
+      "type": "string",
+      "pattern": "^[^\\s@:]+(?:/[^\\s@:]+)+@sha256:[0-9a-f]{64}$"
+    },
+    "domain": {
+      "type": "string",
+      "pattern": "^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+    },
+    "secretRef": {
+      "type": "string",
+      "pattern": "^(secret|vault|kms)://[^\\s]+$"
+    },
+    "checksummedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "not": { "pattern": "(^/|(^|/)\\.\\.(/|$))" }
+        },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "safeMigration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256", "direction", "destructive"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "direction": { "const": "forward" },
+        "destructive": { "const": false }
+      }
+    },
+    "disabledCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connectors_enabled",
+        "live_models_enabled",
+        "kingdee_enabled",
+        "external_sends_enabled",
+        "destructive_operations_enabled"
+      ],
+      "properties": {
+        "connectors_enabled": { "const": false },
+        "live_models_enabled": { "const": false },
+        "kingdee_enabled": { "const": false },
+        "external_sends_enabled": { "const": false },
+        "destructive_operations_enabled": { "const": false }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "role", "approved_at", "scope", "release_id", "decision"],
+      "properties": {
+        "identity": { "type": "string", "minLength": 1 },
+        "role": {
+          "enum": ["privacy-approver", "release-approver", "rollback-approver"]
+        },
+        "approved_at": { "type": "string", "format": "date-time" },
+        "scope": { "const": "production" },
+        "release_id": { "type": "string", "minLength": 1 },
+        "decision": { "const": "approved" }
+      }
+    }
+  }
+}

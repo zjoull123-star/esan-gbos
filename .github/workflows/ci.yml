@@ -286,3 +286,46 @@ jobs:
             ${{ runner.temp }}/sbom/security-scan.log
           if-no-files-found: warn
           retention-days: 14
+
+  gate6-controls:
+    name: Gate 6 release, privacy and operations controls
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+        with:
+          enable-cache: true
+      - name: Validate Gate 6 controls without external mutations
+        run: |
+          mkdir -p "${RUNNER_TEMP}/gate-logs"
+          exec > >(tee "${RUNNER_TEMP}/gate-logs/gate6-controls.log") 2>&1
+          uv run --offline --frozen pytest \
+            tests/contracts/test_gate6_decision_contract.py \
+            tests/release \
+            tests/ops \
+            tests/governance/test_gate6_privacy_contracts.py \
+            tests/governance/test_gate6_privacy_procedures.py
+          uv run --offline --frozen python scripts/ops/gate6_ops.py validate-policy \
+            --policy infra/observability/slo-alert-policy.json \
+            --repo-root .
+          bash -n scripts/release/preflight scripts/release/plan
+          scripts/release/preflight --help
+          scripts/release/plan --help
+          uv run --offline --frozen python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for value in (
+              "contracts/gate6/release-manifest.schema.json",
+              "infra/prod/single-tenant-v1.json",
+              "infra/prod/site-per-tenant-v1.template.json",
+          ):
+              json.loads(Path(value).read_text(encoding="utf-8"))
+          PY
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: gate-log-gate6-controls
+          path: ${{ runner.temp }}/gate-logs/gate6-controls.log
+          if-no-files-found: warn
+          retention-days: 14

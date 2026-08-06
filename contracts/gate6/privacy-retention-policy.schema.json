@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.esan.dev/contracts/gate6/privacy-retention-policy.schema.json",
+  "title": "GBOS Gate 6 retention policy manifest",
+  "allOf": [
+    {
+      "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/core"
+    },
+    {
+      "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/standardLifecycle"
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": [
+              "approved",
+              "executed"
+            ]
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "retention": {
+            "required": [
+              "approved_at"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "executed"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "retention": {
+            "required": [
+              "executed_at"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "required": [
+    "retention"
+  ],
+  "properties": {
+    "operation": {
+      "const": "retention_policy"
+    },
+    "retention": {
+      "type": "object",
+      "required": [
+        "retention_class",
+        "start_event",
+        "duration_days",
+        "expiry_action",
+        "legal_hold_check_required",
+        "review_at"
+      ],
+      "properties": {
+        "retention_class": {
+          "enum": [
+            "R0-ephemeral",
+            "R1-operational",
+            "R2-record",
+            "R3-legal-hold"
+          ]
+        },
+        "start_event": {
+          "enum": [
+            "collection",
+            "case_closed",
+            "contract_end",
+            "hold_release"
+          ]
+        },
+        "duration_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 36500
+        },
+        "expiry_action": {
+          "enum": [
+            "delete",
+            "anonymize",
+            "review"
+          ]
+        },
+        "legal_hold_check_required": {
+          "const": true
+        },
+        "approved_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "executed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "review_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

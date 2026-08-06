@@ -1,0 +1,115 @@
+{
+  "api_version": "gbos.esan/v1",
+  "kind": "ProductionTopology",
+  "topology_id": "gbos-prod-single-tenant-v1",
+  "version": 1,
+  "enabled": false,
+  "environment": {
+    "name": "production",
+    "identity": "gbos-production-primary",
+    "tenant_mode": "single",
+    "tenant_id": "tenant-placeholder"
+  },
+  "domain": {
+    "primary": "gbos.example.invalid"
+  },
+  "tls": {
+    "secret_ref": "secret://prod/ingress/tls-certificate"
+  },
+  "secrets": {
+    "provider": "external-kms",
+    "kms_key_ref": "kms://prod/gbos/config",
+    "required_refs": [
+      "secret://prod/app/runtime",
+      "secret://prod/mariadb/application",
+      "secret://prod/postgres/metrics",
+      "secret://prod/redis/auth",
+      "secret://prod/object-storage/auth"
+    ]
+  },
+  "backup": {
+    "target_ref": "object://prod-backups/gbos-primary",
+    "identity": "gbos-prod-backup-writer",
+    "kms_key_ref": "kms://prod/gbos/backups"
+  },
+  "release_policy": {
+    "approved_release_identities": [
+      "gbos-release-automation"
+    ],
+    "minimum_production_approvals": 2,
+    "minimum_rollback_approvals": 2,
+    "approval_max_age_hours": 72
+  },
+  "capabilities": {
+    "connectors_enabled": false,
+    "live_models_enabled": false,
+    "kingdee_enabled": false,
+    "external_sends_enabled": false,
+    "destructive_operations_enabled": false
+  },
+  "components": {
+    "app": {
+      "image": "registry.example.invalid/gbos/app@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "identity": "gbos-prod-app",
+      "network": "application",
+      "public_ports": [],
+      "secret_refs": [
+        "secret://prod/app/runtime"
+      ]
+    },
+    "mariadb": {
+      "image": "registry.example.invalid/gbos/mariadb@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "identity": "gbos-prod-mariadb",
+      "network": "data",
+      "public_ports": [],
+      "secret_refs": [
+        "secret://prod/mariadb/application"
+      ]
+    },
+    "postgres_pgvector": {
+      "image": "registry.example.invalid/gbos/postgres-pgvector@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "identity": "gbos-prod-postgres",
+      "network": "data",
+      "public_ports": [],
+      "secret_refs": [
+        "secret://prod/postgres/metrics"
+      ]
+    },
+    "queue_cache": {
+      "image": "registry.example.invalid/gbos/redis@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "identity": "gbos-prod-queue-cache",
+      "network": "data",
+      "public_ports": [],
+      "secret_refs": [
+        "secret://prod/redis/auth"
+      ]
+    },
+    "object_storage": {
+      "image": "registry.example.invalid/gbos/object-storage@sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "identity": "gbos-prod-object-storage",
+      "network": "storage",
+      "public_ports": [],
+      "secret_refs": [
+        "secret://prod/object-storage/auth"
+      ]
+    },
+    "ingress_waf": {
+      "image": "registry.example.invalid/gbos/ingress@sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "identity": "gbos-prod-ingress",
+      "network": "edge",
+      "public_ports": [
+        443
+      ],
+      "secret_refs": [
+        "secret://prod/ingress/tls-certificate"
+      ]
+    },
+    "monitoring": {
+      "image": "registry.example.invalid/gbos/monitoring@sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "identity": "gbos-prod-monitoring-reader",
+      "network": "monitoring",
+      "public_ports": [],
+      "secret_refs": []
+    }
+  }
+}

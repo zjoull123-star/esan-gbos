@@ -118,7 +118,7 @@ def test_example_environment_keeps_every_external_gate3_capability_disabled() ->
 def test_gate3_integration_reuses_an_existing_ci_job() -> None:
     workflow = _read(CI)
 
-    assert workflow.count("runs-on: ubuntu-24.04") == 8
+    assert workflow.count("runs-on: ubuntu-24.04") == 9
     assert "scripts/dev/test-gate3-integration" in workflow
     assert "services/observer/observer" in workflow
     assert "services/context/context_service" in workflow

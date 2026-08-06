@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.esan.dev/contracts/gate6/privacy-data-subject-request.schema.json",
+  "title": "GBOS Gate 6 data subject access and export manifest",
+  "allOf": [
+    {
+      "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/core"
+    },
+    {
+      "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/standardLifecycle"
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "executed"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "required": [
+          "delivery"
+        ]
+      }
+    }
+  ],
+  "required": [
+    "request"
+  ],
+  "properties": {
+    "operation": {
+      "const": "data_subject_request"
+    },
+    "request": {
+      "type": "object",
+      "required": [
+        "request_kind",
+        "requested_at",
+        "identity_verification_ref",
+        "authorized_fields",
+        "redaction_required"
+      ],
+      "properties": {
+        "request_kind": {
+          "enum": [
+            "access",
+            "export",
+            "access_export"
+          ]
+        },
+        "requested_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "identity_verification_ref": {
+          "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/reference"
+        },
+        "authorized_fields": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,63}$"
+          }
+        },
+        "redaction_required": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "delivery": {
+      "type": "object",
+      "required": [
+        "package_ref",
+        "manifest_ref",
+        "generated_at",
+        "expires_at",
+        "download_audit_ref",
+        "contains_raw_communications"
+      ],
+      "properties": {
+        "package_ref": {
+          "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/reference"
+        },
+        "manifest_ref": {
+          "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/reference"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "download_audit_ref": {
+          "$ref": "https://gbos.esan.dev/contracts/gate6/privacy-common.schema.json#/$defs/reference"
+        },
+        "contains_raw_communications": {
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}
