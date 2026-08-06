@@ -45,11 +45,19 @@ def test_version_lock_stays_on_supported_major_versions() -> None:
 def test_version_lock_pins_multi_arch_image_digests() -> None:
     lock = load_lock()
 
-    assert set(lock["images"]) == {"erpnext", "mariadb", "postgres", "redis"}
-    for image in lock["images"].values():
+    upstream_images = {"erpnext", "mariadb", "postgres", "redis"}
+    assert set(lock["images"]) == {*upstream_images, "esan_gbos_final"}
+    for name in upstream_images:
+        image = lock["images"][name]
         assert DIGEST_PATTERN.fullmatch(image["index_digest"])
         assert DIGEST_PATTERN.fullmatch(image["linux_arm64_digest"])
         assert image["tag"] not in {"latest", "main", "develop"}
+
+    final_image = lock["images"]["esan_gbos_final"]
+    assert final_image["tag"] == "esan-gbos-final:gate1"
+    assert DIGEST_PATTERN.fullmatch(final_image["linux_arm64_digest"])
+    assert SHA_PATTERN.fullmatch(final_image["source_commit"])
+    assert re.fullmatch(r"^[a-f0-9]{64}$", final_image["app_source_sha256"])
 
 
 def test_runtime_versions_match_frappe_v16_baseline() -> None:
@@ -80,7 +88,7 @@ def test_repository_and_ci_pin_python_and_node_patch_versions() -> None:
     assert 'test "$(pnpm --version)" = "11.9.0"' in workflow
 
 
-def test_local_upstream_runtime_evidence_is_frozen_without_claiming_gate1() -> None:
+def test_local_upstream_and_final_runtime_evidence_are_frozen() -> None:
     lock = load_lock()
 
     assert lock["tooling"] == {
@@ -105,8 +113,14 @@ def test_local_upstream_runtime_evidence_is_frozen_without_claiming_gate1() -> N
     assert evidence["node_scope"] == "builder-only"
     assert lock["gate_status"] == {
         "upstream_three_app_runtime": "verified-local",
-        "final_four_app_runtime": "pending-gate1",
+        "final_four_app_runtime": "verified-local",
     }
+    final = lock["local_evidence"]["final_image"]
+    assert final["installed_apps"] == ["frappe", "erpnext", "crm", "esan_gbos"]
+    assert final["consecutive_migrations_exit_codes"] == [0, 0]
+    assert final["frappe_integration_tests"] == 21
+    assert final["security_unwaived_high_critical"] == 0
+    assert final["backup_restore"] == "verified-local"
 
 
 def test_crm_doctype_contract_freezes_verified_parent_fields() -> None:

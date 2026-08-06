@@ -55,9 +55,18 @@ The build context is produced with `git archive` from that commit, so ignored
 caches and unrelated monorepo changes cannot enter the final image.
 
 The exact frappe_docker builder stage supplies Node 24.13.0 for
-`bench build --app esan_gbos`. The final backend stage copies the built assets
-and Python app, runs only the Python editable install, and does not assume Node
-exists at runtime.
+`bench build --app esan_gbos`. The final stage copies the built assets and
+Python app, then retains only the Node 24.13.0 executable plus the locked
+minimal Frappe realtime dependency bundle. Frontend build dependencies and
+upstream app `node_modules` are removed from the runtime.
+
+The verified local ARM64 result was built from
+`deccc2caaa2d25cebceab2aff99dbbbb4e037a04`:
+
+```text
+esan-gbos-final:gate1
+sha256:a55e3dc432cabc7e4a1bbe4951d1586c97e65151b41a5d9c7e5eb0632d61f1e9
+```
 
 The manual GitHub fresh-site smoke runs on `linux/amd64`. An explicitly
 authorized registry publisher can create its single-platform prerequisite

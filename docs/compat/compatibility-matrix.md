@@ -10,7 +10,7 @@ claims are limited to the disposable local ARM64 environment described here.
 | Frappe CRM | `v1.81.0` | `f6016eab20936ea15e5f450ec8dff9880f4dffe9` | AGPL-3.0 | Installed; `bench version` reported `1.81.0` |
 | frappe_docker | `v3.2.2` | `3061850feface8fbbad15b5dc08a110c596107cb` | MIT | Custom image build source |
 | Gate 0 upstream image | `esan-gbos-upstream:gate0` | `sha256:b69f0001225523ec52ceb6d80fc696c34f24c560a0d15c5ebc53e803eb5286ec` | Combined upstream obligations | Built and run on ARM64 |
-| `esan_gbos` | Gate 1 local monorepo app | Final digest pending | Private / licensing decision pending | **Not included in the verified Gate 0 upstream image** |
+| `esan_gbos` | `0.1.0` from runtime commit `deccc2caaa2d25cebceab2aff99dbbbb4e037a04` | `sha256:a55e3dc432cabc7e4a1bbe4951d1586c97e65151b41a5d9c7e5eb0632d61f1e9` | AGPL-3.0-only package metadata; external-service legal review pending | Fresh four-App ARM64 site, double migration, tests, security scan and recovery verified |
 
 Infrastructure image indexes remain frozen in
 [`versions.json`](versions.json). Moving branches and floating image tags are
@@ -33,8 +33,8 @@ The local host used OrbStack 2.2.2, Docker 29.4.0, Compose 5.1.2, and buildx
   `frappe`, `erpnext`, and `crm`.
 - Two consecutive `bench --site gbos.localhost migrate` commands exited 0.
 
-This verifies the three upstream apps together. It does not verify the Gate 1
-final image or the four-app install.
+This three-App result is the compatibility prerequisite. The separate Gate 1
+result below verifies the final four-App image; the two scopes remain distinct.
 
 ## Findings retained as evidence
 
@@ -75,16 +75,27 @@ docker compose --env-file infra/dev/.env -f infra/dev/compose.yml exec -T backen
 
 Repeat for `CRM Lead`, `CRM Deal`, and `CRM Contacts`.
 
-## Gate 1 final-image gate
+## Verified Gate 1 final-image gate
 
-Gate 1 must produce a clean, committed `apps/esan_gbos` source tree and build
-the local monorepo app on top of the verified upstream image. The final smoke
-must prove a fresh site with exactly `frappe`, `erpnext`, `crm`, and
-`esan_gbos`, followed by two successful migrations, final-image security and
-license scans, and a CycloneDX SBOM.
+The local final image was built from a clean Git archive at
+`deccc2caaa2d25cebceab2aff99dbbbb4e037a04`. The image label records app source
+SHA-256
+`b6da2818182774b2246e4429c519a936de09ea40630d4985e865d3ccd5776339`.
+Its `linux/arm64` digest is
+`sha256:a55e3dc432cabc7e4a1bbe4951d1586c97e65151b41a5d9c7e5eb0632d61f1e9`.
 
-No fallback to Frappe/ERPNext v15 is permitted. Failure of that final smoke is a
-blocker; the three-app Gate 0 evidence cannot be promoted into a four-app claim.
+- Fresh site: exactly `frappe`, `erpnext`, `crm`, and `esan_gbos`.
+- Two consecutive migrations: exit 0.
+- Frappe integration tests: 21/21.
+- Final-image scan: 0 unwaived High/Critical; scoped Gate 0/1 exceptions
+  remain visible and production-blocking.
+- CycloneDX 1.7 SBOM and license inventory generated with checksums.
+- Backup and restore into a second fresh site followed by migration and count
+  verification succeeded.
+
+The final image retains Node 24.13.0 only for the Frappe realtime process and
+27 locked runtime packages. Frontend build dependencies and upstream app
+`node_modules` are pruned. No fallback to Frappe/ERPNext v15 occurred.
 
 ## Sources
 

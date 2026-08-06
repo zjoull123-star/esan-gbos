@@ -384,7 +384,7 @@ def test_security_and_sbom_commands_are_reproducible_and_pinned() -> None:
     assert "**/*.jar" not in security
     assert "--format cyclonedx" in sbom
     assert "--scanners license" in sbom
-    assert "--skip-files \"${NON_RUNTIME_JAR}\"" in sbom
+    assert '--skip-files "${NON_RUNTIME_JAR}"' in sbom
     assert 'NON_RUNTIME_JAR="usr/share/java/libintl-0.21.jar"' in sbom
     assert "**/*.jar" not in sbom
     assert "docker image inspect" in security

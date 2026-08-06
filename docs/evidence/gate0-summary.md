@@ -1,59 +1,77 @@
 # Gate 0 evidence summary
 
-Status: **partial**. The exact three-app upstream stack is verified locally.
-The Gate 1 final image and final four-app runtime remain pending.
+Status: **pass for the local disposable Gate 0 boundary**.
 
-## Verified local Gate 0 upstream evidence
+Go/No-Go: **Gate 0 Go**. This is not a production approval. Gate 5
+preproduction and Gate 6 production remain **No-Go**.
+
+## Immutable compatibility evidence
 
 - Host: OrbStack 2.2.2; Docker 29.4.0; Compose 5.1.2; buildx 0.33.0;
   ARM64.
-- Image: `esan-gbos-upstream:gate0`, Linux ARM64, created
-  `2026-08-06T03:00:09+08:00`, digest
+- Frappe Framework `v16.30.0` at
+  `9523516cac25992bc2cd810e1015df8994c257f5`.
+- ERPNext `v16.31.0` at
+  `68ea583a1fbd1c533004cabc4294213e9a58716e`.
+- Frappe CRM `v1.81.0` at
+  `f6016eab20936ea15e5f450ec8dff9880f4dffe9`.
+- `frappe_docker` `v3.2.2` at
+  `3061850feface8fbbad15b5dc08a110c596107cb`.
+- The original upstream-only ARM64 image remains recorded at
   `sha256:b69f0001225523ec52ceb6d80fc696c34f24c560a0d15c5ebc53e803eb5286ec`.
-- Runtime: Python 3.14.2. Node 24.13.0 exists in the builder only and is absent
-  from the backend stage.
-- `bench version`: Frappe 16.30.0, ERPNext 16.31.0, CRM 1.81.0.
-- Fresh site `gbos.localhost`: installed apps were exactly `frappe`, `erpnext`,
-  and `crm`.
-- Two consecutive migrations exited 0.
-- The backend Host-header healthcheck regression was reproduced and fixed.
-  The frontend healthcheck was changed from unavailable `wget` to runtime
-  `curl`; after recreation, the upstream frontend container reported Healthy.
+  A fresh site installed exactly `frappe`, `erpnext`, and `crm`; two
+  consecutive migrations exited 0.
+- The Gate 1 foundation image was built from committed runtime source
+  `deccc2caaa2d25cebceab2aff99dbbbb4e037a04` and has local ARM64 digest
+  `sha256:a55e3dc432cabc7e4a1bbe4951d1586c97e65151b41a5d9c7e5eb0632d61f1e9`.
+  Its fresh site installed exactly `frappe`, `erpnext`, `crm`, and
+  `esan_gbos`.
 
-The first exact build experienced a transient network hang while Yarn fetched
-`sortablejs`, `vuex`, and `yargs`. Independent network checks remained
-available and the unchanged retry succeeded. This is not classified as an
-upstream compatibility failure.
+The CRM metadata snapshot and all JSON Schema 2020-12 examples pass the
+repository contract checks. PostgreSQL 17 with pgvector 0.8.2 also passed the
+optional Observer connectivity/contract check; Observer remains isolated and
+is not a Gate 1 runtime dependency.
 
-Frappe emitted a `duckdb_sync` warning because `cleanup_old_syncs` is not a
-valid method. The migrations still exited 0, but the warning remains an
-upstream limitation requiring follow-up.
+## Security and governance result
 
-## Pending Gate 1 evidence
+- Repository Trivy, secret, and misconfiguration scans reported no blocking
+  result.
+- The final-image scan exited 0 with **0 unwaived High/Critical** findings.
+- The remaining 85 Debian and 18 Python scanner findings are not hidden:
+  57 time-bounded Gate 0/1 exceptions cover 103 exact PURLs and expire no
+  later than `2026-09-30T00:00:00Z`.
+- Those exceptions do not authorize Gate 5/6. The machine policy, owner,
+  scope, expiry, remediation conditions, and production block are documented
+  in [Gate 0/1 security exceptions](../governance/security-exceptions-gate01.md).
+- Production channel ingestion, real model calls, Kingdee networking, external
+  writes, and production deployment remained disabled; observed calls for
+  each were 0.
 
-- A deterministic final image built from clean, committed
-  `apps/esan_gbos` monorepo source.
-- Fresh final four-app runtime: `frappe`, `erpnext`, `crm`, and `esan_gbos`.
-- Two consecutive final-image migrations.
-- Final-image security scan, license inventory, CycloneDX SBOM, and checksums.
-- Vue unit/build gates and Playwright browser checks after the frontend is
-  materialized.
+The ADRs, permission matrix, data classification, consent/withdrawal,
+retention/deletion/export/legal-hold process, Singapore cross-border checklist,
+threat model, external dependencies, license baseline, and SBOM workflow are
+present and validated.
 
-The three-app result must not be presented as final four-app runtime evidence.
+## Known limitations
 
-## Repository ruleset exception
-
-The repository is private and the authenticated viewer has ADMIN permission.
-A read-only ruleset query returned HTTP 403 with GitHub's requirement for
-GitHub Pro for private-repository rulesets. Repository visibility must remain
-private. Until that capability is available, the compensating control is
-main-agent-only merge plus required local and CI evidence. Enabling a ruleset
-remains an external dependency for the repository owner; no account or
-repository setting was changed during this work.
+- Frappe emits an upstream `duckdb_sync.cleanup_old_syncs` warning during
+  migration. Both consecutive migrations and the post-restore migration exit
+  0. The warning remains visible and is not represented as fixed.
+- The first exact upstream build experienced a transient network hang while
+  fetching frontend packages. An unchanged retry succeeded; no tag, commit,
+  runtime, or version fallback occurred.
+- GitHub returned HTTP 403 for private-repository rulesets because the account
+  lacks the required GitHub Pro capability. The repository remains private.
+  The compensating control is main-agent-only merge plus green local and
+  GitHub CI evidence; the exception is not silently treated as a ruleset.
+- AGPL/GPL source and notice obligations still require legal confirmation
+  before an external pilot or production service.
 
 ## Evidence handling
 
-Only the compact JSON record, summary, template, and their checksums are
-committed. Raw build logs, scan databases, large SBOMs, and secrets are not
-stored in the repository. CI uploads scan/SBOM artifacts with bounded
-retention.
+Compact summaries, machine records, screenshots, and checksums are committed.
+Raw logs, scan output, database backups, and multi-megabyte SBOMs remain
+outside Git. GitHub workflows upload bounded-retention raw gate logs, license
+inventory, CycloneDX SBOM, and checksums. The review surface is
+[PR #1](https://github.com/zjoull123-star/esan-gbos/pull/1); its head must be
+green before merge.

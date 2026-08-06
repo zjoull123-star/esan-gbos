@@ -67,6 +67,13 @@
       "tag": "redis:6.2-alpine",
       "index_digest": "sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23",
       "linux_arm64_digest": "sha256:ef0234ae359f2550f773accc0b4207ae213475eccaa0b2dd17c2710abb8c1998"
+    },
+    "esan_gbos_final": {
+      "tag": "esan-gbos-final:gate1",
+      "linux_arm64_digest": "sha256:a55e3dc432cabc7e4a1bbe4951d1586c97e65151b41a5d9c7e5eb0632d61f1e9",
+      "source_commit": "deccc2caaa2d25cebceab2aff99dbbbb4e037a04",
+      "app_source_sha256": "b6da2818182774b2246e4429c519a936de09ea40630d4985e865d3ccd5776339",
+      "created": "2026-08-06T10:52:25.274279038+08:00"
     }
   },
   "local_evidence": {
@@ -92,10 +99,31 @@
         0,
         0
       ]
+    },
+    "final_image": {
+      "tag": "esan-gbos-final:gate1",
+      "digest": "sha256:a55e3dc432cabc7e4a1bbe4951d1586c97e65151b41a5d9c7e5eb0632d61f1e9",
+      "created": "2026-08-06T10:52:25.274279038+08:00",
+      "platform": "linux/arm64",
+      "source_commit": "deccc2caaa2d25cebceab2aff99dbbbb4e037a04",
+      "fresh_site": "gbos-final.localhost",
+      "installed_apps": [
+        "frappe",
+        "erpnext",
+        "crm",
+        "esan_gbos"
+      ],
+      "consecutive_migrations_exit_codes": [
+        0,
+        0
+      ],
+      "frappe_integration_tests": 21,
+      "security_unwaived_high_critical": 0,
+      "backup_restore": "verified-local"
     }
   },
   "gate_status": {
     "upstream_three_app_runtime": "verified-local",
-    "final_four_app_runtime": "pending-gate1"
+    "final_four_app_runtime": "verified-local"
   }
 }
