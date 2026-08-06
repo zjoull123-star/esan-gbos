@@ -674,7 +674,7 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
         with self.assertRaises(frappe.PermissionError):
             assigned_work.save()
 
-    def test_reviewer_cannot_reassign_case_but_can_record_assigned_decision(self) -> None:
+    def test_reviewer_cannot_reassign_or_decide_case_through_generic_save(self) -> None:
         work = self._work_item()
         review = frappe.get_doc(
             {
@@ -697,9 +697,8 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
         review.reload()
         review.business_status = "Approved"
         review.decision_note = "Approved by the assigned synthetic reviewer"
-        review.save()
-        self.assertEqual(review.review_status, "Approved")
-        self.assertIsNotNone(review.decided_at)
+        with self.assertRaises(frappe.PermissionError):
+            review.save()
 
     def test_privacy_auditor_cannot_write_business_records(self) -> None:
         work = self._work_item()

@@ -25,6 +25,7 @@ package = false
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
   "postgres_integration: requires the pinned local Gate 3 PostgreSQL runtime",
 ]

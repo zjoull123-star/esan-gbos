@@ -36,6 +36,8 @@ def run_idempotent[Result: dict[str, Any]](
     key: str,
     payload: dict[str, Any],
     execute: Callable[[], Result],
+    *,
+    api_version: str = "v1",
 ) -> tuple[Result, bool, str]:
     name = _audit_name(key)
     digest = command_payload_hash(command, frappe.session.user, payload)
@@ -60,7 +62,7 @@ def run_idempotent[Result: dict[str, Any]](
         {
             "doctype": "Integration Request",
             "request_id": current_request_id,
-            "integration_request_service": f"esan_gbos.v1.{command}",
+            "integration_request_service": f"esan_gbos.{api_version}.{command}",
             "request_description": "Governed GBOS BFF command",
             "status": "Authorized",
             "data": json.dumps(

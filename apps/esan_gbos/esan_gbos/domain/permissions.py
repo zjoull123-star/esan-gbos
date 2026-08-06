@@ -93,7 +93,7 @@ def role_has_doctype_permission(
     if role == "Reviewer":
         if permission_type == "read":
             return doctype in _BUSINESS_DOCTYPES
-        return permission_type == "write" and doctype == "GBOS Review Case"
+        return False
     if permission_type == "read":
         return doctype in _TEAM_READ.get(role, frozenset())
     if permission_type in {"write", "create"}:
@@ -113,6 +113,12 @@ def can_access_record(
     assigned_roles = frozenset(roles)
 
     if doctype not in _ALL_PARENT_DOCTYPES:
+        return False
+    if (
+        "Reviewer" in assigned_roles
+        and is_assigned_review_subject
+        and permission_type in {"write", "create", "delete"}
+    ):
         return False
     if permission_type == "read":
         if "GBOS Admin" in assigned_roles:
@@ -134,9 +140,7 @@ def can_access_record(
             doctype == "GBOS Review Case" and is_assigned_reviewer and "Reviewer" in assigned_roles
         )
     if permission_type == "write" and doctype == "GBOS Review Case":
-        return "GBOS Admin" in assigned_roles or (
-            is_assigned_reviewer and "Reviewer" in assigned_roles
-        )
+        return "GBOS Admin" in assigned_roles
     if permission_type in {"write", "create"}:
         if "GBOS Admin" in assigned_roles:
             return True

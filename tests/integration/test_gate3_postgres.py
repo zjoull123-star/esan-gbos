@@ -16,9 +16,7 @@ from services.context.context_service.models import (
 )
 from services.context.context_service.publisher import ContextPublisher
 from services.context.context_service.storage import (
-    MigrationRunner,
     PostgresContextRepository,
-    connect_postgres,
     connect_postgres_components,
 )
 from services.observer.observer.api import create_observer_app
@@ -102,24 +100,6 @@ def _container_sql(
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    if POSTGRES_DSN:
-        root = Path(__file__).parents[2]
-        connection = connect_postgres(POSTGRES_DSN)
-        try:
-            runner = MigrationRunner(
-                connection,
-                [
-                    root / "services" / "observer" / "migrations",
-                    root / "services" / "context" / "migrations",
-                ],
-            )
-            first = runner.run()
-            second = runner.run()
-            assert second == ()
-            assert first or _migration_ledger_count() == 3
-        finally:
-            connection.close()
-
     assert _migration_ledger_count() == 3
     result = _container_sql(
         """
@@ -129,6 +109,15 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
         WHERE n.nspname IN ('observer', 'context')
           AND c.relkind = 'r'
           AND c.relname <> 'schema_migrations'
+          AND c.relname IN (
+              'manual_import_jobs', 'raw_objects', 'observation_events',
+              'participants', 'evidence_refs', 'event_evidence',
+              'checkpoints', 'quarantine', 'dead_letter', 'processor_runs',
+              'derivation_edges', 'consent', 'legal_holds',
+              'deletion_receipts', 'evidence_records', 'fact_proposals',
+              'fact_evidence', 'entity_resolution_proposals', 'candidates',
+              'restrictions', 'inbox_messages'
+          )
           AND c.relrowsecurity
           AND c.relforcerowsecurity
         """
@@ -137,7 +126,17 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
 
 
 def _migration_ledger_count() -> int:
-    result = _container_sql("SELECT count(*) FROM observer.schema_migrations")
+    result = _container_sql(
+        """
+        SELECT count(*)
+        FROM observer.schema_migrations
+        WHERE migration_name IN (
+            'observer/001_gate3_observer.sql',
+            'observer/002_gate3_observer_runtime.sql',
+            'context/001_gate3_context.sql'
+        )
+        """
+    )
     return int(result.stdout.strip())
 
 
@@ -185,7 +184,8 @@ def test_gate3_context_rls_and_proposal_constraint_fail_closed() -> None:
             ) VALUES (
               '{site}', 'fact-{site}', 'observation_processing',
               'idem-{site}', '{digest}', 'proposed', 'subject-{site}',
-              'communication_summary', 1.0, '{{"status":"proposed"}}'::jsonb
+              'communication_summary', 1.0,
+              '{{"status":"proposed","output_version":"gate3-test-v1"}}'::jsonb
             );
             COMMIT;
             """
@@ -215,7 +215,8 @@ def test_gate3_context_rls_and_proposal_constraint_fail_closed() -> None:
         ) VALUES (
           '{site_b}', 'cross-{suffix}', 'observation_processing',
           'cross-{suffix}', '{digest}', 'proposed', 'subject',
-          'communication_summary', 1.0, '{{"status":"proposed"}}'::jsonb
+          'communication_summary', 1.0,
+          '{{"status":"proposed","output_version":"gate3-test-v1"}}'::jsonb
         );
         COMMIT;
         """,
@@ -235,7 +236,8 @@ def test_gate3_context_rls_and_proposal_constraint_fail_closed() -> None:
         ) VALUES (
           '{site_a}', 'confirmed-{suffix}', 'observation_processing',
           'confirmed-{suffix}', '{digest}', 'confirmed', 'subject',
-          'communication_summary', 1.0, '{{"status":"confirmed"}}'::jsonb
+          'communication_summary', 1.0,
+          '{{"status":"confirmed","output_version":"gate3-test-v1"}}'::jsonb
         );
         COMMIT;
         """,

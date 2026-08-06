@@ -1,0 +1,118 @@
+{
+  "schema_version": "1.0",
+  "site_id": "gbos.localhost",
+  "decision": {
+    "schema_version": "1.0",
+    "decision_id": "decision-SYNTH-001",
+    "site_id": "gbos.localhost",
+    "processing_purpose": "business_operations",
+    "decision_version": "gate4-decision-v1",
+    "decision_revision": 1,
+    "decision_type": "human",
+    "proposal_ref": "fact-proposal-record-SYNTH-001",
+    "proposal_version": "fact-proposal-v1",
+    "proposal_revision": 1,
+    "input_fact_refs": [],
+    "output_fact_refs": [
+      {
+        "fact_id": "verified-fact-SYNTH-001",
+        "fact_version": 1
+      }
+    ],
+    "evidence_refs": [
+      "evidence-record-SYNTH-001"
+    ],
+    "operator": "reviewer-SYNTH-001",
+    "decision_basis": "Synthetic evidence supports the exact proposed quantity.",
+    "outcome": "confirmed",
+    "effective_at": "2026-08-06T03:05:00Z",
+    "valid_time": {
+      "start": "2026-08-06T01:59:00Z",
+      "end": null
+    },
+    "recorded_time": "2026-08-06T03:05:00Z",
+    "review_status": "human_reviewed",
+    "correlation_id": "corr-SYNTH-001"
+  },
+  "proposal": {
+    "proposal_ref": "fact-proposal-record-SYNTH-001",
+    "proposal_version": "fact-proposal-v1",
+    "proposal_revision": 1,
+    "payload_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "facts": [
+    {
+      "schema_version": "1.0",
+      "fact_id": "verified-fact-SYNTH-001",
+      "site_id": "gbos.localhost",
+      "processing_purpose": "business_operations",
+      "proposal_ref": "fact-proposal-record-SYNTH-001",
+      "proposal_version": "fact-proposal-v1",
+      "proposal_revision": 1,
+      "subject_ref": "contact-SYNTH-001",
+      "predicate": "requested_quantity",
+      "value": {
+        "type": "number",
+        "number": 1000,
+        "unit": "pcs"
+      },
+      "fact_version": 1,
+      "status": "confirmed",
+      "evidence_refs": [
+        "evidence-record-SYNTH-001"
+      ],
+      "confirmation_decision_ref": "decision-SYNTH-001",
+      "valid_time": {
+        "start": "2026-08-06T01:59:00Z",
+        "end": null
+      },
+      "recorded_time": "2026-08-06T03:05:00Z",
+      "review_status": "human_reviewed",
+      "source_lineage": {
+        "source_system": "manual_import",
+        "source_record_refs": [
+          "event-SYNTH-001",
+          "evidence-record-SYNTH-001",
+          "fact-proposal-record-SYNTH-001"
+        ],
+        "retrieved_at": "2026-08-06T02:00:03Z",
+        "transformation_version": "gate4-confirm-v1",
+        "evidence_status": "synthetic"
+      },
+      "correlation_id": "corr-SYNTH-001"
+    }
+  ],
+  "evidence": [
+    {
+      "schema_version": "2.0",
+      "evidence_record_id": "evidence-record-SYNTH-001",
+      "site_id": "gbos.localhost",
+      "processing_purpose": "business_operations",
+      "evidence_ref": {
+        "schema_version": "1.0",
+        "evidence_id": "evidence-SYNTH-001",
+        "observation_event_id": "01K20B8BV5C6P4YFAT8YQ3D4S5",
+        "raw_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "object_ref": "cos://synthetic/evidence-SYNTH-001",
+        "media_type": "text/plain",
+        "locator": {
+          "message_start": 0,
+          "message_end": 42
+        },
+        "created_at": "2026-08-06T01:00:03Z"
+      },
+      "source_lineage": {
+        "source_system": "synthetic_observer",
+        "source_record_refs": [
+          "01K20B8BV5C6P4YFAT8YQ3D4S5"
+        ],
+        "retrieved_at": "2026-08-06T01:00:03Z",
+        "transformation_version": "gate2-fixture-v1",
+        "evidence_status": "synthetic"
+      },
+      "data_classification": "Restricted",
+      "review_status": "human_reviewed",
+      "recorded_at": "2026-08-06T01:00:04Z"
+    }
+  ]
+}

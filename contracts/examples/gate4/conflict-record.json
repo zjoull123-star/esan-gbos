@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "conflict_id": "conflict-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "processing_purpose": "business_operations",
+  "candidates": [
+    {
+      "record_kind": "verified_fact",
+      "record_ref": "verified-fact-SYNTH-000",
+      "record_version": "1",
+      "record_revision": 1,
+      "evidence_refs": [
+        "evidence-record-SYNTH-000"
+      ]
+    },
+    {
+      "record_kind": "fact_proposal",
+      "record_ref": "fact-proposal-record-SYNTH-001",
+      "record_version": "fact-proposal-v1",
+      "record_revision": 1,
+      "evidence_refs": [
+        "evidence-record-SYNTH-001"
+      ]
+    }
+  ],
+  "status": "open",
+  "evidence_refs": [
+    "evidence-record-SYNTH-000",
+    "evidence-record-SYNTH-001"
+  ],
+  "detected_at": "2026-08-06T03:00:00Z",
+  "recorded_time": "2026-08-06T03:00:01Z",
+  "correlation_id": "corr-SYNTH-001"
+}

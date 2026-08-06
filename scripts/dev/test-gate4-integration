@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+export PATH="${HOME}/.orbstack/bin:${PATH}"
+
+ENV_FILE="${REPO_ROOT}/infra/dev/.env"
+if [[ ! -f "${ENV_FILE}" ]]; then
+  cp -- "${REPO_ROOT}/infra/dev/.env.example" "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
+fi
+if grep -Eiq \
+  '^(GBOS_PRODUCTION_ENABLED=(true|1|yes)|GBOS_ENV=production)$' \
+  "${ENV_FILE}"; then
+  echo "Gate 4 integration tests refuse production configuration." >&2
+  exit 78
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+set +a
+export GBOS_PRODUCTION_ENABLED=false
+export GBOS_RUN_GATE4_POSTGRES_INTEGRATION=1
+export GBOS_GATE4_POSTGRES_HOST=127.0.0.1
+export GBOS_GATE4_POSTGRES_PORT="${OBSERVER_POSTGRES_PORT}"
+export GBOS_GATE4_POSTGRES_DATABASE="${OBSERVER_POSTGRES_DB}"
+export GBOS_GATE4_POSTGRES_PASSWORD="${OBSERVER_POSTGRES_PASSWORD}"
+export GBOS_GATE4_OWNER_USER="${OBSERVER_POSTGRES_USER}"
+export GBOS_GATE4_AGENT_USER=gbos_agent_app
+export GBOS_GATE4_CONTEXT_USER=gbos_context_app
+
+"${SCRIPT_DIR}/gate4-migrate"
+"${SCRIPT_DIR}/gate4-migrate"
+
+cd "${REPO_ROOT}"
+PYTHONDONTWRITEBYTECODE=1 \
+  uv run --frozen --no-sync \
+  pytest -p no:cacheprovider \
+  tests/integration/test_gate4_postgres.py -q

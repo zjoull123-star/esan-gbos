@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "guard_decision_id": "guard-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "processing_purpose": "sales_follow_up",
+  "proposal_ref": "action-proposal-SYNTH-001",
+  "proposal_version": "action-proposal-v1",
+  "proposal_revision": 1,
+  "target_revision": 0,
+  "evaluation_phase": "pre_tool",
+  "outcome": "allow",
+  "policy_version": "action-guard-v1",
+  "reason_codes": [
+    "scoped_internal_proposal"
+  ],
+  "evidence_refs": [
+    "evidence-record-SYNTH-001"
+  ],
+  "evaluated_at": "2026-08-06T03:10:01Z",
+  "correlation_id": "corr-SYNTH-001"
+}

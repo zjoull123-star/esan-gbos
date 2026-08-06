@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate4/conflict-record.schema.json",
+  "title": "Gate4ConflictRecord",
+  "description": "An explicit retained conflict; referenced proposals and facts are never overwritten.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "conflict_id",
+    "site_id",
+    "processing_purpose",
+    "candidates",
+    "status",
+    "evidence_refs",
+    "detected_at",
+    "recorded_time",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "conflict_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/SiteId"
+    },
+    "processing_purpose": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/ProcessingPurpose"
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "record_kind",
+          "record_ref",
+          "record_version",
+          "record_revision",
+          "evidence_refs"
+        ],
+        "properties": {
+          "record_kind": {
+            "type": "string",
+            "enum": [
+              "fact_proposal",
+              "verified_fact"
+            ]
+          },
+          "record_ref": {
+            "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+          },
+          "record_version": {
+            "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+          },
+          "record_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "evidence_refs": {
+            "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/EvidenceRefs"
+          }
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "resolved",
+        "dismissed"
+      ]
+    },
+    "evidence_refs": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/EvidenceRefs"
+    },
+    "detected_at": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Timestamp"
+    },
+    "recorded_time": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Timestamp"
+    },
+    "correlation_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "resolution_decision_ref": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "resolved_at": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Timestamp"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "resolved"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "resolution_decision_ref",
+          "resolved_at"
+        ]
+      }
+    }
+  ]
+}

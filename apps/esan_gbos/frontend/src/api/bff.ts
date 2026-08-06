@@ -1,6 +1,10 @@
 import type {
   ContractError,
   ContractErrorCode,
+  ReviewCaseDetailPayload,
+  ReviewCaseListPayload,
+  ReviewCaseListQuery,
+  ReviewDecisionCommand,
   SampleCreateCommand,
   SampleFeedbackCommand,
   SourcingCreateCommand,
@@ -19,6 +23,12 @@ export const BFF_ENDPOINTS = {
   sampleFeedback: "/api/method/esan_gbos.api.v1.sample.record_feedback",
   sourcingCreate: "/api/method/esan_gbos.api.v1.sourcing.create_from_demand",
   workItemTransition: "/api/method/esan_gbos.api.v1.work_item.transition",
+} as const;
+
+export const BFF_V2_ENDPOINTS = {
+  reviewList: "/api/method/esan_gbos.api.v2.review_case.list",
+  reviewGet: "/api/method/esan_gbos.api.v2.review_case.get",
+  reviewDecide: "/api/method/esan_gbos.api.v2.review_case.decide",
 } as const;
 
 type ClientErrorCode =
@@ -190,7 +200,10 @@ const toFormBody = (command: Record<string, unknown>) => {
   const body = new URLSearchParams();
   for (const [key, value] of Object.entries(command)) {
     if (value !== undefined && value !== null) {
-      body.set(key, String(value));
+      body.set(
+        key,
+        Array.isArray(value) || isRecord(value) ? JSON.stringify(value) : String(value),
+      );
     }
   }
   return body.toString();
@@ -285,6 +298,24 @@ export const createBffClient = (dependencies: BffDependencies = {}) => {
       post<T>(BFF_ENDPOINTS.sourcingCreate, command as unknown as Record<string, unknown>),
     transitionWorkItem: <T = unknown>(command: WorkItemTransitionCommand) =>
       post<T>(BFF_ENDPOINTS.workItemTransition, command as unknown as Record<string, unknown>),
+    listReviewCases: (query: ReviewCaseListQuery = {}) => {
+      if (query.pageSize !== undefined && (query.pageSize < 1 || query.pageSize > 50)) {
+        throw new Error("page_size 必须在 1 到 50 之间");
+      }
+      return get<ReviewCaseListPayload>(
+        addQuery(BFF_V2_ENDPOINTS.reviewList, {
+          cursor: query.cursor,
+          page_size: query.pageSize,
+        }),
+      );
+    },
+    getReviewCase: (name: string) =>
+      get<ReviewCaseDetailPayload>(addQuery(BFF_V2_ENDPOINTS.reviewGet, { name })),
+    decideReviewCase: (command: ReviewDecisionCommand) =>
+      post<ReviewCaseDetailPayload>(
+        BFF_V2_ENDPOINTS.reviewDecide,
+        command as unknown as Record<string, unknown>,
+      ),
   };
 };
 

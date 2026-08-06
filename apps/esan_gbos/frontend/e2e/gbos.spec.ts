@@ -64,6 +64,46 @@ const syntheticSourcingEnvelope = {
   },
 };
 
+const syntheticReviewEnvelope = {
+  message: {
+    data: {
+      cases: [
+        {
+          name: "REVIEW-E2E-1",
+          title: "REVIEW-ONLY · 确认客户反馈事实",
+          assigned_reviewer: "gbos.admin.synthetic@example.invalid",
+          review_status: "Pending",
+          case_revision: 1,
+          case_payload_hash: "a".repeat(64),
+          subject: {
+            doctype: "GBOS Sample Feedback",
+            name: "FEEDBACK-E2E-1",
+            revision: 1,
+            payload_hash: "b".repeat(64),
+            snapshot: { title: "合成审核主体" },
+          },
+          evidence: [
+            {
+              evidence_type: "Evidence",
+              reference: "EVIDENCE-E2E-1",
+              payload_hash: "c".repeat(64),
+            },
+          ],
+          policy_reference: "gbos-action-policy@1.0.0",
+          origin: "Fixture",
+        },
+      ],
+      total: 1,
+      page_size: 20,
+      next_cursor: null,
+    },
+    meta: {
+      request_id: "req-e2e-review",
+      schema_version: "1.0",
+    },
+  },
+};
+
 const isHarness = (testInfo: TestInfo) =>
   testInfo.project.name === "frontend-harness";
 
@@ -83,9 +123,12 @@ const prepareHarness = async (page: Page) => {
     };
   });
   await page.route("**/api/method/**", async (route) => {
-    const envelope = route.request().url().includes("sourcing.get_board")
-      ? syntheticSourcingEnvelope
-      : syntheticWorkEnvelope;
+    const url = route.request().url();
+    const envelope = url.includes("review_case.list")
+      ? syntheticReviewEnvelope
+      : url.includes("sourcing.get_board")
+        ? syntheticSourcingEnvelope
+        : syntheticWorkEnvelope;
     await route.fulfill({
       status: 200,
       contentType: "application/json",

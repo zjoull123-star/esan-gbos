@@ -5,13 +5,14 @@ import { APP_ROUTES, isRouteAllowed } from "@/router";
 import { clearSession, readFrappeSession } from "@/session";
 
 describe("角色裁剪导航", () => {
-  it("精确声明 Gate 1 的七条业务路由", () => {
+  it("精确声明 Gate 4 的八条业务路由", () => {
     expect(APP_ROUTES.map((route) => route.path)).toEqual([
       "/gbos/ceo",
       "/gbos/sales",
       "/gbos/purchase",
       "/gbos/product",
       "/gbos/review",
+      "/gbos/review/:id",
       "/gbos/party/:id",
       "/gbos/sample/:id",
     ]);
@@ -42,6 +43,8 @@ describe("角色裁剪导航", () => {
     expect(isRouteAllowed("/gbos/party/CUST-1", ["Buyer"])).toBe(false);
     expect(isRouteAllowed("/gbos/sample/SAMPLE-1", ["Product/R&D"])).toBe(true);
     expect(isRouteAllowed("/gbos/review", ["CEO"])).toBe(false);
+    expect(isRouteAllowed("/gbos/review/REVIEW-1", ["Reviewer"])).toBe(true);
+    expect(isRouteAllowed("/gbos/review/REVIEW-1", ["Sales User"])).toBe(false);
   });
 });
 

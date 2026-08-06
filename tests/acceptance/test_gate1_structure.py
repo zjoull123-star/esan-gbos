@@ -22,6 +22,7 @@ PARENT_DOCTYPES = {
     "GBOS Review Case",
 }
 CHILD_DOCTYPES = {"GBOS Team Member", "GBOS Sourcing Candidate"}
+GATE4_AUDIT_DOCTYPES = {"GBOS Review Decision"}
 DEFERRED_DOCTYPE_TERMS = {
     "Observation",
     "Extracted Fact",
@@ -94,7 +95,7 @@ def _app_text() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in files)
 
 
-def test_gate_one_contains_only_the_frozen_doctype_set() -> None:
+def test_gate_one_set_remains_frozen_and_gate_four_adds_only_review_audit() -> None:
     doctypes = _doctype_jsons()
 
     assert set(doctypes) >= PARENT_DOCTYPES | CHILD_DOCTYPES
@@ -102,7 +103,7 @@ def test_gate_one_contains_only_the_frozen_doctype_set() -> None:
         name
         for name, payload in doctypes.items()
         if name.startswith("GBOS ") and not payload.get("custom")
-    } == PARENT_DOCTYPES | CHILD_DOCTYPES
+    } == PARENT_DOCTYPES | CHILD_DOCTYPES | GATE4_AUDIT_DOCTYPES
     assert all(not any(term in name for term in DEFERRED_DOCTYPE_TERMS) for name in doctypes)
 
 

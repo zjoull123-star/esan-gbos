@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate4/action-approval.schema.json",
+  "title": "Gate4ActionApproval",
+  "description": "A human review outcome bound to an immutable proposal revision; it does not authorize execution by itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "action_approval_id",
+    "site_id",
+    "processing_purpose",
+    "proposal_ref",
+    "proposal_version",
+    "proposal_revision",
+    "target_revision",
+    "status",
+    "human_reviewer",
+    "review_case_ref",
+    "payload_digest",
+    "before_state",
+    "after_state",
+    "evidence_refs",
+    "decision_basis",
+    "reviewed_at",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "action_approval_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/SiteId"
+    },
+    "processing_purpose": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/ProcessingPurpose"
+    },
+    "proposal_ref": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "proposal_version": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+    },
+    "proposal_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "target_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "rejected"
+      ]
+    },
+    "human_reviewer": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 320
+    },
+    "review_case_ref": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "payload_digest": {
+      "$ref": "https://contracts.esan.example/gbos/gate4/common.schema.json#/$defs/Sha256"
+    },
+    "before_state": {
+      "type": "object"
+    },
+    "after_state": {
+      "type": "object"
+    },
+    "evidence_refs": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/EvidenceRefs"
+    },
+    "decision_basis": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "reviewed_at": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Timestamp"
+    },
+    "correlation_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    }
+  }
+}

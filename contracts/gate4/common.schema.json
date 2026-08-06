@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate4/common.schema.json",
+  "title": "GBOS Gate 4 Common Definitions",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "ProposalReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proposal_ref",
+        "proposal_version",
+        "proposal_revision"
+      ],
+      "properties": {
+        "proposal_ref": {
+          "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+        },
+        "proposal_version": {
+          "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+        },
+        "proposal_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "payload_digest": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "FactVersionReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fact_id",
+        "fact_version"
+      ],
+      "properties": {
+        "fact_id": {
+          "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+        },
+        "fact_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

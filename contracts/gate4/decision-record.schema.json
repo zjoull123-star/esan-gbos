@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate4/decision-record.schema.json",
+  "title": "Gate4DecisionRecord",
+  "description": "A traceable human or deterministic-rule confirmation over one exact proposal revision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision_id",
+    "site_id",
+    "processing_purpose",
+    "decision_version",
+    "decision_revision",
+    "decision_type",
+    "proposal_ref",
+    "proposal_version",
+    "proposal_revision",
+    "input_fact_refs",
+    "output_fact_refs",
+    "evidence_refs",
+    "operator",
+    "decision_basis",
+    "outcome",
+    "effective_at",
+    "valid_time",
+    "recorded_time",
+    "review_status",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "decision_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/SiteId"
+    },
+    "processing_purpose": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/ProcessingPurpose"
+    },
+    "decision_version": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+    },
+    "decision_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "decision_type": {
+      "type": "string",
+      "enum": [
+        "human",
+        "rule"
+      ]
+    },
+    "proposal_ref": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "proposal_version": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+    },
+    "proposal_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "input_fact_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "https://contracts.esan.example/gbos/gate4/common.schema.json#/$defs/FactVersionReference"
+      }
+    },
+    "output_fact_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "https://contracts.esan.example/gbos/gate4/common.schema.json#/$defs/FactVersionReference"
+      }
+    },
+    "evidence_refs": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/EvidenceRefs"
+    },
+    "operator": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 320
+    },
+    "rule_version": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+    },
+    "decision_basis": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "outcome": {
+      "const": "confirmed"
+    },
+    "effective_at": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Timestamp"
+    },
+    "valid_time": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/ValidTime"
+    },
+    "recorded_time": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Timestamp"
+    },
+    "review_status": {
+      "type": "string",
+      "enum": [
+        "human_reviewed",
+        "rule_reviewed"
+      ]
+    },
+    "correlation_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision_type": {
+            "const": "rule"
+          }
+        },
+        "required": [
+          "decision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "rule_version"
+        ]
+      }
+    }
+  ]
+}

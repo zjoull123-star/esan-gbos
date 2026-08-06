@@ -82,3 +82,74 @@ export interface WorkItemTransitionCommand {
   idempotency_key: string;
   reason?: string;
 }
+
+export interface ReviewEvidenceRef {
+  evidence_type: string;
+  reference: string;
+  revision?: number;
+  payload_hash?: string;
+}
+
+export interface ReviewSubjectSnapshot {
+  doctype: string;
+  name: string;
+  revision: number;
+  payload_hash: string;
+  snapshot: Record<string, unknown>;
+}
+
+export interface ReviewCaseSummary {
+  name: string;
+  title: string;
+  team?: string;
+  assigned_reviewer: string;
+  review_status: "Pending" | "Approved" | "Rejected" | "Superseded";
+  case_revision: number;
+  case_payload_hash: string;
+  subject: ReviewSubjectSnapshot;
+  evidence: ReviewEvidenceRef[];
+  policy_reference: string;
+  origin?: "Manual" | "Fixture" | "Integration" | "AI";
+  decided_at?: string | null;
+  decision_note?: string | null;
+}
+
+export interface ReviewDecision {
+  name: string;
+  review_case?: string;
+  decision: "Approved" | "Rejected";
+  reviewer?: string;
+  reason?: string;
+  request_id?: string;
+  decided_at?: string;
+}
+
+export interface ReviewCaseDetailPayload {
+  case: ReviewCaseSummary;
+  decision?: ReviewDecision | null;
+}
+
+export interface ReviewCaseListPayload {
+  cases: ReviewCaseSummary[];
+  total: number;
+  page_size?: number;
+  next_cursor?: string | null;
+}
+
+export interface ReviewCaseListQuery {
+  cursor?: string;
+  pageSize?: number;
+}
+
+export interface ReviewDecisionCommand {
+  name: string;
+  decision: "Approved" | "Rejected";
+  decision_note: string;
+  expected_revision: number;
+  expected_subject_revision: number;
+  idempotency_key: string;
+  subject_payload_sha256: string;
+  evidence_refs: string[];
+  policy_version: string;
+  expected_case_payload_hash?: string;
+}

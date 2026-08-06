@@ -38,8 +38,14 @@ export const APP_ROUTES = [
   {
     path: "/gbos/review",
     name: "review",
-    component: () => import("./views/WorkspaceView.vue"),
-    props: { workspace: "review" },
+    component: () => import("./views/ReviewQueueView.vue"),
+    meta: { roles: REVIEW_ROLES },
+  },
+  {
+    path: "/gbos/review/:id",
+    name: "review-detail",
+    component: () => import("./views/ReviewDetailView.vue"),
+    props: true,
     meta: { roles: REVIEW_ROLES },
   },
   {

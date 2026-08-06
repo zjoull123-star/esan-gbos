@@ -77,6 +77,8 @@ jobs:
             services/observer/contract_check.py \
             services/observer/observer \
             services/context/context_service \
+            services/action_guard \
+            services/agent_runtime \
             fixtures/gate1/generate.py \
             fixtures/kingdee/gate1/mock.py \
             fixtures/kingdee/gate2/adapter.py 2>&1 | \
@@ -196,6 +198,10 @@ jobs:
           docker pull \
             pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966
           scripts/dev/test-gate3-integration
+      - name: Gate 4 pinned PostgreSQL integration
+        run: |
+          exec > >(tee -a "${RUNNER_TEMP}/gate-logs/python-vue-playwright.log") 2>&1
+          scripts/dev/test-gate4-integration
       - name: Vue unit, build, and Playwright checks
         run: |
           exec > >(tee -a "${RUNNER_TEMP}/gate-logs/python-vue-playwright.log") 2>&1

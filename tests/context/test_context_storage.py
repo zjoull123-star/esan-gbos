@@ -48,6 +48,12 @@ def _migration_sql() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in paths).lower()
 
 
+def _gate3_migration_sql() -> str:
+    path = CONTEXT_MIGRATIONS / "001_gate3_context.sql"
+    assert path.is_file(), "Gate 3 Context migration must remain immutable"
+    return path.read_text(encoding="utf-8").lower()
+
+
 def _table_body(sql: str, table: str) -> str:
     match = re.search(
         rf"create\s+table\s+if\s+not\s+exists\s+context\.{table}\s*\((.*?)\);",
@@ -86,7 +92,7 @@ def _envelope(record_id: str, *, kind: RecordKind, key: str = "key-1") -> Govern
 
 
 def test_context_migration_creates_gate3_tables_with_composite_site_keys() -> None:
-    sql = _migration_sql()
+    sql = _gate3_migration_sql()
     created_tables = set(
         re.findall(r"create\s+table\s+if\s+not\s+exists\s+context\.([a-z_]+)", sql)
     )

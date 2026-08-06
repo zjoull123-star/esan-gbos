@@ -93,25 +93,6 @@ describe("工作台数据状态", () => {
     expect(wrapper.text()).not.toContain("不应显示的供应商");
   });
 
-  it("审核队列不发送不存在的 Pending 工作项状态过滤", async () => {
-    const fetcher = vi.fn<Fetcher>().mockResolvedValue(apiResponse([]));
-    const client = createBffClient({
-      fetcher,
-      isOnline: () => true,
-      getCsrfToken: () => "csrf-test",
-    });
-    const wrapper = mount(WorkspaceView, {
-      props: { workspace: "review" },
-      global: { provide: { [BFF_CLIENT_KEY as symbol]: client } },
-    });
-    await flushPromises();
-
-    const url = new URL(String(fetcher.mock.calls[0]?.[0]), "https://gbos.invalid");
-    expect(url.searchParams.has("filters")).toBe(false);
-    expect(wrapper.text()).toContain("只读审核队列");
-    expect(wrapper.text()).toContain("正式审核命令将在 Gate 4 提供");
-  });
-
   it("采购页展开 sourcing lanes 并保留嵌套演示来源", async () => {
     const wrapper = mount(WorkspaceView, {
       props: { workspace: "purchase" },

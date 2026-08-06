@@ -138,6 +138,7 @@ def _is_assigned_review_subject(
                 "assigned_reviewer": user,
                 "subject_doctype": doctype,
                 "subject_name": name,
+                "business_status": "Pending",
             },
         )
     )
@@ -165,14 +166,11 @@ def has_gbos_permission(
         doctype == "GBOS Review Case" and getattr(doc, "assigned_reviewer", None) == actor
     )
     if doctype == "GBOS Review Case" and action != "read":
-        if action == "write" and assigned_reviewer and "Reviewer" in roles:
-            return True
         return "GBOS Admin" in roles
-    translated_action = "approve" if assigned_reviewer and action == "write" else action
     return can_access_record(
         roles=roles,
         doctype=doctype,
-        permission_type=translated_action,
+        permission_type=action,
         is_team_member=_is_team_member(actor, team),
         is_assigned_reviewer=assigned_reviewer,
         is_assigned_review_subject=_is_assigned_review_subject(

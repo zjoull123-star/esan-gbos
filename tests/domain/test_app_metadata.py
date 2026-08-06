@@ -24,6 +24,7 @@ PARENT_DOCTYPES = {
     "GBOS Review Case",
 }
 CHILD_DOCTYPES = {"GBOS Team Member", "GBOS Sourcing Candidate"}
+GATE4_AUDIT_DOCTYPES = {"GBOS Review Decision"}
 COMMON_FIELDS = {"origin", "business_status", "review_status", "revision"}
 
 
@@ -58,8 +59,8 @@ def test_custom_app_license_metadata_matches_the_shipped_agpl_text() -> None:
     assert "GNU Affero General Public License v3.0" in license_text
 
 
-def test_only_gate_one_doctypes_are_declared() -> None:
-    assert set(_doctype_documents()) == PARENT_DOCTYPES | CHILD_DOCTYPES
+def test_gate_one_doctypes_remain_frozen_and_gate_four_adds_only_review_audit() -> None:
+    assert set(_doctype_documents()) == (PARENT_DOCTYPES | CHILD_DOCTYPES | GATE4_AUDIT_DOCTYPES)
 
 
 def test_every_parent_has_governed_fields_and_is_not_submittable() -> None:

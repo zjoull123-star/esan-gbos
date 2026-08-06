@@ -3,7 +3,7 @@
     <header class="page-header">
       <div>
         <p class="eyebrow">
-          ESAN GBOS · Gate 1
+          ESAN GBOS · Gate 4
         </p>
         <h1>{{ config.title }}</h1>
         <p>{{ config.description }}</p>
@@ -54,7 +54,7 @@ import {
   recordsFromPayload,
 } from "@/presentation";
 
-type Workspace = "ceo" | "sales" | "purchase" | "product" | "review";
+type Workspace = "ceo" | "sales" | "purchase" | "product";
 
 const props = defineProps<{ workspace: Workspace }>();
 const client = useBffClient();
@@ -78,12 +78,6 @@ const WORKSPACES = {
   product: {
     title: "产品与样品",
     description: "协同 Product Brief、样品迭代、寄样与反馈。",
-    load: () => client.listWorkItems({ pageSize: 25 }),
-  },
-  review: {
-    title: "审核队列",
-    description:
-      "Gate 1 为只读审核队列，仅显示后端授权给当前审核人的关联工作项；正式审核命令将在 Gate 4 提供。",
     load: () => client.listWorkItems({ pageSize: 25 }),
   },
 } satisfies Record<Workspace, { title: string; description: string; load: () => Promise<unknown> }>;

@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+export PATH="${HOME}/.orbstack/bin:${PATH}"
+
+COMPOSE_FILE="${REPO_ROOT}/infra/dev/compose.yml"
+ENV_FILE="${REPO_ROOT}/infra/dev/.env"
+
+refuse_production() {
+  if [[ "${GBOS_PRODUCTION_ENABLED:-false}" =~ ^(true|1|yes)$ ]]; then
+    echo "Gate 4 local migration refuses production mode." >&2
+    exit 78
+  fi
+}
+
+if [[ "${1:-}" == "--inside-container" ]]; then
+  refuse_production
+  export PGPASSWORD="${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+  PSQL=(
+    psql
+    -h observer-postgres
+    -U "${POSTGRES_USER:?POSTGRES_USER is required}"
+    -d "${POSTGRES_DB:?POSTGRES_DB is required}"
+    -v ON_ERROR_STOP=1
+  )
+  "${PSQL[@]}" -v app_password="${GBOS_APP_ROLE_PASSWORD:?GBOS_APP_ROLE_PASSWORD is required}" <<'SQL'
+SELECT format(
+  'CREATE ROLE gbos_agent_app LOGIN NOBYPASSRLS PASSWORD %L',
+  :'app_password'
+) WHERE NOT EXISTS (
+  SELECT 1 FROM pg_roles WHERE rolname = 'gbos_agent_app'
+)\gexec
+ALTER ROLE gbos_agent_app
+  LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+SELECT format('ALTER ROLE gbos_agent_app PASSWORD %L', :'app_password')\gexec
+CREATE SCHEMA IF NOT EXISTS observer;
+CREATE TABLE IF NOT EXISTS observer.schema_migrations (
+  migration_name text PRIMARY KEY,
+  checksum char(64) NOT NULL,
+  applied_at timestamptz NOT NULL DEFAULT now()
+);
+SQL
+  for migration in \
+    /migrations/context/00[2-4]_gate4_*.sql \
+    /migrations/agent/*.sql; do
+    [[ -f "${migration}" ]] || {
+      echo "No Gate 4 migration found at ${migration}." >&2
+      exit 66
+    }
+    migration_group="$(basename -- "$(dirname -- "${migration}")")"
+    migration_name="${migration_group}/$(basename -- "${migration}")"
+    if [[ ! "${migration_name}" =~ ^[a-z0-9._/-]+$ ]]; then
+      echo "Unsafe migration name: ${migration_name}" >&2
+      exit 65
+    fi
+    migration_checksum="$(sha256sum "${migration}" | awk '{print $1}')"
+    existing_checksum="$(
+      "${PSQL[@]}" -At \
+        -c "SELECT checksum FROM observer.schema_migrations WHERE migration_name = '${migration_name}'"
+    )"
+    if [[ -n "${existing_checksum}" ]]; then
+      if [[ "${existing_checksum}" != "${migration_checksum}" ]]; then
+        echo "Applied migration checksum changed: ${migration_name}" >&2
+        exit 65
+      fi
+      continue
+    fi
+    "${PSQL[@]}" \
+      --single-transaction \
+      -f "${migration}" \
+      -c \
+      "INSERT INTO observer.schema_migrations (migration_name, checksum) VALUES ('${migration_name}', '${migration_checksum}')"
+  done
+  exit 0
+fi
+
+if [[ $# -ne 0 ]]; then
+  echo "Usage: scripts/dev/gate4-migrate" >&2
+  exit 64
+fi
+if [[ ! -f "${ENV_FILE}" ]]; then
+  echo "infra/dev/.env is missing; run scripts/dev/bootstrap --observer first." >&2
+  exit 66
+fi
+if grep -Eiq \
+  '^(GBOS_PRODUCTION_ENABLED=(true|1|yes)|GBOS_ENV=production)$' \
+  "${ENV_FILE}"; then
+  echo "Gate 4 migration is local-only and refuses production configuration." >&2
+  exit 78
+fi
+
+"${SCRIPT_DIR}/gate3-migrate"
+docker compose \
+  --env-file "${ENV_FILE}" \
+  -f "${COMPOSE_FILE}" \
+  --profile observer \
+  run --rm --pull never gate4-db-migrate

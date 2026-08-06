@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "action_approval_id": "approval-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "processing_purpose": "sales_follow_up",
+  "proposal_ref": "action-proposal-SYNTH-001",
+  "proposal_version": "action-proposal-v1",
+  "proposal_revision": 1,
+  "target_revision": 0,
+  "status": "approved",
+  "human_reviewer": "reviewer-SYNTH-001",
+  "review_case_ref": "review-case-SYNTH-001",
+  "payload_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "before_state": {
+    "revision": 0,
+    "status": "missing"
+  },
+  "after_state": {
+    "revision": 1,
+    "status": "proposed"
+  },
+  "evidence_refs": [
+    "evidence-record-SYNTH-001"
+  ],
+  "decision_basis": "The internal proposal is reversible and evidence-linked.",
+  "reviewed_at": "2026-08-06T03:12:00Z",
+  "correlation_id": "corr-SYNTH-001"
+}

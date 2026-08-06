@@ -1,0 +1,701 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ESAN GBOS Review BFF",
+    "version": "2.0.0",
+    "description": "Gate 4 人工审核专用接口。只允许读取分配案件和记录案件决定，不修改被审业务主体。"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "当前 Frappe site"
+    }
+  ],
+  "paths": {
+    "/api/method/esan_gbos.api.v2.review_case.list": {
+      "get": {
+        "operationId": "review_case.list",
+        "summary": "读取当前审核人的待审案件",
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ReviewListSuccess"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v2.review_case.get": {
+      "get": {
+        "operationId": "review_case.get",
+        "summary": "读取一个分配案件的冻结快照",
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ReviewDetailSuccess"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v2.review_case.decide": {
+      "post": {
+        "operationId": "review_case.decide",
+        "summary": "记录当前审核人对待审案件的决定",
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "decision",
+                  "decision_note",
+                  "expected_revision",
+                  "expected_subject_revision",
+                  "idempotency_key",
+                  "subject_payload_sha256",
+                  "evidence_refs",
+                  "policy_version"
+                ],
+                "properties": {
+                  "name": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "Approved",
+                      "Rejected"
+                    ]
+                  },
+                  "decision_note": {
+                    "type": "string",
+                    "minLength": 4,
+                    "maxLength": 1000
+                  },
+                  "expected_revision": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "expected_subject_revision": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "idempotency_key": {
+                    "$ref": "#/components/schemas/IdempotencyKey"
+                  },
+                  "subject_payload_sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "evidence_refs": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 8192,
+                    "description": "JSON array of 1 to 100 unique evidence reference strings."
+                  },
+                  "policy_version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "expected_case_payload_hash": {
+                    "$ref": "#/components/schemas/Sha256"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ReviewDetailSuccess"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "FrappeSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "sid"
+      },
+      "FrappeCsrf": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Frappe-CSRF-Token"
+      }
+    },
+    "schemas": {
+      "DocumentName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "Revision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "IdempotencyKey": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 256
+      },
+      "Sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "SuccessMeta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "schema_version"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "schema_version": {
+            "const": "1.0"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "original_request_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ReviewEvidence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidence_type",
+          "reference"
+        ],
+        "properties": {
+          "evidence_type": {
+            "const": "Evidence"
+          },
+          "reference": {
+            "$ref": "#/components/schemas/DocumentName"
+          }
+        }
+      },
+      "ReviewSubject": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "doctype",
+          "name",
+          "revision",
+          "payload_hash",
+          "snapshot"
+        ],
+        "properties": {
+          "doctype": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "payload_hash": {
+            "$ref": "#/components/schemas/Sha256"
+          },
+          "snapshot": {
+            "type": "object",
+            "description": "服务端钉住的最小只读主体快照。"
+          }
+        }
+      },
+      "ReviewCase": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "title",
+          "assigned_reviewer",
+          "business_status",
+          "review_status",
+          "case_revision",
+          "case_payload_hash",
+          "subject",
+          "evidence",
+          "policy_reference",
+          "origin"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "team": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assigned_reviewer": {
+            "type": "string",
+            "format": "email"
+          },
+          "business_status": {
+            "type": "string",
+            "enum": [
+              "Pending",
+              "Approved",
+              "Rejected",
+              "Superseded"
+            ]
+          },
+          "review_status": {
+            "type": "string",
+            "enum": [
+              "Pending",
+              "Approved",
+              "Rejected",
+              "Superseded"
+            ]
+          },
+          "case_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "case_payload_hash": {
+            "$ref": "#/components/schemas/Sha256"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/ReviewSubject"
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/ReviewEvidence"
+            }
+          },
+          "policy_reference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "Manual",
+              "Fixture",
+              "Integration",
+              "AI"
+            ]
+          },
+          "decision_note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decided_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "decision_record": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision_payload_sha256": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Sha256"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReviewDecision": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "review_case",
+          "decision",
+          "reviewer",
+          "reason",
+          "case_revision",
+          "case_payload_sha256",
+          "subject_doctype",
+          "subject_name",
+          "subject_revision",
+          "subject_payload_sha256",
+          "evidence_refs",
+          "policy_version",
+          "payload_sha256",
+          "request_id",
+          "decided_at"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "review_case": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "Approved",
+              "Rejected"
+            ]
+          },
+          "reviewer": {
+            "type": "string",
+            "format": "email"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 1000
+          },
+          "case_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "case_payload_sha256": {
+            "$ref": "#/components/schemas/Sha256"
+          },
+          "subject_doctype": {
+            "type": "string"
+          },
+          "subject_name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "subject_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "subject_payload_sha256": {
+            "$ref": "#/components/schemas/Sha256"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/DocumentName"
+            }
+          },
+          "policy_version": {
+            "type": "string"
+          },
+          "payload_sha256": {
+            "$ref": "#/components/schemas/Sha256"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "decided_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ReviewListData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cases",
+          "total",
+          "page_size",
+          "next_cursor"
+        ],
+        "properties": {
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewCase"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ReviewDetailData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case",
+          "decision"
+        ],
+        "properties": {
+          "case": {
+            "$ref": "#/components/schemas/ReviewCase"
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReviewDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReviewListEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReviewListData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SuccessMeta"
+          }
+        }
+      },
+      "ReviewDetailEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReviewDetailData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SuccessMeta"
+          }
+        }
+      },
+      "ReviewListWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/ReviewListEnvelope"
+          }
+        }
+      },
+      "ReviewDetailWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/ReviewDetailEnvelope"
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message",
+              "request_id",
+              "details"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "authentication_required",
+                  "permission_denied",
+                  "method_not_allowed",
+                  "invalid_dto",
+                  "invalid_query",
+                  "invalid_cursor",
+                  "not_found",
+                  "revision_conflict",
+                  "idempotency_conflict",
+                  "request_in_progress",
+                  "internal_error"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "FrappeErrorWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/ErrorEnvelope"
+          }
+        }
+      }
+    },
+    "responses": {
+      "ReviewListSuccess": {
+        "description": "待审案件列表",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ReviewListWire"
+            }
+          }
+        }
+      },
+      "ReviewDetailSuccess": {
+        "description": "审核案件及决定",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ReviewDetailWire"
+            }
+          }
+        }
+      },
+      "Error": {
+        "description": "统一错误",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/FrappeErrorWire"
+            }
+          }
+        }
+      }
+    }
+  }
+}

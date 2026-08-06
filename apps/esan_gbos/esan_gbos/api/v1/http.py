@@ -7,7 +7,10 @@ import frappe
 from esan_gbos.api.v1.common import request_id
 from esan_gbos.domain.errors import build_error_envelope
 
-_BFF_PATH_PREFIX = "/api/method/esan_gbos.api.v1."
+_BFF_PATH_PREFIXES = (
+    "/api/method/esan_gbos.api.v1.",
+    "/api/method/esan_gbos.api.v2.",
+)
 
 
 def normalize_bff_pre_dispatch_error(response: Any, request: Any) -> None:
@@ -19,7 +22,7 @@ def normalize_bff_pre_dispatch_error(response: Any, request: Any) -> None:
     surface is rewritten; every other Frappe response remains untouched.
     """
 
-    if not str(getattr(request, "path", "")).startswith(_BFF_PATH_PREFIX):
+    if not str(getattr(request, "path", "")).startswith(_BFF_PATH_PREFIXES):
         return
     response_state = getattr(frappe.local, "response", {})
     if response_state.get("exc_type") != "CSRFTokenError":

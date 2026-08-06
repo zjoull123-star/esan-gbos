@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "decision_id": "decision-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "processing_purpose": "business_operations",
+  "decision_version": "gate4-decision-v1",
+  "decision_revision": 1,
+  "decision_type": "human",
+  "proposal_ref": "fact-proposal-record-SYNTH-001",
+  "proposal_version": "fact-proposal-v1",
+  "proposal_revision": 1,
+  "input_fact_refs": [],
+  "output_fact_refs": [
+    {
+      "fact_id": "verified-fact-SYNTH-001",
+      "fact_version": 1
+    }
+  ],
+  "evidence_refs": [
+    "evidence-record-SYNTH-001"
+  ],
+  "operator": "reviewer-SYNTH-001",
+  "decision_basis": "Synthetic evidence supports the exact proposed quantity.",
+  "outcome": "confirmed",
+  "effective_at": "2026-08-06T03:05:00Z",
+  "valid_time": {
+    "start": "2026-08-06T01:59:00Z",
+    "end": null
+  },
+  "recorded_time": "2026-08-06T03:05:00Z",
+  "review_status": "human_reviewed",
+  "correlation_id": "corr-SYNTH-001"
+}
