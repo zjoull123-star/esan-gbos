@@ -502,8 +502,14 @@ def test_frappe_app_smoke_builds_pr_image_or_accepts_pinned_dispatch_image() -> 
     assert "sha256:" in workflow
     assert "linux/amd64" in workflow
     assert "scripts/dev/build-custom-image" in workflow
+    assert '"containerd-snapshotter": true' in workflow
+    assert "sudo systemctl restart docker" in workflow
+    assert "io.containerd.snapshotter.v1" in workflow
     assert "docker buildx create --name gbos-ci --driver docker-container --use" in workflow
     assert "docker buildx inspect --bootstrap" in workflow
+    assert workflow.index("sudo systemctl restart docker") < workflow.index(
+        "docker buildx create --name gbos-ci"
+    )
     assert "--stage final" in workflow
     assert '--esan-commit "${SOURCE_COMMIT}"' in workflow
     assert "--platform linux/amd64" in workflow

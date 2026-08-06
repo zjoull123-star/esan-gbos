@@ -45,6 +45,20 @@ jobs:
             docker pull --platform linux/amd64 "${PROVIDED_IMAGE}"
             RESOLVED_IMAGE="${PROVIDED_IMAGE}"
           else
+            DAEMON_SOURCE="${RUNNER_TEMP}/docker-daemon-current.json"
+            DAEMON_TARGET="${RUNNER_TEMP}/docker-daemon-containerd.json"
+            if sudo test -f /etc/docker/daemon.json; then
+              sudo cat /etc/docker/daemon.json > "${DAEMON_SOURCE}"
+            else
+              printf '{}\n' > "${DAEMON_SOURCE}"
+            fi
+            jq \
+              '.features = ((.features // {}) + {"containerd-snapshotter": true})' \
+              "${DAEMON_SOURCE}" > "${DAEMON_TARGET}"
+            sudo install -m 0644 "${DAEMON_TARGET}" /etc/docker/daemon.json
+            sudo systemctl restart docker
+            docker info --format '{{json .DriverStatus}}' | \
+              grep -F 'io.containerd.snapshotter.v1'
             docker buildx create --name gbos-ci --driver docker-container --use
             docker buildx inspect --bootstrap
             SOURCE_COMMIT="$(git rev-parse HEAD)"
