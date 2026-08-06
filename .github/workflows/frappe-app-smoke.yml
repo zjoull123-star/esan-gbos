@@ -34,6 +34,17 @@ jobs:
       GBOS_LOAD_DEMO_FIXTURES: "false"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Reclaim disposable runner disk
+        run: |
+          df -h /
+          sudo rm -rf -- \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL
+          docker system prune --all --force --volumes
+          df -h /
       - name: Build the exact PR image or pull an explicit immutable image
         shell: bash
         run: |
@@ -59,7 +70,7 @@ jobs:
             sudo systemctl restart docker
             docker info --format '{{json .DriverStatus}}' | \
               grep -F 'io.containerd.snapshotter.v1'
-            docker buildx create --name gbos-ci --driver docker-container --use
+            docker buildx use default
             docker buildx inspect --bootstrap
             SOURCE_COMMIT="$(git rev-parse HEAD)"
             scripts/dev/build-custom-image \
@@ -134,4 +145,4 @@ jobs:
         if: always()
         run: |
           docker compose -f infra/dev/compose.yml --profile core down --remove-orphans
-          docker buildx rm gbos-ci >/dev/null 2>&1 || true
+          docker buildx prune --all --force >/dev/null 2>&1 || true

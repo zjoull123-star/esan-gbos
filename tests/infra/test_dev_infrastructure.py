@@ -505,10 +505,21 @@ def test_frappe_app_smoke_builds_pr_image_or_accepts_pinned_dispatch_image() -> 
     assert '"containerd-snapshotter": true' in workflow
     assert "sudo systemctl restart docker" in workflow
     assert "io.containerd.snapshotter.v1" in workflow
-    assert "docker buildx create --name gbos-ci --driver docker-container --use" in workflow
+    assert "Reclaim disposable runner disk" in workflow
+    for disposable_path in (
+        "/usr/local/lib/android",
+        "/usr/share/dotnet",
+        "/opt/ghc",
+        "/usr/local/share/boost",
+        "/opt/hostedtoolcache/CodeQL",
+    ):
+        assert disposable_path in workflow
+    assert "docker system prune --all --force --volumes" in workflow
+    assert "docker buildx use default" in workflow
+    assert "docker buildx create --name gbos-ci" not in workflow
     assert "docker buildx inspect --bootstrap" in workflow
     assert workflow.index("sudo systemctl restart docker") < workflow.index(
-        "docker buildx create --name gbos-ci"
+        "docker buildx use default"
     )
     assert "--stage final" in workflow
     assert '--esan-commit "${SOURCE_COMMIT}"' in workflow
@@ -522,4 +533,4 @@ def test_frappe_app_smoke_builds_pr_image_or_accepts_pinned_dispatch_image() -> 
     assert 'apps_by_site["gbos-smoke.localhost"]' in workflow
     assert "set-config allow_tests true" in workflow
     assert 'bench --site "${SITE_NAME}" run-tests --app esan_gbos' in workflow
-    assert "docker buildx rm gbos-ci" in workflow
+    assert "docker buildx prune --all --force" in workflow
