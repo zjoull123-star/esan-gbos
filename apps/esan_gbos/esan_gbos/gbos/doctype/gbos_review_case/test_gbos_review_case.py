@@ -16,7 +16,16 @@ TEST_REVIEWER = "gbos-gate4-reviewer@example.invalid"
 TEST_OTHER_REVIEWER = "gbos-gate4-other-reviewer@example.invalid"
 TEST_ADMIN = "gbos-gate4-admin@example.invalid"
 
-IGNORE_TEST_RECORD_DEPENDENCIES = ["GBOS Team", "User"]
+# This suite creates its complete graph explicitly.  In particular, allowing
+# Frappe to synthesize the immutable decision link recursively reaches User and
+# ERPNext Company fixtures, which correctly collide with the GBOS V1
+# transaction guard.
+IGNORE_TEST_RECORD_DEPENDENCIES = [
+    "DocType",
+    "GBOS Review Decision",
+    "GBOS Team",
+    "User",
+]
 
 
 class TestGBOSGateFourReviewCase(IntegrationTestCase):
@@ -99,6 +108,10 @@ class TestGBOSGateFourReviewCase(IntegrationTestCase):
             "expected_case_payload_hash": case.case_payload_sha256,
         }
         arguments.update(overrides)
+        # Direct test invocation reuses frappe.local across calls, unlike
+        # separate HTTP requests.  Clear the per-request cache so audit request
+        # IDs retain their real wire-level uniqueness.
+        frappe.local.gbos_request_id = None
         return decide(**arguments)
 
     def test_reviewer_generic_doctype_write_cannot_decide_case(self) -> None:
@@ -191,7 +204,9 @@ class TestGBOSGateFourReviewCase(IntegrationTestCase):
 
     def test_deleted_subject_returns_revision_conflict_not_not_found(self) -> None:
         case, work, _snapshot = self._case()
-        frappe.delete_doc(work.doctype, work.name, ignore_permissions=True)
+        # Simulate an out-of-band loss: normal Frappe deletion correctly
+        # refuses to remove a document referenced by the Review Case.
+        frappe.db.delete(work.doctype, {"name": work.name})
         frappe.set_user(self.reviewer)
 
         result = self._decide(case)

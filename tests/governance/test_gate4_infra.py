@@ -45,9 +45,7 @@ def test_gate4_integration_runner_enables_only_local_postgres_tests() -> None:
 
 
 def test_ci_runs_gate4_types_and_live_postgres_integration() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     assert "services/action_guard" in workflow
     assert "services/agent_runtime" in workflow

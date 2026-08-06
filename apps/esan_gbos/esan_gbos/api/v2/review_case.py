@@ -59,7 +59,7 @@ def _decision_dto(decision: Any) -> dict[str, Any]:
         "policy_version": decision.policy_version,
         "payload_sha256": decision.payload_sha256,
         "request_id": decision.request_id,
-        "decided_at": decision.decided_at,
+        "decided_at": str(decision.decided_at) if decision.decided_at else None,
     }
 
 
@@ -89,7 +89,7 @@ def _case_dto(case: Any) -> dict[str, Any]:
         "origin": case.origin,
         "decision_note": case.decision_note,
         "decided_by": case.decided_by,
-        "decided_at": case.decided_at,
+        "decided_at": str(case.decided_at) if case.decided_at else None,
         "decision_record": case.decision_record,
         "decision_payload_sha256": case.decision_payload_sha256,
     }

@@ -4,6 +4,7 @@ import frappe
 from frappe.model.document import Document
 
 from esan_gbos.domain.naming import make_gbos_name
+from esan_gbos.domain.review_dto import REVIEW_SUBJECT_DOCTYPES
 from esan_gbos.domain.revision import RevisionConflict, next_revision
 from esan_gbos.domain.state_machine import (
     InvalidTransition,
@@ -42,6 +43,7 @@ class GBOSDocument(Document):
 
     def validate(self) -> None:
         self._validate_origin_boundary()
+        self._protect_assigned_review_subject()
         self._validate_transition()
         self._advance_revision()
 
@@ -51,6 +53,30 @@ class GBOSDocument(Document):
                 "AI-origin records must be created as AI Draft",
                 title="AI Draft boundary",
             )
+
+    def _protect_assigned_review_subject(self) -> None:
+        """Prevent an assigned Reviewer from changing the pinned subject.
+
+        A user may hold both a business writer role and Reviewer.  Record
+        permissions alone must not let that combination bypass the governed
+        decision command while the assigned review remains pending.
+        """
+        if self.is_new() or self.doctype not in REVIEW_SUBJECT_DOCTYPES:
+            return
+        actor = frappe.session.user
+        if "Reviewer" not in frappe.get_roles(actor):
+            return
+        if frappe.db.exists(
+            "GBOS Review Case",
+            {
+                "assigned_reviewer": actor,
+                "subject_doctype": self.doctype,
+                "subject_name": self.name,
+                "business_status": "Pending",
+                "review_status": "Pending",
+            },
+        ):
+            raise frappe.PermissionError
 
     def _validate_transition(self) -> None:
         workflow = WORKFLOWS.get(self.doctype)
