@@ -161,7 +161,7 @@ def test_site_creator_keeps_multiline_cli_options_in_the_same_shell_command() ->
     )
     assert [line.strip() for line in compose_lines[seed_start : seed_start + 2]] == [
         'bench --site "$$SITE_NAME" execute esan_gbos.demo.seed \\',
-        """--kwargs '{"confirm_synthetic": true}';""",
+        """--kwargs '{"confirm_synthetic": True}';""",
     ]
 
 

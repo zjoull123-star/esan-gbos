@@ -130,7 +130,7 @@ services:
             exit 78;
           fi;
           bench --site "$$SITE_NAME" execute esan_gbos.demo.seed \
-          --kwargs '{"confirm_synthetic": true}';
+          --kwargs '{"confirm_synthetic": True}';
         fi
     environment:
       SITE_NAME: "${SITE_NAME:-gbos.localhost}"
