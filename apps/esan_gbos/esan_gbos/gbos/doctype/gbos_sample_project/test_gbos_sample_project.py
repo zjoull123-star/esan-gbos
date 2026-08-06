@@ -79,7 +79,7 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
             ).insert(ignore_permissions=True)
         user = frappe.get_doc("User", email)
         for role in roles:
-            if role not in user.get_roles():
+            if role not in frappe.get_roles(email):
                 user.add_roles(role)
         return email
 
