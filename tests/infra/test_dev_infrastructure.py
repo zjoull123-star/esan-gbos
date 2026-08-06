@@ -295,6 +295,16 @@ def test_bootstrap_is_final_by_default_with_explicit_upstream_escape_hatch() -> 
     assert "Final runtime source must be tracked and clean" in bootstrap
     assert "ls-files --others --exclude-standard" in bootstrap
     assert "FINAL_INPUT_PATHS" in bootstrap
+    assert "OBSERVER_ENABLED=false" in bootstrap
+    assert "OBSERVER_ENABLED=true" in bootstrap
+    assert "--profile core" in bootstrap
+    assert "--profile observer" in bootstrap
+    assert "up -d --wait observer-postgres" in bootstrap
+    assert "run --rm observer-contract-check" in bootstrap
+    assert bootstrap.index("up -d --wait observer-postgres") < bootstrap.index(
+        "run --rm observer-contract-check"
+    )
+    assert '"${PROFILES[@]}"' not in bootstrap
 
 
 def test_custom_image_builder_verifies_every_source_ref() -> None:
