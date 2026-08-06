@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "captured_at": "2026-08-06",
+  "captured_at": "2026-08-06T08:28:54Z",
   "scope": "gate2-contract-schema-and-synthetic-examples",
-  "status": "not_run",
+  "status": "pass",
   "json_schema_draft": "2020-12",
   "network_allowed": false,
   "credentials_allowed": false,
@@ -13,17 +13,26 @@
   "results": [
     {
       "name": "gate2_contracts_and_examples",
-      "status": "not_run",
-      "passed": null,
-      "failed": null
+      "status": "pass",
+      "passed": 138,
+      "failed": 0
     },
     {
       "name": "gate2_kingdee_synthetic_projection",
-      "status": "not_run",
-      "passed": null,
-      "failed": null
+      "status": "pass",
+      "passed": 37,
+      "failed": 0
     }
   ],
+  "inventory": {
+    "json_schemas": 20,
+    "gate2_examples": 20,
+    "openapi_paths": 9,
+    "ontology_nodes": 22,
+    "ontology_relations": 18,
+    "metric_definitions": 3,
+    "kingdee_mock_tools": 7
+  },
   "claims": {
     "local_schema_registry_only": true,
     "synthetic_examples_only": true,
@@ -32,7 +41,6 @@
     "runtime_service_validated": false
   },
   "limitations": [
-    "This preliminary artifact is finalized only after the main agent runs the complete contract and fixture suites.",
     "Passing schema/example tests cannot establish provider compatibility, live authentication, business data correctness or runtime availability."
   ]
 }

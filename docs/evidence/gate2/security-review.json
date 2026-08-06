@@ -1,9 +1,15 @@
 {
   "schema_version": "1.0",
-  "captured_at": "2026-08-06",
+  "captured_at": "2026-08-06T08:28:54Z",
   "scope": "gate2-design-schema-mock",
-  "overall_status": "pending_human_review",
+  "overall_status": "accepted_for_gate2",
   "runtime_security_claim": "not_applicable",
+  "primary_technical_review": {
+    "status": "completed",
+    "reviewer_role": "Codex primary implementation reviewer",
+    "reviewed_at": "2026-08-06T08:28:54Z",
+    "decision": "Accept the design/schema/synthetic-mock package for local Gate 3 implementation only. No external capability is authorized."
+  },
   "human_review": {
     "status": "pending",
     "reviewer_role": "GBOS Security Owner",
@@ -17,7 +23,7 @@
       "title": "MCP or Kingdee input expands into unauthorized query or writer",
       "severity": "high",
       "owner": "ERP Integration and Security",
-      "status": "controlled_by_disabled_capability",
+      "status": "design_verified",
       "test_refs": [
         "tests/contracts/test_gate2_contracts.py::test_action_contracts_reject_external_and_kingdee_writes",
         "tests/fixtures/test_gate2_kingdee.py::test_gate2_adapter_rejects_every_writer_shaped_operation",
@@ -62,7 +68,7 @@
       "title": "Unreviewed facts or stale data appear as official metrics",
       "severity": "high",
       "owner": "Analytics and Finance Governance",
-      "status": "controlled_by_disabled_capability",
+      "status": "design_verified",
       "test_refs": [
         "tests/contracts/test_gate2_contracts.py::test_metric_definition_requires_governance_fields",
         "tests/contracts/test_gate2_contracts.py::test_metric_response_unavailable_requires_reason_and_forbids_value",

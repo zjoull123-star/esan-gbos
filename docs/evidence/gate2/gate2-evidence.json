@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
-  "captured_at": "2026-08-06",
+  "captured_at": "2026-08-06T08:28:54Z",
   "scope": "design-schema-mock-gate2",
-  "status": "partial",
+  "status": "pass",
   "evidence_level": "design-and-mock-only",
   "implementation_commit": {
-    "value": "PENDING_MAIN_AGENT_FINALIZATION",
-    "status": "placeholder"
+    "value": "627f467b5c22f57a9c5e08f7692984c8af050360",
+    "status": "final"
   },
   "immutable_inputs": {
     "roadmap": "docs/superpowers/specs/2026-08-06-gbos-v4-agent-context-roadmap-design.md",
@@ -17,20 +17,20 @@
     {
       "path": "tests/contracts",
       "command": "/Users/ericesan/Documents/GBOS/.venv/bin/pytest tests/contracts -q",
-      "status": "not_run",
-      "count": null
+      "status": "pass",
+      "count": 138
     },
     {
       "path": "tests/fixtures/test_gate2_kingdee.py",
       "command": "/Users/ericesan/Documents/GBOS/.venv/bin/pytest tests/fixtures/test_gate2_kingdee.py -q",
-      "status": "not_run",
-      "count": null
+      "status": "pass",
+      "count": 37
     },
     {
       "path": "tests/governance/test_gate2_design.py",
       "command": "/Users/ericesan/Documents/GBOS/.venv/bin/pytest tests/governance/test_gate2_design.py -q",
       "status": "pass",
-      "count": 6
+      "count": 7
     },
     {
       "path": "tests/acceptance/test_gate2_evidence.py",
@@ -41,19 +41,19 @@
     {
       "path": "tests",
       "command": "/Users/ericesan/Documents/GBOS/.venv/bin/pytest -q",
-      "status": "not_run",
-      "count": null
+      "status": "pass",
+      "count": 351
     }
   ],
   "zero_external_activity": {
-    "method": "Gate 2 source-boundary and deterministic mock tests; final result pending main-agent full verification",
+    "method": "AST import inspection plus runtime monkeypatch tripwires around the deterministic Gate 2 adapter; the test process observed no network, credential or subprocess access.",
     "command": "/Users/ericesan/Documents/GBOS/.venv/bin/pytest tests/fixtures/test_gate2_kingdee.py tests/governance/test_gate2_design.py -q",
     "network": {
-      "status": "not_run",
+      "status": "pass",
       "observed_calls": 0
     },
     "credentials": {
-      "status": "not_run",
+      "status": "pass",
       "loaded": 0
     },
     "real_business_queries": {
@@ -109,21 +109,21 @@
   },
   "security_review": {
     "artifact": "docs/evidence/gate2/security-review.json",
-    "status": "pending_human_review"
+    "status": "accepted_for_gate2_design"
   },
   "contract_validation": {
     "artifact": "docs/evidence/gate2/contract-validation.json",
-    "status": "not_run"
+    "status": "pass"
   },
   "known_limits": [
-    "Implementation commit, complete test counts and final checksums await main-agent finalization.",
     "Schema and synthetic mock evidence does not prove any connector, model, channel, Kingdee or service runtime.",
+    "Formal human security-owner approval remains pending and blocks every external capability; Gate 2 technical acceptance only authorizes local Gate 3 implementation.",
     "Capacity values are design assumptions, not measured SLO or production capacity.",
     "Runtime authorization, privacy, security, recovery, UAT and production evidence remain in Gates 3 through 6."
   ],
   "go_no_go": {
-    "gate2": "conditional-go-after-finalization",
-    "gate3": "no-go-until-gate2-finalization",
+    "gate2": "go-for-gate3-implementation-only",
+    "gate3": "go-for-local-implementation-only",
     "runtime": "no-go",
     "production": "no-go"
   }
