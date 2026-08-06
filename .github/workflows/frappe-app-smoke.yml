@@ -1,0 +1,148 @@
+name: Frappe App Install Smoke
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      custom_image:
+        description: Optional immutable linux/amd64 final image (repository@sha256:digest); omit to build the exact checkout without publishing
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frappe-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frappe-app-install-smoke:
+    name: Fresh four-app install and double migration
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PROVIDED_IMAGE: ${{ inputs.custom_image }}
+      LOCAL_IMAGE: esan-gbos-ci:gate1
+      GBOS_IMAGE_STAGE: final
+      APP_LIST: erpnext,crm,esan_gbos
+      SITE_NAME: gbos-smoke.localhost
+      DB_ROOT_PASSWORD: SYNTHETIC-ci-db-root-7d3d8399
+      ADMIN_PASSWORD: SYNTHETIC-ci-admin-e29b4dc1
+      OBSERVER_POSTGRES_PASSWORD: SYNTHETIC-ci-observer-5fe821a6
+      GBOS_PRODUCTION_ENABLED: "false"
+      GBOS_LOAD_DEMO_FIXTURES: "false"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Reclaim disposable runner disk
+        run: |
+          df -h /
+          sudo rm -rf -- \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL
+          docker system prune --all --force --volumes
+          df -h /
+      - name: Build the exact PR image or pull an explicit immutable image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/final-image-sbom"
+          exec > >(tee "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log") 2>&1
+          if [[ -n "${PROVIDED_IMAGE}" ]]; then
+            [[ "${PROVIDED_IMAGE}" =~ ^[a-zA-Z0-9._/-]+(:[a-zA-Z0-9._-]+)?@sha256:[a-f0-9]{64}$ ]]
+            docker pull --platform linux/amd64 "${PROVIDED_IMAGE}"
+            RESOLVED_IMAGE="${PROVIDED_IMAGE}"
+          else
+            DAEMON_SOURCE="${RUNNER_TEMP}/docker-daemon-current.json"
+            DAEMON_TARGET="${RUNNER_TEMP}/docker-daemon-containerd.json"
+            if sudo test -f /etc/docker/daemon.json; then
+              sudo cat /etc/docker/daemon.json > "${DAEMON_SOURCE}"
+            else
+              printf '{}\n' > "${DAEMON_SOURCE}"
+            fi
+            jq \
+              '.features = ((.features // {}) + {"containerd-snapshotter": true})' \
+              "${DAEMON_SOURCE}" > "${DAEMON_TARGET}"
+            sudo install -m 0644 "${DAEMON_TARGET}" /etc/docker/daemon.json
+            sudo systemctl restart docker
+            docker info --format '{{json .DriverStatus}}' | \
+              grep -F 'io.containerd.snapshotter.v1'
+            docker buildx use default
+            docker buildx inspect --bootstrap
+            SOURCE_COMMIT="$(git rev-parse HEAD)"
+            scripts/dev/build-custom-image \
+              --stage final \
+              --esan-commit "${SOURCE_COMMIT}" \
+              --image "${LOCAL_IMAGE}" \
+              --platform linux/amd64
+            RESOLVED_IMAGE="${LOCAL_IMAGE}"
+            docker image rm \
+              esan-gbos-upstream-builder:gate1 \
+              esan-gbos-upstream:gate0 >/dev/null 2>&1 || true
+            docker builder prune --force >/dev/null
+          fi
+          echo "ERPNEXT_IMAGE=${RESOLVED_IMAGE}" >> "${GITHUB_ENV}"
+          docker image inspect "${RESOLVED_IMAGE}" \
+            --format 'image={{index .RepoTags 0}} platform={{.Os}}/{{.Architecture}} created={{.Created}} digest={{.Id}}'
+      - name: Create a fresh site with the final four-app gate
+        run: |
+          docker compose -f infra/dev/compose.yml --profile core up -d --wait 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
+      - name: Run two consecutive migrations
+        run: |
+          docker compose -f infra/dev/compose.yml exec -T backend \
+            bench --site "${SITE_NAME}" migrate 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
+          docker compose -f infra/dev/compose.yml exec -T backend \
+            bench --site "${SITE_NAME}" migrate 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
+      - name: Run Frappe domain, permission, state-machine, and idempotency tests
+        run: |
+          docker compose -f infra/dev/compose.yml exec -T backend \
+            bench --site "${SITE_NAME}" set-config allow_tests true 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
+          docker compose -f infra/dev/compose.yml exec -T backend \
+            bench --site "${SITE_NAME}" run-tests --app esan_gbos 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
+      - name: Verify the exact four installed apps
+        run: |
+          docker compose -f infra/dev/compose.yml exec -T backend \
+            bench --site "${SITE_NAME}" list-apps --format json > installed-apps.json
+          python - <<'PY'
+          import json
+
+          with open("installed-apps.json", encoding="utf-8") as handle:
+              apps_by_site = json.load(handle)
+          apps = apps_by_site["gbos-smoke.localhost"]
+          assert apps == ["frappe", "erpnext", "crm", "esan_gbos"], apps
+          PY
+          cat installed-apps.json | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
+      - name: Scan the final image
+        run: |
+          scripts/dev/security-scan "${ERPNEXT_IMAGE}" 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
+      - name: Generate final-image licenses and SBOM
+        run: |
+          scripts/dev/license-sbom "${RUNNER_TEMP}/final-image-sbom" "${ERPNEXT_IMAGE}" 2>&1 | \
+            tee -a "${RUNNER_TEMP}/final-image-sbom/runtime-smoke.log"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: final-image-gate-evidence
+          path: |
+            installed-apps.json
+            ${{ runner.temp }}/final-image-sbom/licenses.json
+            ${{ runner.temp }}/final-image-sbom/sbom.cdx.json
+            ${{ runner.temp }}/final-image-sbom/SHA256SUMS
+            ${{ runner.temp }}/final-image-sbom/runtime-smoke.log
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Stop containers while preserving named volumes
+        if: always()
+        run: |
+          docker compose -f infra/dev/compose.yml --profile core down --remove-orphans
+          docker buildx prune --all --force >/dev/null 2>&1 || true

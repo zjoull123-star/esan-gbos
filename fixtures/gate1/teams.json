@@ -1,0 +1,212 @@
+[
+  {
+    "demo": true,
+    "doctype": "GBOS Team",
+    "fields": {
+      "business_status": "Active",
+      "last_request_id": "req-gate1-synthetic-0001",
+      "members": [
+        {
+          "enabled": 1,
+          "team_role": "Sales User",
+          "user": "synthetic.sales.1@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Sales Manager",
+          "user": "synthetic.sales.manager@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Purchase Manager",
+          "user": "synthetic.purchase.manager@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Buyer",
+          "user": "synthetic.buyer@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Product/R&D",
+          "user": "synthetic.product@example.invalid"
+        }
+      ],
+      "origin": "Fixture",
+      "origin_reference": "fixture://gate1/GBOS Team",
+      "review_status": "Approved",
+      "revision": 1,
+      "team_name": "Synthetic Team 0001"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "TEM-01KZA5X900CB5Z66AA0562EBVS",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "GBOS Team",
+    "fields": {
+      "business_status": "Active",
+      "last_request_id": "req-gate1-synthetic-0001",
+      "members": [
+        {
+          "enabled": 1,
+          "team_role": "Sales User",
+          "user": "synthetic.sales.2@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Purchase Manager",
+          "user": "synthetic.purchase.manager@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Buyer",
+          "user": "synthetic.buyer@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Product/R&D",
+          "user": "synthetic.product@example.invalid"
+        }
+      ],
+      "origin": "Fixture",
+      "origin_reference": "fixture://gate1/GBOS Team",
+      "review_status": "Approved",
+      "revision": 1,
+      "team_name": "Synthetic Team 0002"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "TEM-01KZA5X900J7DPD0EC68V18G4P",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "GBOS Team",
+    "fields": {
+      "business_status": "Active",
+      "last_request_id": "req-gate1-synthetic-0001",
+      "members": [
+        {
+          "enabled": 1,
+          "team_role": "Sales User",
+          "user": "synthetic.sales.3@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Purchase Manager",
+          "user": "synthetic.purchase.manager@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Buyer",
+          "user": "synthetic.buyer@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Product/R&D",
+          "user": "synthetic.product@example.invalid"
+        }
+      ],
+      "origin": "Fixture",
+      "origin_reference": "fixture://gate1/GBOS Team",
+      "review_status": "Approved",
+      "revision": 1,
+      "team_name": "Synthetic Team 0003"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "TEM-01KZA5X900GSZQBV6NV1DRTJJ3",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "GBOS Team",
+    "fields": {
+      "business_status": "Active",
+      "last_request_id": "req-gate1-synthetic-0001",
+      "members": [
+        {
+          "enabled": 1,
+          "team_role": "Sales User",
+          "user": "synthetic.sales.4@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Purchase Manager",
+          "user": "synthetic.purchase.manager@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Buyer",
+          "user": "synthetic.buyer@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Product/R&D",
+          "user": "synthetic.product@example.invalid"
+        }
+      ],
+      "origin": "Fixture",
+      "origin_reference": "fixture://gate1/GBOS Team",
+      "review_status": "Approved",
+      "revision": 1,
+      "team_name": "Synthetic Team 0004"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "TEM-01KZA5X900M1KZPHB2HBQVM57M",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  },
+  {
+    "demo": true,
+    "doctype": "GBOS Team",
+    "fields": {
+      "business_status": "Active",
+      "last_request_id": "req-gate1-synthetic-0001",
+      "members": [
+        {
+          "enabled": 1,
+          "team_role": "Sales User",
+          "user": "synthetic.sales.5@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Purchase Manager",
+          "user": "synthetic.purchase.manager@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Buyer",
+          "user": "synthetic.buyer@example.invalid"
+        },
+        {
+          "enabled": 1,
+          "team_role": "Product/R&D",
+          "user": "synthetic.product@example.invalid"
+        }
+      ],
+      "origin": "Fixture",
+      "origin_reference": "fixture://gate1/GBOS Team",
+      "review_status": "Approved",
+      "revision": 1,
+      "team_name": "Synthetic Team 0005"
+    },
+    "fixture_source": "gate1-synthetic",
+    "generated_at": "2026-08-06T00:00:00Z",
+    "name": "TEM-01KZA5X9008WYC09CXCEMYF6JZ",
+    "seed": 20260806,
+    "site_id": "gbos.localhost",
+    "synthetic": true
+  }
+]

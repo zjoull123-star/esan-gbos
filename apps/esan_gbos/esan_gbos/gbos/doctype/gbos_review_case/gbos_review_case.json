@@ -1,0 +1,25 @@
+{
+  "doctype": "DocType",
+  "name": "GBOS Review Case",
+  "module": "GBOS",
+  "engine": "InnoDB",
+  "track_changes": 1,
+  "title_field": "title",
+  "field_order": ["title", "team", "assigned_reviewer", "subject_doctype", "subject_name", "decision_note", "decided_at", "origin", "origin_reference", "business_status", "review_status", "revision", "last_request_id"],
+  "fields": [
+    {"fieldname": "title", "label": "Title", "fieldtype": "Data", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "team", "label": "Team", "fieldtype": "Link", "options": "GBOS Team", "reqd": 1},
+    {"fieldname": "assigned_reviewer", "label": "Assigned Reviewer", "fieldtype": "Link", "options": "User", "reqd": 1, "in_standard_filter": 1},
+    {"fieldname": "subject_doctype", "label": "Subject DocType", "fieldtype": "Link", "options": "DocType", "reqd": 1},
+    {"fieldname": "subject_name", "label": "Subject Name", "fieldtype": "Dynamic Link", "options": "subject_doctype", "reqd": 1},
+    {"fieldname": "decision_note", "label": "Decision Note", "fieldtype": "Small Text"},
+    {"fieldname": "decided_at", "label": "Decided At", "fieldtype": "Datetime", "read_only": 1},
+    {"fieldname": "origin", "label": "Origin", "fieldtype": "Select", "options": "Manual\nFixture\nIntegration\nAI", "default": "Manual", "reqd": 1},
+    {"fieldname": "origin_reference", "label": "Origin Reference", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "business_status", "label": "Business Status", "fieldtype": "Select", "options": "Pending\nApproved\nRejected\nSuperseded", "default": "Pending", "reqd": 1, "in_list_view": 1, "in_standard_filter": 1},
+    {"fieldname": "review_status", "label": "Review Status", "fieldtype": "Select", "options": "AI Draft\nPending\nApproved\nRejected\nSuperseded", "default": "Pending", "reqd": 1},
+    {"fieldname": "revision", "label": "Revision", "fieldtype": "Int", "default": "0", "read_only": 1},
+    {"fieldname": "last_request_id", "label": "Last Request ID", "fieldtype": "Data", "read_only": 1}
+  ],
+  "permissions": [{"role": "GBOS Admin", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1}]
+}

@@ -1,0 +1,94 @@
+{
+  "schema_version": "1.1",
+  "captured_at": "2026-08-06",
+  "scope": "local-disposable-gate0",
+  "status": "pass",
+  "go_no_go": {
+    "gate0": "go",
+    "gate5_preproduction": "no-go",
+    "gate6_production": "no-go"
+  },
+  "environment": {
+    "orbstack": "2.2.2",
+    "docker": "29.4.0",
+    "compose": "5.1.2",
+    "buildx": "0.33.0",
+    "architecture": "arm64"
+  },
+  "verified": {
+    "upstream_image": {
+      "tag": "esan-gbos-upstream:gate0",
+      "digest": "sha256:b69f0001225523ec52ceb6d80fc696c34f24c560a0d15c5ebc53e803eb5286ec",
+      "platform": "linux/arm64",
+      "runtime_python": "3.14.2",
+      "installed_apps": [
+        "frappe",
+        "erpnext",
+        "crm"
+      ],
+      "migration_exit_codes": [
+        0,
+        0
+      ]
+    },
+    "final_foundation_image": {
+      "tag": "esan-gbos-final:gate1",
+      "digest": "sha256:a55e3dc432cabc7e4a1bbe4951d1586c97e65151b41a5d9c7e5eb0632d61f1e9",
+      "source_commit": "deccc2caaa2d25cebceab2aff99dbbbb4e037a04",
+      "platform": "linux/arm64",
+      "installed_apps": [
+        "frappe",
+        "erpnext",
+        "crm",
+        "esan_gbos"
+      ]
+    },
+    "bench_version": {
+      "frappe": "16.30.0",
+      "erpnext": "16.31.0",
+      "crm": "1.81.0",
+      "esan_gbos": "0.1.0"
+    },
+    "observer_contract": {
+      "postgres": "17-bookworm",
+      "pgvector": "0.8.2",
+      "connectivity": "pass"
+    }
+  },
+  "security": {
+    "unwaived_high": 0,
+    "unwaived_critical": 0,
+    "waiver_entries": 57,
+    "exact_purls": 103,
+    "expires_no_later_than": "2026-09-30T00:00:00Z",
+    "production_authorized": false
+  },
+  "external_call_counts": {
+    "kingdee": 0,
+    "channel_connectors": 0,
+    "real_ai_models": 0,
+    "production_deployments": 0
+  },
+  "findings": [
+    {
+      "id": "build-network-hang",
+      "classification": "transient-network",
+      "result": "exact-input-retry-succeeded"
+    },
+    {
+      "id": "duckdb-sync-cleanup-warning",
+      "classification": "upstream-warning",
+      "result": "open-follow-up"
+    }
+  ],
+  "repository_ruleset": {
+    "availability": "blocked-by-private-plan-capability",
+    "read_only_api_result": "HTTP 403",
+    "fallback": "main-agent-only-merge-and-required-local-ci-evidence",
+    "mutation_performed": false
+  },
+  "ci": {
+    "pull_request": "https://github.com/zjoull123-star/esan-gbos/pull/1",
+    "merge_condition": "all-required-head-checks-green"
+  }
+}

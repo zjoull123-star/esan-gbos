@@ -1,0 +1,56 @@
+{
+  "child_record_counts": {
+    "GBOS Sourcing Candidate": 720
+  },
+  "dataset": "gate1",
+  "demo": true,
+  "files": {
+    "CRM Deal": "crm_deals.json",
+    "CRM Lead": "crm_leads.json",
+    "CRM Organization": "crm_organizations.json",
+    "Contact": "contacts.json",
+    "GBOS Demand Signal": "demand_signals.json",
+    "GBOS Party Profile": "party_profiles.json",
+    "GBOS Product Brief": "product_briefs.json",
+    "GBOS Review Case": "review_cases.json",
+    "GBOS Sample Feedback": "sample_feedback.json",
+    "GBOS Sample Iteration": "sample_iterations.json",
+    "GBOS Sample Project": "sample_projects.json",
+    "GBOS Sample Shipment": "sample_shipments.json",
+    "GBOS Sourcing Event": "sourcing_events.json",
+    "GBOS Team": "teams.json",
+    "GBOS Work Item": "work_items.json",
+    "User": "users.json",
+    "children": {
+      "GBOS Sourcing Candidate": "sourcing_candidates.json"
+    },
+    "frappe_payload": "frappe_payload.json",
+    "records": "records.json",
+    "status_allowlist": "status_allowlist.json"
+  },
+  "fixture_source": "gate1-synthetic",
+  "frappe_payload_sha256": "d3b1ad2bddf10ee1305f4cf02d5f49f98185ccce934d6c412990c40be48b9a20",
+  "generated_at": "2026-08-06T00:00:00Z",
+  "record_counts": {
+    "CRM Deal": 500,
+    "CRM Lead": 500,
+    "CRM Organization": 500,
+    "Contact": 500,
+    "GBOS Demand Signal": 240,
+    "GBOS Party Profile": 500,
+    "GBOS Product Brief": 240,
+    "GBOS Review Case": 280,
+    "GBOS Sample Feedback": 240,
+    "GBOS Sample Iteration": 240,
+    "GBOS Sample Project": 240,
+    "GBOS Sample Shipment": 240,
+    "GBOS Sourcing Event": 240,
+    "GBOS Team": 5,
+    "GBOS Work Item": 280,
+    "User": 13
+  },
+  "schema_version": "1.0",
+  "seed": 20260806,
+  "site_id": "gbos.localhost",
+  "synthetic": true
+}

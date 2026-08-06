@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+export PATH="${HOME}/.orbstack/bin:${PATH}"
+
+COMPOSE_FILE="${REPO_ROOT}/infra/dev/compose.yml"
+ENV_FILE="${REPO_ROOT}/infra/dev/.env"
+
+if [[ "${1:-}" != "--confirm-delete-local-volumes" || $# -ne 1 ]]; then
+  echo "This permanently deletes only the local ESAN GBOS Compose volumes." >&2
+  echo "Usage: scripts/dev/purge-local-data --confirm-delete-local-volumes" >&2
+  exit 64
+fi
+if [[ ! -f "${ENV_FILE}" ]]; then
+  echo "infra/dev/.env is missing; refusing to infer a Compose target." >&2
+  exit 66
+fi
+if grep -Eiq \
+  '^(GBOS_PRODUCTION_ENABLED=(true|1|yes)|GBOS_ENV=production)$' \
+  "${ENV_FILE}"; then
+  echo "Refusing to purge volumes while production mode is configured." >&2
+  exit 78
+fi
+
+docker compose \
+  --env-file "${ENV_FILE}" \
+  -f "${COMPOSE_FILE}" \
+  --profile core \
+  --profile observer \
+  down --remove-orphans --volumes

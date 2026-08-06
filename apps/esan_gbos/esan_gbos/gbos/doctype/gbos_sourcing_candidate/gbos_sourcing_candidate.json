@@ -1,0 +1,19 @@
+{
+  "doctype": "DocType",
+  "name": "GBOS Sourcing Candidate",
+  "module": "GBOS",
+  "engine": "InnoDB",
+  "istable": 1,
+  "editable_grid": 1,
+  "field_order": ["supplier_name", "external_supplier_id", "quoted_price", "currency", "lead_time_days", "candidate_status", "notes"],
+  "fields": [
+    {"fieldname": "supplier_name", "label": "Supplier Name", "fieldtype": "Data", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "external_supplier_id", "label": "External Supplier ID", "fieldtype": "Data"},
+    {"fieldname": "quoted_price", "label": "Quoted Price", "fieldtype": "Currency", "options": "currency"},
+    {"fieldname": "currency", "label": "Currency", "fieldtype": "Link", "options": "Currency"},
+    {"fieldname": "lead_time_days", "label": "Lead Time Days", "fieldtype": "Int"},
+    {"fieldname": "candidate_status", "label": "Candidate Status", "fieldtype": "Select", "options": "Invited\nResponded\nShortlisted\nSelected\nRejected", "default": "Invited", "in_list_view": 1},
+    {"fieldname": "notes", "label": "Notes", "fieldtype": "Small Text"}
+  ],
+  "permissions": []
+}

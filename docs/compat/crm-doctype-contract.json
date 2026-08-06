@@ -1,0 +1,137 @@
+{
+  "schema_version": "1.0",
+  "verified_at": "2026-08-06",
+  "source": {
+    "app": "crm",
+    "tag": "v1.81.0",
+    "commit": "f6016eab20936ea15e5f450ec8dff9880f4dffe9",
+    "method": "frappe.get_meta + frappe.get_all"
+  },
+  "reference_values": {
+    "CRM Lead Status": [
+      "Contacted",
+      "Converted",
+      "Junk",
+      "New",
+      "Nurture",
+      "Qualified",
+      "Unqualified"
+    ],
+    "CRM Deal Status": [
+      "Demo/Making",
+      "Lost",
+      "Negotiation",
+      "Proposal/Quotation",
+      "Qualification",
+      "Ready to Close",
+      "Won"
+    ]
+  },
+  "doctypes": {
+    "CRM Organization": {
+      "is_child_table": false,
+      "autoname": "field:organization_name",
+      "fields": {
+        "organization_name": {
+          "fieldtype": "Data",
+          "unique": true
+        },
+        "website": {
+          "fieldtype": "Data"
+        }
+      }
+    },
+    "Contact": {
+      "is_child_table": false,
+      "autoname": null,
+      "fields": {
+        "first_name": {
+          "fieldtype": "Data"
+        },
+        "last_name": {
+          "fieldtype": "Data"
+        },
+        "email_id": {
+          "fieldtype": "Data",
+          "options": "Email"
+        },
+        "mobile_no": {
+          "fieldtype": "Data",
+          "options": "Phone"
+        }
+      }
+    },
+    "CRM Lead": {
+      "is_child_table": false,
+      "autoname": "naming_series:",
+      "fields": {
+        "first_name": {
+          "fieldtype": "Data",
+          "reqd": true
+        },
+        "last_name": {
+          "fieldtype": "Data"
+        },
+        "lead_name": {
+          "fieldtype": "Data"
+        },
+        "email": {
+          "fieldtype": "Data",
+          "options": "Email"
+        },
+        "mobile_no": {
+          "fieldtype": "Data",
+          "options": "Phone"
+        },
+        "status": {
+          "fieldtype": "Link",
+          "options": "CRM Lead Status",
+          "reqd": true
+        },
+        "organization": {
+          "fieldtype": "Data"
+        }
+      }
+    },
+    "CRM Deal": {
+      "is_child_table": false,
+      "autoname": "naming_series:",
+      "fields": {
+        "status": {
+          "fieldtype": "Link",
+          "options": "CRM Deal Status",
+          "reqd": true
+        },
+        "organization": {
+          "fieldtype": "Link",
+          "options": "CRM Organization"
+        },
+        "lead": {
+          "fieldtype": "Link",
+          "options": "CRM Lead"
+        },
+        "contacts": {
+          "fieldtype": "Table",
+          "options": "CRM Contacts"
+        },
+        "contact": {
+          "fieldtype": "Link",
+          "options": "Contact"
+        },
+        "expected_deal_value": {
+          "fieldtype": "Currency",
+          "options": "currency"
+        }
+      }
+    },
+    "CRM Contacts": {
+      "is_child_table": true,
+      "fields": {
+        "contact": {
+          "fieldtype": "Link",
+          "options": "Contact"
+        }
+      }
+    }
+  }
+}

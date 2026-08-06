@@ -1,0 +1,506 @@
+{
+  "vulnerabilities": [
+    {
+      "id": "CVE-2022-4055",
+      "purls": [
+        "pkg:deb/debian/xdg-utils@1.1.3-4.1?arch=all&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2023-25193",
+      "purls": [
+        "pkg:deb/debian/libharfbuzz-subset0@6.0.0%2Bdfsg-3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libharfbuzz0b@6.0.0%2Bdfsg-3?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2023-2953",
+      "purls": [
+        "pkg:deb/debian/libldap-2.5-0@2.5.13%2Bdfsg-5?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2023-45853",
+      "purls": [
+        "pkg:deb/debian/zlib1g@1.2.13.dfsg-1?arch=arm64&distro=debian-12.15&epoch=1"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2025-26240",
+      "purls": [
+        "pkg:pypi/pdfkit@1.0.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 requires pdfkit 1.0.0 and no fixed upstream release exists. GBOS does not expose user-controlled PDF rendering in Gate 1; block Gate 5/6 until replacement or upstream remediation is verified."
+    },
+    {
+      "id": "CVE-2025-47273",
+      "purls": [
+        "pkg:pypi/setuptools@70.3.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only scanner exception: this exact PURL is a build-component entry nested in the Pillow wheel SBOM and is not an installed/importable Frappe virtualenv distribution. Revalidate the wheel SBOM and block Gate 5/6 if the component becomes runtime reachable."
+    },
+    {
+      "id": "CVE-2025-59375",
+      "purls": [
+        "pkg:deb/debian/libexpat1@2.5.0-1%2Bdeb12u2?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2025-69720",
+      "purls": [
+        "pkg:deb/debian/libncurses6@6.4-4?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libncursesw6@6.4-4?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libtinfo6@6.4-4?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/ncurses-base@6.4-4?arch=all&distro=debian-12.15",
+        "pkg:deb/debian/ncurses-bin@6.4-4?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2025-7458",
+      "purls": [
+        "pkg:deb/debian/libsqlite3-0@3.40.1-2%2Bdeb12u2?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-12064",
+      "purls": [
+        "pkg:deb/debian/curl@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libcurl3-gnutls@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libcurl4@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-13221",
+      "purls": [
+        "pkg:deb/debian/libperl5.36@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-base@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-modules-5.36@5.36.0-7%2Bdeb12u3?arch=all&distro=debian-12.15",
+        "pkg:deb/debian/perl@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-25210",
+      "purls": [
+        "pkg:deb/debian/libexpat1@2.5.0-1%2Bdeb12u2?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-37555",
+      "purls": [
+        "pkg:deb/debian/libsndfile1@1.2.0-1%2Bdeb12u1?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-41992",
+      "purls": [
+        "pkg:deb/debian/gzip@1.12-1?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-42496",
+      "purls": [
+        "pkg:deb/debian/libperl5.36@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-base@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-modules-5.36@5.36.0-7%2Bdeb12u3?arch=all&distro=debian-12.15",
+        "pkg:deb/debian/perl@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-42497",
+      "purls": [
+        "pkg:deb/debian/libperl5.36@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-base@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-modules-5.36@5.36.0-7%2Bdeb12u3?arch=all&distro=debian-12.15",
+        "pkg:deb/debian/perl@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-42533",
+      "purls": [
+        "pkg:deb/debian/nginx-common@1.22.1-9%2Bdeb12u9?arch=all&distro=debian-12.15",
+        "pkg:deb/debian/nginx@1.22.1-9%2Bdeb12u9?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-45186",
+      "purls": [
+        "pkg:deb/debian/libexpat1@2.5.0-1%2Bdeb12u2?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-48962",
+      "purls": [
+        "pkg:deb/debian/libperl5.36@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-base@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-modules-5.36@5.36.0-7%2Bdeb12u3?arch=all&distro=debian-12.15",
+        "pkg:deb/debian/perl@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-53615",
+      "purls": [
+        "pkg:deb/debian/bsdutils@2.38.1-5%2Bdeb12u3?arch=arm64&distro=debian-12.15&epoch=1",
+        "pkg:deb/debian/libblkid1@2.38.1-5%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libmount1@2.38.1-5%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libsmartcols1@2.38.1-5%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libuuid1@2.38.1-5%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/mount@2.38.1-5%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/util-linux-extra@2.38.1-5%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/util-linux@2.38.1-5%2Bdeb12u3?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-54058",
+      "purls": [
+        "pkg:pypi/pillow@12.2.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-54059",
+      "purls": [
+        "pkg:pypi/pillow@12.2.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-54060",
+      "purls": [
+        "pkg:pypi/pillow@12.2.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-54369",
+      "purls": [
+        "pkg:deb/debian/libacl1@2.3.1-3?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-55199",
+      "purls": [
+        "pkg:deb/debian/libssh2-1@1.10.0-3%2Bb1?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-55200",
+      "purls": [
+        "pkg:deb/debian/libssh2-1@1.10.0-3%2Bb1?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-55379",
+      "purls": [
+        "pkg:pypi/pillow@12.2.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-55380",
+      "purls": [
+        "pkg:pypi/pillow@12.2.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-56408",
+      "purls": [
+        "pkg:deb/debian/libexpat1@2.5.0-1%2Bdeb12u2?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-57432",
+      "purls": [
+        "pkg:deb/debian/libperl5.36@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-base@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-modules-5.36@5.36.0-7%2Bdeb12u3?arch=all&distro=debian-12.15",
+        "pkg:deb/debian/perl@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-57433",
+      "purls": [
+        "pkg:deb/debian/libperl5.36@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-base@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-modules-5.36@5.36.0-7%2Bdeb12u3?arch=all&distro=debian-12.15",
+        "pkg:deb/debian/perl@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-58010",
+      "purls": [
+        "pkg:deb/debian/libglib2.0-0@2.74.6-2%2Bdeb12u9?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-58011",
+      "purls": [
+        "pkg:deb/debian/libglib2.0-0@2.74.6-2%2Bdeb12u9?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-58012",
+      "purls": [
+        "pkg:deb/debian/libglib2.0-0@2.74.6-2%2Bdeb12u9?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-58013",
+      "purls": [
+        "pkg:deb/debian/libglib2.0-0@2.74.6-2%2Bdeb12u9?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-58014",
+      "purls": [
+        "pkg:deb/debian/libglib2.0-0@2.74.6-2%2Bdeb12u9?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-58015",
+      "purls": [
+        "pkg:deb/debian/libglib2.0-0@2.74.6-2%2Bdeb12u9?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-58016",
+      "purls": [
+        "pkg:deb/debian/libglib2.0-0@2.74.6-2%2Bdeb12u9?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-59197",
+      "purls": [
+        "pkg:pypi/pillow@12.2.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-59199",
+      "purls": [
+        "pkg:pypi/pillow@12.2.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-59200",
+      "purls": [
+        "pkg:pypi/pillow@12.2.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-59204",
+      "purls": [
+        "pkg:pypi/pillow@12.2.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-59205",
+      "purls": [
+        "pkg:pypi/pillow@12.2.0"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-59935",
+      "purls": [
+        "pkg:pypi/pypdf@6.13.3"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-59936",
+      "purls": [
+        "pkg:pypi/pypdf@6.13.3"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-60005",
+      "purls": [
+        "pkg:deb/debian/nginx-common@1.22.1-9%2Bdeb12u9?arch=all&distro=debian-12.15",
+        "pkg:deb/debian/nginx@1.22.1-9%2Bdeb12u9?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-6276",
+      "purls": [
+        "pkg:deb/debian/curl@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libcurl3-gnutls@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libcurl4@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-6653",
+      "purls": [
+        "pkg:deb/debian/libxml2@2.9.14%2Bdfsg-1.3~deb12u6?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-69247",
+      "purls": [
+        "pkg:pypi/cryptography@46.0.7"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-69249",
+      "purls": [
+        "pkg:pypi/cryptography@46.0.7"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "CVE-2026-7598",
+      "purls": [
+        "pkg:deb/debian/libssh2-1@1.10.0-3%2Bb1?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-8286",
+      "purls": [
+        "pkg:deb/debian/curl@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libcurl3-gnutls@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libcurl4@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-8376",
+      "purls": [
+        "pkg:deb/debian/libperl5.36@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-base@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-modules-5.36@5.36.0-7%2Bdeb12u3?arch=all&distro=debian-12.15",
+        "pkg:deb/debian/perl@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-8927",
+      "purls": [
+        "pkg:deb/debian/curl@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libcurl3-gnutls@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/libcurl4@7.88.1-10%2Bdeb12u15?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "CVE-2026-9538",
+      "purls": [
+        "pkg:deb/debian/libperl5.36@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-base@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15",
+        "pkg:deb/debian/perl-modules-5.36@5.36.0-7%2Bdeb12u3?arch=all&distro=debian-12.15",
+        "pkg:deb/debian/perl@5.36.0-7%2Bdeb12u3?arch=arm64&distro=debian-12.15"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: Debian 12.15 publishes no fixed version for this exact package. The image is upgraded from current Bookworm security repositories; re-scan weekly and block Gate 5/6 until a vendor fix or approved base-image migration is verified."
+    },
+    {
+      "id": "GHSA-537c-gmf6-5ccf",
+      "purls": [
+        "pkg:pypi/cryptography@46.0.7"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only exception: pinned Frappe v16.30.0 dependency metadata rejects the available fixed release in pip check. Do not override upstream constraints; block Gate 5/6 until a compatible pinned Frappe patch and full regression evidence are available."
+    },
+    {
+      "id": "GHSA-6v7p-g79w-8964",
+      "purls": [
+        "pkg:pypi/msgpack@1.1.2"
+      ],
+      "expired_at": "2026-09-30T00:00:00Z",
+      "statement": "Gate 0/1 local-only scanner exception: this exact PURL is a build-component entry nested in the Pillow wheel SBOM and is not an installed/importable Frappe virtualenv distribution. Revalidate the wheel SBOM and block Gate 5/6 if the component becomes runtime reachable."
+    }
+  ]
+}

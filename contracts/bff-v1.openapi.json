@@ -1,0 +1,1762 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ESAN GBOS BFF",
+    "version": "1.0.0",
+    "description": "Gate 1 的固定查询与命令接口。查询只接受 GET，状态变化只接受 POST。"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "当前 Frappe site"
+    }
+  ],
+  "paths": {
+    "/api/method/esan_gbos.api.v1.party.get_360": {
+      "get": {
+        "operationId": "party.get_360",
+        "summary": "读取客户 360",
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "party",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Party360Success"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.work_item.list": {
+      "get": {
+        "operationId": "work_item.list",
+        "summary": "分页读取工作项",
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "filters",
+            "in": "query",
+            "required": false,
+            "description": "JSON object；只允许 team、business_status、assigned_to、priority、due_date。",
+            "schema": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 25
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/WorkItemListSuccess"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.sample.get_status": {
+      "get": {
+        "operationId": "sample.get_status",
+        "summary": "读取样品项目状态",
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SampleStatusSuccess"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.sourcing.get_board": {
+      "get": {
+        "operationId": "sourcing.get_board",
+        "summary": "读取询源看板",
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "team",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SourcingBoardSuccess"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.sample.create_project": {
+      "post": {
+        "operationId": "sample.create_project",
+        "summary": "创建样品项目",
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "team",
+                  "title",
+                  "expected_revision",
+                  "idempotency_key"
+                ],
+                "properties": {
+                  "team": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "expected_revision": {
+                    "const": 0
+                  },
+                  "idempotency_key": {
+                    "$ref": "#/components/schemas/IdempotencyKey"
+                  },
+                  "party_profile": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "product_brief": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "deal": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "origin": {
+                    "type": "string",
+                    "const": "Manual",
+                    "default": "Manual"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SampleCreateSuccess"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.sample.record_feedback": {
+      "post": {
+        "operationId": "sample.record_feedback",
+        "summary": "记录客户样品反馈",
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "project",
+                  "summary",
+                  "expected_revision",
+                  "idempotency_key"
+                ],
+                "properties": {
+                  "project": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  },
+                  "expected_revision": {
+                    "$ref": "#/components/schemas/Revision"
+                  },
+                  "idempotency_key": {
+                    "$ref": "#/components/schemas/IdempotencyKey"
+                  },
+                  "rating": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "received_on": {
+                    "type": "string",
+                    "format": "date"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SampleFeedbackSuccess"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.sourcing.create_from_demand": {
+      "post": {
+        "operationId": "sourcing.create_from_demand",
+        "summary": "从确认需求创建询源事件",
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "demand",
+                  "expected_revision",
+                  "idempotency_key"
+                ],
+                "properties": {
+                  "demand": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "expected_revision": {
+                    "$ref": "#/components/schemas/Revision"
+                  },
+                  "idempotency_key": {
+                    "$ref": "#/components/schemas/IdempotencyKey"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SourcingCreateSuccess"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v1.work_item.transition": {
+      "post": {
+        "operationId": "work_item.transition",
+        "summary": "按 revision 与状态机迁移工作项",
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "to_status",
+                  "expected_revision",
+                  "idempotency_key"
+                ],
+                "properties": {
+                  "name": {
+                    "$ref": "#/components/schemas/DocumentName"
+                  },
+                  "to_status": {
+                    "type": "string",
+                    "enum": [
+                      "In Progress",
+                      "Blocked",
+                      "Done",
+                      "Cancelled"
+                    ]
+                  },
+                  "expected_revision": {
+                    "$ref": "#/components/schemas/Revision"
+                  },
+                  "idempotency_key": {
+                    "$ref": "#/components/schemas/IdempotencyKey"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/WorkItemTransitionSuccess"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "FrappeSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "sid"
+      },
+      "FrappeCsrf": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Frappe-CSRF-Token",
+        "description": "Frappe session 对 POST 请求签发的 CSRF token。"
+      }
+    },
+    "schemas": {
+      "DocumentName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "Revision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "IdempotencyKey": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 256
+      },
+      "SuccessMeta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "schema_version"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 100
+          },
+          "schema_version": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "original_request_id": {
+            "type": "string"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          }
+        }
+      },
+      "PartyProfileSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "party_name",
+          "team",
+          "origin",
+          "business_status",
+          "review_status",
+          "revision",
+          "modified"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "party_name": {
+            "type": "string"
+          },
+          "team": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "business_status": {
+            "type": "string"
+          },
+          "review_status": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "modified": {
+            "type": "string"
+          }
+        }
+      },
+      "CRMOrganizationSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "organization_name",
+          "website",
+          "territory",
+          "industry"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "organization_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "website": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "territory": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "industry": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ContactSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "full_name",
+          "email_id",
+          "mobile_no"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "full_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mobile_no": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CRMLeadSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "lead_name",
+          "organization",
+          "status",
+          "lead_owner"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "lead_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "organization": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lead_owner": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CRMDealSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "organization",
+          "status",
+          "deal_owner",
+          "expected_deal_value"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "organization": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deal_owner": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_deal_value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "BusinessRecordSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "title",
+          "origin",
+          "business_status",
+          "review_status",
+          "revision"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "title": {
+            "type": "string"
+          },
+          "deal": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": "string"
+          },
+          "business_status": {
+            "type": "string"
+          },
+          "review_status": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        }
+      },
+      "Party360Data": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "profile",
+          "organization",
+          "contact",
+          "lead",
+          "deal",
+          "product_briefs",
+          "samples",
+          "demands"
+        ],
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/PartyProfileSummary"
+          },
+          "organization": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CRMOrganizationSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contact": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ContactSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lead": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CRMLeadSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deal": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CRMDealSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "product_briefs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusinessRecordSummary"
+            }
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusinessRecordSummary"
+            }
+          },
+          "demands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusinessRecordSummary"
+            }
+          }
+        }
+      },
+      "WorkItemData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "title",
+          "team",
+          "assigned_to",
+          "priority",
+          "due_date",
+          "origin",
+          "business_status",
+          "review_status",
+          "revision",
+          "reference_doctype",
+          "reference_name",
+          "modified"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "title": {
+            "type": "string"
+          },
+          "team": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "assigned_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "priority": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "due_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": "string"
+          },
+          "business_status": {
+            "type": "string"
+          },
+          "review_status": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "reference_doctype": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reference_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "modified": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkItemListData": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/WorkItemData"
+        }
+      },
+      "SampleProjectSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "title",
+          "team",
+          "party_profile",
+          "product_brief",
+          "origin",
+          "business_status",
+          "review_status",
+          "revision",
+          "modified"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "title": {
+            "type": "string"
+          },
+          "team": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "party_profile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "product_brief": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": "string"
+          },
+          "business_status": {
+            "type": "string"
+          },
+          "review_status": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "modified": {
+            "type": "string"
+          }
+        }
+      },
+      "SampleIterationSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "iteration_number",
+          "summary",
+          "origin",
+          "business_status",
+          "review_status",
+          "revision"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "iteration_number": {
+            "type": "integer"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": "string"
+          },
+          "business_status": {
+            "type": "string"
+          },
+          "review_status": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        }
+      },
+      "SampleShipmentSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "carrier",
+          "tracking_number",
+          "shipped_on",
+          "delivered_on",
+          "origin",
+          "business_status",
+          "revision"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "carrier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tracking_number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "shipped_on": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delivered_on": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": "string"
+          },
+          "business_status": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        }
+      },
+      "SampleFeedbackSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "summary",
+          "rating",
+          "received_on",
+          "origin",
+          "review_status",
+          "revision"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "rating": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "received_on": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": "string"
+          },
+          "review_status": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        }
+      },
+      "SampleStatusData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "project",
+          "iterations",
+          "shipments",
+          "feedback"
+        ],
+        "properties": {
+          "project": {
+            "$ref": "#/components/schemas/SampleProjectSummary"
+          },
+          "iterations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SampleIterationSummary"
+            }
+          },
+          "shipments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SampleShipmentSummary"
+            }
+          },
+          "feedback": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SampleFeedbackSummary"
+            }
+          }
+        }
+      },
+      "SourcingCandidateSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "supplier_name",
+          "external_supplier_id",
+          "quoted_price",
+          "currency",
+          "lead_time_days",
+          "candidate_status",
+          "notes"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "supplier_name": {
+            "type": "string"
+          },
+          "external_supplier_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "quoted_price": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lead_time_days": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "candidate_status": {
+            "type": "string"
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SourcingEventSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "title",
+          "team",
+          "demand_signal",
+          "selected_supplier",
+          "owner_user",
+          "origin",
+          "business_status",
+          "review_status",
+          "revision",
+          "modified",
+          "candidates"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "title": {
+            "type": "string"
+          },
+          "team": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "demand_signal": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "selected_supplier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "owner_user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": "string"
+          },
+          "business_status": {
+            "type": "string"
+          },
+          "review_status": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "modified": {
+            "type": "string"
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourcingCandidateSummary"
+            }
+          }
+        }
+      },
+      "SourcingLanes": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "Draft",
+          "Invited",
+          "Collecting",
+          "Evaluating",
+          "Selected",
+          "Closed",
+          "Cancelled"
+        ],
+        "properties": {
+          "Draft": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourcingEventSummary"
+            }
+          },
+          "Invited": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourcingEventSummary"
+            }
+          },
+          "Collecting": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourcingEventSummary"
+            }
+          },
+          "Evaluating": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourcingEventSummary"
+            }
+          },
+          "Selected": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourcingEventSummary"
+            }
+          },
+          "Closed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourcingEventSummary"
+            }
+          },
+          "Cancelled": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourcingEventSummary"
+            }
+          }
+        }
+      },
+      "SourcingBoardData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lanes",
+          "total"
+        ],
+        "properties": {
+          "lanes": {
+            "$ref": "#/components/schemas/SourcingLanes"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SampleCreateData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "doctype",
+          "name",
+          "business_status",
+          "review_status",
+          "revision"
+        ],
+        "properties": {
+          "doctype": {
+            "const": "GBOS Sample Project"
+          },
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "business_status": {
+            "type": "string"
+          },
+          "review_status": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        }
+      },
+      "SampleFeedbackData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "doctype",
+          "name",
+          "project",
+          "project_status",
+          "project_revision",
+          "revision"
+        ],
+        "properties": {
+          "doctype": {
+            "const": "GBOS Sample Feedback"
+          },
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "project": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "project_status": {
+            "type": "string"
+          },
+          "project_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        }
+      },
+      "SourcingCreateData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "doctype",
+          "name",
+          "business_status",
+          "revision",
+          "demand",
+          "demand_status",
+          "demand_revision"
+        ],
+        "properties": {
+          "doctype": {
+            "const": "GBOS Sourcing Event"
+          },
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "business_status": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "demand": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "demand_status": {
+            "type": "string"
+          },
+          "demand_revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        }
+      },
+      "WorkItemTransitionData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "doctype",
+          "name",
+          "business_status",
+          "revision"
+        ],
+        "properties": {
+          "doctype": {
+            "const": "GBOS Work Item"
+          },
+          "name": {
+            "$ref": "#/components/schemas/DocumentName"
+          },
+          "business_status": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        }
+      },
+      "Party360Envelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Party360Data"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SuccessMeta"
+          }
+        }
+      },
+      "WorkItemListEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkItemListData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SuccessMeta"
+          }
+        }
+      },
+      "SampleStatusEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SampleStatusData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SuccessMeta"
+          }
+        }
+      },
+      "SourcingBoardEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SourcingBoardData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SuccessMeta"
+          }
+        }
+      },
+      "SampleCreateEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SampleCreateData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SuccessMeta"
+          }
+        }
+      },
+      "SampleFeedbackEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SampleFeedbackData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SuccessMeta"
+          }
+        }
+      },
+      "SourcingCreateEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SourcingCreateData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SuccessMeta"
+          }
+        }
+      },
+      "WorkItemTransitionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkItemTransitionData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SuccessMeta"
+          }
+        }
+      },
+      "Party360Wire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/Party360Envelope"
+          }
+        }
+      },
+      "WorkItemListWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/WorkItemListEnvelope"
+          }
+        }
+      },
+      "SampleStatusWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/SampleStatusEnvelope"
+          }
+        }
+      },
+      "SourcingBoardWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/SourcingBoardEnvelope"
+          }
+        }
+      },
+      "SampleCreateWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/SampleCreateEnvelope"
+          }
+        }
+      },
+      "SampleFeedbackWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/SampleFeedbackEnvelope"
+          }
+        }
+      },
+      "SourcingCreateWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/SourcingCreateEnvelope"
+          }
+        }
+      },
+      "WorkItemTransitionWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/WorkItemTransitionEnvelope"
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message",
+              "request_id",
+              "details"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "authentication_required",
+                  "csrf_failed",
+                  "permission_denied",
+                  "method_not_allowed",
+                  "invalid_dto",
+                  "invalid_query",
+                  "invalid_cursor",
+                  "not_found",
+                  "scope_mismatch",
+                  "revision_conflict",
+                  "invalid_transition",
+                  "idempotency_conflict",
+                  "request_in_progress",
+                  "validation_error",
+                  "internal_error"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "FrappeErrorWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/ErrorEnvelope"
+          }
+        }
+      }
+    },
+    "responses": {
+      "Party360Success": {
+        "description": "客户 360 查询成功；Frappe wire 在 message 中返回 GBOS envelope。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Party360Wire"
+            }
+          }
+        }
+      },
+      "WorkItemListSuccess": {
+        "description": "工作项查询成功；Frappe wire 在 message 中返回 GBOS envelope。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/WorkItemListWire"
+            }
+          }
+        }
+      },
+      "SampleStatusSuccess": {
+        "description": "样品状态查询成功；Frappe wire 在 message 中返回 GBOS envelope。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SampleStatusWire"
+            }
+          }
+        }
+      },
+      "SourcingBoardSuccess": {
+        "description": "询源看板查询成功；Frappe wire 在 message 中返回 GBOS envelope。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SourcingBoardWire"
+            }
+          }
+        }
+      },
+      "SampleCreateSuccess": {
+        "description": "样品项目创建成功；Frappe wire 在 message 中返回 GBOS envelope。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SampleCreateWire"
+            }
+          }
+        }
+      },
+      "SampleFeedbackSuccess": {
+        "description": "样品反馈记录成功；Frappe wire 在 message 中返回 GBOS envelope。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SampleFeedbackWire"
+            }
+          }
+        }
+      },
+      "SourcingCreateSuccess": {
+        "description": "询源事件创建成功；Frappe wire 在 message 中返回 GBOS envelope。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SourcingCreateWire"
+            }
+          }
+        }
+      },
+      "WorkItemTransitionSuccess": {
+        "description": "工作项状态变更成功；Frappe wire 在 message 中返回 GBOS envelope。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/WorkItemTransitionWire"
+            }
+          }
+        }
+      },
+      "Error": {
+        "description": "统一错误",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/FrappeErrorWire"
+            }
+          }
+        }
+      }
+    }
+  }
+}

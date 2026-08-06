@@ -1,0 +1,1 @@
+"""ESAN GBOS Frappe module."""

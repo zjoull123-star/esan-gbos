@@ -1,0 +1,1 @@
+"""GBOS Work Item DocType."""

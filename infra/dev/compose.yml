@@ -1,0 +1,298 @@
+name: esan-gbos-dev
+
+x-gbos-compat:
+  frappe_docker: "v3.2.2@3061850feface8fbbad15b5dc08a110c596107cb"
+
+x-erpnext-image: &erpnext-image "${ERPNEXT_IMAGE:-frappe/erpnext:v16.31.0@sha256:473407805828fd0afa0df15ae72c17a0030113e0cb0ea24be0ec0d91d822b392}"
+x-upstream-runtime-image: &upstream-runtime-image "frappe/erpnext:v16.31.0@sha256:473407805828fd0afa0df15ae72c17a0030113e0cb0ea24be0ec0d91d822b392"
+x-erpnext-volumes: &erpnext-volumes
+  - sites:/home/frappe/frappe-bench/sites
+  - logs:/home/frappe/frappe-bench/logs
+
+services:
+  db:
+    image: "mariadb:11.8@sha256:d9f7eb2637296652f24b484afd5d246f759f49f5babcadc6a9e344c9acb75fbf"
+    profiles: ["core"]
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+    environment:
+      MARIADB_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD in infra/dev/.env}"
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -uroot -p\"$$MARIADB_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  redis-cache:
+    image: "redis:6.2-alpine@sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23"
+    profiles: ["core"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-cache-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis-queue:
+    image: "redis:6.2-alpine@sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23"
+    profiles: ["core"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-queue-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  configurator:
+    image: *erpnext-image
+    profiles: ["core"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        bench set-config -g db_host db;
+        bench set-config -gp db_port 3306;
+        bench set-config -g redis_cache redis://redis-cache:6379;
+        bench set-config -g redis_queue redis://redis-queue:6379;
+        bench set-config -g redis_socketio redis://redis-queue:6379;
+        bench set-config -gp socketio_port 9000;
+    volumes: *erpnext-volumes
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+    restart: "no"
+
+  site-creator:
+    image: *erpnext-image
+    profiles: ["core"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        case "$$APP_LIST" in
+          *[!a-z0-9_,]*|"") echo "APP_LIST must be a comma-separated app-name list" >&2; exit 64;;
+        esac;
+        if [ "$$GBOS_IMAGE_STAGE" = "final" ]; then
+          for required in erpnext crm esan_gbos; do
+            case ",$$APP_LIST," in
+              *,"$$required",*) ;;
+              *) echo "Final image stage requires $$required" >&2; exit 78;;
+            esac;
+          done;
+        elif [ "$$GBOS_IMAGE_STAGE" != "upstream" ]; then
+          echo "GBOS_IMAGE_STAGE must be final or upstream" >&2;
+          exit 64;
+        fi;
+        for app in $$(echo "$$APP_LIST" | tr ',' ' '); do
+          if [ ! -d "apps/$$app" ]; then
+            echo "Required app $$app is absent from image; build the correct $$GBOS_IMAGE_STAGE image" >&2;
+            exit 69;
+          fi;
+        done;
+        if [ ! -d "sites/$$SITE_NAME" ]; then
+          bench new-site "$$SITE_NAME" \
+          --mariadb-user-host-login-scope="%" \
+          --db-root-username=root \
+          --db-root-password="$$DB_ROOT_PASSWORD" \
+          --admin-password="$$ADMIN_PASSWORD" \
+          --set-default;
+        else
+          echo "Site $$SITE_NAME already exists";
+        fi;
+        for app in $$(echo "$$APP_LIST" | tr ',' ' '); do
+          if ! bench --site "$$SITE_NAME" list-apps --format json |
+            jq -e --arg site "$$SITE_NAME" --arg app "$$app" '.[$$site] | index($$app) != null' >/dev/null; then
+            bench --site "$$SITE_NAME" install-app "$$app";
+          fi;
+        done;
+        case "$$GBOS_LOAD_DEMO_FIXTURES" in
+          true|false) ;;
+          *) echo "GBOS_LOAD_DEMO_FIXTURES must be true or false" >&2; exit 64;;
+        esac;
+        if [ "$$GBOS_IMAGE_STAGE" = "final" ] &&
+          [ "$$GBOS_LOAD_DEMO_FIXTURES" = "true" ]; then
+          if [ -z "$$GBOS_DEMO_PASSWORD" ]; then
+            echo "GBOS_DEMO_PASSWORD is required for local demo users" >&2;
+            exit 78;
+          fi;
+          bench --site "$$SITE_NAME" execute esan_gbos.demo.seed \
+          --kwargs '{"confirm_synthetic": True}';
+        fi
+    environment:
+      SITE_NAME: "${SITE_NAME:-gbos.localhost}"
+      GBOS_IMAGE_STAGE: "${GBOS_IMAGE_STAGE:-final}"
+      APP_LIST: "${APP_LIST:-erpnext,crm,esan_gbos}"
+      GBOS_PRODUCTION_ENABLED: "${GBOS_PRODUCTION_ENABLED:-false}"
+      GBOS_LOAD_DEMO_FIXTURES: "${GBOS_LOAD_DEMO_FIXTURES:-false}"
+      GBOS_DEMO_PASSWORD: "${GBOS_DEMO_PASSWORD:-}"
+      DB_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD in infra/dev/.env}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in infra/dev/.env}"
+    volumes: *erpnext-volumes
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+    restart: "no"
+
+  backend:
+    image: *erpnext-image
+    profiles: ["core"]
+    volumes: *erpnext-volumes
+    depends_on:
+      site-creator:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          request = urllib.request.Request(
+          'http://127.0.0.1:8000/api/method/ping',
+          headers={'Host': '${SITE_NAME:-gbos.localhost}'});
+          urllib.request.urlopen(request, timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    image: *erpnext-image
+    profiles: ["core"]
+    command: ["nginx-entrypoint.sh"]
+    environment:
+      BACKEND: backend:8000
+      CLIENT_MAX_BODY_SIZE: 50m
+      FRAPPE_SITE_NAME_HEADER: "${SITE_NAME:-gbos.localhost}"
+      PROXY_READ_TIMEOUT: "120"
+      SOCKETIO: websocket:9000
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+    volumes: *erpnext-volumes
+    ports:
+      - "127.0.0.1:${GBOS_HTTP_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+      websocket:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl --fail --silent --show-error http://127.0.0.1:8080/api/method/ping >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  websocket:
+    image: *erpnext-image
+    profiles: ["core"]
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+    volumes: *erpnext-volumes
+    depends_on:
+      site-creator:
+        condition: service_completed_successfully
+      redis-queue:
+        condition: service_healthy
+    restart: unless-stopped
+
+  queue-long:
+    image: *erpnext-image
+    profiles: ["core"]
+    command: ["bench", "worker", "--queue", "long,default,short"]
+    volumes: *erpnext-volumes
+    depends_on:
+      site-creator:
+        condition: service_completed_successfully
+      redis-queue:
+        condition: service_healthy
+    restart: unless-stopped
+
+  queue-short:
+    image: *erpnext-image
+    profiles: ["core"]
+    command: ["bench", "worker", "--queue", "short,default"]
+    volumes: *erpnext-volumes
+    depends_on:
+      site-creator:
+        condition: service_completed_successfully
+      redis-queue:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler:
+    image: *erpnext-image
+    profiles: ["core"]
+    command: ["bench", "schedule"]
+    volumes: *erpnext-volumes
+    depends_on:
+      site-creator:
+        condition: service_completed_successfully
+      redis-queue:
+        condition: service_healthy
+    restart: unless-stopped
+
+  observer-postgres:
+    image: "pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966"
+    profiles: ["observer"]
+    environment:
+      POSTGRES_DB: "${OBSERVER_POSTGRES_DB:-gbos_observer}"
+      POSTGRES_USER: "${OBSERVER_POSTGRES_USER:-gbos_observer}"
+      POSTGRES_PASSWORD: "${OBSERVER_POSTGRES_PASSWORD:?Set OBSERVER_POSTGRES_PASSWORD in infra/dev/.env}"
+    volumes:
+      - observer-postgres-data:/var/lib/postgresql/data
+      - ./observer/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${OBSERVER_POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" &&
+          PGPASSWORD="$$POSTGRES_PASSWORD"
+          psql -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+          -Atqc "select extversion from pg_extension where extname = 'vector'" |
+          grep -Fx '0.8.2'
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: "no"
+
+  observer-contract-check:
+    image: *upstream-runtime-image
+    profiles: ["observer"]
+    command: ["python", "/observer/contract_check.py"]
+    environment:
+      OBSERVER_POSTGRES_HOST: observer-postgres
+      OBSERVER_POSTGRES_PORT: "5432"
+    volumes:
+      - ../../contracts:/contracts:ro
+      - ../../services/observer:/observer:ro
+    depends_on:
+      observer-postgres:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  db-data:
+  redis-cache-data:
+  redis-queue-data:
+  sites:
+  logs:
+  observer-postgres-data:

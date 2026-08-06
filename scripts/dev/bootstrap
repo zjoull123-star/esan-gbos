@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+export PATH="${HOME}/.orbstack/bin:${PATH}"
+
+COMPOSE_FILE="${REPO_ROOT}/infra/dev/compose.yml"
+ENV_FILE="${REPO_ROOT}/infra/dev/.env"
+ENV_EXAMPLE="${REPO_ROOT}/infra/dev/.env.example"
+PROFILES=(--profile core)
+IMAGE_STAGE=final
+
+while (( $# > 0 )); do
+  case "$1" in
+    --observer)
+      PROFILES+=(--profile observer)
+      ;;
+    --upstream-only)
+      IMAGE_STAGE=upstream
+      ;;
+    *)
+      echo "Usage: scripts/dev/bootstrap [--observer] [--upstream-only]" >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+  cp -- "${ENV_EXAMPLE}" "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
+  echo "Created infra/dev/.env with synthetic development-only values."
+fi
+
+if grep -Eiq \
+  '^(GBOS_PRODUCTION_ENABLED=(true|1|yes)|GBOS_ENV=production)$' \
+  "${ENV_FILE}"; then
+  echo "Refusing to use the local development stack with production enabled." >&2
+  exit 78
+fi
+
+if [[ "${IMAGE_STAGE}" == "upstream" ]]; then
+  export GBOS_IMAGE_STAGE=upstream
+  export APP_LIST=erpnext,crm
+  export ERPNEXT_IMAGE="${ERPNEXT_IMAGE:-esan-gbos-upstream:gate0}"
+  echo "Starting explicit upstream-only stage (erpnext + crm); this is not the Gate 1 final image."
+else
+  export GBOS_IMAGE_STAGE=final
+  export APP_LIST=erpnext,crm,esan_gbos
+fi
+
+if [[ "${IMAGE_STAGE}" == "final" ]]; then
+  FINAL_INPUT_PATHS=(
+    apps/esan_gbos
+    fixtures/gate1
+    infra/dev/nginx
+    infra/dev/realtime-runtime
+    infra/dev/Containerfile.final
+    infra/dev/apps.upstream.json
+    scripts/dev/build-custom-image
+  )
+  FINAL_SOURCE_DIRTY=false
+  if ! git -C "${REPO_ROOT}" diff --quiet -- "${FINAL_INPUT_PATHS[@]}" ||
+    ! git -C "${REPO_ROOT}" diff --cached --quiet -- "${FINAL_INPUT_PATHS[@]}" ||
+    [[ -n "$(
+      git -C "${REPO_ROOT}" ls-files --others --exclude-standard -- "${FINAL_INPUT_PATHS[@]}"
+    )" ]]; then
+    FINAL_SOURCE_DIRTY=true
+  fi
+  if [[ "${FINAL_SOURCE_DIRTY}" == "true" ]]; then
+    echo "Final runtime source must be tracked and clean before bootstrap." >&2
+    exit 65
+  fi
+fi
+
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${PROFILES[@]}" config --quiet
+TARGET_IMAGE="$(
+  docker compose \
+    --env-file "${ENV_FILE}" \
+    -f "${COMPOSE_FILE}" \
+    "${PROFILES[@]}" \
+    config --format json |
+    python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["backend"]["image"])'
+)"
+SOURCE_COMMIT=
+IMAGE_AVAILABLE=false
+if docker image inspect "${TARGET_IMAGE}" >/dev/null 2>&1; then
+  IMAGE_AVAILABLE=true
+  if [[ "${IMAGE_STAGE}" == "final" ]]; then
+    SOURCE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+    IMAGE_REVISION="$(
+      docker image inspect "${TARGET_IMAGE}" \
+        --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+    )"
+    if [[ "${IMAGE_REVISION}" != "${SOURCE_COMMIT}" ]]; then
+      echo "Configured final image revision ${IMAGE_REVISION:-missing} does not match repository HEAD ${SOURCE_COMMIT}; rebuilding."
+      IMAGE_AVAILABLE=false
+    fi
+  fi
+fi
+if [[ "${IMAGE_AVAILABLE}" != "true" ]]; then
+  case "${TARGET_IMAGE}" in
+    esan-gbos-upstream:*)
+      "${SCRIPT_DIR}/build-custom-image" --stage upstream --image "${TARGET_IMAGE}"
+      ;;
+    esan-gbos-final:*)
+      SOURCE_COMMIT="${SOURCE_COMMIT:-$(git -C "${REPO_ROOT}" rev-parse HEAD)}"
+      "${SCRIPT_DIR}/build-custom-image" \
+        --stage final \
+        --esan-commit "${SOURCE_COMMIT}" \
+        --image "${TARGET_IMAGE}"
+      ;;
+    *)
+      echo "Configured image ${TARGET_IMAGE} is unavailable and is not a local GBOS build target." >&2
+      exit 69
+      ;;
+  esac
+fi
+docker compose \
+  --env-file "${ENV_FILE}" \
+  -f "${COMPOSE_FILE}" \
+  "${PROFILES[@]}" \
+  up -d --wait

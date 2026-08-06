@@ -1,0 +1,62 @@
+[
+  {
+    "doctype": "Custom Field",
+    "name": "CRM Organization-custom_esan_team",
+    "dt": "CRM Organization",
+    "fieldname": "custom_esan_team",
+    "label": "GBOS Team",
+    "fieldtype": "Link",
+    "options": "GBOS Team",
+    "insert_after": "organization_name"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "CRM Organization-custom_esan_origin",
+    "dt": "CRM Organization",
+    "fieldname": "custom_esan_origin",
+    "label": "GBOS Origin",
+    "fieldtype": "Data",
+    "insert_after": "custom_esan_team",
+    "read_only": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Contact-custom_esan_team",
+    "dt": "Contact",
+    "fieldname": "custom_esan_team",
+    "label": "GBOS Team",
+    "fieldtype": "Link",
+    "options": "GBOS Team",
+    "insert_after": "first_name"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "CRM Lead-custom_esan_team",
+    "dt": "CRM Lead",
+    "fieldname": "custom_esan_team",
+    "label": "GBOS Team",
+    "fieldtype": "Link",
+    "options": "GBOS Team",
+    "insert_after": "organization"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "CRM Deal-custom_esan_team",
+    "dt": "CRM Deal",
+    "fieldname": "custom_esan_team",
+    "label": "GBOS Team",
+    "fieldtype": "Link",
+    "options": "GBOS Team",
+    "insert_after": "organization"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "CRM Deal-custom_esan_party_profile",
+    "dt": "CRM Deal",
+    "fieldname": "custom_esan_party_profile",
+    "label": "GBOS Party Profile",
+    "fieldtype": "Link",
+    "options": "GBOS Party Profile",
+    "insert_after": "custom_esan_team"
+  }
+]

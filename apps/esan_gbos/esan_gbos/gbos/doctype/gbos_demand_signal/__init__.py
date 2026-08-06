@@ -1,0 +1,1 @@
+"""GBOS Demand Signal DocType."""

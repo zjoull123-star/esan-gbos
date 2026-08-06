@@ -1,0 +1,121 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06",
+  "scope": "local-disposable-gate1",
+  "status": "pass",
+  "go_no_go": {
+    "gate1": "go-after-green-head-ci",
+    "gate2": "no-go",
+    "gate3": "no-go",
+    "gate4": "no-go",
+    "gate5": "no-go",
+    "gate6": "no-go"
+  },
+  "immutable_runtime": {
+    "image": "esan-gbos-final:gate1",
+    "digest": "sha256:a55e3dc432cabc7e4a1bbe4951d1586c97e65151b41a5d9c7e5eb0632d61f1e9",
+    "created": "2026-08-06T10:52:25.274279038+08:00",
+    "platform": "linux/arm64",
+    "source_commit": "deccc2caaa2d25cebceab2aff99dbbbb4e037a04",
+    "app_source_sha256": "b6da2818182774b2246e4429c519a936de09ea40630d4985e865d3ccd5776339",
+    "installed_apps": [
+      "frappe",
+      "erpnext",
+      "crm",
+      "esan_gbos"
+    ],
+    "consecutive_migration_exit_codes": [
+      0,
+      0
+    ]
+  },
+  "tests": {
+    "repository_pytest": 200,
+    "frappe_integration": 21,
+    "frontend_unit": 56,
+    "playwright_harness": 5,
+    "live_role_pages": 5,
+    "axe_critical_serious": 0,
+    "mobile_horizontal_overflow": 0
+  },
+  "http_contract": {
+    "guest": 401,
+    "query": 200,
+    "idempotent_replay": 200,
+    "idempotency_conflict": 409,
+    "revision_conflict": 409,
+    "csrf_failed": 400,
+    "wrong_method": 405,
+    "reviewer_write": 403
+  },
+  "fixture_counts_after_http_smoke": {
+    "GBOS Party Profile": 500,
+    "GBOS Work Item": 280,
+    "GBOS Sample Project": 241,
+    "Sales Order": 0,
+    "Purchase Order": 0,
+    "Stock Entry": 0,
+    "GL Entry": 0
+  },
+  "query_p95_ms": {
+    "party.get_360": 11.68,
+    "work_item.list": 6.85,
+    "sample.get_status": 6.38,
+    "sourcing.get_board": 8.8,
+    "threshold": 800
+  },
+  "browser": {
+    "role_scoped_navigation": true,
+    "viewports": [
+      375,
+      768,
+      1440
+    ],
+    "first_focus": "跳到主要内容",
+    "service_worker_active": true,
+    "local_storage_keys": 0,
+    "session_storage_keys": 0,
+    "business_api_cache_entries": 0,
+    "indexeddb_databases": 0,
+    "online_records_before_offline": 25,
+    "offline_records": 0
+  },
+  "security": {
+    "unwaived_high": 0,
+    "unwaived_critical": 0,
+    "waiver_entries": 57,
+    "exact_purls": 103,
+    "security_log_sha256": "f6da3de94994021fca0ff4f2d25f12653ca7fff71f80f7fb8fe5115eb943439d"
+  },
+  "sbom": {
+    "format": "CycloneDX",
+    "spec_version": "1.7",
+    "components": 1570,
+    "licenses_sha256": "ba56c022cecef8dfb5595619b76a2d77f5bb84dfa8c204f42e25da3bc2b0ecb4",
+    "cyclonedx_sha256": "fa70d8bd0d13f8fa0e02ee1586e17fb09aba7466eda34df393362406519d8544"
+  },
+  "backup_restore": {
+    "status": "pass",
+    "database_sha256": "86d7d2585def1bc2015d058e6c2490c92991319de3fc715285cff23346db420b",
+    "public_files_sha256": "336727d418e9c21910b81c0273702890244d8fa30d9df7465043b209c7d4fb35",
+    "private_files_sha256": "7c5d14543bfe9a672ab9be5960e6a876aec95b7b4b1f5e3c3e42eff0746775e1",
+    "post_restore_migrate": "pass",
+    "post_restore_counts_match": true
+  },
+  "external_call_counts": {
+    "kingdee": 0,
+    "channel_connectors": 0,
+    "real_ai_models": 0,
+    "external_writers": 0,
+    "production_deployments": 0
+  },
+  "known_limitations": [
+    "upstream-duckdb-sync-cleanup-warning",
+    "private-repository-ruleset-requires-github-pro",
+    "local-arm64-image-not-published"
+  ],
+  "ci": {
+    "pull_request": "https://github.com/zjoull123-star/esan-gbos/pull/1",
+    "merge_condition": "all-required-head-checks-green"
+  }
+}

@@ -1,0 +1,12 @@
+title = "ESAN GBOS Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Allow only the documented synthetic CI database password format"
+condition = "AND"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''^\s+DB_ROOT_PASSWORD: SYNTHETIC-ci-db-root-[a-f0-9]{8}$''']
+paths = ['''^\.github/workflows/frappe-app-smoke\.yml$''']

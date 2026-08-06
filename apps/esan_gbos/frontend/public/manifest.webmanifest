@@ -1,0 +1,22 @@
+{
+  "name": "ESAN GBOS",
+  "short_name": "GBOS",
+  "description": "ESAN 治理型业务操作系统",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "/gbos/ceo",
+  "scope": "/gbos/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f0e8",
+  "theme_color": "#12372a",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/assets/esan_gbos/frontend/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
