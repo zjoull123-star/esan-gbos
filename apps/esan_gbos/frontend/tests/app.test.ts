@@ -483,6 +483,7 @@ describe("应用壳", () => {
     expect(wrapper.get("nav").text()).not.toContain("采购协同");
     expect(wrapper.text()).toContain("当前角色无权查看此页面");
     expect(wrapper.get("a.skip-link").attributes("href")).toBe("#main-content");
+    expect(wrapper.get("footer").text()).toContain("Gate 5 · 在线优先");
   });
 
   it("离线 fallback 没有 Frappe session 时仍优先显示精确需要联网", async () => {

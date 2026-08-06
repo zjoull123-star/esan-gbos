@@ -42,7 +42,7 @@
     </main>
 
     <footer>
-      <span>Gate 4 · 在线优先</span>
+      <span>Gate 5 · 在线优先</span>
       <span>业务数据不进入浏览器持久存储</span>
     </footer>
   </div>
