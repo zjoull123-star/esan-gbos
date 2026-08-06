@@ -1,0 +1,173 @@
+{
+  "schema_version": "1.0",
+  "gate": 5,
+  "captured_at": "2026-08-06T18:57:18Z",
+  "scope": "local-synthetic-governed-metrics-and-read-only-kingdee-boundary",
+  "status": "technical_local_go",
+  "evidence_level": "local-runtime-synthetic-only",
+  "implementation_commit": {
+    "value": "cd00add47c72d35d1cf6e0c3971147342b205b74",
+    "status": "final"
+  },
+  "capability_boundary": {
+    "governed_metric_keys": [
+      "sales.order_value",
+      "inventory.on_hand_quantity",
+      "receivables.balance"
+    ],
+    "kingdee_tools": 8,
+    "kingdee_writer_tools": 0,
+    "live_kingdee_enabled": false,
+    "synthetic_mode_visibly_labeled": true,
+    "arbitrary_query_allowed": false,
+    "llm_calculation_allowed": false,
+    "external_send": false
+  },
+  "test_inventory": [
+    {
+      "path": "tests",
+      "command": "uv run --frozen pytest",
+      "status": "pass",
+      "passed": 833,
+      "failed": 0,
+      "skipped": 12
+    },
+    {
+      "path": "tests/integration/test_gate5_metrics_postgres.py",
+      "command": "scripts/dev/test-gate5-integration",
+      "status": "pass",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "Frappe esan_gbos app",
+      "command": "bench --site gbos.localhost run-tests --app esan_gbos",
+      "status": "pass",
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "apps/esan_gbos/frontend",
+      "command": "pnpm run lint && pnpm run typecheck && pnpm run test:unit && pnpm run build",
+      "status": "pass",
+      "passed": 77,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "apps/esan_gbos/frontend/e2e",
+      "command": "pnpm run test:e2e",
+      "status": "pass",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "tests/acceptance/test_gate5_evidence.py",
+      "command": "uv run --frozen pytest tests/acceptance/test_gate5_evidence.py",
+      "status": "pass",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "control_results": {
+    "exact_governed_metrics": {
+      "status": "pass",
+      "test_refs": [
+        "tests/metrics/test_service.py",
+        "tests/contracts/test_gate5_contracts.py"
+      ],
+      "evidence_refs": [
+        "contracts/gate5/metrics-registry-v1.json",
+        "docs/evidence/gate5/runtime-validation.json"
+      ]
+    },
+    "quality_gate_fails_closed": {
+      "status": "pass",
+      "test_refs": [
+        "tests/metrics/test_service.py",
+        "tests/metrics/test_api.py"
+      ],
+      "evidence_refs": [
+        "services/metrics/service.py",
+        "contracts/gate5/metric-response.schema.json"
+      ]
+    },
+    "read_only_kingdee_surface": {
+      "status": "pass",
+      "test_refs": [
+        "tests/kingdee_adapter/test_policy_and_requests.py",
+        "tests/kingdee_adapter/test_transports_and_audit.py"
+      ],
+      "evidence_refs": [
+        "contracts/gate5/kingdee-runtime-policy-v1.json",
+        "services/kingdee_adapter/policy.py"
+      ]
+    },
+    "projection_reconciliation_and_exception_policy": {
+      "status": "pass",
+      "test_refs": [
+        "tests/metrics/test_projector.py",
+        "tests/metrics/test_exceptions.py",
+        "tests/integration/test_gate5_metrics_postgres.py"
+      ],
+      "evidence_refs": [
+        "services/metrics/projector.py",
+        "services/metrics/migrations/001_gate5_metrics.sql"
+      ]
+    },
+    "ceo_runtime_and_sensitive_cache_boundary": {
+      "status": "pass",
+      "test_refs": [
+        "apps/esan_gbos/frontend/tests/metrics.test.ts",
+        "apps/esan_gbos/frontend/e2e/gbos.spec.ts"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate5/runtime-validation.json"
+      ]
+    }
+  },
+  "zero_external_activity": {
+    "method": "Capability allowlists, disabled live transports, synthetic fixtures and local runtime inspection",
+    "real_kingdee_startups": 0,
+    "real_kingdee_authentications": 0,
+    "real_kingdee_metadata_queries": 0,
+    "real_kingdee_business_queries": 0,
+    "kingdee_mutations": 0,
+    "writer_tools_discovered": 0,
+    "cloud_deployments": 0,
+    "production_credentials_loaded": 0
+  },
+  "entry_gate_status": {
+    "local_technical_readiness": "go",
+    "live_kingdee_canary": "blocked_external_input",
+    "singapore_preproduction": "blocked_external_input",
+    "security_owner_review": "pending_external_review",
+    "privacy_and_cross_border_review": "blocked_external_input",
+    "business_owner_uat": "blocked_external_input"
+  },
+  "go_no_go": {
+    "gate5_technical_local": "go",
+    "gate6_local_implementation": "go",
+    "kingdee_live": "blocked_external_input",
+    "preproduction": "blocked_external_input",
+    "real_business_metrics": "no_go",
+    "production": "no_go"
+  },
+  "pending_evidence": [
+    "Restricted Kingdee AI_ReadOnly account, endpoint and four-step live canary evidence",
+    "Tencent Cloud Singapore account, quota, security design and preproduction deployment",
+    "Formal Security Owner review and production treatment for time-bounded Gate 0/1 waivers",
+    "Privacy and Legal approval for real personal data and cross-border processing",
+    "Business-owner UAT"
+  ],
+  "limitations": [
+    "All dashboard values and adapter records are deterministic synthetic fixtures.",
+    "The exact image has zero unwaived High/Critical findings, but 57 Gate 0/1 local-only waiver entries covering 103 exact PURLs remain production blockers.",
+    "No real Kingdee, Tencent Cloud, personal data, external channel or production credential was used.",
+    "Local technical Go authorizes Gate 6 release-control implementation only; it does not authorize a live canary, preproduction or production release."
+  ]
+}

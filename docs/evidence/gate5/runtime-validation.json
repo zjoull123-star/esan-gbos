@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06T18:57:18Z",
+  "scope": "gate5-local-synthetic-governed-metrics-runtime",
+  "status": "pass",
+  "implementation_commit": "cd00add47c72d35d1cf6e0c3971147342b205b74",
+  "frappe_runtime": {
+    "site": "gbos.localhost",
+    "apps": {
+      "frappe": "16.30.0",
+      "erpnext": "16.31.0",
+      "crm": "1.81.0",
+      "esan_gbos": "0.1.0"
+    },
+    "migration_runs_after_hardened_image": 2,
+    "integration_tests": {
+      "passed": 34,
+      "failed": 0
+    },
+    "guest_metrics_status": 401,
+    "health": "healthy"
+  },
+  "final_image": {
+    "platform": "linux/arm64",
+    "digest": "sha256:e604fef4a0eb0a22bff399c2057add9ca03d991627c454803a2d015b19e1eb1f",
+    "revision_label": "cd00add47c72d35d1cf6e0c3971147342b205b74",
+    "source_sha256_label": "37cd2cfc8860fc5934b3c12c3f328fea16c73b3ad7508029f2229fc8442e9093",
+    "runtime_git_present": false,
+    "runtime_curl_present": false
+  },
+  "postgres": {
+    "server_major": 17,
+    "pgvector": "0.8.2",
+    "gate5_migration_runs": 2,
+    "forced_rls_tables_in_metrics_schema": 4,
+    "roles": {
+      "gbos_metrics_app": {
+        "superuser": false,
+        "bypass_rls": false
+      }
+    },
+    "live_integration_tests": {
+      "passed": 2,
+      "failed": 0
+    }
+  },
+  "metrics_api": {
+    "http_status": 200,
+    "bff_envelope_schema_version": "1.0",
+    "metric_schema_version": "3.0",
+    "metric_count": 3,
+    "source_modes": [
+      "synthetic"
+    ],
+    "availability": [
+      "available",
+      "available",
+      "available"
+    ],
+    "cache_control": "no-store"
+  },
+  "browser": {
+    "url": "http://127.0.0.1:8080/gbos/ceo",
+    "title": "ESAN GBOS",
+    "gate_label": "Gate 5",
+    "synthetic_banner": true,
+    "viewport": "375x812",
+    "horizontal_overflow": false,
+    "console_errors": 0,
+    "console_warnings": 0,
+    "screenshot_sha256": "71e7fad4589a5a421eae54e24c2db85d2f340264017540d3f698caa9de707b72",
+    "raw_artifact_policy": "local_or_ci_artifact_only_not_committed"
+  },
+  "security_and_supply_chain": {
+    "trivy_version": "0.73.0",
+    "unwaived_high_or_critical": 0,
+    "time_bounded_local_only_waiver_entries": 57,
+    "time_bounded_local_only_waiver_purls": 103,
+    "waiver_expiry": "2026-09-30T00:00:00Z",
+    "license_inventory_sha256": "8302d259340edc24f4ebb15508dd440b692938cbd1e423b70ef5e73f7d3a64fa",
+    "cyclonedx_sbom_sha256": "99f476b7997f91b59c575f6b5176076a42aafff2265e2cb8199839c623860335"
+  },
+  "activity_counters": {
+    "real_kingdee_calls": 0,
+    "kingdee_mutations": 0,
+    "writer_tools_discovered": 0,
+    "cloud_deployments": 0,
+    "production_credentials_loaded": 0
+  },
+  "warnings": [
+    "Frappe migration reports a non-fatal upstream DuckDB cleanup method warning.",
+    "Frappe v16 reports query pagination argument deprecations scheduled for v17.",
+    "Gate 0/1 local-only vulnerability waivers remain explicit production blockers even though the current scan has zero unwaived High/Critical findings."
+  ]
+}

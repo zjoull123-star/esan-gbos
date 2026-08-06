@@ -1,0 +1,104 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06T18:57:18Z",
+  "scope": "gate5-local-governed-metrics-and-read-only-adapter",
+  "overall_status": "accepted_for_local_gate6_implementation",
+  "primary_technical_review": {
+    "status": "completed",
+    "reviewer_role": "Codex primary implementation reviewer",
+    "decision": "Accept the synthetic governed-metrics runtime and disabled Kingdee live boundary for Gate 6 control implementation only."
+  },
+  "human_review": {
+    "status": "pending",
+    "reviewer_role": "GBOS Security Owner",
+    "decision": null
+  },
+  "scanner": {
+    "exact_image": "sha256:e604fef4a0eb0a22bff399c2057add9ca03d991627c454803a2d015b19e1eb1f",
+    "unwaived_high_or_critical": 0,
+    "local_only_waiver_entries": 57,
+    "local_only_waiver_purls": 103,
+    "production_effect": "blocked_pending_remediation_or_independent_approval",
+    "runtime_hardening": "CVE-2026-8458 was removed without a waiver by removing nonessential curl, libcurl and git packages from the final runtime image."
+  },
+  "risks": [
+    {
+      "risk_id": "G5-KD-01",
+      "title": "A model or caller reaches a Kingdee writer or an arbitrary transport target",
+      "severity": "critical",
+      "owner": "ERP Integration Security",
+      "status": "controlled_by_disabled_capability",
+      "test_refs": [
+        "tests/kingdee_adapter/test_policy_and_requests.py",
+        "tests/kingdee_adapter/test_transports_and_audit.py"
+      ],
+      "evidence_refs": [
+        "contracts/gate5/kingdee-runtime-policy-v1.json",
+        "services/kingdee_adapter/policy.py"
+      ]
+    },
+    {
+      "risk_id": "G5-METRIC-02",
+      "title": "Stale, incomplete or unreconciled data is displayed as an official value",
+      "severity": "high",
+      "owner": "Analytics Governance",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/metrics/test_service.py",
+        "tests/metrics/test_api.py"
+      ],
+      "evidence_refs": [
+        "contracts/gate5/metric-response.schema.json",
+        "services/metrics/service.py"
+      ]
+    },
+    {
+      "risk_id": "G5-RLS-03",
+      "title": "Projection or audit rows leak across sites or can be rewritten",
+      "severity": "high",
+      "owner": "Data Platform Security",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/integration/test_gate5_metrics_postgres.py"
+      ],
+      "evidence_refs": [
+        "services/metrics/migrations/001_gate5_metrics.sql",
+        "docs/evidence/gate5/runtime-validation.json"
+      ]
+    },
+    {
+      "risk_id": "G5-SUPPLY-04",
+      "title": "Inherited Gate 0/1 vulnerability waivers are treated as production approval",
+      "severity": "high",
+      "owner": "Platform Security",
+      "status": "production_blocker",
+      "test_refs": [
+        "tests/infra/test_dev_infrastructure.py",
+        "tests/governance/test_governance_baseline.py"
+      ],
+      "evidence_refs": [
+        "security/trivy-gate01-ignore.yaml",
+        "docs/governance/security-exceptions-gate01.md"
+      ]
+    },
+    {
+      "risk_id": "G5-EXTERNAL-05",
+      "title": "Synthetic evidence is mistaken for live Kingdee, preproduction, privacy or UAT evidence",
+      "severity": "high",
+      "owner": "Release Governance",
+      "status": "controlled_by_explicit_entry_gates",
+      "test_refs": [
+        "tests/acceptance/test_gate5_evidence.py"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate5/gate5-evidence.json",
+        "docs/external-deps.md"
+      ]
+    }
+  ],
+  "limitations": [
+    "Formal Security Owner approval is pending.",
+    "All Kingdee and metric source data is synthetic.",
+    "Production remains No-Go while local-only dependency waivers, cloud, privacy, cross-border and UAT evidence are unresolved."
+  ]
+}

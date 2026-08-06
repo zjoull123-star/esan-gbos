@@ -1,26 +1,35 @@
 # ESAN GBOS
 
 ESAN Global Business Operating System 是面向全球销售、产品打样、采购协同、
-AI 观察和经营洞察的治理型业务前台。Gate 0/1 复用 Frappe CRM 的
-Organization、Contact、Lead 和 Deal；金蝶仍是订单、库存与财务权威系统。
+AI 观察和经营洞察的治理型业务前台。系统复用 Frappe CRM 的 Organization、
+Contact、Lead 和 Deal；金蝶仍是订单、库存与财务权威系统。
 
 ## 当前交付边界
 
-本仓库当前只实现 Gate 0 与 Gate 1：
+本仓库已完成 Gate 0–5 的本地、合成数据技术实现：
 
 - 冻结的 Frappe v16、ERPNext v16、Frappe CRM v1 兼容基线；
 - `esan_gbos` Frappe App、13 个父 DocType 与 2 个 Child DocType；
 - 销售 → 产品需求 → 样品 → 反馈 → 需求 → 询源 → 工作项/审核闭环；
 - 版本化 BFF、团队级权限、revision、幂等与服务端状态机；
-- 中文响应式 PWA 和确定性合成 fixtures；
-- 治理、共享契约、本地 Compose、CI、安全与 Gate 证据。
+- 观察事件、不可变证据、事实提案与最小 Context Service；
+- 持久 Agent Runtime、Action Guard、Decision 和人工审核链路；
+- 受治理 Metrics API、CEO 驾驶舱和只读 Kingdee Adapter 边界；
+- 中文响应式 PWA、确定性合成 fixtures、本地 Compose、CI、安全与 Gate 证据。
 
-以下能力保持关闭或不存在：真实金蝶连接及写入、生产渠道采集、真实 AI
-模型调用、自动外发、自动报价、正式订单创建和腾讯云部署。Observer
-profile 只是 Gate 3 的隔离占位，不是 Gate 1 运行依赖。
+以下能力保持关闭或不存在：真实金蝶连接及任何金蝶写入、生产渠道采集、
+真实 AI 模型调用、自动外发、自动报价、正式订单创建、腾讯云部署和生产
+发布。Observer profile 承载 Gate 3–5 的 PostgreSQL 本地验证，但仍不是
+核心 CRM/PWA 的启动依赖。
 
-Gate 1 的 CEO 页面读取确定性合成数据，只是已交付的工作台与交互基线，
-不是 Gate 5 的 Metrics API、正式 CEO 驾驶舱或实时经营证据。
+Gate 5 的 CEO 页面读取受治理 Metrics API，但当前来源仍是确定性合成数据；
+界面明确显示“演示 / 合成数据”，不得解读为实时经营结果。
+
+| Gate | 当前状态 |
+|---|---|
+| Gate 0–4 | 本地技术证据完成 |
+| Gate 5 | `technical_local_go`；真实金蝶、预生产、隐私/安全审核和 UAT 阻塞 |
+| Gate 6 | 待完成本地发布控制；生产始终以独立 Go/No-Go 证据为准 |
 
 ## 后续路线
 
@@ -30,11 +39,13 @@ Gate 1 的 CEO 页面读取确定性合成数据，只是已交付的工作台�
 [ADR-0009](docs/adr/ADR-0009-four-truths-agent-context-and-gate-sequencing.md)
 为准：
 
-- Gate 2：冻结 Agent、Context、Metrics 和金蝶字段/接口契约与 mock；零实连。
-- Gate 3：建设渠道观察、不可变证据、事实提案和最小 Context Service。
-- Gate 4：建设持久 Agent Runtime、Context/Decision、Action Guard 和人工审核。
-- Gate 5：建设 Metrics API、正式 CEO 驾驶舱、金蝶只读 MCP 实连及预生产。
-- Gate 6：完成生产安全、隐私、恢复、运维和 Go/No-Go。
+- Gate 2：已冻结 Agent、Context、Metrics 和金蝶字段/接口契约与 mock；零实连。
+- Gate 3：已完成本地观察、不可变证据、事实提案和最小 Context Service。
+- Gate 4：已完成本地 Agent Runtime、Context/Decision、Action Guard 和人工审核。
+- Gate 5：已完成本地 Metrics API、CEO 驾驶舱和金蝶只读边界；实连与预生产
+  保持 `blocked_external_input`。
+- Gate 6：建设生产拓扑、预检、监控、恢复、隐私和发布 Go/No-Go 资产；没有
+  外部证据时只能形成 `technical_local_go` 与 `production_no_go`。
 
 Gate 0/1 证据中的旧 downstream planning note 是当时的历史快照，不再作为
 Gate 2–6 的执行顺序；证据文件和校验和保持不变。
@@ -66,8 +77,8 @@ Compose 会固定 Frappe site header。
 scripts/dev/bootstrap --upstream-only
 ```
 
-这不是 Gate 1 四 App 结果。Observer 占位 profile 仅在需要契约连接冒烟时
-显式启用：
+这不是 Gate 1 四 App 结果。Observer/PostgreSQL profile 仅在需要 Gate 3–5
+数据面和迁移验证时显式启用：
 
 ```bash
 scripts/dev/bootstrap --observer
@@ -133,6 +144,9 @@ scripts/dev/secret-scan
 scripts/dev/security-scan esan-gbos-final:gate1
 scripts/dev/license-sbom /tmp/esan-gbos-sbom esan-gbos-final:gate1
 ```
+
+Gate 5 精确镜像可将上述镜像引用替换为 `esan-gbos-final:gate5`。Gate 0/1
+遗留的限时、本地专用漏洞豁免即使扫描被抑制，仍不能作为生产批准。
 
 Trivy 对全部未豁免 High/Critical 结果失败关闭；仓库只保留摘要、校验和和
 CI 链接，原始日志与大型 SBOM 作为短期 artifact 保存。
