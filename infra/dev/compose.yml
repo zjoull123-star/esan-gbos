@@ -103,6 +103,15 @@ services:
             exit 69;
           fi;
         done;
+        touch sites/apps.txt;
+        for app in $$(echo "$$APP_LIST" | tr ',' ' '); do
+          if ! grep -Fxq "$$app" sites/apps.txt; then
+            if [ -s sites/apps.txt ] && [ -n "$$(tail -c 1 sites/apps.txt)" ]; then
+              printf '\n' >> sites/apps.txt;
+            fi;
+            printf '%s\n' "$$app" >> sites/apps.txt;
+          fi;
+        done;
         if [ ! -d "sites/$$SITE_NAME" ]; then
           bench new-site "$$SITE_NAME" \
           --mariadb-user-host-login-scope="%" \
@@ -119,6 +128,7 @@ services:
             bench --site "$$SITE_NAME" install-app "$$app";
           fi;
         done;
+        bench --site "$$SITE_NAME" migrate;
         case "$$GBOS_LOAD_DEMO_FIXTURES" in
           true|false) ;;
           *) echo "GBOS_LOAD_DEMO_FIXTURES must be true or false" >&2; exit 64;;

@@ -130,7 +130,10 @@ def test_compose_defaults_to_the_four_app_final_gate() -> None:
 
     assert 'APP_LIST: "${APP_LIST:-erpnext,crm,esan_gbos}"' in compose
     assert "for app in $$(echo \"$$APP_LIST\" | tr ',' ' ')" in compose
+    assert 'if ! grep -Fxq "$$app" sites/apps.txt; then' in compose
+    assert "printf '%s\\n' \"$$app\" >> sites/apps.txt;" in compose
     assert 'bench --site "$$SITE_NAME" install-app "$$app"' in compose
+    assert 'bench --site "$$SITE_NAME" migrate;' in compose
     assert 'bench --site "$$SITE_NAME" list-apps --format json' in compose
     assert "jq -e --arg site" in compose
     assert (
@@ -139,6 +142,13 @@ def test_compose_defaults_to_the_four_app_final_gate() -> None:
     ) in compose
     assert "APP_LIST=erpnext,crm,esan_gbos" in env_example
     assert "GBOS_IMAGE_STAGE=final" in env_example
+    app_directory_check = compose.index('if [ ! -d "apps/$$app" ]; then')
+    app_registry_update = compose.index('if ! grep -Fxq "$$app" sites/apps.txt; then')
+    app_install = compose.index('bench --site "$$SITE_NAME" install-app "$$app"')
+    app_migrate = compose.index('bench --site "$$SITE_NAME" migrate;')
+    fixture_seed = compose.index('bench --site "$$SITE_NAME" execute esan_gbos.demo.seed')
+    assert app_directory_check < app_registry_update < app_install < app_migrate
+    assert app_migrate < fixture_seed
 
 
 def test_site_creator_keeps_multiline_cli_options_in_the_same_shell_command() -> None:
@@ -166,6 +176,40 @@ def test_site_creator_keeps_multiline_cli_options_in_the_same_shell_command() ->
     assert [line.strip() for line in compose_lines[seed_start : seed_start + 2]] == [
         'bench --site "$$SITE_NAME" execute esan_gbos.demo.seed \\',
         """--kwargs '{"confirm_synthetic": True}';""",
+    ]
+
+
+def test_site_creator_app_registry_handles_a_missing_trailing_newline(
+    tmp_path: Path,
+) -> None:
+    compose = read_required(COMPOSE_FILE)
+    start = compose.index("        touch sites/apps.txt;")
+    end = compose.index('        if [ ! -d "sites/$$SITE_NAME" ]; then', start)
+    registry_script = "\n".join(
+        line.removeprefix("        ") for line in compose[start:end].splitlines()
+    ).replace("$$", "$")
+
+    sites = tmp_path / "sites"
+    sites.mkdir()
+    apps_file = sites / "apps.txt"
+    apps_file.write_text("frappe\nerpnext\ncrm", encoding="utf-8")
+
+    subprocess.run(
+        [
+            "/bin/sh",
+            "-eu",
+            "-c",
+            f"APP_LIST=erpnext,crm,esan_gbos; {registry_script}",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    assert apps_file.read_text(encoding="utf-8").splitlines() == [
+        "frappe",
+        "erpnext",
+        "crm",
+        "esan_gbos",
     ]
 
 
