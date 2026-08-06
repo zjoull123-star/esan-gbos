@@ -2,6 +2,7 @@
 
 - Status: Gate 0/1 decision; runtime evidence is pending
 - Date: 2026-08-06
+- Sequencing: live read canary moved to Gate 5 by ADR-0009
 
 ## Context
 
@@ -30,12 +31,14 @@ injection into a formal business transaction.
 - Reconciliation and stale-read handling are visible workflows, not silent
   retries or local overrides.
 - Enabling a live read canary requires consent/data review, least-privilege
-  credentials, audit evidence, and a Gate 3 decision. It is not a Gate 0
-  completion criterion.
+  credentials, audit evidence, and a Gate 5 preproduction decision. Gate 2 is
+  contract/mapping/mock only; Gate 3/4 must have zero Kingdee network traffic.
+  Live access is not a Gate 0/1 completion criterion.
 
 ## Verification gate
 
 Tool discovery tests must show an allow-list containing no write operation.
 Negative tests must prove write-shaped calls are rejected before network
-access. The live read canary, if later approved, must be separately evidenced
-and does not authorize writes.
+access. The Gate 5 live read canary, if later approved, must separately prove
+startup, authentication, metadata, and a white-listed business query. It does
+not authorize writes.

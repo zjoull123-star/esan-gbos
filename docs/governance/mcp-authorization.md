@@ -2,18 +2,37 @@
 
 本基线面向未来的远程 MCP 服务，目标协议版本为 `2026-07-28`。Gate 0–1
 不启动远程 MCP、不连接真实金蝶，也不把旧的本地 stdio 进程原地升级。
-协议版本目标不代表服务已经上线或通过安全验收。
+Gate 2 只冻结契约、工具 schema、字段白名单和 mock，并证明金蝶网络调用
+为零。协议版本目标不代表服务已经上线或通过安全验收；每个实施 Gate
+开始时都要重新核对当前官方规范。
 
 ## 冻结的 scope
 
-| Scope | 用途 | 明确限制 |
-|---|---|---|
-| `kingdee-read` | 读取受治理的金蝶 metadata 与白名单业务投影 | 只读工具 allow-list；不能保存、提交、审核、反审核、删除或执行任意操作 |
-| `gbos-read` | 读取调用者在当前 site、团队与记录级权限内的 GBOS DTO | 不能把任意 DocType、字段或过滤表达式代理给模型 |
-| `gbos-propose` | 提交内部 AI Draft 或 Review Case 建议 | 只能产生待审内部记录；不能改变正式状态、外发、报价、承诺或订单 |
+| Scope | 最早运行 Gate | 用途 | 明确限制 |
+|---|---|---|---|
+| `kingdee-read` | Gate 5 | 读取受治理的金蝶 metadata 与白名单业务投影 | Gate 2–4 仅 schema/mock；不能保存、提交、审核、反审核、删除或执行任意操作 |
+| `gbos-read` | Gate 4 | 读取调用者在当前 site、团队与记录级权限内的 GBOS DTO | 不能把任意 DocType、字段或过滤表达式代理给模型 |
+| `gbos-propose` | Gate 4 | 提交内部 AI Draft 或 Review Case 建议 | 只能产生待审内部记录；不能改变正式状态、外发、报价、承诺或订单 |
+| `metrics-read` | Gate 5 | 读取定义已冻结且通过治理门禁的 KPI | 不允许任意 SQL/聚合；缺少血缘、新鲜度、覆盖率或对账即返回不可用 |
 
 系统不定义任何金蝶写 scope，也不向模型暴露正式业务 writer。新增 scope
 必须重新进行威胁建模、权限矩阵更新、负向测试和人工变更审批。
+
+## 工具 allow-list
+
+Gate 4 可实现 `sales.customer.get`、`sales.opportunity.search`、
+`sales.follow_up.propose`、`procurement.requirement.get`、
+`procurement.supplier.compare`、`procurement.risk.analyze`、
+`context.entity.resolve`、`context.evidence.get` 和
+`context.decision.trace`。
+
+Gate 5 才可加入 `metrics.kpi.get` 以及
+`kingdee.sales_order.get`、`kingdee.inventory.get`、
+`kingdee.receivable.get` 等经过字段与查询预算约束的只读工具。
+
+永久禁止 `arbitrary_sql`、`arbitrary_doctype`、`arbitrary_form_id`、
+`direct_database_write` 和任何 Kingdee create/update/save/submit/audit/
+unaudit/delete/payment 工具。
 
 ## 每请求验证
 
@@ -47,10 +66,18 @@
 
 ## Gate 证据
 
-Gate 0 仅验收本基线、契约与禁用默认值。Gate 2/4 在真实服务进入预生产前
-至少补齐：授权流程、scope 正反向测试、token 重放/混淆、audience 错配、
-SSRF、重定向、出站 allow-list、工具越权、审计脱敏和撤销生效时间。没有
-这些运行证据时，状态保持 `No-Go`。
+Gate 证据按能力分开：
+
+- Gate 2：工具 schema、allow-list、scope 设计、mock、写形状拒绝和金蝶
+  零网络证据。
+- Gate 4：`gbos-read`/`gbos-propose` 的授权流程、正反向权限、工具 sandbox、
+  用户审核、审计脱敏和撤销证据。
+- Gate 5：`metrics-read`/`kingdee-read` 的真实每请求鉴权、token 重放/混淆、
+  audience 错配、SSRF、重定向、出站 allow-list、最小凭据、工具越权和
+  预生产审计。
+- Gate 6：生产身份、轮换、监控、事件响应和最终批准。
+
+任一对应证据缺失时，该 scope 保持 `No-Go`。
 
 参考：
 

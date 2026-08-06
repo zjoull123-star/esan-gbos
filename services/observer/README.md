@@ -10,7 +10,10 @@
 - 将输入规范化为不可变、带 `site_id`、`consent_basis`、分类、保留类和
   证据引用的 Canonical Observation Event。
 - 管理 connector checkpoint、原始对象引用、哈希和保留/删除/legal hold
-  回执；向 Frappe 发布引用或待审事实。
+  回执；向 Context Service/Frappe 发布引用。
+- 在供应商、隐私和数据流获批后执行工具-free 的转写、语言识别、摘要和
+  `ExtractedFact` 提案。提案始终非权威，并携带模型/提示版本、置信度和
+  EvidenceRef。
 
 ## 明确不负责
 
@@ -18,6 +21,8 @@
 - 不绕过权限把原始通信暴露给 Frappe、模型、导出或日志。
 - 不把接入成功、队列健康或模型输出当作业务事实；所有派生内容都须
   经证据与人工审核边界（见 ADR-0004）。
+- 不确认事实、不解决业务冲突、不创建 Decision/Action/DraftMutation，
+  不运行 Gate 4 Agent 工具，也不计算正式 KPI。
 
 ## Contracts
 
@@ -28,6 +33,6 @@
 - [`draft-mutation`](../../contracts/draft-mutation.schema.json)
 - [`approved-command`](../../contracts/approved-command.schema.json)
 
-Gate 3 实施前还需完成连接器威胁测试、同意/撤回、租户隔离、保留/删除/
-导出/legal hold、上传隔离和运行时观测的可复核证据。此 README 不表示
-任何服务已经存在或可用。
+Gate 3 退出前必须完成连接器威胁测试、同意/撤回、租户隔离、保留/删除/
+导出/legal hold、上传隔离、模型数据最小化和运行时观测的可复核证据。
+这些证据是 Gate 4 的输入门禁；此 README 不表示任何服务已经存在或可用。

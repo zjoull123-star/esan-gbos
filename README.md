@@ -19,6 +19,26 @@ Organization、Contact、Lead 和 Deal；金蝶仍是订单、库存与财务权
 模型调用、自动外发、自动报价、正式订单创建和腾讯云部署。Observer
 profile 只是 Gate 3 的隔离占位，不是 Gate 1 运行依赖。
 
+Gate 1 的 CEO 页面读取确定性合成数据，只是已交付的工作台与交互基线，
+不是 Gate 5 的 Metrics API、正式 CEO 驾驶舱或实时经营证据。
+
+## 后续路线
+
+规范路线以
+[GBOS v4 设计](docs/superpowers/specs/2026-08-06-gbos-v4-agent-context-roadmap-design.md)
+和
+[ADR-0009](docs/adr/ADR-0009-four-truths-agent-context-and-gate-sequencing.md)
+为准：
+
+- Gate 2：冻结 Agent、Context、Metrics 和金蝶字段/接口契约与 mock；零实连。
+- Gate 3：建设渠道观察、不可变证据、事实提案和最小 Context Service。
+- Gate 4：建设持久 Agent Runtime、Context/Decision、Action Guard 和人工审核。
+- Gate 5：建设 Metrics API、正式 CEO 驾驶舱、金蝶只读 MCP 实连及预生产。
+- Gate 6：完成生产安全、隐私、恢复、运维和 Go/No-Go。
+
+Gate 0/1 证据中的旧 downstream planning note 是当时的历史快照，不再作为
+Gate 2–6 的执行顺序；证据文件和校验和保持不变。
+
 ## 本地启动
 
 前置条件：
@@ -118,6 +138,7 @@ CI 链接，原始日志与大型 SBOM 作为短期 artifact 保存。
 
 ## 重要设计资料
 
+- `docs/superpowers/specs/`：当前规范产品/架构设计及 Gate 路线；
 - `docs/adr/`：架构、权威边界、租户、AI Draft、Observer 与升级决策；
 - `contracts/`：JSON Schema 2020-12 与 BFF OpenAPI；
 - `docs/permission-matrix.md`：角色和记录级权限；

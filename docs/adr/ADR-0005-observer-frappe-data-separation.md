@@ -2,6 +2,7 @@
 
 - Status: Gate 0/1 decision; Gate 3 service boundary is a placeholder
 - Date: 2026-08-06
+- Extended by: ADR-0009 Context/Decision and Agent Runtime boundaries
 
 ## Context
 
@@ -20,9 +21,12 @@ surface and should not become an unbounded raw-message archive.
 - The boundary is contract-driven: use
   `canonical-observation-event.schema.json`, `connector-checkpoint.schema.json`,
   `evidence-ref.schema.json`, and `extracted-fact.schema.json`.
-- Observer may publish an event or a proposed fact; it may not approve a
-  command or mutate a formal Frappe document. Frappe may request a permitted
-  evidence view, subject to role, consent, retention, and tenant checks.
+- Observer may publish an event, evidence reference, or bounded extracted-fact
+  proposal. Context/Decision Service owns fact versions and conflicts; Gate 4
+  Agent Runtime owns decisions and action proposals. Observer may not confirm
+  a fact, approve a command, create a DraftMutation, or mutate a formal Frappe
+  document. Frappe may request a permitted evidence view, subject to role,
+  consent, retention, and tenant checks.
 - Gate 0/1 has no production connector, raw-message store, or live model path.
   `services/observer/README.md` records only the future Gate 3 boundary.
 
@@ -37,6 +41,7 @@ surface and should not become an unbounded raw-message archive.
 
 ## Verification gate
 
-Before Gate 3, prove tenant partitioning, replay handling, consent basis,
+At Gate 3 exit, prove tenant partitioning, replay handling, consent basis,
 retention enforcement, evidence hash checking, and deny-by-default access from
-Frappe to raw content. No service implementation is implied by this ADR.
+Frappe to raw content. Gate 2 only freezes contracts and mocks; no service
+implementation is implied by the Gate 0/1 state of this ADR.

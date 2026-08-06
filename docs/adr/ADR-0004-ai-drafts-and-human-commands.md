@@ -2,6 +2,7 @@
 
 - Status: Gate 0/1 decision; runtime evidence is pending
 - Date: 2026-08-06
+- Extended by: ADR-0009 Agent Runtime, context and decision sequencing
 
 ## Context
 
@@ -29,6 +30,13 @@ purchase orders, outbound messages, or other formal state transitions.
    audit record. Model services and Observer have no approve or execute tool.
 6. Real model calls are disabled by default in Gate 0/1. Fixtures must make
    provenance obvious and must not look like production approvals.
+7. Gate 3 may run bounded, tool-free transformations such as transcription,
+   language detection, summarization, and evidence-backed fact proposals after
+   provider/privacy approval. Confirmation, decision, DraftMutation, tool use,
+   and action orchestration belong to Gate 4 Agent Runtime.
+8. Gate 4 Agent tasks are durable, budgeted, leased, idempotent and fully
+   recorded in an Agent timeline. All proposed actions pass through the common
+   Action Guard before review or execution.
 
 ## Consequences
 

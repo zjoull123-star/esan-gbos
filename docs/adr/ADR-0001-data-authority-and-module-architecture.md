@@ -3,6 +3,7 @@
 - Status: Gate 0/1 decision; runtime evidence is pending
 - Date: 2026-08-06
 - Scope: ESAN GBOS v1
+- Extended by: ADR-0009 four-truth architecture and Gate 2–6 sequencing
 
 ## Context
 
@@ -23,25 +24,36 @@ commands; the module boundaries must make that separation enforceable.
    compatibility, but its Sales Order, Purchase Order, Stock, and GL
    transaction DocTypes are hidden or creation-disabled in V1 and never become
    a second ledger.
-3. **Observer is a separate data plane.** It owns raw communication objects,
-   canonical observation events, connector checkpoints, and evidence pointers.
-   Frappe receives references and reviewed derived facts, not an implicit raw
-   archive.
-4. **AI output is derived, never authoritative.** Extracted facts retain
+3. **Observer is a separate ingestion data plane.** It owns raw communication
+   objects, canonical observation events, connector checkpoints, and immutable
+   source pointers. It is not an Agent runtime or business decision engine.
+4. **Context/Decision Service owns context truth.** It owns evidence
+   aggregation, entity links, fact versions, conflicts, temporal validity,
+   decision provenance, and Agent timelines. Frappe receives references and
+   reviewed derived facts, not an implicit raw archive.
+5. **Metrics API owns analytical truth.** Official KPIs are versioned,
+   governed, reconciled outputs with source, `as_of`, freshness, coverage, and
+   unavailable reasons. LLM output and ad-hoc graph aggregation are not
+   official metrics.
+6. **AI output is derived, never authoritative.** Extracted facts retain
    model metadata and evidence; mutations are `AI Draft` only until a person
    issues an approved command.
-5. **Contracts are the only cross-module write boundary.** Events and
+7. **Contracts are the only cross-module write boundary.** Events and
    evidence use `canonical-observation-event.schema.json` and
    `evidence-ref.schema.json`; AI proposals use
    `extracted-fact.schema.json` and `draft-mutation.schema.json`; formal
-   transitions use `approved-command.schema.json`.
-6. Every object and command carries an explicit `site_id`. Cross-site reads,
+   transitions use `approved-command.schema.json`. Gate 2 extends this set for
+   Agent tasks, context/decision lineage, metrics, and Kingdee read projections.
+8. Every object and command carries an explicit `site_id`. Cross-site reads,
    writes, joins, and exports are denied by default.
 
 ## Consequences
 
 - A value copied from Kingdee or Observer must display its source, timestamp,
   and evidence/reference status.
+- A CEO or Finance value may be called an official KPI only when returned by
+  Metrics API with a governed definition and successful freshness/coverage/
+  reconciliation checks.
 - Reconciliation is an explicit workflow; it is not a silent overwrite.
 - The module owners can evolve storage independently, but a contract change
   requires the version-freeze process in ADR-0006.

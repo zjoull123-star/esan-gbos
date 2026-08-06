@@ -12,6 +12,9 @@
   只读检查。真实模型、生产采集和跨境传输在 Gate 0/1 默认关闭。
 - 原始资料、提取事实、AI Draft、ApprovedCommand 是不同状态；状态变化
   必须可追溯、可回放、可拒绝。
+- Context Graph 只保存完成目的最小化的实体、关系、事实版本和 EvidenceRef，
+  不把 Restricted 原文整体复制为普通 Agent 上下文。事实、决策、动作和
+  Metrics 必须分别保留权威层、来源、valid/recorded time 和审核状态。
 
 ## 数据分类
 
@@ -73,6 +76,14 @@ legal hold 生命周期、跨模块引用校验、审批命令和 break-glass �
 
 ## Gate 状态
 
-Gate 0/1 只验证 schema、隔离、策略和 fixture 行为；生产采集、真实模型
-调用、真实金蝶数据和跨境传输均保持关闭。工程清单的存在不表示已完成
-法律评估或已获监管批准。
+- Gate 0/1 只验证 schema、隔离、策略和 fixture 行为。
+- Gate 2 只设计数据流、契约、字段映射、mock 和影响评估；零真实外部数据。
+- Gate 3 只在获批范围内处理观察、原始证据和非权威事实提案，并验证同意、
+  撤回、保留、删除、隔离和 provenance。
+- Gate 4 才允许受治理的 Agent/Context/Decision 处理，并证明目的限制、
+  最小上下文、人工审核、预算和 Action Guard。
+- Gate 5 才允许金蝶只读数据进入受治理投影/Metrics API，并在新加坡
+  预生产前完成适用的跨境、DPA、访问和对账检查。
+- Gate 6 才能凭完整生产证据决定 Go/No-Go。
+
+工程清单的存在不表示已完成法律评估或已获监管批准。
