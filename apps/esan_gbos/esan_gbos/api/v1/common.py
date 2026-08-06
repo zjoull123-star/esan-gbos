@@ -79,6 +79,15 @@ def _require_request(method: str) -> None:
 
 
 def bff_endpoint(method: str) -> Callable[[Endpoint], Endpoint]:
+    """Apply the authoritative BFF authentication and HTTP-method boundary.
+
+    BFF functions are registered with Frappe for guest, GET, and POST dispatch
+    so pre-dispatch checks cannot replace this API's stable error envelope.
+    This guard still rejects every guest and every unexpected method before the
+    endpoint body runs; authenticated unsafe requests remain subject to
+    Frappe's earlier CSRF validation.
+    """
+
     expected = method.upper()
 
     def decorate(function: Endpoint) -> Endpoint:

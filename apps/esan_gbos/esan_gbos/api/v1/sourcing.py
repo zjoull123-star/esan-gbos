@@ -65,7 +65,7 @@ def _attach_candidates(events: list[dict[str, Any]]) -> None:
         event["candidates"] = by_parent.get(str(event["name"]), [])
 
 
-@frappe.whitelist(methods=["GET"])
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 @bff_endpoint("GET")
 def get_board(team: str | None = None) -> dict[str, Any]:
     require_roles(READ_ROLES)
@@ -109,7 +109,7 @@ def get_board(team: str | None = None) -> dict[str, Any]:
     return success({"lanes": lanes, "total": len(events)})
 
 
-@frappe.whitelist(methods=["POST"])
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 @bff_endpoint("POST")
 def create_from_demand(
     demand: str,

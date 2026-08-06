@@ -10,6 +10,11 @@ RUN test -f apps/esan_gbos/pyproject.toml \
     && test -f apps/esan_gbos/esan_gbos/hooks.py \
     && test -f apps/esan_gbos/frontend/pnpm-lock.yaml \
     && ./env/bin/pip install --no-deps -e apps/esan_gbos
+RUN if ! grep -Fxq esan_gbos sites/apps.txt; then \
+        printf '\n%s\n' esan_gbos >> sites/apps.txt; \
+    fi \
+    && awk 'NF && !seen[$0]++' sites/apps.txt > sites/apps.txt.tmp \
+    && mv sites/apps.txt.tmp sites/apps.txt
 RUN mkdir -p /home/frappe/.local/bin \
     && corepack enable --install-directory /home/frappe/.local/bin \
     && corepack install --global pnpm@11.9.0
@@ -21,7 +26,8 @@ RUN test "$(pnpm --version)" = "11.9.0" \
 WORKDIR /home/frappe/frappe-bench
 RUN mkdir -p apps/esan_gbos/esan_gbos/public/frontend/ \
     && cp -a apps/esan_gbos/frontend/dist/. apps/esan_gbos/esan_gbos/public/frontend/ \
-    && bench build --app esan_gbos
+    && bench build --app esan_gbos \
+    && test -f sites/assets/esan_gbos/frontend/.vite/manifest.json
 
 FROM ${UPSTREAM_IMAGE} AS final
 

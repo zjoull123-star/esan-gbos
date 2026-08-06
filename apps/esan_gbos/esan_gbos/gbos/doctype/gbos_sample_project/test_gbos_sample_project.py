@@ -145,13 +145,13 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
             "external_system": "fixture-system",
             "account_set": "fixture-account",
             "object_type": "Material",
-            "external_id": "fixture-id",
+            "external_id": f"fixture-id-{self.team.name}",
             "target_doctype": "GBOS Team",
             "target_name": self.team.name,
         }
         frappe.get_doc(values).insert(ignore_permissions=True)
 
-        with self.assertRaises(frappe.DuplicateEntryError):
+        with self.assertRaises(frappe.UniqueValidationError):
             frappe.get_doc(values).insert(ignore_permissions=True)
 
     def test_list_and_document_permissions_use_the_same_team_scope(self) -> None:
@@ -257,14 +257,12 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
             ),
             [organization.name],
         )
-        self.assertEqual(
+        with self.assertRaises(frappe.PermissionError):
             frappe.get_list(
                 "Contact",
                 filters={"name": contact.name},
                 pluck="name",
-            ),
-            [],
-        )
+            )
 
     def test_party_360_omits_every_linked_crm_record_from_another_team(self) -> None:
         other_team = frappe.get_doc(
@@ -397,9 +395,17 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
         ).insert(ignore_permissions=True)
 
         frappe.set_user(self.member)
+
+        def deny_linked_organization(
+            doctype: str,
+            *_args: object,
+            **_kwargs: object,
+        ) -> bool:
+            return doctype != "CRM Organization"
+
         with patch(
             "esan_gbos.api.v1.party.frappe.has_permission",
-            return_value=False,
+            side_effect=deny_linked_organization,
         ) as has_permission:
             data = get_360(party.name)["data"]
 
@@ -466,14 +472,12 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
             ),
             [sample.name],
         )
-        self.assertEqual(
+        with self.assertRaises(frappe.PermissionError):
             frappe.get_list(
                 "GBOS Sourcing Event",
                 filters={"name": sourcing.name},
                 pluck="name",
-            ),
-            [],
-        )
+            )
 
         frappe.set_user(self.buyer)
         self.assertEqual(
@@ -484,14 +488,12 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
             ),
             [sourcing.name],
         )
-        self.assertEqual(
+        with self.assertRaises(frappe.PermissionError):
             frappe.get_list(
                 "GBOS Sample Project",
                 filters={"name": sample.name},
                 pluck="name",
-            ),
-            [],
-        )
+            )
 
     def test_buyer_cannot_make_final_supplier_selection(self) -> None:
         demand = frappe.get_doc(
@@ -667,6 +669,7 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
         self.assertIn(assigned_work.name, visible_names)
         self.assertNotIn(hidden_work.name, visible_names)
 
+        assigned_work = frappe.get_doc("GBOS Work Item", assigned_work.name)
         assigned_work.title = "Reviewer must not mutate the business subject"
         with self.assertRaises(frappe.PermissionError):
             assigned_work.save()
@@ -701,6 +704,7 @@ class TestGBOSGateOneDomain(IntegrationTestCase):
     def test_privacy_auditor_cannot_write_business_records(self) -> None:
         work = self._work_item()
         frappe.set_user(self.auditor)
+        work = frappe.get_doc("GBOS Work Item", work.name)
         work.title = "Auditor must remain read only"
 
         with self.assertRaises(frappe.PermissionError):

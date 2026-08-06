@@ -51,7 +51,7 @@ WORK_FIELDS = [
 ]
 
 
-@frappe.whitelist(methods=["GET"])
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 @bff_endpoint("GET")
 def list(
     filters: str | dict[str, Any] | None = None,
@@ -119,7 +119,7 @@ def list(
     return success(rows, next_cursor=next_cursor, page_size=size)
 
 
-@frappe.whitelist(methods=["POST"])
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 @bff_endpoint("POST")
 def transition(
     name: str,

@@ -140,3 +140,21 @@ def test_gbos_shell_uses_manifest_assets_and_non_executable_bootstrap_json() -> 
     assert "gbos_entry" in template
     assert "gbos_styles" in template
     assert "/assets/esan_gbos/frontend/registerSW.js" in template
+
+
+def test_bff_dispatch_reaches_the_uniform_auth_and_method_guard() -> None:
+    api_root = PACKAGE_ROOT / "api" / "v1"
+    endpoint_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            api_root / "party.py",
+            api_root / "sample.py",
+            api_root / "sourcing.py",
+            api_root / "work_item.py",
+        )
+    )
+
+    dispatch_decorator = '@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])'
+    assert endpoint_sources.count(dispatch_decorator) == 8
+    assert endpoint_sources.count('@bff_endpoint("GET")') == 4
+    assert endpoint_sources.count('@bff_endpoint("POST")') == 4

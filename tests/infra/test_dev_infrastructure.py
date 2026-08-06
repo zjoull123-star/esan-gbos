@@ -293,6 +293,19 @@ def test_custom_image_builder_verifies_every_source_ref() -> None:
     assert "\n    python3 -" in builder
 
 
+def test_final_image_registers_the_app_before_linking_frontend_assets() -> None:
+    final_containerfile = read_required(FINAL_CONTAINERFILE)
+    asset_stage = final_containerfile.split("FROM ${UPSTREAM_IMAGE} AS final", 1)[0]
+
+    registry_position = asset_stage.index("grep -Fxq esan_gbos sites/apps.txt")
+    build_position = asset_stage.index("bench build --app esan_gbos")
+    manifest_check_position = asset_stage.index(
+        "test -f sites/assets/esan_gbos/frontend/.vite/manifest.json"
+    )
+
+    assert registry_position < build_position < manifest_check_position
+
+
 def test_custom_nginx_allows_only_the_gbos_worker_to_control_gbos_routes() -> None:
     template = read_required(NGINX_TEMPLATE)
 

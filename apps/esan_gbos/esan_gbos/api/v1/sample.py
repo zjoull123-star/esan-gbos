@@ -50,7 +50,7 @@ def _validate_link_scope(
         raise BFFError("invalid_dto", "deal requires product_brief")
 
 
-@frappe.whitelist(methods=["GET"])
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 @bff_endpoint("GET")
 def get_status(project: str) -> dict[str, Any]:
     require_roles(READ_ROLES)
@@ -119,7 +119,7 @@ def get_status(project: str) -> dict[str, Any]:
     return success(data)
 
 
-@frappe.whitelist(methods=["POST"])
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 @bff_endpoint("POST")
 def create_project(
     team: str,
@@ -200,7 +200,7 @@ def create_project(
     )
 
 
-@frappe.whitelist(methods=["POST"])
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 @bff_endpoint("POST")
 def record_feedback(
     project: str,

@@ -42,7 +42,7 @@ def _linked(
     return {field: value.get(field) for field in fields}
 
 
-@frappe.whitelist(methods=["GET"])
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 @bff_endpoint("GET")
 def get_360(party: str) -> dict[str, Any]:
     """Return the fixed, permission-scoped customer 360 DTO."""
