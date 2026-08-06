@@ -492,18 +492,21 @@ def test_gitleaks_exception_is_narrow_and_keeps_default_rules() -> None:
     assert "commits =" not in config
 
 
-def test_frappe_app_smoke_is_manual_and_final_image_gated() -> None:
+def test_frappe_app_smoke_builds_pr_image_or_accepts_pinned_dispatch_image() -> None:
     workflow = read_required(WORKFLOWS_DIR / "frappe-app-smoke.yml")
 
     assert "workflow_dispatch:" in workflow
-    assert "pull_request:" not in workflow
+    assert "pull_request:" in workflow
     assert re.search(r"(?m)^  push:", workflow) is None
-    assert "preconditions:" in workflow
-    assert re.search(r"needs:\s*preconditions", workflow)
     assert "custom_image" in workflow
     assert "sha256:" in workflow
     assert "linux/amd64" in workflow
-    assert 'docker pull --platform linux/amd64 "${CUSTOM_IMAGE}"' in workflow
+    assert "scripts/dev/build-custom-image" in workflow
+    assert "--stage final" in workflow
+    assert '--esan-commit "${SOURCE_COMMIT}"' in workflow
+    assert "--platform linux/amd64" in workflow
+    assert 'docker pull --platform linux/amd64 "${PROVIDED_IMAGE}"' in workflow
+    assert 'echo "ERPNEXT_IMAGE=${RESOLVED_IMAGE}" >> "${GITHUB_ENV}"' in workflow
     assert "APP_LIST: erpnext,crm,esan_gbos" in workflow
     assert workflow.count('bench --site "${SITE_NAME}" migrate') >= 2
     assert "list-apps" in workflow

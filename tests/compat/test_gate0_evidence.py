@@ -81,9 +81,10 @@ def test_gate1_evidence_records_the_verified_local_exit_conditions() -> None:
     assert "PR #1" in summary
     normalized_summary = " ".join(summary.split())
     assert (
-        "No `linux/amd64` registry smoke or production deployment was authorized."
-        in normalized_summary
+        "Pull requests build an ephemeral `linux/amd64` image for the fresh-site "
+        "smoke without pushing it." in normalized_summary
     )
+    assert "No registry publication or production deployment was authorized." in normalized_summary
 
 
 def test_gate0_checksum_manifest_matches_small_evidence_files() -> None:

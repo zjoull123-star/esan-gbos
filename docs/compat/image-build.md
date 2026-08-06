@@ -68,9 +68,14 @@ esan-gbos-final:gate1
 sha256:a55e3dc432cabc7e4a1bbe4951d1586c97e65151b41a5d9c7e5eb0632d61f1e9
 ```
 
-The manual GitHub fresh-site smoke runs on `linux/amd64`. An explicitly
-authorized registry publisher can create its single-platform prerequisite
-without changing the local ARM64 default:
+Pull requests run the GitHub fresh-site smoke on `linux/amd64`. The workflow
+builds the exact checked-out commit into an ephemeral runner-local image, runs
+the four-App install, two migrations, Frappe tests, security scan and SBOM,
+then stops the containers without publishing the image.
+
+For a separately authorized manual run, an immutable registry image may be
+supplied. An authorized registry publisher can create that single-platform
+input without changing the local ARM64 default:
 
 ```bash
 scripts/dev/build-custom-image \
@@ -81,10 +86,10 @@ scripts/dev/build-custom-image \
   --image registry.example/esan/esan-gbos:gate1-0123456
 ```
 
-`--push` accepts only a registry-qualified final-image tag. The smoke workflow
-then accepts the immutable `repository@sha256:digest` and first proves it can
-be pulled for `linux/amd64`. Publishing a registry image is not part of the
-default local bootstrap and must be separately authorized.
+`--push` accepts only a registry-qualified final-image tag. The manual smoke
+input accepts only immutable `repository@sha256:digest` syntax and first
+proves it can be pulled for `linux/amd64`. Publishing a registry image is not
+part of the Gate 0/1 scope and must be separately authorized.
 
 Default `scripts/dev/bootstrap` is the final gate and requires
 `APP_LIST=erpnext,crm,esan_gbos`. Site creation fails before installation if

@@ -91,8 +91,10 @@ All are below the Gate 1 local threshold of 800 ms.
   migrations still exit 0.
 - The private GitHub repository cannot enable rulesets on the current account
   plan. Main-agent-only merge and a green head commit are mandatory.
-- The image is a local ARM64 artifact, not a published registry image. No
-  `linux/amd64` registry smoke or production deployment was authorized.
+- The formal image is a local ARM64 artifact, not a published registry image.
+  Pull requests build an ephemeral `linux/amd64` image for the fresh-site
+  smoke without pushing it. No registry publication or production deployment
+  was authorized.
 - No Kingdee request, channel ingestion, real model invocation, automatic
   external message, or production network write occurred.
 - Gate 2 requires a separately authorized read-only Kingdee adapter. Gate 3
