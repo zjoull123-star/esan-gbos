@@ -1624,6 +1624,7 @@
                 "type": "string",
                 "enum": [
                   "authentication_required",
+                  "csrf_failed",
                   "permission_denied",
                   "method_not_allowed",
                   "invalid_dto",

@@ -61,6 +61,10 @@ def test_internal_error_has_safe_actionable_chinese_message() -> None:
     assert ERROR_MESSAGES_ZH["internal_error"] == "服务暂时不可用，请稍后重试并提供请求编号。"
 
 
+def test_csrf_failure_has_safe_actionable_chinese_message() -> None:
+    assert ERROR_MESSAGES_ZH["csrf_failed"] == "请求安全校验失败，请刷新页面后重试。"
+
+
 def test_permission_error_uses_frozen_contract_code() -> None:
     envelope = build_error_envelope(
         code="permission_denied",

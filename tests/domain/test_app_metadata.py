@@ -104,6 +104,7 @@ def test_product_brief_links_forward_to_crm_deal() -> None:
 def test_hooks_enforce_server_side_permissions_and_transaction_guards() -> None:
     hooks = (PACKAGE_ROOT / "hooks.py").read_text(encoding="utf-8")
 
+    assert 'after_request = ["esan_gbos.api.v1.http.normalize_bff_pre_dispatch_error"]' in hooks
     assert "permission_query_conditions" in hooks
     assert "has_permission" in hooks
     assert '"GBOS Review Case": "esan_gbos.permissions.review_case_permission_query"' in hooks

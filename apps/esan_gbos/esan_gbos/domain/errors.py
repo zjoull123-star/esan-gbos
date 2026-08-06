@@ -5,6 +5,7 @@ from typing import Any
 ERROR_MESSAGES_ZH = {
     "method_not_allowed": "请求方式不正确，请刷新页面后重试。",
     "authentication_required": "登录已失效，请重新登录后继续。",
+    "csrf_failed": "请求安全校验失败，请刷新页面后重试。",
     "permission_denied": "你没有执行此操作的权限，请联系团队管理员。",
     "not_found": "未找到该记录，可能已被删除或你无权查看。",
     "validation_error": "提交内容不符合要求，请检查后重试。",

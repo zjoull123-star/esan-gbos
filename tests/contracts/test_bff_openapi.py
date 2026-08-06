@@ -70,9 +70,12 @@ def test_bff_error_envelope_contains_request_id_and_conflict_codes() -> None:
     error_body = error["properties"]["error"]
 
     assert "request_id" in error_body["required"]
-    assert {"idempotency_conflict", "revision_conflict", "invalid_transition"} <= set(
-        error_body["properties"]["code"]["enum"]
-    )
+    assert {
+        "csrf_failed",
+        "idempotency_conflict",
+        "revision_conflict",
+        "invalid_transition",
+    } <= set(error_body["properties"]["code"]["enum"])
     for path, method in OPERATIONS.items():
         responses = contract["paths"][path][method]["responses"]
         assert "200" in responses
