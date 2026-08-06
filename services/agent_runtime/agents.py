@@ -23,6 +23,7 @@ class AgentKind(StrEnum):
     SALES = "sales"
     PURCHASE = "purchase"
     PRODUCT = "product"
+    CEO = "ceo"
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +116,8 @@ class DeterministicLocalProvider:
         "publish a quotation",
         "create a kingdee",
         "mark the deal won",
+        "query the database",
+        "official revenue forecast",
     )
 
     def __init__(self) -> None:
@@ -163,11 +166,29 @@ class DeterministicLocalProvider:
                 injection_detected=injection_detected,
                 prompt_version="product-agent-prompt-v1",
             )
+        if request.agent_kind is AgentKind.CEO:
+            return ProviderOutput(
+                action_type="internal.ai_draft.propose",
+                payload={
+                    "title": "经营观察草稿（演示）",
+                    "summary": "根据已确认的合成事实生成内部观察草稿，由负责人复核证据。",
+                    "synthetic": True,
+                    "display_label": "演示数据",
+                    "source_mode": "synthetic_agent_context",
+                    "is_official_metric": False,
+                    "is_official_forecast": False,
+                    "requires_human_review": True,
+                    "subject_ref": request.subject_ref,
+                },
+                confidence=0.74,
+                injection_detected=injection_detected,
+                prompt_version="ceo-agent-prototype-prompt-v1",
+            )
         raise AgentExecutionError("unsupported agent kind")
 
 
 class AgentOrchestrator:
-    """Bounded orchestration for the three Gate 4 deterministic agents."""
+    """Bounded orchestration for the four Gate 4 deterministic agents."""
 
     _PROFILES = {
         AgentKind.SALES: (
@@ -184,6 +205,11 @@ class AgentOrchestrator:
             "product_sample_management",
             "GBOS Sample Feedback",
             "internal.work_item.propose",
+        ),
+        AgentKind.CEO: (
+            "metric_reporting",
+            "GBOS Synthetic Executive Snapshot",
+            "internal.ai_draft.propose",
         ),
     }
 

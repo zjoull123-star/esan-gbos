@@ -123,6 +123,18 @@ def test_in_memory_and_postgres_implement_repository_protocol() -> None:
     )
 
 
+def test_in_memory_repository_accepts_ceo_metric_reporting_task() -> None:
+    repository = InMemoryAgentTaskRepository()
+
+    stored = repository.enqueue(
+        valid_submission(agent_type="ceo", processing_purpose="metric_reporting"),
+        now=NOW,
+    )
+
+    assert stored.agent_type == "ceo"
+    assert stored.processing_purpose == "metric_reporting"
+
+
 def test_repository_rejects_naive_transition_time() -> None:
     repository = InMemoryAgentTaskRepository()
 
