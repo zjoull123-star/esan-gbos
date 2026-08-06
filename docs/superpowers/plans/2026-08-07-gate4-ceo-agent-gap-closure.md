@@ -66,9 +66,7 @@ assert payload["subject_ref"] == "BUSINESS-SNAPSHOT-SYNTH-001"
 assert proposal["site_id"] == request.site_id
 assert proposal["decision_ref"] == request.decision_ref
 assert proposal["evidence_refs"] == list(request.evidence_refs)
-assert proposal["fact_version_refs"] == [
-    {"fact_id": "verified-fact-SYNTH-001", "fact_version": 1}
-]
+assert proposal["fact_version_refs"] == [{"fact_id": "verified-fact-SYNTH-001", "fact_version": 1}]
 assert proposal["target_ref"] == request.subject_ref
 assert proposal["target_revision"] == request.subject_revision
 assert result.pre_guard.outcome is GuardOutcome.ALLOW
@@ -306,8 +304,10 @@ assert evidence["go_no_go"] == {
     "production": "no_go",
 }
 assert all(value == 0 for value in evidence["external_activity"].values())
-assert evidence["historical_evidence"]["sha256sum_manifest_sha256"] \
+assert (
+    evidence["historical_evidence"]["sha256sum_manifest_sha256"]
     == "2df12cda3e442bbe68880e555583affe7e4f483096fd369e2c37bf34ef843b64"
+)
 assert evidence["historical_evidence"]["modified"] is False
 ```
 

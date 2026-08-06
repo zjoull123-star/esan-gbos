@@ -63,11 +63,11 @@ def test_gate4_agent_role_is_rls_scoped_and_queue_lifecycle_is_durable() -> None
     suffix = uuid4().hex
     site_id = f"gate4-{suffix}.localhost"
     other_site = f"gate4-other-{suffix}.localhost"
-    now = datetime.now(UTC)
     conn = connection("GBOS_GATE4_AGENT_USER")
     try:
         repository = PostgresAgentTaskRepository(conn)
         request = submission(site_id, suffix)
+        now = request.due_at
         created = repository.enqueue(request, now=now)
         replay = repository.enqueue(request, now=now)
         assert replay == created
