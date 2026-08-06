@@ -104,11 +104,11 @@ services:
           fi;
         done;
         if [ ! -d "sites/$$SITE_NAME" ]; then
-          bench new-site "$$SITE_NAME"
-          --mariadb-user-host-login-scope="%"
-          --db-root-username=root
-          --db-root-password="$$DB_ROOT_PASSWORD"
-          --admin-password="$$ADMIN_PASSWORD"
+          bench new-site "$$SITE_NAME" \
+          --mariadb-user-host-login-scope="%" \
+          --db-root-username=root \
+          --db-root-password="$$DB_ROOT_PASSWORD" \
+          --admin-password="$$ADMIN_PASSWORD" \
           --set-default;
         else
           echo "Site $$SITE_NAME already exists";
@@ -129,7 +129,7 @@ services:
             echo "GBOS_DEMO_PASSWORD is required for local demo users" >&2;
             exit 78;
           fi;
-          bench --site "$$SITE_NAME" execute esan_gbos.demo.seed
+          bench --site "$$SITE_NAME" execute esan_gbos.demo.seed \
           --kwargs '{"confirm_synthetic": true}';
         fi
     environment:

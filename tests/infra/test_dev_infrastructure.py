@@ -137,6 +137,34 @@ def test_compose_defaults_to_the_four_app_final_gate() -> None:
     assert "GBOS_IMAGE_STAGE=final" in env_example
 
 
+def test_site_creator_keeps_multiline_cli_options_in_the_same_shell_command() -> None:
+    compose_lines = read_required(COMPOSE_FILE).splitlines()
+
+    new_site_start = next(
+        index
+        for index, line in enumerate(compose_lines)
+        if line.strip().startswith('bench new-site "$$SITE_NAME"')
+    )
+    assert [line.strip() for line in compose_lines[new_site_start : new_site_start + 6]] == [
+        'bench new-site "$$SITE_NAME" \\',
+        '--mariadb-user-host-login-scope="%" \\',
+        "--db-root-username=root \\",
+        '--db-root-password="$$DB_ROOT_PASSWORD" \\',
+        '--admin-password="$$ADMIN_PASSWORD" \\',
+        "--set-default;",
+    ]
+
+    seed_start = next(
+        index
+        for index, line in enumerate(compose_lines)
+        if line.strip().startswith('bench --site "$$SITE_NAME" execute esan_gbos.demo.seed')
+    )
+    assert [line.strip() for line in compose_lines[seed_start : seed_start + 2]] == [
+        'bench --site "$$SITE_NAME" execute esan_gbos.demo.seed \\',
+        """--kwargs '{"confirm_synthetic": true}';""",
+    ]
+
+
 def test_upstream_app_manifest_is_release_pinned() -> None:
     apps = read_required(UPSTREAM_APPS)
 
