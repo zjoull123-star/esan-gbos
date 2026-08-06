@@ -19,7 +19,7 @@ concurrency:
 jobs:
   frappe-app-install-smoke:
     name: Fresh four-app install and double migration
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       PROVIDED_IMAGE: ${{ inputs.custom_image }}
