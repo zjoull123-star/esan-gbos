@@ -203,7 +203,12 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - curl --fail --silent --show-error http://127.0.0.1:8080/api/method/ping >/dev/null
+        - >-
+          python -c "import urllib.request;
+          request = urllib.request.Request(
+          'http://127.0.0.1:8080/api/method/ping',
+          headers={'Host': '${SITE_NAME:-gbos.localhost}'});
+          urllib.request.urlopen(request, timeout=3)"
       interval: 10s
       timeout: 5s
       retries: 30
