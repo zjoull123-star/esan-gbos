@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate3/manual-import-manifest.schema.json",
+  "title": "ManualImportManifest",
+  "description": "A local-only Gate 3 manifest for an approved fixture email, message or transcript package.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_id",
+    "synthetic",
+    "site_id",
+    "processing_purpose",
+    "data_classification",
+    "consent_basis",
+    "retention_class",
+    "occurred_at",
+    "original_language",
+    "participants",
+    "source",
+    "package",
+    "budgets",
+    "idempotency_key",
+    "correlation_id",
+    "submitted_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "manifest_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "synthetic": {
+      "const": true
+    },
+    "site_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/SiteId"
+    },
+    "processing_purpose": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/ProcessingPurpose"
+    },
+    "data_classification": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/DataClassification"
+    },
+    "consent_basis": {
+      "type": "string",
+      "enum": [
+        "consent",
+        "contract",
+        "legal_obligation",
+        "legitimate_interest",
+        "manual_import_pending_review"
+      ]
+    },
+    "retention_class": {
+      "type": "string",
+      "enum": [
+        "R0-ephemeral",
+        "R1-operational",
+        "R2-record",
+        "R3-legal-hold"
+      ]
+    },
+    "occurred_at": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Timestamp"
+    },
+    "original_language": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 35
+    },
+    "participants": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "identity_ref"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "internal",
+              "external",
+              "system",
+              "unknown"
+            ]
+          },
+          "identity_ref": {
+            "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 256
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connector",
+        "package_type"
+      ],
+      "properties": {
+        "connector": {
+          "const": "manual_import"
+        },
+        "package_type": {
+          "type": "string",
+          "enum": [
+            "email_fixture",
+            "message_fixture",
+            "transcript_fixture"
+          ]
+        },
+        "provider_event_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "filename",
+        "media_type",
+        "size_bytes",
+        "sha256"
+      ],
+      "properties": {
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[^/\\\\\\u0000]+$"
+        },
+        "media_type": {
+          "type": "string",
+          "enum": [
+            "application/json",
+            "message/rfc822",
+            "text/plain"
+          ]
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 104857600
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body_bytes",
+        "attachment_count",
+        "attachment_bytes",
+        "decompressed_bytes"
+      ],
+      "properties": {
+        "body_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10485760
+        },
+        "attachment_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50
+        },
+        "attachment_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 104857600
+        },
+        "decompressed_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 209715200
+        }
+      }
+    },
+    "idempotency_key": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "correlation_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "submitted_at": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Timestamp"
+    }
+  }
+}

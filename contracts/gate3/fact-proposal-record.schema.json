@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate3/fact-proposal-record.schema.json",
+  "title": "FactProposalRecord",
+  "description": "A Gate 3 provenance and processing wrapper around a proposal-only ExtractedFact.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fact_proposal_record_id",
+    "site_id",
+    "processing_purpose",
+    "data_classification",
+    "fact",
+    "source_lineage",
+    "valid_time",
+    "recorded_time",
+    "processor",
+    "processor_version",
+    "rule_version",
+    "output_version",
+    "budget",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "fact_proposal_record_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/SiteId"
+    },
+    "processing_purpose": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/ProcessingPurpose"
+    },
+    "data_classification": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/DataClassification"
+    },
+    "fact": {
+      "allOf": [
+        {
+          "$ref": "https://contracts.esan.example/gbos/v1/extracted-fact.schema.json"
+        },
+        {
+          "type": "object",
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "const": "proposed"
+            }
+          }
+        }
+      ]
+    },
+    "source_lineage": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/SourceLineage"
+    },
+    "valid_time": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/ValidTime"
+    },
+    "recorded_time": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Timestamp"
+    },
+    "processor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "processor_id",
+        "kind"
+      ],
+      "properties": {
+        "processor_id": {
+          "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+        },
+        "kind": {
+          "const": "deterministic_test_processor"
+        }
+      }
+    },
+    "processor_version": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+    },
+    "rule_version": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+    },
+    "output_version": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+    },
+    "budget": {
+      "$ref": "#/$defs/ProcessingBudget"
+    },
+    "correlation_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    }
+  },
+  "$defs": {
+    "ProcessingBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit",
+        "limit_units",
+        "used_units",
+        "network_calls",
+        "tool_calls"
+      ],
+      "properties": {
+        "unit": {
+          "type": "string",
+          "enum": [
+            "characters",
+            "seconds",
+            "records"
+          ]
+        },
+        "limit_units": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "used_units": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "network_calls": {
+          "const": 0
+        },
+        "tool_calls": {
+          "const": 0
+        }
+      }
+    }
+  }
+}

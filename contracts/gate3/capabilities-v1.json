@@ -1,0 +1,89 @@
+{
+  "ledger_version": "1.0.0",
+  "gate": 3,
+  "runtime_mode": "local_fixture_only",
+  "description": "Gate 3 may persist only observations, evidence, proposed facts and entity-resolution proposals. It has no Gate 4 or external-effect authority.",
+  "allowed_outputs": [
+    {
+      "type": "observation",
+      "contract": "CanonicalObservationEvent"
+    },
+    {
+      "type": "evidence",
+      "contract": "EvidenceRecord"
+    },
+    {
+      "type": "fact_proposal",
+      "contract": "FactProposalRecord",
+      "required_status": "proposed"
+    },
+    {
+      "type": "entity_resolution_proposal",
+      "contract": "EntityResolutionProposal",
+      "required_status": "proposed"
+    }
+  ],
+  "capabilities": {
+    "observation_output": {
+      "enabled": true,
+      "scope": "current_site_only"
+    },
+    "evidence_output": {
+      "enabled": true,
+      "scope": "current_site_only"
+    },
+    "fact_proposal_output": {
+      "enabled": true,
+      "scope": "current_site_only",
+      "required_status": "proposed"
+    },
+    "entity_resolution_proposal_output": {
+      "enabled": true,
+      "scope": "current_site_only",
+      "required_status": "proposed",
+      "entity_merge_allowed": false
+    },
+    "frappe_access": {
+      "enabled": false,
+      "network_allowed": false,
+      "reason": "Gate 3 Context and Observer services do not connect to Frappe or MariaDB."
+    },
+    "review_case_creation": {
+      "enabled": false,
+      "network_allowed": false,
+      "reason": "Review Case creation belongs to Gate 4."
+    },
+    "agent_runtime": {
+      "enabled": false,
+      "network_allowed": false,
+      "reason": "Durable Agent Runtime belongs to Gate 4."
+    },
+    "real_model_calls": {
+      "enabled": false,
+      "network_allowed": false,
+      "reason": "Gate 3 contracts permit only deterministic tool-free test processors."
+    },
+    "kingdee_access": {
+      "enabled": false,
+      "network_allowed": false,
+      "credentials_allowed": false,
+      "reason": "Kingdee read-only activation belongs to Gate 5."
+    },
+    "external_side_effects": {
+      "enabled": false,
+      "network_allowed": false,
+      "reason": "No external send, publication, commitment, order, payment, mutation, delete or archive is executable."
+    }
+  },
+  "forbidden_outputs": [
+    "VerifiedBusinessFact",
+    "ConflictRecord",
+    "DecisionRecord",
+    "ActionProposal",
+    "ReviewCase",
+    "DraftMutation",
+    "ApprovedCommand",
+    "MetricResponse",
+    "KingdeeReadProjection"
+  ]
+}

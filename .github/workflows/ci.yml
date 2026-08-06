@@ -75,6 +75,8 @@ jobs:
           uv run --frozen mypy \
             apps/esan_gbos/esan_gbos/domain \
             services/observer/contract_check.py \
+            services/observer/observer \
+            services/context/context_service \
             fixtures/gate1/generate.py \
             fixtures/kingdee/gate1/mock.py \
             fixtures/kingdee/gate2/adapter.py 2>&1 | \
@@ -105,12 +107,15 @@ jobs:
           bash -n \
             scripts/dev/bootstrap \
             scripts/dev/build-custom-image \
+            scripts/dev/gate3-migrate \
             scripts/dev/license-sbom \
             scripts/dev/purge-local-data \
+            scripts/dev/run-gate3-local \
             scripts/dev/secret-scan \
             scripts/dev/security-scan \
             scripts/dev/status \
             scripts/dev/teardown \
+            scripts/dev/test-gate3-integration \
             scripts/dev/validate-security-waivers \
             scripts/dev/verify-crm-contract 2>&1 | \
             tee -a "${RUNNER_TEMP}/gate-logs/compose-static.log"
@@ -184,6 +189,13 @@ jobs:
                   continue
               json.loads(path.read_text(encoding="utf-8"))
           PY
+      - name: Gate 3 pinned PostgreSQL integration
+        run: |
+          exec > >(tee -a "${RUNNER_TEMP}/gate-logs/python-vue-playwright.log") 2>&1
+          cp infra/dev/.env.example infra/dev/.env
+          docker pull \
+            pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966
+          scripts/dev/test-gate3-integration
       - name: Vue unit, build, and Playwright checks
         run: |
           exec > >(tee -a "${RUNNER_TEMP}/gate-logs/python-vue-playwright.log") 2>&1

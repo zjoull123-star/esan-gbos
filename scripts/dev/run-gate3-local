@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+export PATH="${HOME}/.orbstack/bin:${PATH}"
+
+SERVICE="${1:-observer}"
+ENV_FILE="${REPO_ROOT}/infra/dev/.env"
+if [[ ! -f "${ENV_FILE}" ]]; then
+  echo "infra/dev/.env is missing; run scripts/dev/bootstrap --observer first." >&2
+  exit 66
+fi
+if grep -Eiq \
+  '^(GBOS_PRODUCTION_ENABLED=(true|1|yes)|GBOS_ENV=production)$' \
+  "${ENV_FILE}"; then
+  echo "Gate 3 local runtime refuses production configuration." >&2
+  exit 78
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+set +a
+export GBOS_PRODUCTION_ENABLED=false
+export GBOS_REAL_CONNECTORS_ENABLED=false
+export GBOS_MODEL_NETWORK_ENABLED=false
+export GBOS_EXTERNAL_SEND_ENABLED=false
+export GBOS_FRAPPE_BRIDGE_ENABLED=false
+export GBOS_OBSERVER_OBJECT_ROOT="${REPO_ROOT}/.runtime/gate3/objects"
+export PYTHONPATH="${REPO_ROOT}/services/observer:${REPO_ROOT}/services/context"
+mkdir -p -- "${GBOS_OBSERVER_OBJECT_ROOT}"
+chmod 700 "${REPO_ROOT}/.runtime" "${REPO_ROOT}/.runtime/gate3" \
+  "${GBOS_OBSERVER_OBJECT_ROOT}"
+
+case "${SERVICE}" in
+  observer)
+    MODULE=observer.api:app
+    PORT="${GBOS_OBSERVER_PORT:-8091}"
+    export GBOS_OBSERVER_DATABASE_ENABLED=true
+    export GBOS_OBSERVER_DATABASE_HOST=127.0.0.1
+    export GBOS_OBSERVER_DATABASE_PORT="${OBSERVER_POSTGRES_PORT}"
+    export GBOS_OBSERVER_DATABASE_NAME="${OBSERVER_POSTGRES_DB}"
+    export GBOS_OBSERVER_DATABASE_USER=gbos_observer_app
+    export GBOS_OBSERVER_DATABASE_PASSWORD="${OBSERVER_POSTGRES_PASSWORD}"
+    export GBOS_CONTEXT_WRITE_ENABLED=true
+    export GBOS_CONTEXT_LOCAL_URL="http://127.0.0.1:${GBOS_CONTEXT_PORT:-8092}"
+    ;;
+  context)
+    MODULE=context_service.api:app
+    PORT="${GBOS_CONTEXT_PORT:-8092}"
+    export GBOS_CONTEXT_DATABASE_ENABLED=true
+    export GBOS_CONTEXT_DATABASE_HOST=127.0.0.1
+    export GBOS_CONTEXT_DATABASE_PORT="${OBSERVER_POSTGRES_PORT}"
+    export GBOS_CONTEXT_DATABASE_NAME="${OBSERVER_POSTGRES_DB}"
+    export GBOS_CONTEXT_DATABASE_USER=gbos_context_app
+    export GBOS_CONTEXT_DATABASE_PASSWORD="${OBSERVER_POSTGRES_PASSWORD}"
+    ;;
+  *)
+    echo "Usage: scripts/dev/run-gate3-local [observer|context]" >&2
+    exit 64
+    ;;
+esac
+
+"${SCRIPT_DIR}/gate3-migrate"
+cd "${REPO_ROOT}"
+exec uv run --frozen --no-sync uvicorn "${MODULE}" \
+  --host 127.0.0.1 \
+  --port "${PORT}" \
+  --no-access-log

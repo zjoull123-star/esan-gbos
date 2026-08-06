@@ -270,6 +270,9 @@ services:
       - ./observer/init:/docker-entrypoint-initdb.d:ro
     ports:
       - "127.0.0.1:${OBSERVER_POSTGRES_PORT:-5432}:5432"
+    networks:
+      - gate3-internal
+      - gate3-loopback
     healthcheck:
       test:
         - CMD-SHELL
@@ -297,7 +300,41 @@ services:
     depends_on:
       observer-postgres:
         condition: service_healthy
+    networks:
+      - gate3-internal
     restart: "no"
+
+  gate3-db-migrate:
+    image: "pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966"
+    profiles: ["observer"]
+    command: ["/scripts/gate3-migrate", "--inside-container"]
+    environment:
+      POSTGRES_DB: "${OBSERVER_POSTGRES_DB:-gbos_observer}"
+      POSTGRES_USER: "${OBSERVER_POSTGRES_USER:-gbos_observer}"
+      POSTGRES_PASSWORD: "${OBSERVER_POSTGRES_PASSWORD:?Set OBSERVER_POSTGRES_PASSWORD in infra/dev/.env}"
+      GBOS_APP_ROLE_PASSWORD: "${OBSERVER_POSTGRES_PASSWORD:?Set OBSERVER_POSTGRES_PASSWORD in infra/dev/.env}"
+      GBOS_PRODUCTION_ENABLED: "${GBOS_PRODUCTION_ENABLED:-false}"
+    volumes:
+      - ../../services/observer/migrations:/migrations/observer:ro
+      - ../../services/context/migrations:/migrations/context:ro
+      - ../../scripts/dev:/scripts:ro
+    depends_on:
+      observer-postgres:
+        condition: service_healthy
+    networks:
+      - gate3-internal
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+networks:
+  gate3-internal:
+    internal: true
+  gate3-loopback:
 
 volumes:
   db-data:

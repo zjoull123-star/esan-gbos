@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "entity_resolution_proposal_id": "entity-resolution-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "processing_purpose": "entity_resolution",
+  "data_classification": "Restricted",
+  "status": "proposed",
+  "entity_type": "Contact",
+  "source_entity_ref": "observed-contact-SYNTH-001",
+  "candidates": [
+    {
+      "entity_ref": "contact-SYNTH-001",
+      "confidence": 0.81,
+      "matching_attributes": [
+        "email_hash",
+        "normalized_name"
+      ]
+    }
+  ],
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "source_lineage": {
+    "source_system": "manual_import",
+    "source_record_refs": [
+      "event-SYNTH-001",
+      "evidence-SYNTH-001"
+    ],
+    "retrieved_at": "2026-08-06T02:00:03Z",
+    "transformation_version": "canonicalize-v1",
+    "evidence_status": "synthetic"
+  },
+  "valid_time": {
+    "start": "2026-08-06T01:59:00Z",
+    "end": null
+  },
+  "recorded_time": "2026-08-06T02:00:05Z",
+  "processor": {
+    "processor_id": "fixture-entity-resolver",
+    "kind": "deterministic_test_processor"
+  },
+  "processor_version": "1.0.0",
+  "rule_version": "entity-candidate-v1",
+  "output_version": "entity-resolution-proposal-v1",
+  "budget": {
+    "unit": "records",
+    "limit_units": 20,
+    "used_units": 1,
+    "network_calls": 0,
+    "tool_calls": 0
+  },
+  "correlation_id": "corr-SYNTH-001"
+}

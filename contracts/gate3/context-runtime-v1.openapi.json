@@ -1,0 +1,491 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ESAN GBOS Gate 3 Context Runtime",
+    "version": "1.0.0",
+    "description": "Local Gate 3 evidence, fact-proposal and entity-resolution-proposal write/read boundary."
+  },
+  "x-gbos-gate": 3,
+  "x-runtime-mode": "local_fixture_only",
+  "x-external-network-allowed": false,
+  "x-frappe-access-allowed": false,
+  "x-kingdee-access-allowed": false,
+  "x-real-model-calls-allowed": false,
+  "paths": {
+    "/internal/v1/context/evidence-records": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthorizationHeader"
+        },
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        },
+        {
+          "$ref": "#/components/parameters/IdempotencyKeyHeader"
+        }
+      ],
+      "post": {
+        "operationId": "createEvidenceRecord",
+        "tags": [
+          "Gate3 Context"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "context:evidence:write"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../evidence-record.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Immutable evidence record created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../evidence-record.schema.json"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/internal/v1/context/fact-proposals": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthorizationHeader"
+        },
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        },
+        {
+          "$ref": "#/components/parameters/IdempotencyKeyHeader"
+        }
+      ],
+      "post": {
+        "operationId": "createFactProposalRecord",
+        "tags": [
+          "Gate3 Context"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "context:fact-proposal:write"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "fact-proposal-record.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Proposal-only fact record created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "fact-proposal-record.schema.json"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/internal/v1/context/entity-resolution-proposals": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthorizationHeader"
+        },
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        },
+        {
+          "$ref": "#/components/parameters/IdempotencyKeyHeader"
+        }
+      ],
+      "post": {
+        "operationId": "createEntityResolutionProposal",
+        "tags": [
+          "Gate3 Context"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "context:entity-resolution-proposal:write"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "entity-resolution-proposal.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Proposal-only entity-resolution candidates created without merge.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "entity-resolution-proposal.schema.json"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/context/evidence-records/{evidence_record_id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthorizationHeader"
+        },
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        },
+        {
+          "$ref": "#/components/parameters/IdempotencyKeyHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getEvidenceRecord",
+        "tags": [
+          "Gate3 Context"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "context:evidence:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/EvidenceRecordId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Site-scoped evidence record.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../evidence-record.schema.json"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/context/fact-proposals/{fact_proposal_record_id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthorizationHeader"
+        },
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        },
+        {
+          "$ref": "#/components/parameters/IdempotencyKeyHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getFactProposalRecord",
+        "tags": [
+          "Gate3 Context"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "context:fact-proposal:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FactProposalRecordId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Site-scoped proposal-only fact record.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "fact-proposal-record.schema.json"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/context/entity-resolution-proposals/{entity_resolution_proposal_id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthorizationHeader"
+        },
+        {
+          "$ref": "#/components/parameters/SiteIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/RequestIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ProcessingPurposeHeader"
+        },
+        {
+          "$ref": "#/components/parameters/IdempotencyKeyHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getEntityResolutionProposal",
+        "tags": [
+          "Gate3 Context"
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "context:entity-resolution-proposal:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/EntityResolutionProposalId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Site-scoped entity-resolution proposal without merge state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "entity-resolution-proposal.schema.json"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "OAuth2": {
+        "type": "oauth2",
+        "description": "Short-lived service identity token. Issuer, audience, site, purpose and resource binding are verified on every request.",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "/oauth2/token",
+            "scopes": {
+              "context:evidence:write": "Create an evidence record for the token site and purpose.",
+              "context:fact-proposal:write": "Create a proposed fact wrapper for the token site and purpose.",
+              "context:entity-resolution-proposal:write": "Create entity-resolution candidates without merging identities.",
+              "context:evidence:read": "Read one evidence record for the token site and purpose.",
+              "context:fact-proposal:read": "Read one proposed fact wrapper for the token site and purpose.",
+              "context:entity-resolution-proposal:read": "Read one entity-resolution proposal for the token site and purpose."
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "AuthorizationHeader": {
+        "name": "Authorization",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^Bearer .+$"
+        },
+        "description": "Short-lived bearer token; token passthrough is prohibited."
+      },
+      "SiteIdHeader": {
+        "name": "X-Site-ID",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+        }
+      },
+      "RequestIdHeader": {
+        "name": "X-Request-ID",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "ProcessingPurposeHeader": {
+        "name": "X-Processing-Purpose",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "observation_processing",
+            "entity_resolution",
+            "audit_compliance"
+          ]
+        }
+      },
+      "IdempotencyKeyHeader": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "EvidenceRecordId": {
+        "name": "evidence_record_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "FactProposalRecordId": {
+        "name": "fact_proposal_record_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "EntityResolutionProposalId": {
+        "name": "entity_resolution_proposal_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "Fail-closed request rejection.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "error",
+                "request_id"
+              ],
+              "properties": {
+                "error": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "request_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

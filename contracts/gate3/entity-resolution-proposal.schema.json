@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/gate3/entity-resolution-proposal.schema.json",
+  "title": "EntityResolutionProposal",
+  "description": "A non-authoritative Gate 3 candidate match. It cannot merge entities or create a Gate 4 action or Review Case.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "entity_resolution_proposal_id",
+    "site_id",
+    "processing_purpose",
+    "data_classification",
+    "status",
+    "entity_type",
+    "source_entity_ref",
+    "candidates",
+    "evidence_refs",
+    "source_lineage",
+    "valid_time",
+    "recorded_time",
+    "processor",
+    "processor_version",
+    "rule_version",
+    "output_version",
+    "budget",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "entity_resolution_proposal_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "site_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/SiteId"
+    },
+    "processing_purpose": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/ProcessingPurpose"
+    },
+    "data_classification": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/DataClassification"
+    },
+    "status": {
+      "const": "proposed"
+    },
+    "entity_type": {
+      "type": "string",
+      "enum": [
+        "Customer",
+        "Supplier",
+        "Contact",
+        "InternalUser",
+        "Product"
+      ]
+    },
+    "source_entity_ref": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "entity_ref",
+          "confidence",
+          "matching_attributes"
+        ],
+        "properties": {
+          "entity_ref": {
+            "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "matching_attributes": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "external_reference",
+                "email_hash",
+                "telephone_hash",
+                "normalized_name",
+                "organization",
+                "address"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "evidence_refs": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/EvidenceRefs"
+    },
+    "source_lineage": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/SourceLineage"
+    },
+    "valid_time": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/ValidTime"
+    },
+    "recorded_time": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Timestamp"
+    },
+    "processor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "processor_id",
+        "kind"
+      ],
+      "properties": {
+        "processor_id": {
+          "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+        },
+        "kind": {
+          "const": "deterministic_test_processor"
+        }
+      }
+    },
+    "processor_version": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+    },
+    "rule_version": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+    },
+    "output_version": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Version"
+    },
+    "budget": {
+      "$ref": "#/$defs/ProcessingBudget"
+    },
+    "correlation_id": {
+      "$ref": "https://contracts.esan.example/gbos/gate2/common.schema.json#/$defs/Identifier"
+    }
+  },
+  "$defs": {
+    "ProcessingBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit",
+        "limit_units",
+        "used_units",
+        "network_calls",
+        "tool_calls"
+      ],
+      "properties": {
+        "unit": {
+          "type": "string",
+          "enum": [
+            "characters",
+            "seconds",
+            "records"
+          ]
+        },
+        "limit_units": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "used_units": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "network_calls": {
+          "const": 0
+        },
+        "tool_calls": {
+          "const": 0
+        }
+      }
+    }
+  }
+}

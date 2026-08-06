@@ -42,5 +42,6 @@ currentsite.txt
 # Local evidence and generated outputs
 artifacts/
 outputs/
+.runtime/
 *.log
 *.sqlite

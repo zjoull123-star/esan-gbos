@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+export PATH="${HOME}/.orbstack/bin:${PATH}"
+
+ENV_FILE="${REPO_ROOT}/infra/dev/.env"
+if [[ ! -f "${ENV_FILE}" ]]; then
+  cp -- "${REPO_ROOT}/infra/dev/.env.example" "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
+fi
+if grep -Eiq \
+  '^(GBOS_PRODUCTION_ENABLED=(true|1|yes)|GBOS_ENV=production)$' \
+  "${ENV_FILE}"; then
+  echo "Gate 3 integration tests refuse production configuration." >&2
+  exit 78
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+set +a
+export GBOS_PRODUCTION_ENABLED=false
+export GBOS_RUN_POSTGRES_INTEGRATION=1
+
+"${SCRIPT_DIR}/gate3-migrate"
+"${SCRIPT_DIR}/gate3-migrate"
+export GBOS_GATE3_POSTGRES_CONTAINER="$(
+  docker compose \
+    --env-file "${ENV_FILE}" \
+    -f "${REPO_ROOT}/infra/dev/compose.yml" \
+    --profile observer \
+    ps -q observer-postgres
+)"
+if [[ -z "${GBOS_GATE3_POSTGRES_CONTAINER}" ]]; then
+  echo "Gate 3 PostgreSQL container could not be resolved." >&2
+  exit 69
+fi
+export GBOS_GATE3_CONTEXT_HOST=127.0.0.1
+export GBOS_GATE3_CONTEXT_PORT="${OBSERVER_POSTGRES_PORT}"
+export GBOS_GATE3_CONTEXT_DATABASE="${OBSERVER_POSTGRES_DB}"
+export GBOS_GATE3_CONTEXT_PASSWORD="${OBSERVER_POSTGRES_PASSWORD}"
+
+cd "${REPO_ROOT}"
+PYTHONDONTWRITEBYTECODE=1 \
+  uv run --frozen --no-sync \
+  pytest -p no:cacheprovider -m postgres_integration tests/integration -q

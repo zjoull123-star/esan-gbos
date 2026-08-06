@@ -3,14 +3,19 @@ name = "esan-gbos-tooling"
 version = "0.1.0"
 description = "Repository-level validation tooling for ESAN GBOS"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+  "fastapi>=0.116,<1",
+  "jsonschema[format]>=4.25,<5",
+  "psycopg[binary,pool]>=3.2,<4",
+  "referencing>=0.36,<1",
+  "uvicorn>=0.35,<1",
+]
 
 [dependency-groups]
 dev = [
-  "jsonschema[format]>=4.25,<5",
+  "httpx>=0.28,<1",
   "mypy>=1.17,<2",
   "pytest>=8.4,<9",
-  "referencing>=0.36,<1",
   "ruff>=0.12,<1",
 ]
 
@@ -20,6 +25,9 @@ package = false
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+markers = [
+  "postgres_integration: requires the pinned local Gate 3 PostgreSQL runtime",
+]
 
 [tool.ruff]
 line-length = 100
