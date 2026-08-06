@@ -232,6 +232,10 @@ def test_crm_payload_uses_only_frozen_v1_fields_and_statuses() -> None:
             "Qualified",
             "Unqualified",
         }
+        if fields["status"] in {"Unqualified", "Junk"}:
+            assert fields["lost_reason"] == "Poor Fit"
+        else:
+            assert "lost_reason" not in fields
     for deal in grouped["CRM Deal"]:
         fields = record_fields(deal)
         assert "deal_name" not in fields
@@ -245,6 +249,10 @@ def test_crm_payload_uses_only_frozen_v1_fields_and_statuses() -> None:
             "Ready to Close",
             "Won",
         }
+        if fields["status"] == "Lost":
+            assert fields["lost_reason"] == "Competition"
+        else:
+            assert "lost_reason" not in fields
     for contact in grouped["Contact"]:
         assert "organization" not in record_fields(contact)
 

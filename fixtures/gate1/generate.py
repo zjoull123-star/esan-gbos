@@ -429,6 +429,7 @@ FRAPPE_FIELDS: dict[str, frozenset[str]] = {
             "email",
             "mobile_no",
             "status",
+            "lost_reason",
             "custom_esan_team",
         }
     ),
@@ -438,6 +439,7 @@ FRAPPE_FIELDS: dict[str, frozenset[str]] = {
             "contact",
             "lead",
             "status",
+            "lost_reason",
             "expected_deal_value",
             "custom_esan_team",
             "custom_esan_party_profile",
@@ -662,40 +664,48 @@ def _make_records(seed: int) -> tuple[OrderedDict[str, list[dict[str, Any]]], li
             )
         )
     for index, lead_id in enumerate(lead_ids):
+        lead_status = (
+            "Qualified" if index < CHAIN_COUNT else _cycle(CRM_STATUS_ALLOWLIST["CRM Lead"], index)
+        )
+        lead_fields = {
+            "first_name": f"Synthetic Lead {index + 1:04d}",
+            "last_name": "Fixture",
+            "lead_name": f"Synthetic Lead {index + 1:04d}",
+            "organization": organization_ids[index],
+            "email": lead_id.lower() + "@example.invalid",
+            "mobile_no": f"+000-{index // 10000:04d}-{index + 1:04d}",
+            "status": lead_status,
+            "custom_esan_team": team_ids[index % TEAM_COUNT],
+        }
+        if lead_status in {"Unqualified", "Junk"}:
+            lead_fields["lost_reason"] = "Poor Fit"
         records["CRM Lead"].append(
             _record(
                 "CRM Lead",
                 lead_id,
-                {
-                    "first_name": f"Synthetic Lead {index + 1:04d}",
-                    "last_name": "Fixture",
-                    "lead_name": f"Synthetic Lead {index + 1:04d}",
-                    "organization": organization_ids[index],
-                    "email": lead_id.lower() + "@example.invalid",
-                    "mobile_no": f"+000-{index // 10000:04d}-{index + 1:04d}",
-                    "status": "Qualified"
-                    if index < CHAIN_COUNT
-                    else _cycle(CRM_STATUS_ALLOWLIST["CRM Lead"], index),
-                    "custom_esan_team": team_ids[index % TEAM_COUNT],
-                },
+                lead_fields,
             )
         )
     for index, deal_id in enumerate(deal_ids):
+        deal_status = (
+            "Won" if index < CHAIN_COUNT else _cycle(CRM_STATUS_ALLOWLIST["CRM Deal"], index)
+        )
+        deal_fields: dict[str, Any] = {
+            "organization": organization_ids[index],
+            "contact": contact_ids[index],
+            "lead": lead_ids[index],
+            "status": deal_status,
+            "expected_deal_value": 10000 + index * 10,
+            "custom_esan_team": team_ids[index % TEAM_COUNT],
+            "custom_esan_party_profile": party_ids[index],
+        }
+        if deal_status == "Lost":
+            deal_fields["lost_reason"] = "Competition"
         records["CRM Deal"].append(
             _record(
                 "CRM Deal",
                 deal_id,
-                {
-                    "organization": organization_ids[index],
-                    "contact": contact_ids[index],
-                    "lead": lead_ids[index],
-                    "status": "Won"
-                    if index < CHAIN_COUNT
-                    else _cycle(CRM_STATUS_ALLOWLIST["CRM Deal"], index),
-                    "expected_deal_value": 10000 + index * 10,
-                    "custom_esan_team": team_ids[index % TEAM_COUNT],
-                    "custom_esan_party_profile": party_ids[index],
-                },
+                deal_fields,
             )
         )
 

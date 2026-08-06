@@ -4868,6 +4868,7 @@
       "first_name": "Synthetic Lead 0244",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0244",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0244",
       "organization": "CRM-ORG-0244",
       "status": "Unqualified"
@@ -4888,6 +4889,7 @@
       "first_name": "Synthetic Lead 0245",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0245",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0245",
       "organization": "CRM-ORG-0245",
       "status": "Junk"
@@ -5008,6 +5010,7 @@
       "first_name": "Synthetic Lead 0251",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0251",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0251",
       "organization": "CRM-ORG-0251",
       "status": "Unqualified"
@@ -5028,6 +5031,7 @@
       "first_name": "Synthetic Lead 0252",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0252",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0252",
       "organization": "CRM-ORG-0252",
       "status": "Junk"
@@ -5148,6 +5152,7 @@
       "first_name": "Synthetic Lead 0258",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0258",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0258",
       "organization": "CRM-ORG-0258",
       "status": "Unqualified"
@@ -5168,6 +5173,7 @@
       "first_name": "Synthetic Lead 0259",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0259",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0259",
       "organization": "CRM-ORG-0259",
       "status": "Junk"
@@ -5288,6 +5294,7 @@
       "first_name": "Synthetic Lead 0265",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0265",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0265",
       "organization": "CRM-ORG-0265",
       "status": "Unqualified"
@@ -5308,6 +5315,7 @@
       "first_name": "Synthetic Lead 0266",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0266",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0266",
       "organization": "CRM-ORG-0266",
       "status": "Junk"
@@ -5428,6 +5436,7 @@
       "first_name": "Synthetic Lead 0272",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0272",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0272",
       "organization": "CRM-ORG-0272",
       "status": "Unqualified"
@@ -5448,6 +5457,7 @@
       "first_name": "Synthetic Lead 0273",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0273",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0273",
       "organization": "CRM-ORG-0273",
       "status": "Junk"
@@ -5568,6 +5578,7 @@
       "first_name": "Synthetic Lead 0279",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0279",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0279",
       "organization": "CRM-ORG-0279",
       "status": "Unqualified"
@@ -5588,6 +5599,7 @@
       "first_name": "Synthetic Lead 0280",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0280",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0280",
       "organization": "CRM-ORG-0280",
       "status": "Junk"
@@ -5708,6 +5720,7 @@
       "first_name": "Synthetic Lead 0286",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0286",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0286",
       "organization": "CRM-ORG-0286",
       "status": "Unqualified"
@@ -5728,6 +5741,7 @@
       "first_name": "Synthetic Lead 0287",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0287",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0287",
       "organization": "CRM-ORG-0287",
       "status": "Junk"
@@ -5848,6 +5862,7 @@
       "first_name": "Synthetic Lead 0293",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0293",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0293",
       "organization": "CRM-ORG-0293",
       "status": "Unqualified"
@@ -5868,6 +5883,7 @@
       "first_name": "Synthetic Lead 0294",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0294",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0294",
       "organization": "CRM-ORG-0294",
       "status": "Junk"
@@ -5988,6 +6004,7 @@
       "first_name": "Synthetic Lead 0300",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0300",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0300",
       "organization": "CRM-ORG-0300",
       "status": "Unqualified"
@@ -6008,6 +6025,7 @@
       "first_name": "Synthetic Lead 0301",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0301",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0301",
       "organization": "CRM-ORG-0301",
       "status": "Junk"
@@ -6128,6 +6146,7 @@
       "first_name": "Synthetic Lead 0307",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0307",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0307",
       "organization": "CRM-ORG-0307",
       "status": "Unqualified"
@@ -6148,6 +6167,7 @@
       "first_name": "Synthetic Lead 0308",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0308",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0308",
       "organization": "CRM-ORG-0308",
       "status": "Junk"
@@ -6268,6 +6288,7 @@
       "first_name": "Synthetic Lead 0314",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0314",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0314",
       "organization": "CRM-ORG-0314",
       "status": "Unqualified"
@@ -6288,6 +6309,7 @@
       "first_name": "Synthetic Lead 0315",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0315",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0315",
       "organization": "CRM-ORG-0315",
       "status": "Junk"
@@ -6408,6 +6430,7 @@
       "first_name": "Synthetic Lead 0321",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0321",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0321",
       "organization": "CRM-ORG-0321",
       "status": "Unqualified"
@@ -6428,6 +6451,7 @@
       "first_name": "Synthetic Lead 0322",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0322",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0322",
       "organization": "CRM-ORG-0322",
       "status": "Junk"
@@ -6548,6 +6572,7 @@
       "first_name": "Synthetic Lead 0328",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0328",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0328",
       "organization": "CRM-ORG-0328",
       "status": "Unqualified"
@@ -6568,6 +6593,7 @@
       "first_name": "Synthetic Lead 0329",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0329",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0329",
       "organization": "CRM-ORG-0329",
       "status": "Junk"
@@ -6688,6 +6714,7 @@
       "first_name": "Synthetic Lead 0335",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0335",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0335",
       "organization": "CRM-ORG-0335",
       "status": "Unqualified"
@@ -6708,6 +6735,7 @@
       "first_name": "Synthetic Lead 0336",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0336",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0336",
       "organization": "CRM-ORG-0336",
       "status": "Junk"
@@ -6828,6 +6856,7 @@
       "first_name": "Synthetic Lead 0342",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0342",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0342",
       "organization": "CRM-ORG-0342",
       "status": "Unqualified"
@@ -6848,6 +6877,7 @@
       "first_name": "Synthetic Lead 0343",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0343",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0343",
       "organization": "CRM-ORG-0343",
       "status": "Junk"
@@ -6968,6 +6998,7 @@
       "first_name": "Synthetic Lead 0349",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0349",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0349",
       "organization": "CRM-ORG-0349",
       "status": "Unqualified"
@@ -6988,6 +7019,7 @@
       "first_name": "Synthetic Lead 0350",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0350",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0350",
       "organization": "CRM-ORG-0350",
       "status": "Junk"
@@ -7108,6 +7140,7 @@
       "first_name": "Synthetic Lead 0356",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0356",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0356",
       "organization": "CRM-ORG-0356",
       "status": "Unqualified"
@@ -7128,6 +7161,7 @@
       "first_name": "Synthetic Lead 0357",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0357",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0357",
       "organization": "CRM-ORG-0357",
       "status": "Junk"
@@ -7248,6 +7282,7 @@
       "first_name": "Synthetic Lead 0363",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0363",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0363",
       "organization": "CRM-ORG-0363",
       "status": "Unqualified"
@@ -7268,6 +7303,7 @@
       "first_name": "Synthetic Lead 0364",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0364",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0364",
       "organization": "CRM-ORG-0364",
       "status": "Junk"
@@ -7388,6 +7424,7 @@
       "first_name": "Synthetic Lead 0370",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0370",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0370",
       "organization": "CRM-ORG-0370",
       "status": "Unqualified"
@@ -7408,6 +7445,7 @@
       "first_name": "Synthetic Lead 0371",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0371",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0371",
       "organization": "CRM-ORG-0371",
       "status": "Junk"
@@ -7528,6 +7566,7 @@
       "first_name": "Synthetic Lead 0377",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0377",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0377",
       "organization": "CRM-ORG-0377",
       "status": "Unqualified"
@@ -7548,6 +7587,7 @@
       "first_name": "Synthetic Lead 0378",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0378",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0378",
       "organization": "CRM-ORG-0378",
       "status": "Junk"
@@ -7668,6 +7708,7 @@
       "first_name": "Synthetic Lead 0384",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0384",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0384",
       "organization": "CRM-ORG-0384",
       "status": "Unqualified"
@@ -7688,6 +7729,7 @@
       "first_name": "Synthetic Lead 0385",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0385",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0385",
       "organization": "CRM-ORG-0385",
       "status": "Junk"
@@ -7808,6 +7850,7 @@
       "first_name": "Synthetic Lead 0391",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0391",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0391",
       "organization": "CRM-ORG-0391",
       "status": "Unqualified"
@@ -7828,6 +7871,7 @@
       "first_name": "Synthetic Lead 0392",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0392",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0392",
       "organization": "CRM-ORG-0392",
       "status": "Junk"
@@ -7948,6 +7992,7 @@
       "first_name": "Synthetic Lead 0398",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0398",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0398",
       "organization": "CRM-ORG-0398",
       "status": "Unqualified"
@@ -7968,6 +8013,7 @@
       "first_name": "Synthetic Lead 0399",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0399",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0399",
       "organization": "CRM-ORG-0399",
       "status": "Junk"
@@ -8088,6 +8134,7 @@
       "first_name": "Synthetic Lead 0405",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0405",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0405",
       "organization": "CRM-ORG-0405",
       "status": "Unqualified"
@@ -8108,6 +8155,7 @@
       "first_name": "Synthetic Lead 0406",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0406",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0406",
       "organization": "CRM-ORG-0406",
       "status": "Junk"
@@ -8228,6 +8276,7 @@
       "first_name": "Synthetic Lead 0412",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0412",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0412",
       "organization": "CRM-ORG-0412",
       "status": "Unqualified"
@@ -8248,6 +8297,7 @@
       "first_name": "Synthetic Lead 0413",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0413",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0413",
       "organization": "CRM-ORG-0413",
       "status": "Junk"
@@ -8368,6 +8418,7 @@
       "first_name": "Synthetic Lead 0419",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0419",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0419",
       "organization": "CRM-ORG-0419",
       "status": "Unqualified"
@@ -8388,6 +8439,7 @@
       "first_name": "Synthetic Lead 0420",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0420",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0420",
       "organization": "CRM-ORG-0420",
       "status": "Junk"
@@ -8508,6 +8560,7 @@
       "first_name": "Synthetic Lead 0426",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0426",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0426",
       "organization": "CRM-ORG-0426",
       "status": "Unqualified"
@@ -8528,6 +8581,7 @@
       "first_name": "Synthetic Lead 0427",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0427",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0427",
       "organization": "CRM-ORG-0427",
       "status": "Junk"
@@ -8648,6 +8702,7 @@
       "first_name": "Synthetic Lead 0433",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0433",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0433",
       "organization": "CRM-ORG-0433",
       "status": "Unqualified"
@@ -8668,6 +8723,7 @@
       "first_name": "Synthetic Lead 0434",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0434",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0434",
       "organization": "CRM-ORG-0434",
       "status": "Junk"
@@ -8788,6 +8844,7 @@
       "first_name": "Synthetic Lead 0440",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0440",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0440",
       "organization": "CRM-ORG-0440",
       "status": "Unqualified"
@@ -8808,6 +8865,7 @@
       "first_name": "Synthetic Lead 0441",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0441",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0441",
       "organization": "CRM-ORG-0441",
       "status": "Junk"
@@ -8928,6 +8986,7 @@
       "first_name": "Synthetic Lead 0447",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0447",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0447",
       "organization": "CRM-ORG-0447",
       "status": "Unqualified"
@@ -8948,6 +9007,7 @@
       "first_name": "Synthetic Lead 0448",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0448",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0448",
       "organization": "CRM-ORG-0448",
       "status": "Junk"
@@ -9068,6 +9128,7 @@
       "first_name": "Synthetic Lead 0454",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0454",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0454",
       "organization": "CRM-ORG-0454",
       "status": "Unqualified"
@@ -9088,6 +9149,7 @@
       "first_name": "Synthetic Lead 0455",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0455",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0455",
       "organization": "CRM-ORG-0455",
       "status": "Junk"
@@ -9208,6 +9270,7 @@
       "first_name": "Synthetic Lead 0461",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0461",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0461",
       "organization": "CRM-ORG-0461",
       "status": "Unqualified"
@@ -9228,6 +9291,7 @@
       "first_name": "Synthetic Lead 0462",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0462",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0462",
       "organization": "CRM-ORG-0462",
       "status": "Junk"
@@ -9348,6 +9412,7 @@
       "first_name": "Synthetic Lead 0468",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0468",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0468",
       "organization": "CRM-ORG-0468",
       "status": "Unqualified"
@@ -9368,6 +9433,7 @@
       "first_name": "Synthetic Lead 0469",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0469",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0469",
       "organization": "CRM-ORG-0469",
       "status": "Junk"
@@ -9488,6 +9554,7 @@
       "first_name": "Synthetic Lead 0475",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0475",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0475",
       "organization": "CRM-ORG-0475",
       "status": "Unqualified"
@@ -9508,6 +9575,7 @@
       "first_name": "Synthetic Lead 0476",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0476",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0476",
       "organization": "CRM-ORG-0476",
       "status": "Junk"
@@ -9628,6 +9696,7 @@
       "first_name": "Synthetic Lead 0482",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0482",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0482",
       "organization": "CRM-ORG-0482",
       "status": "Unqualified"
@@ -9648,6 +9717,7 @@
       "first_name": "Synthetic Lead 0483",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0483",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0483",
       "organization": "CRM-ORG-0483",
       "status": "Junk"
@@ -9768,6 +9838,7 @@
       "first_name": "Synthetic Lead 0489",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0489",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0489",
       "organization": "CRM-ORG-0489",
       "status": "Unqualified"
@@ -9788,6 +9859,7 @@
       "first_name": "Synthetic Lead 0490",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0490",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0490",
       "organization": "CRM-ORG-0490",
       "status": "Junk"
@@ -9908,6 +9980,7 @@
       "first_name": "Synthetic Lead 0496",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0496",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0496",
       "organization": "CRM-ORG-0496",
       "status": "Unqualified"
@@ -9928,6 +10001,7 @@
       "first_name": "Synthetic Lead 0497",
       "last_name": "Fixture",
       "lead_name": "Synthetic Lead 0497",
+      "lost_reason": "Poor Fit",
       "mobile_no": "+000-0000-0497",
       "organization": "CRM-ORG-0497",
       "status": "Junk"

@@ -29,7 +29,7 @@
     "status_allowlist": "status_allowlist.json"
   },
   "fixture_source": "gate1-synthetic",
-  "frappe_payload_sha256": "968f386506224c9d8706a8976048275c1557b336b8311681dece675c71776510",
+  "frappe_payload_sha256": "4cab8c4861b57844353868625b65f74cf3a5bb2d109cc84ed06b4fbcf97be9a5",
   "generated_at": "2026-08-06T00:00:00Z",
   "record_counts": {
     "CRM Deal": 500,

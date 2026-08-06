@@ -4663,6 +4663,7 @@
       "custom_esan_team": "TEM-01KZA5X900CB5Z66AA0562EBVS",
       "expected_deal_value": 12450,
       "lead": "CRM-LEAD-0246",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0246",
       "status": "Lost"
     },
@@ -4777,6 +4778,7 @@
       "custom_esan_team": "TEM-01KZA5X900J7DPD0EC68V18G4P",
       "expected_deal_value": 12510,
       "lead": "CRM-LEAD-0252",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0252",
       "status": "Lost"
     },
@@ -4891,6 +4893,7 @@
       "custom_esan_team": "TEM-01KZA5X900GSZQBV6NV1DRTJJ3",
       "expected_deal_value": 12570,
       "lead": "CRM-LEAD-0258",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0258",
       "status": "Lost"
     },
@@ -5005,6 +5008,7 @@
       "custom_esan_team": "TEM-01KZA5X900M1KZPHB2HBQVM57M",
       "expected_deal_value": 12630,
       "lead": "CRM-LEAD-0264",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0264",
       "status": "Lost"
     },
@@ -5119,6 +5123,7 @@
       "custom_esan_team": "TEM-01KZA5X9008WYC09CXCEMYF6JZ",
       "expected_deal_value": 12690,
       "lead": "CRM-LEAD-0270",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0270",
       "status": "Lost"
     },
@@ -5233,6 +5238,7 @@
       "custom_esan_team": "TEM-01KZA5X900CB5Z66AA0562EBVS",
       "expected_deal_value": 12750,
       "lead": "CRM-LEAD-0276",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0276",
       "status": "Lost"
     },
@@ -5347,6 +5353,7 @@
       "custom_esan_team": "TEM-01KZA5X900J7DPD0EC68V18G4P",
       "expected_deal_value": 12810,
       "lead": "CRM-LEAD-0282",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0282",
       "status": "Lost"
     },
@@ -5461,6 +5468,7 @@
       "custom_esan_team": "TEM-01KZA5X900GSZQBV6NV1DRTJJ3",
       "expected_deal_value": 12870,
       "lead": "CRM-LEAD-0288",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0288",
       "status": "Lost"
     },
@@ -5575,6 +5583,7 @@
       "custom_esan_team": "TEM-01KZA5X900M1KZPHB2HBQVM57M",
       "expected_deal_value": 12930,
       "lead": "CRM-LEAD-0294",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0294",
       "status": "Lost"
     },
@@ -5689,6 +5698,7 @@
       "custom_esan_team": "TEM-01KZA5X9008WYC09CXCEMYF6JZ",
       "expected_deal_value": 12990,
       "lead": "CRM-LEAD-0300",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0300",
       "status": "Lost"
     },
@@ -5803,6 +5813,7 @@
       "custom_esan_team": "TEM-01KZA5X900CB5Z66AA0562EBVS",
       "expected_deal_value": 13050,
       "lead": "CRM-LEAD-0306",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0306",
       "status": "Lost"
     },
@@ -5917,6 +5928,7 @@
       "custom_esan_team": "TEM-01KZA5X900J7DPD0EC68V18G4P",
       "expected_deal_value": 13110,
       "lead": "CRM-LEAD-0312",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0312",
       "status": "Lost"
     },
@@ -6031,6 +6043,7 @@
       "custom_esan_team": "TEM-01KZA5X900GSZQBV6NV1DRTJJ3",
       "expected_deal_value": 13170,
       "lead": "CRM-LEAD-0318",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0318",
       "status": "Lost"
     },
@@ -6145,6 +6158,7 @@
       "custom_esan_team": "TEM-01KZA5X900M1KZPHB2HBQVM57M",
       "expected_deal_value": 13230,
       "lead": "CRM-LEAD-0324",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0324",
       "status": "Lost"
     },
@@ -6259,6 +6273,7 @@
       "custom_esan_team": "TEM-01KZA5X9008WYC09CXCEMYF6JZ",
       "expected_deal_value": 13290,
       "lead": "CRM-LEAD-0330",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0330",
       "status": "Lost"
     },
@@ -6373,6 +6388,7 @@
       "custom_esan_team": "TEM-01KZA5X900CB5Z66AA0562EBVS",
       "expected_deal_value": 13350,
       "lead": "CRM-LEAD-0336",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0336",
       "status": "Lost"
     },
@@ -6487,6 +6503,7 @@
       "custom_esan_team": "TEM-01KZA5X900J7DPD0EC68V18G4P",
       "expected_deal_value": 13410,
       "lead": "CRM-LEAD-0342",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0342",
       "status": "Lost"
     },
@@ -6601,6 +6618,7 @@
       "custom_esan_team": "TEM-01KZA5X900GSZQBV6NV1DRTJJ3",
       "expected_deal_value": 13470,
       "lead": "CRM-LEAD-0348",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0348",
       "status": "Lost"
     },
@@ -6715,6 +6733,7 @@
       "custom_esan_team": "TEM-01KZA5X900M1KZPHB2HBQVM57M",
       "expected_deal_value": 13530,
       "lead": "CRM-LEAD-0354",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0354",
       "status": "Lost"
     },
@@ -6829,6 +6848,7 @@
       "custom_esan_team": "TEM-01KZA5X9008WYC09CXCEMYF6JZ",
       "expected_deal_value": 13590,
       "lead": "CRM-LEAD-0360",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0360",
       "status": "Lost"
     },
@@ -6943,6 +6963,7 @@
       "custom_esan_team": "TEM-01KZA5X900CB5Z66AA0562EBVS",
       "expected_deal_value": 13650,
       "lead": "CRM-LEAD-0366",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0366",
       "status": "Lost"
     },
@@ -7057,6 +7078,7 @@
       "custom_esan_team": "TEM-01KZA5X900J7DPD0EC68V18G4P",
       "expected_deal_value": 13710,
       "lead": "CRM-LEAD-0372",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0372",
       "status": "Lost"
     },
@@ -7171,6 +7193,7 @@
       "custom_esan_team": "TEM-01KZA5X900GSZQBV6NV1DRTJJ3",
       "expected_deal_value": 13770,
       "lead": "CRM-LEAD-0378",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0378",
       "status": "Lost"
     },
@@ -7285,6 +7308,7 @@
       "custom_esan_team": "TEM-01KZA5X900M1KZPHB2HBQVM57M",
       "expected_deal_value": 13830,
       "lead": "CRM-LEAD-0384",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0384",
       "status": "Lost"
     },
@@ -7399,6 +7423,7 @@
       "custom_esan_team": "TEM-01KZA5X9008WYC09CXCEMYF6JZ",
       "expected_deal_value": 13890,
       "lead": "CRM-LEAD-0390",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0390",
       "status": "Lost"
     },
@@ -7513,6 +7538,7 @@
       "custom_esan_team": "TEM-01KZA5X900CB5Z66AA0562EBVS",
       "expected_deal_value": 13950,
       "lead": "CRM-LEAD-0396",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0396",
       "status": "Lost"
     },
@@ -7627,6 +7653,7 @@
       "custom_esan_team": "TEM-01KZA5X900J7DPD0EC68V18G4P",
       "expected_deal_value": 14010,
       "lead": "CRM-LEAD-0402",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0402",
       "status": "Lost"
     },
@@ -7741,6 +7768,7 @@
       "custom_esan_team": "TEM-01KZA5X900GSZQBV6NV1DRTJJ3",
       "expected_deal_value": 14070,
       "lead": "CRM-LEAD-0408",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0408",
       "status": "Lost"
     },
@@ -7855,6 +7883,7 @@
       "custom_esan_team": "TEM-01KZA5X900M1KZPHB2HBQVM57M",
       "expected_deal_value": 14130,
       "lead": "CRM-LEAD-0414",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0414",
       "status": "Lost"
     },
@@ -7969,6 +7998,7 @@
       "custom_esan_team": "TEM-01KZA5X9008WYC09CXCEMYF6JZ",
       "expected_deal_value": 14190,
       "lead": "CRM-LEAD-0420",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0420",
       "status": "Lost"
     },
@@ -8083,6 +8113,7 @@
       "custom_esan_team": "TEM-01KZA5X900CB5Z66AA0562EBVS",
       "expected_deal_value": 14250,
       "lead": "CRM-LEAD-0426",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0426",
       "status": "Lost"
     },
@@ -8197,6 +8228,7 @@
       "custom_esan_team": "TEM-01KZA5X900J7DPD0EC68V18G4P",
       "expected_deal_value": 14310,
       "lead": "CRM-LEAD-0432",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0432",
       "status": "Lost"
     },
@@ -8311,6 +8343,7 @@
       "custom_esan_team": "TEM-01KZA5X900GSZQBV6NV1DRTJJ3",
       "expected_deal_value": 14370,
       "lead": "CRM-LEAD-0438",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0438",
       "status": "Lost"
     },
@@ -8425,6 +8458,7 @@
       "custom_esan_team": "TEM-01KZA5X900M1KZPHB2HBQVM57M",
       "expected_deal_value": 14430,
       "lead": "CRM-LEAD-0444",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0444",
       "status": "Lost"
     },
@@ -8539,6 +8573,7 @@
       "custom_esan_team": "TEM-01KZA5X9008WYC09CXCEMYF6JZ",
       "expected_deal_value": 14490,
       "lead": "CRM-LEAD-0450",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0450",
       "status": "Lost"
     },
@@ -8653,6 +8688,7 @@
       "custom_esan_team": "TEM-01KZA5X900CB5Z66AA0562EBVS",
       "expected_deal_value": 14550,
       "lead": "CRM-LEAD-0456",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0456",
       "status": "Lost"
     },
@@ -8767,6 +8803,7 @@
       "custom_esan_team": "TEM-01KZA5X900J7DPD0EC68V18G4P",
       "expected_deal_value": 14610,
       "lead": "CRM-LEAD-0462",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0462",
       "status": "Lost"
     },
@@ -8881,6 +8918,7 @@
       "custom_esan_team": "TEM-01KZA5X900GSZQBV6NV1DRTJJ3",
       "expected_deal_value": 14670,
       "lead": "CRM-LEAD-0468",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0468",
       "status": "Lost"
     },
@@ -8995,6 +9033,7 @@
       "custom_esan_team": "TEM-01KZA5X900M1KZPHB2HBQVM57M",
       "expected_deal_value": 14730,
       "lead": "CRM-LEAD-0474",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0474",
       "status": "Lost"
     },
@@ -9109,6 +9148,7 @@
       "custom_esan_team": "TEM-01KZA5X9008WYC09CXCEMYF6JZ",
       "expected_deal_value": 14790,
       "lead": "CRM-LEAD-0480",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0480",
       "status": "Lost"
     },
@@ -9223,6 +9263,7 @@
       "custom_esan_team": "TEM-01KZA5X900CB5Z66AA0562EBVS",
       "expected_deal_value": 14850,
       "lead": "CRM-LEAD-0486",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0486",
       "status": "Lost"
     },
@@ -9337,6 +9378,7 @@
       "custom_esan_team": "TEM-01KZA5X900J7DPD0EC68V18G4P",
       "expected_deal_value": 14910,
       "lead": "CRM-LEAD-0492",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0492",
       "status": "Lost"
     },
@@ -9451,6 +9493,7 @@
       "custom_esan_team": "TEM-01KZA5X900GSZQBV6NV1DRTJJ3",
       "expected_deal_value": 14970,
       "lead": "CRM-LEAD-0498",
+      "lost_reason": "Competition",
       "organization": "CRM-ORG-0498",
       "status": "Lost"
     },
