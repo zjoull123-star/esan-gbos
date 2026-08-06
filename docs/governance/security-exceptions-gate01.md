@@ -41,8 +41,8 @@ High/Critical 项已逐项绑定到精确的 `ID + PURL + 版本`，并设置
 - 镜像唯一的 Java archive 是 Debian `gettext-base` 所属的
   `/usr/share/java/libintl-0.21.jar`（约 2.6 KB）；运行时没有 JVM，
   该文件不被执行，所属 Debian 包仍由 OS vulnerability scanner 覆盖。
-  为避免为这一非运行制品下载约 900 MB Java 数据库，扫描器只跳过
-  这一条精确路径，不使用 JAR 通配。
+  为避免安全与 SBOM 流程为这一非运行制品下载约 900 MB Java
+  数据库，两条扫描命令都只跳过这一条精确路径，不使用 JAR 通配。
 
 ## 剩余例外
 

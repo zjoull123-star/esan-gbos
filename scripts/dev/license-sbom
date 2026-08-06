@@ -8,6 +8,7 @@ export PATH="${HOME}/.orbstack/bin:${PATH}"
 TRIVY_IMAGE="aquasec/trivy:0.73.0@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c"
 OUTPUT_DIR="${1:-${TMPDIR:-/tmp}/esan-gbos-sbom}"
 TARGET_IMAGE="${2:-}"
+NON_RUNTIME_JAR="usr/share/java/libintl-0.21.jar"
 
 mkdir -p -- "${OUTPUT_DIR}"
 OUTPUT_DIR="$(CDPATH= cd -- "${OUTPUT_DIR}" && pwd -P)"
@@ -31,12 +32,21 @@ else
     -v /var/run/docker.sock:/var/run/docker.sock:ro \
     -v "${OUTPUT_DIR}:/output" \
     "${TRIVY_IMAGE}" \
-    image --scanners license --format json --output /output/licenses.json "${TARGET_DIGEST}"
+    image \
+    --scanners license \
+    --skip-files "${NON_RUNTIME_JAR}" \
+    --format json \
+    --output /output/licenses.json \
+    "${TARGET_DIGEST}"
   docker run --rm \
     -v /var/run/docker.sock:/var/run/docker.sock:ro \
     -v "${OUTPUT_DIR}:/output" \
     "${TRIVY_IMAGE}" \
-    image --format cyclonedx --output /output/sbom.cdx.json "${TARGET_DIGEST}"
+    image \
+    --skip-files "${NON_RUNTIME_JAR}" \
+    --format cyclonedx \
+    --output /output/sbom.cdx.json \
+    "${TARGET_DIGEST}"
 fi
 
 (
