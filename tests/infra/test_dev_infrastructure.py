@@ -250,6 +250,8 @@ def test_custom_image_builder_verifies_every_source_ref() -> None:
     assert "COPY --chown=frappe:frappe apps/esan_gbos" in final_containerfile
     assert "pip install --no-deps -e apps/esan_gbos" in final_containerfile
     assert "grep -Fxq esan_gbos sites/apps.txt" in final_containerfile
+    assert "printf '\\n%s\\n' esan_gbos" in final_containerfile
+    assert "awk 'NF && !seen[$0]++'" in final_containerfile
     assert "bench build --app esan_gbos" in final_containerfile
     assert "pnpm install --frozen-lockfile" in final_containerfile
     assert "pnpm run build" in final_containerfile

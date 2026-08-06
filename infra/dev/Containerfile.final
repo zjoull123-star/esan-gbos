@@ -42,8 +42,11 @@ RUN test -f apps/esan_gbos/pyproject.toml \
     && test -f fixtures/gate1/manifest.json \
     && test -f fixtures/gate1/frappe_payload.json \
     && ./env/bin/pip install --no-deps -e apps/esan_gbos
-RUN grep -Fxq esan_gbos sites/apps.txt \
-    || printf '%s\n' esan_gbos >> sites/apps.txt
+RUN if ! grep -Fxq esan_gbos sites/apps.txt; then \
+        printf '\n%s\n' esan_gbos >> sites/apps.txt; \
+    fi \
+    && awk 'NF && !seen[$0]++' sites/apps.txt > sites/apps.txt.tmp \
+    && mv sites/apps.txt.tmp sites/apps.txt
 
 COPY --from=app-assets --chown=frappe:frappe \
     /home/frappe/frappe-bench/apps/esan_gbos/esan_gbos/public/frontend/ \
