@@ -1,0 +1,97 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06T17:40:33Z",
+  "scope": "gate4-local-synthetic-agent-review-runtime",
+  "overall_status": "accepted_for_local_synthetic_gate5_work",
+  "primary_technical_review": {
+    "status": "completed",
+    "reviewer_role": "Codex primary implementation reviewer",
+    "decision": "Accept deterministic local agents, proposal-only policy enforcement and human review for Gate 5 implementation. No external or production capability is authorized."
+  },
+  "human_review": {
+    "status": "pending",
+    "reviewer_role": "GBOS Security Owner",
+    "decision": null
+  },
+  "risks": [
+    {
+      "risk_id": "G4-CAP-01",
+      "title": "Agent output invokes an external or formal business capability",
+      "severity": "critical",
+      "owner": "AI Platform Security",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/action_guard/test_policy.py",
+        "tests/agent_runtime/test_agents.py"
+      ],
+      "evidence_refs": [
+        "contracts/gate4/action-guard-decision.schema.json",
+        "services/action_guard/policy.py"
+      ]
+    },
+    {
+      "risk_id": "G4-QUEUE-02",
+      "title": "Duplicate, expired or cross-site tasks create duplicate effects",
+      "severity": "high",
+      "owner": "Agent Runtime",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/agent_runtime/test_postgres_repository.py",
+        "tests/integration/test_gate4_postgres.py"
+      ],
+      "evidence_refs": [
+        "services/agent_runtime/migrations/001_gate4_agent_runtime.sql",
+        "services/agent_runtime/migrations/002_gate4_agent_runtime_hardening.sql"
+      ]
+    },
+    {
+      "risk_id": "G4-TRACE-03",
+      "title": "A human confirmation is detached from its exact proposal or evidence",
+      "severity": "high",
+      "owner": "Context and Audit",
+      "status": "runtime_verified",
+      "test_refs": [
+        "tests/context/test_gate4_decision.py",
+        "tests/integration/test_gate4_postgres.py"
+      ],
+      "evidence_refs": [
+        "contracts/gate4/decision-trace-response.schema.json",
+        "services/context/migrations/003_gate4_decision_hardening.sql"
+      ]
+    },
+    {
+      "risk_id": "G4-REVIEW-04",
+      "title": "Generic writes or a second role bypass the assigned human review",
+      "severity": "high",
+      "owner": "GBOS Application Security",
+      "status": "runtime_verified",
+      "test_refs": [
+        "apps/esan_gbos/esan_gbos/gbos/doctype/gbos_review_case/test_gbos_review_case.py"
+      ],
+      "evidence_refs": [
+        "apps/esan_gbos/esan_gbos/api/v2/review_case.py",
+        "apps/esan_gbos/esan_gbos/gbos/doctype/base.py"
+      ]
+    },
+    {
+      "risk_id": "G4-EXTERNAL-05",
+      "title": "Real model, Kingdee or cloud access is enabled without external approvals",
+      "severity": "high",
+      "owner": "Platform Security",
+      "status": "controlled_by_disabled_capability",
+      "test_refs": [
+        "tests/governance/test_gate4_infra.py",
+        "tests/contracts/test_gate4_runtime_contracts.py"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate4/runtime-validation.json",
+        "docs/external-deps.md"
+      ]
+    }
+  ],
+  "limitations": [
+    "All agent and review inputs were synthetic.",
+    "No real model, external channel, Kingdee endpoint, cloud account or production secret was used.",
+    "Formal Security Owner review remains pending."
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-06T17:40:33Z",
+  "scope": "gate4-local-synthetic-governed-agent-review-runtime",
+  "status": "pass",
+  "implementation_commit": "36e86f571bcae0a8063ce6ee3d064beaf8d5317b",
+  "frappe_runtime": {
+    "site": "gbos.localhost",
+    "apps": {
+      "frappe": "16.30.0",
+      "erpnext": "16.31.0",
+      "crm": "1.81.0",
+      "esan_gbos": "0.1.0"
+    },
+    "migration_runs_after_final_image": 2,
+    "integration_tests": {
+      "passed": 31,
+      "failed": 0
+    },
+    "health": "healthy"
+  },
+  "final_image": {
+    "platform": "linux/arm64",
+    "digest": "sha256:5a3e4d924fbc7911d6f05b355a6090f139c5e433cfe90e8b59875485bd9dbcb2",
+    "revision_label": "36e86f571bcae0a8063ce6ee3d064beaf8d5317b",
+    "source_sha256_label": "01b88f1bec0d59636080f9f28847826a3770839a5228a86975a5b894add78d00",
+    "source": "verified local Gate 0 upstream and builder images",
+    "remote_tag_revalidation": "temporarily_unavailable_connection_reset"
+  },
+  "postgres": {
+    "server_major": 17,
+    "pgvector": "0.8.2",
+    "gate4_migration_runs": 2,
+    "forced_rls_tables_in_agent_and_context_schemas": 18,
+    "roles": {
+      "gbos_agent_app": {
+        "superuser": false,
+        "bypass_rls": false
+      },
+      "gbos_context_app": {
+        "superuser": false,
+        "bypass_rls": false
+      }
+    },
+    "live_integration_tests": {
+      "passed": 3,
+      "failed": 0
+    }
+  },
+  "frontend": {
+    "unit_tests": {
+      "passed": 61,
+      "failed": 0
+    },
+    "playwright": {
+      "passed": 5,
+      "failed": 0
+    },
+    "production_build": "pass",
+    "sensitive_api_offline_cache": false
+  },
+  "activity_counters": {
+    "real_model_calls": 0,
+    "kingdee_calls": 0,
+    "external_messages": 0,
+    "formal_business_writes": 0,
+    "production_credentials_loaded": 0
+  },
+  "warnings": [
+    "Frappe migration reports a non-fatal upstream DuckDB cleanup method warning.",
+    "Frappe v16 reports query pagination argument deprecations scheduled for v17.",
+    "The first exact upstream tag revalidation attempt was interrupted by a GitHub connection reset; the final image therefore reused the already verified, digest-addressed local Gate 0 images without changing versions."
+  ]
+}

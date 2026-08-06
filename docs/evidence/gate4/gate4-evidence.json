@@ -1,0 +1,175 @@
+{
+  "schema_version": "1.0",
+  "gate": 4,
+  "captured_at": "2026-08-06T17:40:33Z",
+  "scope": "local-synthetic-governed-agent-review-only",
+  "status": "pass",
+  "evidence_level": "local-runtime-synthetic-only",
+  "implementation_commit": {
+    "value": "36e86f571bcae0a8063ce6ee3d064beaf8d5317b",
+    "status": "final"
+  },
+  "capability_boundary": {
+    "deterministic_agents": [
+      "sales",
+      "purchase",
+      "product"
+    ],
+    "allowed_outputs": [
+      "ActionProposal",
+      "AgentTimelineEvent",
+      "ContextDecision",
+      "VerifiedBusinessFact",
+      "ReviewCase",
+      "ReviewDecision"
+    ],
+    "human_confirmation_required": true,
+    "direct_business_writer": false,
+    "external_send": false,
+    "kingdee_write": false
+  },
+  "test_inventory": [
+    {
+      "path": "tests",
+      "command": "uv run --frozen pytest",
+      "status": "pass",
+      "passed": 672,
+      "failed": 0,
+      "skipped": 10
+    },
+    {
+      "path": "tests/integration/test_gate4_postgres.py",
+      "command": "scripts/dev/test-gate4-integration",
+      "status": "pass",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "Frappe esan_gbos app",
+      "command": "bench --site gbos.localhost run-tests --app esan_gbos",
+      "status": "pass",
+      "passed": 31,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "apps/esan_gbos/frontend",
+      "command": "pnpm run lint && pnpm run test && pnpm run build",
+      "status": "pass",
+      "passed": 61,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "apps/esan_gbos/frontend/e2e",
+      "command": "pnpm run test:e2e",
+      "status": "pass",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "path": "tests/acceptance/test_gate4_evidence.py",
+      "command": "uv run --frozen pytest tests/acceptance/test_gate4_evidence.py",
+      "status": "pass",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "control_results": {
+    "action_guard_fail_closed": {
+      "status": "pass",
+      "test_refs": [
+        "tests/action_guard/test_policy.py"
+      ],
+      "evidence_refs": [
+        "services/action_guard/policy.py"
+      ]
+    },
+    "durable_idempotent_queue": {
+      "status": "pass",
+      "test_refs": [
+        "tests/integration/test_gate4_postgres.py"
+      ],
+      "evidence_refs": [
+        "services/agent_runtime/migrations/001_gate4_agent_runtime.sql"
+      ]
+    },
+    "site_isolation_and_role_separation": {
+      "status": "pass",
+      "test_refs": [
+        "tests/integration/test_gate4_postgres.py"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate4/runtime-validation.json"
+      ]
+    },
+    "exact_context_decision_trace": {
+      "status": "pass",
+      "test_refs": [
+        "tests/context/test_gate4_decision.py",
+        "tests/integration/test_gate4_postgres.py"
+      ],
+      "evidence_refs": [
+        "contracts/gate4/decision-trace-response.schema.json"
+      ]
+    },
+    "human_review_command_boundary": {
+      "status": "pass",
+      "test_refs": [
+        "apps/esan_gbos/esan_gbos/gbos/doctype/gbos_review_case/test_gbos_review_case.py"
+      ],
+      "evidence_refs": [
+        "contracts/bff-v2.openapi.json"
+      ]
+    },
+    "responsive_accessible_review_pwa": {
+      "status": "pass",
+      "test_refs": [
+        "apps/esan_gbos/frontend/e2e/gbos.spec.ts"
+      ],
+      "evidence_refs": [
+        "docs/evidence/gate4/runtime-validation.json"
+      ]
+    }
+  },
+  "zero_external_activity": {
+    "method": "Capability allowlist tests, local-only runtime configuration and synthetic fixture execution",
+    "real_model_calls": 0,
+    "kingdee_calls": 0,
+    "external_messages": 0,
+    "formal_business_writes": 0,
+    "production_credentials_loaded": 0
+  },
+  "capability_ledger": {
+    "deterministic_local_agents": "pass",
+    "human_review": "pass",
+    "real_model_provider": "not_started",
+    "kingdee_read": "deferred_to_gate5",
+    "kingdee_write": "not_available",
+    "cloud_runtime": "not_started",
+    "production": "not_started"
+  },
+  "go_no_go": {
+    "gate4_technical_local": "go",
+    "gate5_local_start": "go",
+    "real_model": "no_go",
+    "kingdee_live": "blocked_external_input",
+    "cloud": "no_go",
+    "production": "no_go"
+  },
+  "pending_evidence": [
+    "Formal Security Owner review",
+    "Privacy and Legal approval for real personal data",
+    "Restricted Kingdee read-only account and endpoint",
+    "Tencent Cloud account, quota and deployment approval",
+    "Business-owner UAT"
+  ],
+  "limitations": [
+    "The Gate 4 agents are deterministic test implementations and do not call a model provider.",
+    "The final image reused already verified local upstream digests after remote GitHub tag lookup was interrupted.",
+    "The technical local Go does not authorize real data, external channels, Kingdee, cloud or production."
+  ]
+}
