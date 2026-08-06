@@ -1,5 +1,5 @@
-ARG UPSTREAM_IMAGE
-ARG UPSTREAM_BUILDER_IMAGE
+ARG UPSTREAM_IMAGE=esan-gbos-upstream:gate0
+ARG UPSTREAM_BUILDER_IMAGE=esan-gbos-upstream-builder:gate1
 
 FROM ${UPSTREAM_BUILDER_IMAGE} AS app-assets
 
@@ -42,6 +42,8 @@ RUN test -f apps/esan_gbos/pyproject.toml \
     && test -f fixtures/gate1/manifest.json \
     && test -f fixtures/gate1/frappe_payload.json \
     && ./env/bin/pip install --no-deps -e apps/esan_gbos
+RUN grep -Fxq esan_gbos sites/apps.txt \
+    || printf '%s\n' esan_gbos >> sites/apps.txt
 
 COPY --from=app-assets --chown=frappe:frappe \
     /home/frappe/frappe-bench/apps/esan_gbos/esan_gbos/public/frontend/ \
