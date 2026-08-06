@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -212,6 +213,24 @@ def test_gate1_identifiers_are_synthetic_and_not_real_pii() -> None:
                 assert "@gmail.com" not in value.lower()
                 assert "@qq.com" not in value.lower()
                 assert "@163.com" not in value.lower()
+
+
+def test_fixture_business_dates_are_valid_iso_calendar_dates() -> None:
+    date_fields = {
+        "target_date",
+        "started_on",
+        "completed_on",
+        "shipped_on",
+        "delivered_on",
+        "received_on",
+        "needed_by",
+        "due_date",
+    }
+    for record in load_records():
+        for field_name in date_fields:
+            value = record_fields(record).get(field_name)
+            if value is not None:
+                assert date.fromisoformat(value).isoformat() == value
 
 
 def test_crm_payload_uses_only_frozen_v1_fields_and_statuses() -> None:

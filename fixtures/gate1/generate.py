@@ -925,7 +925,7 @@ def _make_records(seed: int) -> tuple[OrderedDict[str, list[dict[str, Any]]], li
                     title=f"Synthetic follow-up work item {work_index + 1:04d}",
                     assigned_to=reviewer,
                     priority="Low",
-                    due_date=f"2026-10-{index + 1:02d}",
+                    due_date=f"2026-10-{index % 28 + 1:02d}",
                     reference_doctype="GBOS Party Profile",
                     reference_name=party,
                 ),

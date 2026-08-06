@@ -108312,7 +108312,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.1@example.invalid",
       "business_status": "Open",
-      "due_date": "2026-10-29",
+      "due_date": "2026-10-01",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
@@ -108337,7 +108337,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.2@example.invalid",
       "business_status": "Blocked",
-      "due_date": "2026-10-30",
+      "due_date": "2026-10-02",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
@@ -108362,7 +108362,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.1@example.invalid",
       "business_status": "Open",
-      "due_date": "2026-10-31",
+      "due_date": "2026-10-03",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
@@ -108387,7 +108387,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.2@example.invalid",
       "business_status": "Blocked",
-      "due_date": "2026-10-32",
+      "due_date": "2026-10-04",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
@@ -108412,7 +108412,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.1@example.invalid",
       "business_status": "Open",
-      "due_date": "2026-10-33",
+      "due_date": "2026-10-05",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
@@ -108437,7 +108437,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.2@example.invalid",
       "business_status": "Blocked",
-      "due_date": "2026-10-34",
+      "due_date": "2026-10-06",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
@@ -108462,7 +108462,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.1@example.invalid",
       "business_status": "Open",
-      "due_date": "2026-10-35",
+      "due_date": "2026-10-07",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
@@ -108487,7 +108487,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.2@example.invalid",
       "business_status": "Blocked",
-      "due_date": "2026-10-36",
+      "due_date": "2026-10-08",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
@@ -108512,7 +108512,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.1@example.invalid",
       "business_status": "Open",
-      "due_date": "2026-10-37",
+      "due_date": "2026-10-09",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
@@ -108537,7 +108537,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.2@example.invalid",
       "business_status": "Blocked",
-      "due_date": "2026-10-38",
+      "due_date": "2026-10-10",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
@@ -108562,7 +108562,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.1@example.invalid",
       "business_status": "Open",
-      "due_date": "2026-10-39",
+      "due_date": "2026-10-11",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
@@ -108587,7 +108587,7 @@
     "fields": {
       "assigned_to": "synthetic.reviewer.2@example.invalid",
       "business_status": "Blocked",
-      "due_date": "2026-10-40",
+      "due_date": "2026-10-12",
       "last_request_id": "req-gate1-synthetic-0001",
       "origin": "Fixture",
       "origin_reference": "fixture://gate1/GBOS Work Item",
