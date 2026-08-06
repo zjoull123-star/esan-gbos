@@ -375,6 +375,7 @@ def test_final_runtime_prunes_build_tooling_and_uses_a_locked_realtime_bundle() 
         "apt-get purge -y --auto-remove curl git libcurl3-gnutls libcurl4 "
         "vim vim-common vim-runtime xxd"
     ) in containerfile
+    assert 'ENV GIT_PYTHON_REFRESH="quiet"' in containerfile
 
     for dependency in ('"socket.io": "4.8.3"', '"@redis/client": "1.5.12"', '"cookie": "0.7.0"'):
         assert dependency in runtime_package

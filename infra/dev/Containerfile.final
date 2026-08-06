@@ -46,6 +46,7 @@ ARG ESAN_SOURCE_COMMIT
 ARG ESAN_SOURCE_SHA256
 LABEL org.opencontainers.image.revision="${ESAN_SOURCE_COMMIT}"
 LABEL com.esan.gbos.app-source-sha256="${ESAN_SOURCE_SHA256}"
+ENV GIT_PYTHON_REFRESH="quiet"
 
 USER root
 RUN export DEBIAN_FRONTEND=noninteractive \
