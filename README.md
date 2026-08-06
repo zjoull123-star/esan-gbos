@@ -14,8 +14,9 @@ Contact、Lead 和 Deal；金蝶仍是订单、库存与财务权威系统。
 - 版本化 BFF、团队级权限、revision、幂等与服务端状态机；
 - 观察事件、不可变证据、事实提案与最小 Context Service；
 - 持久 Agent Runtime、Action Guard、Decision 和人工审核链路；Gate 4
-  现包含仅限本地合成数据的确定性 Sales、Purchase、Product、CEO 四个原型，
-  其中 Product profile 显式映射到 `product_sample` 队列类型；
+  现包含仅限本地合成数据的确定性 Sales、Purchase、Product、CEO 四个原型；
+  Product profile 名为 `product`，Agent Task 契约类型保留
+  `product_sample`，本轮未实现或宣称二者的持久调度接线；
 - 受治理 Metrics API、CEO 驾驶舱和只读 Kingdee Adapter 边界；
 - 发布清单契约、失败关闭预检、dry-run 发布/回滚计划和双人授权边界；
 - SLO/告警、备份恢复、DR/事件响应 runbook 与隐私治理契约；

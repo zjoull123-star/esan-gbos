@@ -257,8 +257,9 @@ Require the closure evidence to state:
 
 - all four orchestrator profiles: `sales`, `purchase`, `product`, `ceo`;
 - the durable queue contract types remain `sales`, `purchase`,
-  `product_sample`, `ceo`, with an explicit Product profile →
-  `product_sample` queue mapping rather than conflating the two names;
+  `product_sample`, `ceo`; explicitly record that the Product profile kind
+  (`product`) and Agent Task contract type (`product_sample`) are separate names
+  and that this closure does not implement durable dispatch wiring between them;
 - CEO action is exactly `internal.ai_draft.propose`;
 - `synthetic = true`, official metric/forecast are false;
 - network/model/tool/external/Kingdee/production activity counters are zero;
@@ -281,11 +282,13 @@ assert evidence["durable_queue_contract_types"] == [
     "product_sample",
     "ceo",
 ]
-assert evidence["profile_queue_mapping"] == {
-    "sales": "sales",
-    "purchase": "purchase",
-    "product": "product_sample",
-    "ceo": "ceo",
+assert evidence["profile_queue_naming"] == {
+    "product_profile_kind": "product",
+    "agent_task_contract_type": "product_sample",
+}
+assert evidence["runtime_boundaries"] == {
+    "durable_worker_to_orchestrator_dispatcher_present": False,
+    "product_profile_to_product_sample_queue_mapping_present": False,
 }
 assert evidence["ceo_prototype"] == {
     "processing_purpose": "metric_reporting",
@@ -363,9 +366,11 @@ assert evidence["external_activity"] == {
 
 Require `implementation_commit` to match `^[0-9a-f]{40}$` and add
 `implementation_source_sha256`; the acceptance test recomputes the SHA-256 of
-`services/agent_runtime/agents.py`. Before writing evidence, run
-`git cat-file -e <implementation_commit>^{commit}` locally and record only the
-already committed Task 2 SHA, never the later evidence commit.
+`services/agent_runtime/agents.py`, runs
+`git cat-file -e <implementation_commit>^{commit}`, and hashes
+`git show <implementation_commit>:services/agent_runtime/agents.py`. All three
+source bindings must match. Record only the already committed Task 2 SHA, never
+the later evidence commit.
 
 The closure control matrix must reference, rather than duplicate, the existing
 Gate 4 evidence controls for durable queue/lease recovery, Context Decision

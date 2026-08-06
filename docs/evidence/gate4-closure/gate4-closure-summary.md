@@ -13,8 +13,10 @@ contains no official metric or forecast value, and makes zero network, model,
 tool, external-message, Kingdee, cloud or production calls.
 
 The durable Agent Task contract retains the types `sales`, `purchase`,
-`product_sample` and `ceo`. The orchestrator's Product profile maps to the
-`product_sample` queue type; these names are intentionally not conflated.
+`product_sample` and `ceo`, while the orchestrator profile kind remains
+`product`. They are separate names. This closure does not implement or claim a
+durable worker-to-orchestrator dispatcher or a runtime Product →
+`product_sample` mapping.
 
 ## Governance boundary
 
@@ -47,6 +49,8 @@ The implementation is commit
 `f341948986d2426abb873940c2d10960cc82ea9b`. The current
 `services/agent_runtime/agents.py` SHA-256 is
 `6e532884a028e86bba7810393279c1a10b367818647255fda545c0b37b6dbf26`.
+Acceptance verifies that the commit exists and that the same source SHA-256 is
+present both in that commit and in the current tree.
 The historical `docs/evidence/gate4/` snapshot was not modified; its manifest
 SHA-256 remains
 `2df12cda3e442bbe68880e555583affe7e4f483096fd369e2c37bf34ef843b64`.

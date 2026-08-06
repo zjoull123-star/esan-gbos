@@ -19,11 +19,13 @@
     "product_sample",
     "ceo"
   ],
-  "profile_queue_mapping": {
-    "sales": "sales",
-    "purchase": "purchase",
-    "product": "product_sample",
-    "ceo": "ceo"
+  "profile_queue_naming": {
+    "product_profile_kind": "product",
+    "agent_task_contract_type": "product_sample"
+  },
+  "runtime_boundaries": {
+    "durable_worker_to_orchestrator_dispatcher_present": false,
+    "product_profile_to_product_sample_queue_mapping_present": false
   },
   "ceo_prototype": {
     "processing_purpose": "metric_reporting",
@@ -225,6 +227,7 @@
   },
   "limitations": [
     "This closes only the missing deterministic synthetic CEO prototype in Gate 4.",
+    "The Product profile kind and product_sample Agent Task contract type are separate names; this closure does not implement or claim durable worker-to-orchestrator dispatch wiring between them.",
     "The Gate 5 governed cockpit remains a Metrics API surface and is not an output of this prototype.",
     "requires_human_review is proposal metadata only and did not create a Review Case or issue an ApprovedCommand.",
     "This evidence creates no real-model, Kingdee, cloud, external-send or production authorization."
