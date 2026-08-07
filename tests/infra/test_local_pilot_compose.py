@@ -33,7 +33,9 @@ def test_local_compose_isolated_and_remote_images_are_digest_pinned() -> None:
 
     for volume in (
         "local-pilot-postgres-data",
-        "local-pilot-object-data",
+        "local-pilot-evidence-cas",
+        "local-pilot-mariadb-data",
+        "local-pilot-frappe-sites",
     ):
         assert re.search(rf"(?m)^  {re.escape(volume)}:\s*$", compose)
         assert f"name: esan-gbos-{volume}" in compose
@@ -52,15 +54,22 @@ def test_local_compose_isolated_and_remote_images_are_digest_pinned() -> None:
     assert postgres["local_repo_digest"].endswith(postgres["local_inspect_digest"])
     for service in (
         "postgres",
-        "object-store",
         "prometheus",
         "webhook-ingress",
-        "agent-runtime",
+        "context-api",
+        "agent-api",
+        "observer-api",
+        "connector-worker",
+        "model-projection-worker",
         "email-poller",
         "wecom-poller",
         "agent-worker",
-        "deepseek-worker",
+        "materialization-worker",
         "media-worker",
+        "mariadb",
+        "redis-cache",
+        "redis-queue",
+        "pwa",
         "cloudflared",
     ):
         assert "pull_policy: never" in _service_block(compose, service)
@@ -79,7 +88,7 @@ def test_every_published_database_ui_and_monitoring_port_is_loopback_only() -> N
     assert published_ports
     assert all(port.startswith("127.0.0.1:") for port in published_ports)
 
-    for service in ("postgres", "object-store", "prometheus"):
+    for service in ("postgres", "mariadb", "pwa", "prometheus"):
         assert "127.0.0.1:" in _service_block(compose, service)
     assert "pilot-ui:" not in compose
     assert "services.local_pilot_runtime.ui" not in compose
@@ -97,20 +106,25 @@ def test_external_capabilities_are_profile_gated_and_default_killed() -> None:
         assert "GBOS_CONNECTOR_KILL_SWITCH: ${GBOS_CONNECTOR_KILL_SWITCH:-true}" in block
         assert "controlled-egress" in block
 
-    model = _service_block(compose, "deepseek-worker")
-    assert 'profiles: ["model"]' in model
-    assert "GBOS_MODEL_KILL_SWITCH: ${GBOS_MODEL_KILL_SWITCH:-true}" in model
-    assert "controlled-egress" in model
+    for service in ("agent-worker", "model-projection-worker"):
+        model = _service_block(compose, service)
+        assert 'profiles: ["model"]' in model
+        assert "GBOS_MODEL_KILL_SWITCH: ${GBOS_MODEL_KILL_SWITCH:-true}" in model
+        assert "controlled-egress" in model
+    assert "deepseek-worker:" not in compose
 
     tunnel = _service_block(compose, "cloudflared")
     assert 'profiles: ["tunnel"]' in tunnel
     assert "controlled-egress" in tunnel
-    assert "local-internal" in tunnel
+    assert "webhook-tunnel" in tunnel
+    assert "local-internal" not in tunnel
     assert 'profiles: ["whatsapp"]' in _service_block(compose, "webhook-ingress")
 
     assert 'GBOS_KINGDEE_ENABLED: "false"' in compose
+    assert 'GBOS_CLOUD_SERVER_ENABLED: "false"' in compose
+    assert 'GBOS_CLOUD_BUSINESS_STORAGE_ENABLED: "false"' in compose
     assert re.search(r"(?m)^  kingdee(?:-|_).*:\s*$", compose.lower()) is None
-    assert "GBOS_EXTERNAL_SEND_ENABLED: ${GBOS_EXTERNAL_SEND_ENABLED:-false}" in compose
+    assert 'GBOS_EXTERNAL_SEND_ENABLED: "false"' in compose
     assert re.search(r"(?ms)^  local-internal:.*?internal: true", compose)
     assert "whatsapp-poller:" not in compose
     assert '"whatsapp"]' not in compose.replace('profiles: ["whatsapp"]', "")
@@ -121,6 +135,7 @@ def test_cloudflared_can_reach_only_the_whatsapp_webhook_ingress() -> None:
     config = _read(LOCAL_INFRA / "cloudflared" / "config.yml")
 
     assert "./cloudflared/config.yml:/etc/cloudflared/config.yml:ro" in compose
+    assert "webhook-tunnel" in _service_block(compose, "webhook-ingress")
     assert "path: ^/webhooks/whatsapp(/.*)?$" in config
     assert "service: http://webhook-ingress:8000" in config
     assert "service: http_status:404" in config
@@ -147,30 +162,23 @@ def test_health_dependencies_kill_switches_and_file_secrets_are_explicit() -> No
     assert compose.count("healthcheck:") >= 5
     assert compose.count("condition: service_healthy") >= 5
     assert "GBOS_EMERGENCY_STOP_FILE: /run/gbos/EMERGENCY_STOP" in compose
-    assert "./../../.runtime/local-pilot:/run/gbos:ro" in compose
+    assert "../../.runtime/local-pilot:/run/gbos:ro" in compose
     assert "${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}" in compose
     assert "POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password" in compose
-    assert "MINIO_ROOT_PASSWORD_FILE: /run/secrets/object_store_password" in compose
+    assert "MINIO_ROOT_PASSWORD_FILE" not in compose
+    assert "local-pilot-evidence-cas:/var/lib/gbos/evidence" in compose
     assert not re.search(r"(?i)(password|token|api_key):\s*[\"']?[A-Za-z0-9_-]{12,}", compose)
 
 
-def test_prometheus_and_alert_baseline_cover_safety_and_dependencies() -> None:
+def test_optional_prometheus_does_not_claim_unimplemented_runtime_metrics() -> None:
     compose = _read(COMPOSE)
     prometheus = _read(LOCAL_INFRA / "prometheus" / "prometheus.yml")
     alerts = _read(LOCAL_INFRA / "prometheus" / "alerts.yml")
 
-    assert "prometheus" in _service_block(compose, "prometheus")
-    assert "local-pilot-alerts" in prometheus
-    for job in ("webhook-ingress", "agent-runtime"):
-        assert f"job_name: {job}" in prometheus
-    assert "job_name: pilot-ui" not in prometheus
-    for alert in (
-        "LocalPilotTargetDown",
-        "LocalPilotEmergencyStopActive",
-        "LocalPilotConnectorUnexpectedlyEnabled",
-        "LocalPilotModelUnexpectedlyEnabled",
-        "LocalPilotDatabaseUnavailable",
-        "LocalPilotObjectStoreUnavailable",
-    ):
-        assert f"alert: {alert}" in alerts
-    assert 'up{job="agent-runtime"} == 0' in alerts
+    block = _service_block(compose, "prometheus")
+    assert 'profiles: ["observability"]' in block
+    assert "job_name: prometheus" in prometheus
+    for absent in ("webhook-ingress", "agent-runtime", "observer-api", "context-api"):
+        assert f"job_name: {absent}" not in prometheus
+    assert "groups: []" in alerts
+    assert "gbos_local_pilot_" not in alerts

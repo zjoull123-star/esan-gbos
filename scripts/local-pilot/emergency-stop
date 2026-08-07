@@ -11,8 +11,9 @@ chmod 700 "${RUNTIME_DIR}"
 printf '%s\n' "activated" > "${EMERGENCY_STOP_FILE}"
 chmod 600 "${EMERGENCY_STOP_FILE}"
 read_secret_dir
+read_config_dir
 
-# Preserve PostgreSQL, object storage, Prometheus, and the local UI for forensics.
+# Preserve databases, the evidence CAS, monitoring, and the local UI for forensics.
 docker compose \
   --project-name "${PROJECT_NAME}" \
   -f "${COMPOSE_FILE}" \
@@ -21,9 +22,13 @@ docker compose \
   cloudflared \
   email-poller \
   wecom-poller \
-  deepseek-worker \
+  connector-worker \
+  model-projection-worker \
   media-worker \
   agent-worker \
-  webhook-ingress || true
+  materialization-worker \
+  webhook-ingress \
+  frappe-worker \
+  frappe-scheduler || true
 
 echo "Emergency stop latched: tunnel, pollers, webhook, model, and media workers stopped."

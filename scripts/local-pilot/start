@@ -48,15 +48,35 @@ chmod 600 "${SECRET_DIR_RECORD}"
 started=false
 rollback() {
   if [[ "${started}" != "true" ]]; then
+    cleanup_config_dir
     cleanup_secret_dir
   fi
 }
 trap rollback EXIT HUP INT TERM
 
+config_tmp_root="${TMPDIR:-/tmp}"
+config_tmp_root="${config_tmp_root%/}"
+GBOS_CONFIG_DIR="$(mktemp -d "${config_tmp_root}/gbos-local-pilot-config.XXXXXX")"
+export GBOS_CONFIG_DIR
+printf '%s\n' "${GBOS_CONFIG_DIR}" > "${CONFIG_DIR_RECORD}"
+chmod 600 "${CONFIG_DIR_RECORD}"
+"${SCRIPT_DIR}/render-config" \
+  --manifest "${MANIFEST}" \
+  --output-dir "${GBOS_CONFIG_DIR}"
+
 GBOS_CONNECTOR_KILL_SWITCH="true"
 GBOS_MODEL_KILL_SWITCH="true"
+GBOS_MODEL_PROJECTION_KILL_SWITCH="true"
+GBOS_DEEPSEEK_EGRESS_ENABLED="false"
+GBOS_MATERIALIZATION_KILL_SWITCH="false"
 GBOS_EXTERNAL_SEND_ENABLED="false"
-export GBOS_CONNECTOR_KILL_SWITCH GBOS_MODEL_KILL_SWITCH GBOS_EXTERNAL_SEND_ENABLED
+export \
+  GBOS_CONNECTOR_KILL_SWITCH \
+  GBOS_MODEL_KILL_SWITCH \
+  GBOS_MODEL_PROJECTION_KILL_SWITCH \
+  GBOS_DEEPSEEK_EGRESS_ENABLED \
+  GBOS_MATERIALIZATION_KILL_SWITCH \
+  GBOS_EXTERNAL_SEND_ENABLED
 
 profile_args=(--profile runtime)
 connector_profile_enabled=false
@@ -64,6 +84,9 @@ while IFS= read -r capability; do
   case "${capability}" in
     email|wecom|whatsapp)
       profile_args+=(--profile "${capability}")
+      if [[ "${connector_profile_enabled}" == "false" ]]; then
+        profile_args+=(--profile connectors)
+      fi
       connector_profile_enabled=true
       ;;
     media)
@@ -102,10 +125,26 @@ if [[ "${connector_profile_enabled}" == "true" ]]; then
 fi
 if printf '%s\n' "${profile_args[@]}" | grep -Fxq model; then
   GBOS_MODEL_KILL_SWITCH="false"
+  GBOS_MODEL_PROJECTION_KILL_SWITCH="false"
+  GBOS_DEEPSEEK_EGRESS_ENABLED="true"
 fi
-export GBOS_CONNECTOR_KILL_SWITCH GBOS_MODEL_KILL_SWITCH
+export \
+  GBOS_CONNECTOR_KILL_SWITCH \
+  GBOS_MODEL_KILL_SWITCH \
+  GBOS_MODEL_PROJECTION_KILL_SWITCH \
+  GBOS_DEEPSEEK_EGRESS_ENABLED
 
 compose "${profile_args[@]}" config --quiet
+compose --profile runtime up -d --wait \
+  postgres \
+  mariadb \
+  redis-cache \
+  redis-queue \
+  frappe-configurator \
+  frappe-site \
+  frappe-backend \
+  frappe-websocket
+compose --profile runtime run --rm migrations
 compose "${profile_args[@]}" up -d --wait
 
 started=true

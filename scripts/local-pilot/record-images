@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+# ruff: noqa: UP017, UP045
+"""Atomically record locally inspected image identities without pulling."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--lock-file", required=True, type=Path)
+    parser.add_argument("--service", action="append", dest="services")
+    return parser.parse_args()
+
+
+def _inspect(reference: str) -> dict[str, Any]:
+    result = subprocess.run(
+        ["docker", "image", "inspect", reference],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"image is not present locally: {reference}")
+    try:
+        item = json.loads(result.stdout)[0]
+        image_id = item["Id"]
+        repo_digests = item.get("RepoDigests") or []
+    except (IndexError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"invalid image inspection result: {reference}") from exc
+    if not isinstance(image_id, str) or not image_id.startswith("sha256:"):
+        raise RuntimeError(f"image has no inspectable local ID: {reference}")
+    return {"image_id": image_id, "repo_digests": repo_digests}
+
+
+def _matching_repo_digest(reference: str, values: list[str]) -> Optional[str]:
+    expected = reference.split("@", 1)[1] if "@" in reference else None
+    if expected is None:
+        return None
+    matches = [value for value in values if value.endswith(f"@{expected}")]
+    if len(matches) != 1:
+        raise RuntimeError(f"pinned RepoDigest is absent or ambiguous: {reference}")
+    return matches[0]
+
+
+def main() -> int:
+    args = _parse_args()
+    try:
+        lock_path = args.lock_file.resolve()
+        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        images = payload["images"]
+        selected = set(args.services or [item["service"] for item in images])
+        known = {item["service"] for item in images}
+        unknown = selected - known
+        if unknown:
+            raise RuntimeError(f"unknown image services: {sorted(unknown)}")
+        for item in images:
+            if item["service"] not in selected:
+                continue
+            inspected = _inspect(item["reference"])
+            item["local_inspect_digest"] = inspected["image_id"]
+            item["local_repo_digest"] = (
+                _matching_repo_digest(item["reference"], inspected["repo_digests"])
+                if item["source"] == "remote"
+                else None
+            )
+        payload["recorded_at"] = datetime.now(timezone.utc).isoformat()
+        payload["recording_scope"] = (
+            "local docker image inspect after an explicit build or local image installation; "
+            "null means not yet recorded and is fail-closed"
+        )
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{lock_path.name}.",
+            dir=lock_path.parent,
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, lock_path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except (OSError, RuntimeError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        print(f"IMAGE RECORD FAILED: {exc}", file=sys.stderr)
+        return 78
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

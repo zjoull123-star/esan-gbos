@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+if [[ "${1:-}" != "--confirm-network-build" || $# -ne 1 ]]; then
+  echo "Usage: scripts/local-pilot/build-frappe-image --confirm-network-build" >&2
+  echo "The governed Frappe builder verifies upstream tags and requires network access." >&2
+  exit 64
+fi
+
+FRAPPE_IMAGE="esan-gbos-local-pilot-frappe:2026-08-08"
+SOURCE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+"${REPO_ROOT}/scripts/dev/build-custom-image" \
+  --stage final \
+  --esan-commit "${SOURCE_COMMIT}" \
+  --image "${FRAPPE_IMAGE}"
+
+"${SCRIPT_DIR}/record-images" \
+  --lock-file "${REPO_ROOT}/infra/local/images.lock.json" \
+  --service frappe-pwa

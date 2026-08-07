@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+MANIFEST="${DEFAULT_MANIFEST}"
+acknowledged=false
+while (( $# > 0 )); do
+  case "$1" in
+    --acknowledge-synthetic)
+      acknowledged=true
+      ;;
+    --manifest)
+      [[ $# -ge 2 ]] || { echo "--manifest requires a path" >&2; exit 64; }
+      MANIFEST="$2"
+      shift
+      ;;
+    *)
+      echo "Usage: scripts/local-pilot/bootstrap-synthetic-user --acknowledge-synthetic [--manifest PATH]" >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+if [[ "${acknowledged}" != "true" ]]; then
+  echo "Synthetic bootstrap requires explicit acknowledgement." >&2
+  exit 64
+fi
+
+"${SCRIPT_DIR}/preflight" \
+  --repo-root "${REPO_ROOT}" \
+  --manifest "${MANIFEST}" \
+  --require-go
+
+read_secret_dir
+read_config_dir
+[[ -n "${GBOS_SECRET_DIR:-}" && -d "${GBOS_SECRET_DIR}" ]] || {
+  echo "Local-pilot secret material is unavailable; start the approved stack first." >&2
+  exit 78
+}
+[[ -n "${GBOS_CONFIG_DIR:-}" && -d "${GBOS_CONFIG_DIR}" ]] || {
+  echo "Local-pilot rendered configuration is unavailable." >&2
+  exit 78
+}
+if ! compose --profile runtime ps --status running --services | grep -Fxq pwa; then
+  echo "The approved local PWA is not running; refusing an implicit stack start." >&2
+  exit 78
+fi
+
+compose \
+  --profile runtime \
+  --profile synthetic-bootstrap \
+  run --rm --no-deps frappe-synthetic-bootstrap

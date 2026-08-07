@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""Render closed local-pilot runtime and connector configuration."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+_ROLES = {
+    "observer": "gbos_observer_app",
+    "context": "gbos_context_app",
+    "agent": "gbos_agent_app",
+    "media": "gbos_media_app",
+}
+_CHANNEL_FILES = {
+    "email": "/run/secrets/email_credential",
+    "wecom": "/run/secrets/wecom_credential",
+    "whatsapp": "/run/secrets/whatsapp_credential",
+    "media": "/run/secrets/media_runtime_key",
+}
+_TOP_LEVEL_FIELDS = {
+    "schema_version",
+    "mode",
+    "site_id",
+    "compliance_state",
+    "retention_days",
+    "production_go",
+    "local_pilot_go",
+    "local_pilot_status",
+    "capabilities",
+    "deepseek",
+    "channels",
+}
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest", required=True, type=Path)
+    parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="Render disabled deterministic smoke configuration only.",
+    )
+    return parser.parse_args()
+
+
+def _load_manifest(path: Path, *, synthetic: bool) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"manifest is unreadable: {exc}") from exc
+    if (
+        not isinstance(value, dict)
+        or set(value) != _TOP_LEVEL_FIELDS
+        or value.get("schema_version") != "1.0"
+        or value.get("mode") != "local_pilot"
+        or value.get("production_go") is not False
+    ):
+        raise ValueError("manifest must use the closed, non-production local-pilot schema")
+    capabilities = value.get("capabilities")
+    if not isinstance(capabilities, dict) or any(
+        item is not False for item in capabilities.values()
+    ):
+        raise ValueError("all external and formal capabilities must remain disabled")
+    channels = value.get("channels")
+    deepseek = value.get("deepseek")
+    if not isinstance(channels, dict) or set(channels) != set(_CHANNEL_FILES):
+        raise ValueError("manifest channel set is not closed")
+    if not isinstance(deepseek, dict):
+        raise ValueError("manifest DeepSeek declaration is missing")
+    if synthetic:
+        if value.get("local_pilot_go") is not False:
+            raise ValueError("synthetic rendering requires local_pilot_go=false")
+        if deepseek.get("enabled") is not False or any(
+            not isinstance(item, dict) or item.get("enabled") is not False
+            for item in channels.values()
+        ):
+            raise ValueError("synthetic rendering cannot enable connectors or models")
+    elif value.get("local_pilot_go") is not True or value.get("local_pilot_status") not in {
+        "ready",
+        "running",
+    }:
+        raise ValueError("real rendering requires an approved local-pilot manifest")
+    return value
+
+
+def _component(
+    *,
+    enabled: bool,
+    provider_mode: str = "disabled",
+    synthetic: bool = False,
+) -> dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "kill_switch": not enabled,
+        "provider_mode": provider_mode if enabled else "disabled",
+        "synthetic_e2e": synthetic and enabled,
+    }
+
+
+def _runtime_config(
+    manifest: dict[str, Any],
+    *,
+    role_name: str,
+    purpose: str,
+    synthetic: bool,
+) -> dict[str, Any]:
+    approved = manifest["local_pilot_go"] is True and not synthetic
+    deepseek_enabled = (
+        approved
+        and manifest["deepseek"]["enabled"] is True
+        and manifest["deepseek"]["kill_switch"] is False
+    )
+    components = {
+        "agent_api": _component(enabled=approved and purpose == "agent"),
+        "context_api": _component(enabled=approved and purpose == "context"),
+        "agent_worker": _component(
+            enabled=(
+                (deepseek_enabled and purpose == "agent")
+                or (approved and purpose == "materialization")
+            ),
+            provider_mode="deepseek" if purpose == "agent" else "disabled",
+        ),
+        # The runtime schema retains the model_worker component name, but the
+        # enabled observer-side consumer is the direct model-projection worker.
+        # It does not introduce a durable model queue.
+        "model_worker": _component(
+            enabled=deepseek_enabled and purpose == "observer",
+            provider_mode="deepseek",
+        ),
+    }
+    endpoint = (
+        "http://frappe-backend:8000" if purpose == "materialization" else "http://context-api:8001"
+    )
+    return {
+        "schema_version": "1.0",
+        "site_id": manifest["site_id"],
+        "postgres": {
+            "host": "postgres",
+            "port": 5432,
+            "database": "gbos_local_pilot",
+            "user": role_name,
+            "password_file": "/run/secrets/postgres_app_password",
+            "connect_timeout_seconds": 5,
+        },
+        "auth": {
+            "agent_api_bearer_file": "/run/secrets/agent_api_bearer",
+            "context_api_bearer_file": "/run/secrets/context_api_bearer",
+            "context_client_bearer_file": "/run/secrets/context_client_bearer",
+            "context_auth_ref": "local-pilot-context-auth-v1",
+        },
+        "context_endpoint": {
+            "base_url": endpoint,
+            "unix_socket": None,
+        },
+        "listen": {
+            "host": "0.0.0.0",
+            "agent_api_port": 8002,
+            "context_api_port": 8001,
+        },
+        "components": components,
+        "worker": {
+            "worker_id": f"local-pilot-{purpose}-worker",
+            "idle_delay_seconds": 1.0,
+            "heartbeat_interval_seconds": 5.0,
+        },
+    }
+
+
+def _connector_config(manifest: dict[str, Any]) -> dict[str, Any]:
+    channels: dict[str, Any] = {}
+    for name, secret_file in _CHANNEL_FILES.items():
+        source = manifest["channels"][name]
+        channels[name] = {
+            "enabled": source["enabled"],
+            "kill_switch": not source["enabled"],
+            "activation_time": source["activation_time"],
+            "backfill_history": source["backfill_history"],
+            "credential_file": secret_file,
+        }
+    return {
+        "schema_version": "1.0",
+        "site_id": manifest["site_id"],
+        "external_send": False,
+        "evidence_cas_root": "/var/lib/gbos/evidence",
+        "channels": channels,
+    }
+
+
+def _atomic_private_json(output_dir: Path, name: str, payload: dict[str, Any]) -> None:
+    serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{name}.", dir=output_dir)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        os.replace(temporary, output_dir / name)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def main() -> int:
+    args = _parse_args()
+    try:
+        manifest = _load_manifest(args.manifest, synthetic=args.synthetic)
+        output_dir = args.output_dir.resolve()
+        if output_dir.exists() and (output_dir.is_symlink() or not output_dir.is_dir()):
+            raise ValueError("output directory must be a real directory")
+        output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        output_dir.chmod(0o700)
+        for purpose, role in _ROLES.items():
+            _atomic_private_json(
+                output_dir,
+                f"runtime-{purpose}.json",
+                _runtime_config(
+                    manifest,
+                    role_name=role,
+                    purpose=purpose,
+                    synthetic=args.synthetic,
+                ),
+            )
+        _atomic_private_json(
+            output_dir,
+            "runtime-materialization.json",
+            _runtime_config(
+                manifest,
+                role_name=_ROLES["agent"],
+                purpose="materialization",
+                synthetic=args.synthetic,
+            ),
+        )
+        _atomic_private_json(output_dir, "connectors.json", _connector_config(manifest))
+    except (OSError, ValueError) as exc:
+        print(f"CONFIG RENDER FAILED: {exc}", file=sys.stderr)
+        return 78
+    print(f"Rendered closed local-pilot configuration in {output_dir}.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,29 @@
+ARG PYTHON_BASE_IMAGE=python:3.14.2-slim-bookworm
+FROM ${PYTHON_BASE_IMAGE}
+
+ARG UV_VERSION=0.9.28
+
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_NO_PROGRESS=1
+
+RUN groupadd --gid 10001 gbos \
+    && useradd --uid 10001 --gid gbos --create-home --shell /usr/sbin/nologin gbos \
+    && python -m pip install --no-cache-dir "uv==${UV_VERSION}"
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project \
+    && chown -R gbos:gbos /app
+
+COPY --chown=gbos:gbos services ./services
+COPY --chown=gbos:gbos contracts ./contracts
+
+USER gbos
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD ["python", "-c", "import os; os.kill(1, 0)"]
+
+CMD ["python", "-c", "raise SystemExit(78)"]

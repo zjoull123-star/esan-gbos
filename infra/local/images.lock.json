@@ -1,6 +1,6 @@
 {
-  "recorded_at": "2026-08-08T01:42:56+08:00",
-  "recording_scope": "remote manifest digests resolved without pulling; local fields come only from docker image inspect, and null is intentional fail-closed evidence that the image is not installed",
+  "recorded_at": "2026-08-07T18:30:22.574152+00:00",
+  "recording_scope": "local docker image inspect after an explicit build or local image installation; null means not yet recorded and is fail-closed",
   "images": [
     {
       "service": "postgres",
@@ -10,9 +10,23 @@
       "local_repo_digest": "pgvector/pgvector@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966"
     },
     {
-      "service": "object-store",
+      "service": "mariadb",
       "source": "remote",
-      "reference": "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+      "reference": "mariadb:11.8@sha256:d9f7eb2637296652f24b484afd5d246f759f49f5babcadc6a9e344c9acb75fbf",
+      "local_inspect_digest": "sha256:d9f7eb2637296652f24b484afd5d246f759f49f5babcadc6a9e344c9acb75fbf",
+      "local_repo_digest": "mariadb@sha256:d9f7eb2637296652f24b484afd5d246f759f49f5babcadc6a9e344c9acb75fbf"
+    },
+    {
+      "service": "redis",
+      "source": "remote",
+      "reference": "redis:6.2-alpine@sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23",
+      "local_inspect_digest": "sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23",
+      "local_repo_digest": "redis@sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23"
+    },
+    {
+      "service": "frappe-pwa",
+      "source": "local-build",
+      "reference": "esan-gbos-local-pilot-frappe:2026-08-08",
       "local_inspect_digest": null,
       "local_repo_digest": null
     },

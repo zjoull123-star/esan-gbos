@@ -132,10 +132,7 @@ def _composition_issues(configuration: Mapping[str, Any]) -> list[str]:
         or composition.get("frappe_pwa") != "composed"
         or not isinstance(composition.get("runtime_containerfile"), str)
     ):
-        return [
-            "local pilot 未组合，不可启动: "
-            "Frappe PWA and runtime Containerfile composition are incomplete"
-        ]
+        return ["local pilot 未组合，不可启动: declared composition is not runtime verified"]
     return []
 
 
@@ -143,21 +140,51 @@ def _runtime_issues(
     repo_root: Path,
     manifest: Mapping[str, Any],
     configuration: Mapping[str, Any],
+    *,
+    synthetic: bool,
 ) -> list[str]:
     issues: list[str] = []
-    issues.extend(_composition_issues(configuration))
+    if not synthetic:
+        issues.extend(_composition_issues(configuration))
+    declared_services = configuration.get("services")
+    if not isinstance(declared_services, Mapping):
+        issues.append("runtime service status declaration is missing")
+        declared_services = {}
+    if synthetic:
+        for service, declaration in declared_services.items():
+            if not isinstance(declaration, Mapping) or declaration.get("status") != "executable":
+                continue
+            relative_path = declaration.get("path")
+            if not isinstance(relative_path, str) or not (repo_root / relative_path).is_file():
+                issues.append(f"declared executable is unavailable for {service}: {relative_path}")
+    else:
+        for service in _required_entrypoints(manifest, configuration):
+            declaration = declared_services.get(service)
+            if not isinstance(declaration, Mapping) or declaration.get("status") != "executable":
+                issues.append(f"runtime entrypoint remains blocked for {service}")
     for service, relative_path in _required_entrypoints(manifest, configuration).items():
+        if synthetic:
+            continue
         path = repo_root / relative_path
         if not path.is_file():
             issues.append(f"runtime entrypoint unavailable for {service}: {relative_path}")
     image = configuration.get("runtime_image")
     if not isinstance(image, str) or not image or image.endswith(":latest"):
         issues.append("runtime image must use an explicit non-latest tag")
+    containerfile = repo_root / "infra/local/Containerfile.runtime"
+    if not containerfile.is_file():
+        issues.append("runtime Containerfile is unavailable")
     return issues
 
 
 def _required_image_services(manifest: Mapping[str, Any]) -> set[str]:
-    required = {"postgres", "object-store", "prometheus", "local-runtime"}
+    required = {
+        "postgres",
+        "mariadb",
+        "redis",
+        "frappe-pwa",
+        "local-runtime",
+    }
     channels = manifest.get("channels")
     if isinstance(channels, Mapping):
         whatsapp = channels.get("whatsapp")
@@ -243,10 +270,21 @@ def _image_issues(
             issues.append(f"image {service} local_inspect_digest is required")
         elif not SHA256_PATTERN.fullmatch(expected_id):
             issues.append(f"image {service} local_inspect_digest is invalid")
-        if expected_repo_digest is None:
-            issues.append(f"image {service} local_repo_digest is required")
-        elif not REPO_DIGEST_PATTERN.fullmatch(expected_repo_digest):
-            issues.append(f"image {service} local_repo_digest is invalid")
+        source = next(
+            (
+                item.get("source")
+                for item in images
+                if isinstance(item, Mapping) and item.get("service") == service
+            ),
+            None,
+        )
+        if source == "remote":
+            if expected_repo_digest is None:
+                issues.append(f"image {service} local_repo_digest is required")
+            elif not REPO_DIGEST_PATTERN.fullmatch(expected_repo_digest):
+                issues.append(f"image {service} local_repo_digest is invalid")
+        elif expected_repo_digest is not None:
+            issues.append(f"local-build image {service} must not invent a RepoDigest")
     if skip_image_check:
         return issues
     if not shutil.which("docker"):
@@ -311,13 +349,37 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--repo-root", type=Path)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--image-lock", type=Path)
-    parser.add_argument("--require-go", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--require-go", action="store_true")
+    mode.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="Validate disabled synthetic configuration without image or composition claims.",
+    )
     parser.add_argument(
         "--skip-runtime-image-check",
         action="store_true",
         help="Static validation only; start never uses this option.",
     )
     return parser.parse_args(argv)
+
+
+def _synthetic_issues(manifest: Mapping[str, Any], synthetic: bool) -> list[str]:
+    if not synthetic:
+        return []
+    issues: list[str] = []
+    if manifest.get("local_pilot_go") is not False:
+        issues.append("synthetic preflight requires local_pilot_go=false")
+    deepseek = manifest.get("deepseek")
+    if not isinstance(deepseek, Mapping) or deepseek.get("enabled") is not False:
+        issues.append("synthetic preflight requires DeepSeek disabled")
+    channels = manifest.get("channels")
+    if not isinstance(channels, Mapping) or any(
+        not isinstance(item, Mapping) or item.get("enabled") is not False
+        for item in channels.values()
+    ):
+        issues.append("synthetic preflight requires every channel disabled")
+    return issues
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -346,21 +408,24 @@ def main(argv: list[str] | None = None) -> int:
     issues.extend(_placeholder_hash_issues(manifest))
     _validate_schema(manifest, schema, issues)
     issues.extend(_governance_issues(manifest, args.require_go))
+    issues.extend(_synthetic_issues(manifest, args.synthetic))
     issues.extend(
         _runtime_issues(
             repo_root,
             manifest,
             configuration,
+            synthetic=args.synthetic,
         )
     )
-    issues.extend(
-        _image_issues(
-            configuration,
-            manifest,
-            image_lock,
-            skip_image_check=args.skip_runtime_image_check,
+    if not args.synthetic:
+        issues.extend(
+            _image_issues(
+                configuration,
+                manifest,
+                image_lock,
+                skip_image_check=args.skip_runtime_image_check,
+            )
         )
-    )
     issues.extend(_media_host_issues(manifest))
 
     if issues:

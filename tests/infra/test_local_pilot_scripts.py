@@ -43,6 +43,12 @@ def test_operational_scripts_are_executable_and_shell_safe() -> None:
         "prepare-secrets",
         "inspect-images",
         "preflight",
+        "migrate",
+        "render-config",
+        "record-images",
+        "build-runtime-image",
+        "build-frappe-image",
+        "bootstrap-synthetic-user",
     ):
         path = SCRIPTS / name
         content = _read(path)
@@ -52,6 +58,18 @@ def test_operational_scripts_are_executable_and_shell_safe() -> None:
         if content.startswith("#!/usr/bin/env bash"):
             assert "set -euo pipefail" in content
     assert "未组合，不可启动" in _read(SCRIPTS / "status")
+
+
+def test_synthetic_user_bootstrap_is_explicit_and_real_go_gated() -> None:
+    script = _read(SCRIPTS / "bootstrap-synthetic-user")
+
+    assert "--acknowledge-synthetic" in script
+    assert "--require-go" in script
+    assert script.index("--require-go") < script.index(
+        "run --rm --no-deps frappe-synthetic-bootstrap"
+    )
+    assert "--profile synthetic-bootstrap" in script
+    assert "frappe_demo_password" not in script
 
 
 def test_start_runs_fail_closed_preflight_before_secret_or_compose_actions() -> None:
@@ -92,14 +110,17 @@ def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() ->
         "cloudflared",
         "email-poller",
         "wecom-poller",
-        "deepseek-worker",
+        "connector-worker",
+        "model-projection-worker",
         "media-worker",
         "agent-worker",
+        "materialization-worker",
     ):
         assert service in emergency
     stop_command = emergency[emergency.index("docker compose") :]
     assert " postgres" not in stop_command
-    assert " object-store" not in stop_command
+    assert " mariadb" not in stop_command
+    assert " local-pilot-evidence-cas" not in stop_command
     assert "EMERGENCY_STOP" in emergency
     assert "whatsapp-poller" not in emergency
 
@@ -182,16 +203,24 @@ def test_preflight_fails_closed_when_runtime_composition_is_unavailable(tmp_path
 
     assert result.returncode != 0
     assert "未组合，不可启动" in result.stderr
-    assert "Frappe PWA and runtime Containerfile composition are incomplete" in result.stderr
+    assert "declared composition is not runtime verified" in result.stderr
 
 
-def test_preflight_rejects_null_digest_for_required_image() -> None:
-    result = _run_preflight("--image-lock", str(IMAGE_LOCK))
+def test_preflight_rejects_null_digest_for_required_image(tmp_path: Path) -> None:
+    lock = json.loads(_read(IMAGE_LOCK))
+    mariadb = next(item for item in lock["images"] if item["service"] == "mariadb")
+    mariadb["local_inspect_digest"] = None
+    mariadb["local_repo_digest"] = None
+    candidate = tmp_path / "images.lock.json"
+    candidate.write_text(json.dumps(lock), encoding="utf-8")
+
+    result = _run_preflight("--image-lock", str(candidate))
 
     assert result.returncode != 0
-    assert "image object-store local_inspect_digest is required" in result.stderr
-    assert "image object-store local_repo_digest is required" in result.stderr
+    assert "image mariadb local_inspect_digest is required" in result.stderr
+    assert "image mariadb local_repo_digest is required" in result.stderr
     assert "image local-runtime local_inspect_digest is required" in result.stderr
+    assert "image local-runtime local_repo_digest is required" not in result.stderr
 
 
 def test_preflight_requires_digest_for_enabled_tunnel_image(tmp_path: Path) -> None:
@@ -252,15 +281,15 @@ def test_preflight_rejects_local_repo_digest_mismatch(tmp_path: Path) -> None:
 
 def test_preflight_requires_remote_reference_digest(tmp_path: Path) -> None:
     lock = json.loads(_read(IMAGE_LOCK))
-    object_store = next(item for item in lock["images"] if item["service"] == "object-store")
-    object_store["reference"] = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
+    mariadb = next(item for item in lock["images"] if item["service"] == "mariadb")
+    mariadb["reference"] = "mariadb:11.8"
     candidate = tmp_path / "images.lock.json"
     candidate.write_text(json.dumps(lock), encoding="utf-8")
 
     result = _run_preflight("--image-lock", str(candidate))
 
     assert result.returncode != 0
-    assert "remote image object-store reference must include @sha256" in result.stderr
+    assert "remote image mariadb reference must include @sha256" in result.stderr
 
 
 def test_scripts_contain_no_embedded_secret_shaped_values() -> None:

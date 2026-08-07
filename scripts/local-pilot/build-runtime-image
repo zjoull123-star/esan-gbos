@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+RUNTIME_IMAGE="$(
+  python3 - "${REPO_ROOT}/infra/local/runtime-entrypoints.json" <<'PY'
+import json
+import sys
+
+print(json.load(open(sys.argv[1], encoding="utf-8"))["runtime_image"])
+PY
+)"
+PYTHON_BASE_IMAGE="$(
+  awk -F= '/^ARG PYTHON_BASE_IMAGE=/{print $2; exit}' \
+    "${REPO_ROOT}/infra/local/Containerfile.runtime"
+)"
+if [[ -z "${PYTHON_BASE_IMAGE}" ]] ||
+  ! docker image inspect "${PYTHON_BASE_IMAGE}" >/dev/null 2>&1; then
+  echo "Base image is not present locally; refusing an implicit pull." >&2
+  exit 78
+fi
+
+docker build \
+  --pull=false \
+  --file "${REPO_ROOT}/infra/local/Containerfile.runtime" \
+  --tag "${RUNTIME_IMAGE}" \
+  "${REPO_ROOT}"
+
+"${SCRIPT_DIR}/record-images" \
+  --lock-file "${REPO_ROOT}/infra/local/images.lock.json" \
+  --service local-runtime
