@@ -71,6 +71,18 @@ def test_v4_reads_require_session_and_commands_require_csrf_revision_and_idempot
             assert {"expected_revision", "idempotency_key"} <= set(body["required"])
 
 
+def test_v4_replay_is_bounded_to_failed_deliveries_inside_the_retention_window() -> None:
+    operation = contract()["paths"]["/api/method/esan_gbos.api.v4.integration.replay"]["post"]
+
+    assert operation["x-gbos-replay-scope"] == "eligible_failed_deliveries"
+    assert operation["x-gbos-replay-limit"] == 100
+    assert operation["x-gbos-replay-requires"] == [
+        "within_connector_replay_window",
+        "not_retention_expired",
+        "same_site_and_instance",
+    ]
+
+
 def test_v4_freezes_success_and_stable_error_envelopes() -> None:
     schemas = contract()["components"]["schemas"]
 
@@ -138,11 +150,22 @@ def test_v4_freezes_channel_communication_usage_and_ai_draft_shapes() -> None:
     assert set(usage["required"]) >= {
         "period",
         "tokens",
+        "token_state",
         "cost",
-        "soft_limit",
-        "hard_limit",
+        "soft_limit_usd",
+        "hard_limit_usd",
         "state",
     }
+    assert usage["properties"]["tokens"]["type"] == ["integer", "null"]
+    assert usage["properties"]["token_state"]["enum"] == ["known", "partial", "unknown"]
+    assert usage["properties"]["cost"]["$ref"].endswith("/UsageCost")
+    assert usage["properties"]["soft_limit_usd"]["minimum"] == 0
+    assert usage["properties"]["hard_limit_usd"]["exclusiveMinimum"] == 0
+    assert schemas["UsageCost"]["properties"]["state"]["enum"] == [
+        "known",
+        "partial",
+        "unknown",
+    ]
 
     draft = schemas["AiDraft"]
     assert draft["properties"]["kind"]["enum"] == [

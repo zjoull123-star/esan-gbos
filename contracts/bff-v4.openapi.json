@@ -70,6 +70,13 @@
       "post": {
         "operationId": "integration.replay",
         "x-gbos-cache": "no-store",
+        "x-gbos-replay-scope": "eligible_failed_deliveries",
+        "x-gbos-replay-limit": 100,
+        "x-gbos-replay-requires": [
+          "within_connector_replay_window",
+          "not_retention_expired",
+          "same_site_and_instance"
+        ],
         "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
         "security": [{"FrappeSession": [], "FrappeCsrf": []}],
         "requestBody": {
@@ -390,20 +397,21 @@
         "properties": {
           "currency": {"const": "USD"},
           "amount": {"type": ["number", "null"], "minimum": 0},
-          "state": {"type": "string", "enum": ["known", "unknown"]}
+          "state": {"type": "string", "enum": ["known", "partial", "unknown"]}
         }
       },
       "ModelUsage": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["model", "period", "tokens", "cost", "soft_limit", "hard_limit", "state"],
+        "required": ["model", "period", "tokens", "token_state", "cost", "soft_limit_usd", "hard_limit_usd", "state"],
         "properties": {
           "model": {"const": "deepseek-v4-flash"},
           "period": {"type": "string"},
-          "tokens": {"type": "integer", "minimum": 0},
+          "tokens": {"type": ["integer", "null"], "minimum": 0},
+          "token_state": {"type": "string", "enum": ["known", "partial", "unknown"]},
           "cost": {"$ref": "#/components/schemas/UsageCost"},
-          "soft_limit": {"type": "integer", "minimum": 0},
-          "hard_limit": {"type": "integer", "minimum": 0},
+          "soft_limit_usd": {"type": "number", "minimum": 0, "description": "Monthly warning threshold in USD."},
+          "hard_limit_usd": {"type": "number", "exclusiveMinimum": 0, "description": "Monthly model-call stop threshold in USD."},
           "state": {"type": "string", "enum": ["normal", "soft_limit", "hard_limit", "unknown"]}
         }
       },

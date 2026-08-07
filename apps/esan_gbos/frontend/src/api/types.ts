@@ -347,16 +347,17 @@ export interface CommunicationListQuery {
 export interface UsageCost {
   currency: "USD";
   amount: number | null;
-  state: "known" | "unknown";
+  state: "known" | "partial" | "unknown";
 }
 
 export interface ModelUsage {
   model: "deepseek-v4-flash";
   period: string;
-  tokens: number;
+  tokens: number | null;
+  token_state: "known" | "partial" | "unknown";
   cost: UsageCost;
-  soft_limit: number;
-  hard_limit: number;
+  soft_limit_usd: number;
+  hard_limit_usd: number;
   state: "normal" | "soft_limit" | "hard_limit" | "unknown";
 }
 

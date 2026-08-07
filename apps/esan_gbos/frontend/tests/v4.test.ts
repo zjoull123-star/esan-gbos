@@ -239,9 +239,10 @@ describe("v4 roles and pages", () => {
           model: "deepseek-v4-flash",
           period: "2026-08",
           tokens: 1200,
-          cost: { currency: "USD", amount: null, state: "unknown" },
-          soft_limit: 10000,
-          hard_limit: 20000,
+          token_state: "known",
+          cost: { currency: "USD", amount: 3.25, state: "known" },
+          soft_limit_usd: 50,
+          hard_limit_usd: 100,
           state: "normal",
         }),
       );
@@ -258,6 +259,8 @@ describe("v4 roles and pages", () => {
     });
     await flushPromises();
     expect(wrapper.text()).toContain("WhatsApp");
+    expect(wrapper.text()).toContain("50.00 USD");
+    expect(wrapper.text()).toContain("100.00 USD");
     expect(wrapper.text()).not.toMatch(/access[_ -]?token|secret|密钥/iu);
   });
 

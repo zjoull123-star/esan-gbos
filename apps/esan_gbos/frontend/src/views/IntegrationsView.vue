@@ -50,21 +50,21 @@
           <h2 id="model-usage-title">
             {{ usage.model }}
           </h2>
-          <p>{{ usage.period }} · {{ usage.tokens.toLocaleString("zh-CN") }} tokens</p>
+          <p>{{ usage.period }} · {{ formatTokens(usage.tokens, usage.token_state) }}</p>
         </div>
         <dl class="status-list">
           <div>
             <dt>费用</dt>
             <dd>
               {{
-                usage.cost.state === "known" && usage.cost.amount !== null
-                  ? `${usage.cost.amount.toFixed(4)} USD`
+                usage.cost.amount !== null
+                  ? `${usage.cost.amount.toFixed(4)} USD${usage.cost.state === "partial" ? "（部分）" : ""}`
                   : "USD / unknown"
               }}
             </dd>
           </div>
-          <div><dt>软上限</dt><dd>{{ usage.soft_limit }}</dd></div>
-          <div><dt>硬上限</dt><dd>{{ usage.hard_limit }}</dd></div>
+          <div><dt>软上限</dt><dd>{{ usage.soft_limit_usd.toFixed(2) }} USD</dd></div>
+          <div><dt>硬上限</dt><dd>{{ usage.hard_limit_usd.toFixed(2) }} USD</dd></div>
           <div><dt>状态</dt><dd>{{ usage.state }}</dd></div>
         </dl>
       </article>
@@ -159,6 +159,15 @@ const statusLabel = (status: ConnectorState) =>
   ];
 const freshnessLabel = (freshness: FreshnessState) =>
   ({ fresh: "新鲜", stale: "过期", unknown: "未知" })[freshness];
+const formatTokens = (
+  tokens: number | null,
+  state: "known" | "partial" | "unknown",
+) => {
+  if (tokens === null || state === "unknown") {
+    return "tokens 未知";
+  }
+  return `${tokens.toLocaleString("zh-CN")} tokens${state === "partial" ? "（部分）" : ""}`;
+};
 const isSubmitting = (instanceId: string) => submitting.value.has(instanceId);
 
 const runCommand = async (
