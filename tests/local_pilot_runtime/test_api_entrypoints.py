@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -144,19 +145,24 @@ def test_agent_api_postgres_composition_is_ready_and_authorizer_is_secret_safe()
 def test_agent_api_main_runs_injected_server_and_closes_connection(tmp_path: Path) -> None:
     manifest_path, config_path = _files(tmp_path)
     connection = _Connection()
-    seen: list[tuple[FastAPI, str, int]] = []
+    seen: list[tuple[FastAPI, dict[str, object]]] = []
 
     result = agent_api.main(
         manifest_path=manifest_path,
         runtime_config_path=config_path,
         environ={"GBOS_LOCAL_RUNTIME_ENABLED": "true"},
         connector=lambda **_: connection,
-        server_runner=lambda app, host, port: seen.append((app, host, port)),
+        server_runner=lambda app, **kwargs: seen.append((app, kwargs)),
     )
 
     assert result == 0
     assert len(seen) == 1
-    assert seen[0][1:] == ("127.0.0.1", 8002)
+    assert seen[0][1] == {
+        "host": "127.0.0.1",
+        "port": 8002,
+        "unix_socket": None,
+        "network_mode": "loopback",
+    }
     assert TestClient(seen[0][0]).get("/health").json()["ready"] is True
     assert connection.closed is True
 
@@ -185,19 +191,24 @@ def test_context_api_main_composes_postgres_decision_storage_and_per_request_aut
 ) -> None:
     manifest_path, config_path = _files(tmp_path)
     connection = _Connection()
-    seen: list[tuple[FastAPI, str, int]] = []
+    seen: list[tuple[FastAPI, dict[str, object]]] = []
 
     result = context_api.main(
         manifest_path=manifest_path,
         runtime_config_path=config_path,
         environ={"GBOS_LOCAL_RUNTIME_ENABLED": "true"},
         connector=lambda **_: connection,
-        server_runner=lambda app, host, port: seen.append((app, host, port)),
+        server_runner=lambda app, **kwargs: seen.append((app, kwargs)),
     )
 
     assert result == 0
     assert len(seen) == 1
-    assert seen[0][1:] == ("127.0.0.1", 8001)
+    assert seen[0][1] == {
+        "host": "127.0.0.1",
+        "port": 8001,
+        "unix_socket": None,
+        "network_mode": "loopback",
+    }
     health = TestClient(seen[0][0]).get("/health")
     assert health.json()["ready"] is True
     assert connection.closed is True
@@ -207,3 +218,67 @@ def test_context_api_main_composes_postgres_decision_storage_and_per_request_aut
     response = disabled.post("/internal/v1/agent-context", json={})
     assert response.status_code == 503
     assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("entrypoint", (agent_api, context_api))
+def test_api_main_rejects_invalid_uds_before_postgres(
+    entrypoint: Any,
+    tmp_path: Path,
+) -> None:
+    manifest_path, config_path = _files(tmp_path)
+    connect_calls: list[dict[str, Any]] = []
+    server_calls: list[object] = []
+
+    result = entrypoint.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_LISTEN_UNIX_SOCKET": "/tmp/gbos.sock",
+        },
+        connector=lambda **kwargs: connect_calls.append(kwargs),
+        server_runner=lambda *args, **kwargs: server_calls.append((args, kwargs)),
+    )
+
+    assert result == 78
+    assert connect_calls == []
+    assert server_calls == []
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "port"),
+    ((agent_api, 8002), (context_api, 8001)),
+)
+def test_api_main_uses_valid_uds_instead_of_tcp(
+    entrypoint: Any,
+    port: int,
+    tmp_path: Path,
+) -> None:
+    manifest_path, config_path = _files(tmp_path)
+    connection = _Connection()
+    seen: list[tuple[FastAPI, dict[str, object]]] = []
+
+    result = entrypoint.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_LISTEN_UNIX_SOCKET": "/run/gbos/sockets/api.sock",
+        },
+        connector=lambda **_: connection,
+        server_runner=lambda app, **kwargs: seen.append((app, kwargs)),
+    )
+
+    assert result == 0
+    assert seen == [
+        (
+            seen[0][0],
+            {
+                "host": "127.0.0.1",
+                "port": port,
+                "unix_socket": Path("/run/gbos/sockets/api.sock"),
+                "network_mode": "unix_socket",
+            },
+        )
+    ]
+    assert connection.closed is True

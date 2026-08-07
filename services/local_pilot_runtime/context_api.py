@@ -31,10 +31,11 @@ from .runtime_support import (
     reject_plaintext_secret_environment,
     validate_manifest_binding,
 )
+from .server import ServerBindingError, run_server, validate_server_binding
 
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
-ServerRunner = Callable[[FastAPI, str, int], None]
+ServerRunner = Callable[..., None]
 
 
 def build_app(
@@ -59,6 +60,7 @@ def main(
     environ: Mapping[str, str] | None = None,
     connector: Callable[..., object] | None = None,
     server_runner: ServerRunner | None = None,
+    internal_network: bool = False,
 ) -> int:
     environment = os.environ if environ is None else environ
     connection: object | None = None
@@ -73,6 +75,20 @@ def main(
         config = load_runtime_config(runtime_config_path)
         validate_manifest_binding(manifest, config)
         component_settings(config, "context_api")
+        unix_socket_value = environment.get("GBOS_LISTEN_UNIX_SOCKET")
+        network_mode = (
+            "unix_socket"
+            if unix_socket_value is not None
+            else "internal_network"
+            if internal_network
+            else "loopback"
+        )
+        unix_socket = validate_server_binding(
+            host=config.listen.host,
+            port=config.listen.context_api_port,
+            unix_socket=unix_socket_value,
+            network_mode=network_mode,
+        )
         bearer_token = load_secret_file(config.auth.context_api_bearer_file)
         connection = connect_postgres(config.postgres, connector=connector)
         configured_app = build_app(
@@ -83,21 +99,34 @@ def main(
         active_runner = server_runner or _run_server
         active_runner(
             configured_app,
-            config.listen.host,
-            config.listen.context_api_port,
+            host=config.listen.host,
+            port=config.listen.context_api_port,
+            unix_socket=unix_socket,
+            network_mode=network_mode,
         )
         return 0
-    except LocalEntrypointDisabled, RuntimeSupportError, ValueError:
+    except LocalEntrypointDisabled, RuntimeSupportError, ServerBindingError, ValueError:
         return 78
     finally:
         if connection is not None:
             close_connection(connection)
 
 
-def _run_server(application: FastAPI, host: str, port: int) -> None:
-    import uvicorn
-
-    uvicorn.run(application, host=host, port=port, access_log=False)
+def _run_server(
+    application: FastAPI,
+    *,
+    host: str,
+    port: int,
+    unix_socket: Path | None,
+    network_mode: str,
+) -> None:
+    run_server(
+        application,
+        host=host,
+        port=port,
+        unix_socket=unix_socket,
+        network_mode=network_mode,
+    )
 
 
 app = build_app()
