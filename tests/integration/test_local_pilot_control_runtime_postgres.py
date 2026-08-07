@@ -374,6 +374,7 @@ def test_postgres_control_communication_and_polling_survive_repository_restart()
                 idempotency_key: str,
             ) -> None:
                 assert published_scope == scope
+                assert publication.team_ref == "team-sales"
                 assert publication.fact_proposals[0]["evidence_refs"] == [evidence_id]
                 assert publication.model == {
                     "name": "deepseek-v4-flash",
@@ -450,6 +451,7 @@ def test_postgres_control_communication_and_polling_survive_repository_restart()
         assert len(provider_requests) == 2
         assert all(
             request.input_mode == "local_tokenized"
+            and request.processing_purpose == scope.processing_purpose
             and request.evidence_refs == (evidence_id,)
             and request.tokenization_refs == (f"tokenization-{suffix}",)
             and request.mapping_digest == "b" * 64

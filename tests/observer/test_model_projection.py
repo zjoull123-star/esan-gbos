@@ -213,19 +213,24 @@ def test_restricted_observation_is_tokenized_validated_and_published_before_proj
     assert result.status == "projected"
     request = provider.requests[0]
     assert request.input_mode == "local_tokenized"
+    assert request.processing_purpose == SCOPE.processing_purpose
     assert request.evidence_refs == ("evidence-001",)
     assert request.tokenization_refs == ("tokenization-001",)
     assert request.mapping_digest == "b" * 64
     assert request.idempotency_key == "context-normalized:event-001"
     rendered = repr(request)
     assert "alice@example.com" not in rendered
+    assert SCOPE.processing_purpose not in rendered
     assert "<EMAIL_1>" not in rendered
     assert "evidence-001" not in rendered
     assert "<redacted>" in rendered
+    with pytest.raises(ValueError, match="processing purpose"):
+        replace(request, processing_purpose="model_controlled_purpose")
     assert repository.order == ["context", "store"]
     assert context.calls[0][0] == "context-normalized:event-001"
     publication = context.calls[0][1]
     assert publication.site_id == SCOPE.site_id
+    assert publication.team_ref == "team-sales"
     assert publication.review_status == "AI Draft"
     assert publication.fact_proposals[0]["subject_ref"] == "party-001"
     assert publication.fact_proposals[0]["evidence_refs"] == ["evidence-001"]
@@ -253,6 +258,7 @@ def test_context_publication_requires_explicit_site_and_proposed_draft_binding()
     publication = ContextIntelligencePublication(
         site_id=SCOPE.site_id,
         observation_id=SOURCE.observation_id,
+        team_ref="team-sales",
         evidence_refs=("evidence-001",),
         summary_zh="客户希望确认样品交期。",
         original_language="zh-CN",
@@ -265,9 +271,14 @@ def test_context_publication_requires_explicit_site_and_proposed_draft_binding()
     )
 
     assert publication.site_id == SCOPE.site_id
+    assert publication.team_ref == "team-sales"
     assert SCOPE.site_id not in repr(publication)
+    assert "team-sales" not in repr(publication)
+    assert replace(publication, team_ref=None).team_ref is None
     with pytest.raises(ValueError, match="site binding"):
         replace(publication, site_id="")
+    with pytest.raises(ValueError, match="team binding"):
+        replace(publication, team_ref="team\nsales")
     with pytest.raises(ValueError, match="proposed"):
         replace(
             publication,
@@ -550,10 +561,11 @@ def test_nested_fact_and_association_evidence_must_be_bound_to_observation() -> 
 
 def test_nullable_database_team_scope_is_never_synthesized_by_model_output() -> None:
     repository = FakeRepository(source=replace(SOURCE, team_ref=None))
-    publisher, _, _, _ = _publisher(repository=repository)
+    publisher, _, _, context = _publisher(repository=repository)
 
     publisher(SCOPE, SOURCE.observation_id, "context-normalized:event-001")
 
+    assert context.calls[0][1].team_ref is None
     assert repository.stored[0].summary.team_ref is None
 
 

@@ -11,7 +11,7 @@ from typing import Any, Literal, Protocol
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
-from .models import TenantScope, _require_aware
+from .models import PROCESSING_PURPOSES, TenantScope, _require_aware
 from .read_service import CommunicationDetail, CommunicationSummary
 from .storage import Connection
 
@@ -155,6 +155,7 @@ class LocalTokenizationResult:
 @dataclass(frozen=True, slots=True, repr=False)
 class ObservationModelRequest:
     site_id: str
+    processing_purpose: str
     observation_id: str
     channel: str
     classification: str
@@ -171,6 +172,8 @@ class ObservationModelRequest:
 
     def __post_init__(self) -> None:
         _require_aware(self.occurred_at, "occurred_at")
+        if self.processing_purpose not in PROCESSING_PURPOSES:
+            raise ValueError("invalid observation processing purpose")
         if (
             self.input_mode not in {"raw", "local_tokenized"}
             or not self.input_text
@@ -247,6 +250,7 @@ class CommunicationIntelligenceResponse:
 class ContextIntelligencePublication:
     site_id: str
     observation_id: str
+    team_ref: str | None
     evidence_refs: tuple[str, ...]
     summary_zh: str
     original_language: str
@@ -267,6 +271,14 @@ class ContextIntelligencePublication:
             or len(self.observation_id) > 256
         ):
             raise ValueError("invalid Context site binding")
+        if self.team_ref is not None and (
+            not isinstance(self.team_ref, str)
+            or not self.team_ref
+            or self.team_ref != self.team_ref.strip()
+            or len(self.team_ref) > 256
+            or any(character in self.team_ref for character in ("\r", "\n", "\x00"))
+        ):
+            raise ValueError("invalid Context team binding")
         if (
             not isinstance(self.evidence_refs, tuple)
             or not self.evidence_refs
@@ -455,7 +467,7 @@ class ObservationProjectionPublisher:
             raise ProjectionFailure("model_mismatch")
         output = _validated_output(response.output)
         _validate_binding(source, output)
-        publication = _context_publication(output, response)
+        publication = _context_publication(source, output, response)
         try:
             self._context_publisher.publish(
                 scope,
@@ -532,6 +544,7 @@ class ObservationProjectionPublisher:
             raise ProjectionFailure("pii_tokenization_failed")
         return ObservationModelRequest(
             site_id=scope.site_id,
+            processing_purpose=scope.processing_purpose,
             observation_id=source.observation_id,
             channel=source.channel,
             classification=source.classification,
@@ -708,12 +721,14 @@ def _validate_binding(
 
 
 def _context_publication(
+    source: ObservationProjectionSource,
     output: dict[str, Any],
     response: CommunicationIntelligenceResponse,
 ) -> ContextIntelligencePublication:
     return ContextIntelligencePublication(
         site_id=str(output["site_id"]),
         observation_id=str(output["observation_id"]),
+        team_ref=source.team_ref,
         evidence_refs=tuple(str(value) for value in output["evidence_refs"]),
         summary_zh=str(output["summary_zh"]),
         original_language=str(output["original_language"]),

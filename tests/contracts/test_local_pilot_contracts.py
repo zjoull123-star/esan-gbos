@@ -113,6 +113,7 @@ def test_communication_intelligence_is_closed_and_keeps_rich_evidence_binding() 
     validator.validate(valid)
     for invalid in (
         {**valid, "raw_text": "forbidden"},
+        {**valid, "team_ref": "team-model-output-is-forbidden"},
         {**valid, "review_status": "Approved"},
         {
             **valid,
