@@ -101,6 +101,65 @@ def sales_output(*, confidence: float = 0.82) -> dict[str, object]:
     }
 
 
+def communication_request(
+    *,
+    complex_multi_entity: bool = False,
+    evidence_refs: tuple[str, ...] = ("evidence-SYNTH-001",),
+) -> TokenizedModelRequest:
+    return TokenizedModelRequest(
+        request_id="communication-SYNTH-001",
+        site_id="gbos.localhost",
+        purpose="communication_intelligence",
+        agent_kind="communication",
+        subject_ref="observation-SYNTH-001",
+        evidence_refs=evidence_refs,
+        prompt_version="communication-intelligence-local-pilot-v1",
+        tokenized_context="客户 <ENTITY_0123456789abcdef01234567> 希望确认样品交期。",
+        tokenization_receipt_id="tokenization-SYNTH-001",
+        tokenizer_version="stable-hmac-tokenizer-v1",
+        mapping_digest="c" * 64,
+        complex_multi_entity=complex_multi_entity,
+    )
+
+
+def communication_output(
+    *,
+    confidence: float = 0.82,
+    evidence_refs: list[str] | None = None,
+) -> dict[str, object]:
+    refs = ["evidence-SYNTH-001"] if evidence_refs is None else evidence_refs
+    return {
+        "schema_version": "1.0",
+        "site_id": "gbos.localhost",
+        "observation_id": "observation-SYNTH-001",
+        "evidence_refs": refs,
+        "summary_zh": "客户希望确认样品交期。",
+        "original_language": "zh-CN",
+        "confidence": confidence,
+        "review_status": "AI Draft",
+        "fact_proposals": [
+            {
+                "subject_ref": "party-SYNTH-001",
+                "predicate": "sample_delivery_intent",
+                "value_display": "希望确认样品交期",
+                "type": "text",
+                "unit": None,
+                "confidence": 0.8,
+                "evidence_refs": refs,
+                "status": "proposed",
+            }
+        ],
+        "association_suggestions": [
+            {
+                "type": "party",
+                "target_ref": "party-SYNTH-001",
+                "confidence": 0.8,
+                "evidence_refs": refs,
+            }
+        ],
+    }
+
+
 def api_response(
     output: dict[str, object] | str,
     *,
@@ -182,6 +241,88 @@ def test_happy_path_uses_fixed_endpoint_model_json_mode_and_no_tools() -> None:
     assert result.usage.status == "known"
     assert result.cost.status == "known"
     assert result.cost.catalog_version == "test-price-catalog-v1"
+
+
+def test_communication_happy_path_uses_closed_schema_binding_and_audit() -> None:
+    seen: list[dict[str, object]] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(http_request.content))
+        return api_response(communication_output())
+
+    result = adapter(handler).invoke(communication_request())
+
+    assert len(seen) == 1
+    assert seen[0]["thinking"] == {"type": "disabled"}
+    assert "tools" not in seen[0]
+    messages = json.dumps(seen[0]["messages"], ensure_ascii=False)
+    assert "CommunicationIntelligence v1.0" in messages
+    assert result.output == communication_output()
+    assert len(result.invocations) == 1
+    assert result.invocations[0].output_schema_version == "communication-intelligence-v1.0"
+    assert result.invocations[0].references.evidence_refs == ("evidence-SYNTH-001",)
+
+
+def test_communication_complex_request_allows_one_high_thinking_review() -> None:
+    payloads: list[dict[str, object]] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(http_request.content))
+        confidence = 0.7 if len(payloads) == 1 else 0.9
+        return api_response(communication_output(confidence=confidence))
+
+    result = adapter(handler).invoke(communication_request(complex_multi_entity=True))
+
+    assert len(payloads) == 2
+    assert payloads[0]["thinking"] == {"type": "disabled"}
+    assert payloads[1]["thinking"] == {"type": "enabled"}
+    assert payloads[1]["reasoning_effort"] == "high"
+    assert result.output["confidence"] == 0.9
+    assert len(result.invocations) == 2
+
+
+@pytest.mark.parametrize(
+    ("response", "evidence_refs"),
+    [
+        (
+            api_response(communication_output(), model="deepseek-chat"),
+            ("evidence-SYNTH-001",),
+        ),
+        (
+            api_response(
+                communication_output(),
+                extra_message={"tool_calls": [{"id": "forbidden"}]},
+            ),
+            ("evidence-SYNTH-001",),
+        ),
+        (api_response(""), ("evidence-SYNTH-001",)),
+        (api_response("not-json"), ("evidence-SYNTH-001",)),
+        (
+            api_response({**communication_output(), "summary_zh": ""}),
+            ("evidence-SYNTH-001",),
+        ),
+        (
+            api_response({**communication_output(), "site_id": "other.localhost"}),
+            ("evidence-SYNTH-001",),
+        ),
+        (
+            api_response({**communication_output(), "observation_id": "other-observation"}),
+            ("evidence-SYNTH-001",),
+        ),
+        (
+            api_response(
+                communication_output(evidence_refs=["evidence-SYNTH-002", "evidence-SYNTH-001"])
+            ),
+            ("evidence-SYNTH-001", "evidence-SYNTH-002"),
+        ),
+    ],
+)
+def test_communication_protocol_schema_and_binding_fail_closed(
+    response: httpx.Response,
+    evidence_refs: tuple[str, ...],
+) -> None:
+    with pytest.raises(GatewayFailure):
+        adapter(lambda _: response).invoke(communication_request(evidence_refs=evidence_refs))
 
 
 @pytest.mark.parametrize("complex_multi_entity", [False, True])

@@ -41,6 +41,7 @@ OUTPUT_SCHEMA_VERSIONS = {
     "purchase": "purchase-proposal-v1.0",
     "product": "product-proposal-v1.0",
     "ceo": "ceo-proposal-v1.0",
+    "communication": "communication-intelligence-v1.0",
 }
 
 
@@ -130,7 +131,7 @@ class TokenizedModelRequest:
     request_id: str
     site_id: str
     purpose: str
-    agent_kind: Literal["sales", "purchase", "product", "ceo"]
+    agent_kind: Literal["sales", "purchase", "product", "ceo", "communication"]
     subject_ref: str
     evidence_refs: tuple[str, ...]
     prompt_version: str
@@ -1007,6 +1008,17 @@ def _load_schema(agent_kind: str) -> dict[str, Any]:
 
 
 def _validate_request_binding(output: Mapping[str, Any], request: TokenizedModelRequest) -> None:
+    if request.agent_kind == "communication":
+        if (
+            output.get("site_id") != request.site_id
+            or output.get("observation_id") != request.subject_ref
+            or output.get("evidence_refs") != list(request.evidence_refs)
+        ):
+            raise GatewayFailure(
+                "model content did not bind to the communication request",
+                error_code="request_binding_failed",
+            )
+        return
     expected_action = {
         "sales": "internal.work_item.propose",
         "purchase": "internal.review_case.propose",
