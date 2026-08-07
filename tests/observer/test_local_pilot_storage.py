@@ -11,6 +11,7 @@ import pytest
 from observer.local_pilot_storage import (
     CheckpointConflict,
     DeliveryConflict,
+    JobConflict,
     LeaseConflict,
     NonceReplay,
     OutboxConflict,
@@ -20,6 +21,9 @@ from observer.models import ConnectorKey, TenantScope
 
 ROOT = Path(__file__).parents[2]
 MIGRATION = ROOT / "services" / "observer" / "migrations" / "003_local_pilot_runtime.sql"
+INGESTION_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "004_local_pilot_ingestion.sql"
+)
 MIGRATION_SCRIPT = ROOT / "scripts" / "dev" / "gate3-migrate"
 NOW = datetime(2026, 8, 7, 9, 30, tzinfo=UTC)
 SCOPE = TenantScope("alpha.example", "observation_processing")
@@ -95,6 +99,10 @@ def _delivery_row(
     *,
     digest: str = "a" * 64,
     instance_id: str = KEY.instance_id,
+    object_ref: str = "obs:v1:site-partition:sha256:" + "a" * 64,
+    byte_size: int = 17,
+    media_type: str = "application/json",
+    status: str = "queued",
 ) -> tuple[Any, ...]:
     return (
         SCOPE.site_id,
@@ -102,13 +110,49 @@ def _delivery_row(
         instance_id,
         "delivery-001",
         digest,
-        "application/json",
+        object_ref,
+        byte_size,
+        media_type,
         NOW,
-        "received",
+        status,
         0,
         "corr-001",
         None,
         None,
+        NOW,
+        NOW,
+    )
+
+
+def _job_row(
+    *,
+    status: str = "queued",
+    attempt_count: int = 0,
+    max_attempts: int = 3,
+    generation: int = 0,
+    lease_owner: str | None = None,
+    lease_expires_at: datetime | None = None,
+    lease_generation: int = 0,
+    next_retry_at: datetime | None = None,
+    error_code: str | None = None,
+) -> tuple[Any, ...]:
+    return (
+        SCOPE.site_id,
+        "job-001",
+        KEY.connector,
+        KEY.instance_id,
+        "delivery-001",
+        "normalize",
+        status,
+        attempt_count,
+        max_attempts,
+        "delivery:wecom:sales-primary:delivery-001:g0",
+        generation,
+        lease_owner,
+        lease_expires_at,
+        lease_generation,
+        next_retry_at,
+        error_code,
         NOW,
         NOW,
     )
@@ -213,7 +257,28 @@ def test_local_pilot_migration_is_metadata_only_instance_scoped_and_rls_forced()
 def test_gate3_migration_runner_discovers_the_additive_local_pilot_migration() -> None:
     script = MIGRATION_SCRIPT.read_text(encoding="utf-8")
 
-    assert "/migrations/observer/00[1-3]_*.sql" in script
+    assert "/migrations/observer/00[1-4]_*.sql" in script
+
+
+def test_ingestion_migration_is_additive_repeatable_and_preserves_forced_rls() -> None:
+    sql = INGESTION_MIGRATION.read_text(encoding="utf-8").lower()
+
+    assert "alter table observer.inbound_deliveries" in sql
+    assert "add column if not exists object_ref" in sql
+    assert "add column if not exists byte_size" in sql
+    for column in (
+        "idempotency_key",
+        "generation",
+        "lease_owner",
+        "lease_expires_at",
+        "lease_generation",
+    ):
+        assert f"add column if not exists {column}" in sql
+    assert "create unique index if not exists processing_jobs_idempotency_uq" in sql
+    assert "create index if not exists processing_jobs_claim_idx" in sql
+    assert "force row level security" in sql
+    assert "raw_body" not in sql
+    assert "exact_bytes" not in sql
 
 
 def test_local_pilot_storage_exposes_provider_neutral_repository_contract() -> None:
@@ -270,6 +335,8 @@ def test_accept_delivery_is_idempotent_for_same_digest_and_rejects_changed_body(
         KEY,
         delivery_id="delivery-001",
         exact_body_sha256="a" * 64,
+        object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+        byte_size=17,
         media_type="application/json",
         received_at=NOW,
         correlation_id="corr-001",
@@ -282,6 +349,8 @@ def test_accept_delivery_is_idempotent_for_same_digest_and_rejects_changed_body(
             KEY,
             delivery_id="delivery-001",
             exact_body_sha256="a" * 64,
+            object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+            byte_size=17,
             media_type="application/json",
             received_at=NOW,
             correlation_id="corr-001",
@@ -293,6 +362,8 @@ def test_accept_delivery_is_idempotent_for_same_digest_and_rejects_changed_body(
             KEY,
             delivery_id="delivery-002",
             exact_body_sha256="a" * 64,
+            object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+            byte_size=9,
             media_type="application/json",
             received_at=NOW,
             correlation_id="corr-002",
@@ -300,6 +371,199 @@ def test_accept_delivery_is_idempotent_for_same_digest_and_rejects_changed_body(
         )
     flattened_params = repr([params for _sql, params in connection.executed])
     assert "forbidden" not in flattened_params
+
+
+@pytest.mark.parametrize(
+    ("changed", "value"),
+    [
+        ("object_ref", "obs:v1:other:sha256:" + "a" * 64),
+        ("byte_size", 18),
+        ("media_type", "application/octet-stream"),
+    ],
+)
+def test_accept_delivery_rejects_changed_content_metadata(
+    changed: str,
+    value: str | int,
+) -> None:
+    existing = {
+        "object_ref": "obs:v1:site-partition:sha256:" + "a" * 64,
+        "byte_size": 17,
+        "media_type": "application/json",
+    }
+    connection = FakeConnection([None, _delivery_row()])
+    arguments = dict(existing)
+    arguments[changed] = value
+
+    with pytest.raises(DeliveryConflict, match="content metadata"):
+        PostgresLocalPilotStorage(connection).accept_inbound_delivery(
+            SCOPE,
+            KEY,
+            delivery_id="delivery-001",
+            exact_body_sha256="a" * 64,
+            object_ref=str(arguments["object_ref"]),
+            byte_size=int(arguments["byte_size"]),
+            media_type=str(arguments["media_type"]),
+            received_at=NOW,
+            correlation_id="corr-001",
+        )
+
+
+def test_accept_and_enqueue_delivery_is_one_transaction_and_idempotent() -> None:
+    connection = FakeConnection([_delivery_row(), _job_row()])
+
+    delivery, job = PostgresLocalPilotStorage(connection).accept_and_enqueue_delivery(
+        SCOPE,
+        KEY,
+        delivery_id="delivery-001",
+        exact_body_sha256="a" * 64,
+        object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+        byte_size=17,
+        media_type="application/json",
+        received_at=NOW,
+        correlation_id="corr-001",
+        job_id="job-001",
+        idempotency_key="delivery:wecom:sales-primary:delivery-001:g0",
+        max_attempts=3,
+    )
+
+    assert connection.transactions == 1
+    assert delivery.object_ref.endswith("a" * 64)
+    assert delivery.byte_size == 17
+    assert job.status == "queued"
+    assert all(
+        params is not None for sql, params in connection.executed if "INSERT INTO observer." in sql
+    )
+
+
+def test_claim_job_uses_skip_locked_recovers_expired_lease_and_fences_old_attempt() -> None:
+    claimed_connection = FakeConnection(
+        [
+            _job_row(
+                status="processing",
+                attempt_count=2,
+                lease_owner="worker-b",
+                lease_expires_at=NOW + timedelta(seconds=30),
+                lease_generation=2,
+            )
+        ]
+    )
+    claimed = PostgresLocalPilotStorage(claimed_connection).claim_processing_job(
+        SCOPE,
+        worker_id="worker-b",
+        now=NOW,
+        lease_seconds=30,
+    )
+
+    assert claimed is not None
+    assert claimed.attempt_count == 2
+    assert claimed.lease_generation == 2
+    claim_sql = claimed_connection.executed[-1][0]
+    assert "FOR UPDATE SKIP LOCKED" in claim_sql
+    assert "lease_expires_at <= %s" in claim_sql
+    assert "instance.status <> 'paused'" in claim_sql
+
+    stale = FakeConnection([None])
+    with pytest.raises(JobConflict, match="lease"):
+        PostgresLocalPilotStorage(stale).complete_processing_job(
+            SCOPE,
+            job_id="job-001",
+            worker_id="worker-a",
+            expected_attempt=1,
+            expected_lease_generation=1,
+            now=NOW,
+            provider_event_ids=("provider-001",),
+        )
+    complete_sql = stale.executed[-1][0]
+    assert "attempt_count = %s" in complete_sql
+    assert "lease_generation = %s" in complete_sql
+    assert "lease_expires_at > %s" in complete_sql
+
+
+def test_job_retry_reaches_dead_letter_and_quarantine_is_terminal() -> None:
+    retry = FakeConnection(
+        [_job_row(status="retry_wait", attempt_count=1, error_code="temporary_failure")]
+    )
+    retried = PostgresLocalPilotStorage(retry).retry_processing_job(
+        SCOPE,
+        job_id="job-001",
+        worker_id="worker-a",
+        expected_attempt=1,
+        expected_lease_generation=1,
+        now=NOW,
+        next_retry_at=NOW + timedelta(minutes=1),
+        error_code="temporary_failure",
+    )
+    assert retried.status == "retry_wait"
+
+    dead = FakeConnection(
+        [_job_row(status="dead_letter", attempt_count=3, error_code="retry_exhausted")]
+    )
+    dead_lettered = PostgresLocalPilotStorage(dead).retry_processing_job(
+        SCOPE,
+        job_id="job-001",
+        worker_id="worker-a",
+        expected_attempt=3,
+        expected_lease_generation=3,
+        now=NOW,
+        next_retry_at=NOW + timedelta(minutes=1),
+        error_code="retry_exhausted",
+    )
+    assert dead_lettered.status == "dead_letter"
+    assert any("local_pilot_dead_letter" in sql for sql, _params in dead.executed)
+
+    quarantined = FakeConnection(
+        [_job_row(status="quarantined", attempt_count=1, error_code="invalid_envelope")]
+    )
+    result = PostgresLocalPilotStorage(quarantined).quarantine_processing_job(
+        SCOPE,
+        job_id="job-001",
+        worker_id="worker-a",
+        expected_attempt=1,
+        expected_lease_generation=1,
+        now=NOW,
+        reason_code="invalid_envelope",
+    )
+    assert result.status == "quarantined"
+    assert any("local_pilot_quarantine" in sql for sql, _params in quarantined.executed)
+
+
+def test_connector_pause_resume_checkpoint_health_and_replay_are_safe() -> None:
+    paused_connection = FakeConnection([_connector_row(status="paused")])
+    paused = PostgresLocalPilotStorage(paused_connection).set_connector_status(
+        SCOPE,
+        KEY,
+        status="paused",
+        now=NOW,
+    )
+    assert paused.status == "paused"
+
+    health_connection = FakeConnection([_checkpoint_row()])
+    checkpoint = PostgresLocalPilotStorage(health_connection).update_checkpoint_health(
+        SCOPE,
+        KEY,
+        status="healthy",
+        now=NOW,
+        last_success_at=NOW,
+    )
+    assert checkpoint.status == "healthy"
+    flattened = repr(health_connection.executed)
+    assert "payload" not in flattened
+    assert "provider_event_id" not in flattened
+
+    replay_connection = FakeConnection([_job_row(generation=1)])
+    replayed = PostgresLocalPilotStorage(replay_connection).replay_delivery(
+        SCOPE,
+        KEY,
+        delivery_id="delivery-001",
+        job_id="job-replay-001",
+        idempotency_key="replay:ticket-001",
+        now=NOW,
+        max_attempts=3,
+    )
+    assert replayed.generation == 1
+    replay_sql = replay_connection.executed[-1][0]
+    assert "FOR UPDATE" in replay_sql
+    assert "ON CONFLICT (site_id, idempotency_key)" in replay_sql
 
 
 def test_link_delivery_events_is_instance_scoped_and_supports_one_batch_many_events() -> None:
@@ -599,6 +863,8 @@ def test_health_query_returns_sanitized_site_scoped_status_only() -> None:
                 KEY,
                 delivery_id="delivery-001",
                 exact_body_sha256="A" * 64,
+                object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+                byte_size=17,
                 media_type="application/json",
                 received_at=NOW,
                 correlation_id="corr-001",
@@ -611,6 +877,8 @@ def test_health_query_returns_sanitized_site_scoped_status_only() -> None:
                 KEY,
                 delivery_id="delivery-001",
                 exact_body_sha256="a" * 64,
+                object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+                byte_size=17,
                 media_type="application/json",
                 received_at=NOW.replace(tzinfo=None),
                 correlation_id="corr-001",

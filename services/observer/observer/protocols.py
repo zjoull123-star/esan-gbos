@@ -4,9 +4,11 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
 
+from .local_pilot_storage import ProcessingJobMetadata
 from .models import (
     ConnectorBatch,
     ConnectorItem,
+    ConnectorKey,
     ImportResult,
     ManualImportManifest,
     ManualImportMember,
@@ -40,8 +42,27 @@ class DeliveryAuthenticator(Protocol):
     def verify(self, exact_request: bytes) -> RawDelivery: ...
 
 
+class DeliveryDecoder(Protocol):
+    """Provider adapter boundary; implementations own envelope parsing."""
+
+    def decode(self, exact_bytes: bytes) -> tuple[ConnectorItem, ...]: ...
+
+
 class ObservationNormalizer(Protocol):
     def normalize(self, item: ConnectorItem) -> NormalizedObservationInput: ...
+
+
+class NormalizedObservationSink(Protocol):
+    """Durable handoff for normalized envelopes emitted by a delivery job."""
+
+    def accept(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        job: ProcessingJobMetadata,
+        item: ConnectorItem,
+        normalized: NormalizedObservationInput,
+    ) -> None: ...
 
 
 class SpeechProvider(Protocol):

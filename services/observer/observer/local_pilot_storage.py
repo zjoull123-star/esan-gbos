@@ -18,8 +18,9 @@ _CONNECTOR_COLUMNS = """
 """
 _DELIVERY_COLUMNS = """
     site_id, connector, connector_instance_id, delivery_id, exact_body_sha256,
-    media_type, received_at, processing_status, attempt_count, correlation_id,
-    last_attempt_at, last_error_code, created_at, updated_at
+    object_ref, byte_size, media_type, received_at, processing_status,
+    attempt_count, correlation_id, last_attempt_at, last_error_code, created_at,
+    updated_at
 """
 _CHECKPOINT_COLUMNS = """
     site_id, connector, connector_instance_id, checkpoint_id, cursor_value,
@@ -30,6 +31,12 @@ _OUTBOX_COLUMNS = """
     site_id, outbox_id, observation_event_id, idempotency_key, payload_digest,
     status, attempt_count, max_attempts, next_retry_at, lease_owner,
     lease_expires_at, last_error_code, created_at, updated_at
+"""
+_JOB_COLUMNS = """
+    site_id, job_id, connector, connector_instance_id, delivery_id, stage,
+    status, attempt_count, max_attempts, idempotency_key, generation,
+    lease_owner, lease_expires_at, lease_generation, next_retry_at,
+    last_error_code, created_at, updated_at
 """
 
 
@@ -53,6 +60,10 @@ class OutboxConflict(ValueError):
     """A context outbox idempotency or lease transition was rejected."""
 
 
+class JobConflict(ValueError):
+    """A processing job idempotency, lease, or state transition was rejected."""
+
+
 @dataclass(frozen=True, slots=True)
 class ConnectorInstanceMetadata:
     site_id: str
@@ -70,6 +81,8 @@ class InboundDeliveryMetadata:
     connector_instance_id: str
     delivery_id: str
     exact_body_sha256: str
+    object_ref: str
+    byte_size: int
     media_type: str
     received_at: datetime
     processing_status: str
@@ -126,6 +139,28 @@ class ContextOutboxMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class ProcessingJobMetadata:
+    site_id: str
+    job_id: str
+    connector: str
+    connector_instance_id: str
+    delivery_id: str
+    stage: str
+    status: str
+    attempt_count: int
+    max_attempts: int
+    idempotency_key: str
+    generation: int
+    lease_owner: str | None
+    lease_expires_at: datetime | None
+    lease_generation: int
+    next_retry_at: datetime | None
+    last_error_code: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class ConnectorHealthMetadata:
     site_id: str
     connector: str
@@ -170,10 +205,127 @@ class LocalPilotStorage(Protocol):
         *,
         delivery_id: str,
         exact_body_sha256: str,
+        object_ref: str,
+        byte_size: int,
         media_type: str,
         received_at: datetime,
         correlation_id: str,
     ) -> InboundDeliveryMetadata: ...
+
+    def accept_and_enqueue_delivery(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        delivery_id: str,
+        exact_body_sha256: str,
+        object_ref: str,
+        byte_size: int,
+        media_type: str,
+        received_at: datetime,
+        correlation_id: str,
+        job_id: str,
+        idempotency_key: str,
+        max_attempts: int,
+    ) -> tuple[InboundDeliveryMetadata, ProcessingJobMetadata]: ...
+
+    def get_inbound_delivery(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        delivery_id: str,
+    ) -> InboundDeliveryMetadata: ...
+
+    def claim_processing_job(
+        self,
+        scope: TenantScope,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_seconds: int,
+    ) -> ProcessingJobMetadata | None: ...
+
+    def heartbeat_processing_job(
+        self,
+        scope: TenantScope,
+        *,
+        job_id: str,
+        worker_id: str,
+        expected_attempt: int,
+        expected_lease_generation: int,
+        now: datetime,
+        lease_seconds: int,
+    ) -> ProcessingJobMetadata: ...
+
+    def complete_processing_job(
+        self,
+        scope: TenantScope,
+        *,
+        job_id: str,
+        worker_id: str,
+        expected_attempt: int,
+        expected_lease_generation: int,
+        now: datetime,
+        provider_event_ids: tuple[str, ...],
+    ) -> ProcessingJobMetadata: ...
+
+    def retry_processing_job(
+        self,
+        scope: TenantScope,
+        *,
+        job_id: str,
+        worker_id: str,
+        expected_attempt: int,
+        expected_lease_generation: int,
+        now: datetime,
+        next_retry_at: datetime,
+        error_code: str,
+    ) -> ProcessingJobMetadata: ...
+
+    def quarantine_processing_job(
+        self,
+        scope: TenantScope,
+        *,
+        job_id: str,
+        worker_id: str,
+        expected_attempt: int,
+        expected_lease_generation: int,
+        now: datetime,
+        reason_code: str,
+    ) -> ProcessingJobMetadata: ...
+
+    def replay_delivery(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        delivery_id: str,
+        job_id: str,
+        idempotency_key: str,
+        now: datetime,
+        max_attempts: int,
+    ) -> ProcessingJobMetadata: ...
+
+    def set_connector_status(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        status: str,
+        now: datetime,
+    ) -> ConnectorInstanceMetadata: ...
+
+    def update_checkpoint_health(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        status: str,
+        now: datetime,
+        last_success_at: datetime | None = None,
+        error_code: str | None = None,
+    ) -> ConnectorCheckpointMetadata: ...
 
     def link_delivery_events(
         self,
@@ -375,66 +527,723 @@ class PostgresLocalPilotStorage:
         *,
         delivery_id: str,
         exact_body_sha256: str,
+        object_ref: str,
+        byte_size: int,
         media_type: str,
         received_at: datetime,
         correlation_id: str,
     ) -> InboundDeliveryMetadata:
+        _validate_delivery_input(
+            scope,
+            key,
+            delivery_id=delivery_id,
+            exact_body_sha256=exact_body_sha256,
+            object_ref=object_ref,
+            byte_size=byte_size,
+            media_type=media_type,
+            received_at=received_at,
+            correlation_id=correlation_id,
+        )
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            return self._accept_inbound_delivery(
+                cursor,
+                scope,
+                key,
+                delivery_id=delivery_id,
+                exact_body_sha256=exact_body_sha256,
+                object_ref=object_ref,
+                byte_size=byte_size,
+                media_type=media_type,
+                received_at=received_at,
+                correlation_id=correlation_id,
+                queued=False,
+            )
+
+    def accept_and_enqueue_delivery(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        delivery_id: str,
+        exact_body_sha256: str,
+        object_ref: str,
+        byte_size: int,
+        media_type: str,
+        received_at: datetime,
+        correlation_id: str,
+        job_id: str,
+        idempotency_key: str,
+        max_attempts: int,
+    ) -> tuple[InboundDeliveryMetadata, ProcessingJobMetadata]:
+        _validate_delivery_input(
+            scope,
+            key,
+            delivery_id=delivery_id,
+            exact_body_sha256=exact_body_sha256,
+            object_ref=object_ref,
+            byte_size=byte_size,
+            media_type=media_type,
+            received_at=received_at,
+            correlation_id=correlation_id,
+        )
+        _require_identifier(job_id, "job_id")
+        _require_identifier(idempotency_key, "idempotency_key")
+        _require_attempts(max_attempts)
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            delivery = self._accept_inbound_delivery(
+                cursor,
+                scope,
+                key,
+                delivery_id=delivery_id,
+                exact_body_sha256=exact_body_sha256,
+                object_ref=object_ref,
+                byte_size=byte_size,
+                media_type=media_type,
+                received_at=received_at,
+                correlation_id=correlation_id,
+                queued=True,
+            )
+            job = self._enqueue_processing_job(
+                cursor,
+                scope,
+                key,
+                delivery_id=delivery_id,
+                job_id=job_id,
+                idempotency_key=idempotency_key,
+                generation=0,
+                now=received_at,
+                max_attempts=max_attempts,
+            )
+            return delivery, job
+
+    def get_inbound_delivery(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        delivery_id: str,
+    ) -> InboundDeliveryMetadata:
         _validate_scope_key(scope, key)
         _require_identifier(delivery_id, "delivery_id", maximum=512)
-        if not _SHA256.fullmatch(exact_body_sha256):
-            raise ValueError("exact_body_sha256 must be lowercase hexadecimal sha256")
-        _require_identifier(media_type, "media_type", maximum=255)
-        _require_aware(received_at, "received_at")
-        _require_identifier(correlation_id, "correlation_id")
         with self._connection.transaction(), self._connection.cursor() as cursor:
             self._set_site(cursor, scope)
             cursor.execute(
                 f"""
-                INSERT INTO observer.inbound_deliveries (
-                    site_id, connector, connector_instance_id, delivery_id,
-                    exact_body_sha256, media_type, received_at, processing_status,
-                    attempt_count, correlation_id, created_at, updated_at
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, 'received', 0, %s, %s, %s
+                SELECT {_DELIVERY_COLUMNS}
+                FROM observer.inbound_deliveries
+                WHERE site_id = %s
+                  AND connector = %s
+                  AND connector_instance_id = %s
+                  AND delivery_id = %s
+                """,
+                (scope.site_id, key.connector, key.instance_id, delivery_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise DeliveryConflict("delivery not found in connector scope")
+            return _delivery_from_row(row)
+
+    def claim_processing_job(
+        self,
+        scope: TenantScope,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_seconds: int,
+    ) -> ProcessingJobMetadata | None:
+        _validate_scope(scope)
+        _require_identifier(worker_id, "worker_id")
+        _require_aware(now, "now")
+        _require_lease_seconds(lease_seconds)
+        lease_expires_at = now + timedelta(seconds=lease_seconds)
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                f"""
+                WITH candidate AS (
+                    SELECT job.site_id, job.job_id
+                    FROM observer.processing_jobs AS job
+                    WHERE job.site_id = %s
+                      AND job.delivery_id IS NOT NULL
+                      AND job.idempotency_key IS NOT NULL
+                      AND EXISTS (
+                          SELECT 1
+                          FROM observer.connector_instances AS instance
+                          WHERE instance.site_id = job.site_id
+                            AND instance.connector = job.connector
+                            AND instance.connector_instance_id =
+                                job.connector_instance_id
+                            AND instance.status <> 'paused'
+                      )
+                      AND job.attempt_count < job.max_attempts
+                      AND (
+                          (
+                              job.status IN ('queued', 'retry_wait')
+                              AND (
+                                  job.next_retry_at IS NULL
+                                  OR job.next_retry_at <= %s
+                              )
+                          )
+                          OR (
+                              job.status = 'processing'
+                              AND job.lease_expires_at <= %s
+                          )
+                      )
+                    ORDER BY
+                        COALESCE(job.next_retry_at, job.created_at),
+                        job.created_at,
+                        job.job_id
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                ),
+                claimed AS (
+                    UPDATE observer.processing_jobs AS job
+                    SET status = 'processing',
+                        attempt_count = job.attempt_count + 1,
+                        lease_owner = %s,
+                        lease_expires_at = %s,
+                        lease_generation = job.lease_generation + 1,
+                        last_error_code = NULL,
+                        updated_at = %s
+                    FROM candidate
+                    WHERE job.site_id = candidate.site_id
+                      AND job.job_id = candidate.job_id
+                    RETURNING {_qualified_columns(_JOB_COLUMNS, "job")}
+                ),
+                delivery_state AS (
+                    UPDATE observer.inbound_deliveries AS delivery
+                    SET processing_status = 'processing',
+                        attempt_count = claimed.attempt_count,
+                        last_attempt_at = %s,
+                        last_error_code = NULL,
+                        updated_at = %s
+                    FROM claimed
+                    WHERE delivery.site_id = claimed.site_id
+                      AND delivery.connector = claimed.connector
+                      AND delivery.connector_instance_id =
+                          claimed.connector_instance_id
+                      AND delivery.delivery_id = claimed.delivery_id
+                      AND delivery.processing_status IN (
+                          'received', 'authenticated', 'queued', 'processing'
+                      )
+                    RETURNING delivery.delivery_id
                 )
-                ON CONFLICT (
-                    site_id, connector, connector_instance_id, delivery_id
-                ) DO NOTHING
-                RETURNING {_DELIVERY_COLUMNS}
+                SELECT {_qualified_columns(_JOB_COLUMNS, "claimed")}
+                FROM claimed
+                """,
+                (
+                    scope.site_id,
+                    now,
+                    now,
+                    worker_id,
+                    lease_expires_at,
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            row = cursor.fetchone()
+            return None if row is None else _job_from_row(row)
+
+    def heartbeat_processing_job(
+        self,
+        scope: TenantScope,
+        *,
+        job_id: str,
+        worker_id: str,
+        expected_attempt: int,
+        expected_lease_generation: int,
+        now: datetime,
+        lease_seconds: int,
+    ) -> ProcessingJobMetadata:
+        _validate_job_lease_input(
+            scope,
+            job_id=job_id,
+            worker_id=worker_id,
+            expected_attempt=expected_attempt,
+            expected_lease_generation=expected_lease_generation,
+            now=now,
+        )
+        _require_lease_seconds(lease_seconds)
+        lease_expires_at = now + timedelta(seconds=lease_seconds)
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                f"""
+                UPDATE observer.processing_jobs
+                SET lease_expires_at = %s, updated_at = %s
+                WHERE site_id = %s
+                  AND job_id = %s
+                  AND status = 'processing'
+                  AND lease_owner = %s
+                  AND attempt_count = %s
+                  AND lease_generation = %s
+                  AND lease_expires_at > %s
+                RETURNING {_JOB_COLUMNS}
+                """,
+                (
+                    lease_expires_at,
+                    now,
+                    scope.site_id,
+                    job_id,
+                    worker_id,
+                    expected_attempt,
+                    expected_lease_generation,
+                    now,
+                ),
+            )
+            return self._leased_job_result(cursor, "job heartbeat lease transition rejected")
+
+    def complete_processing_job(
+        self,
+        scope: TenantScope,
+        *,
+        job_id: str,
+        worker_id: str,
+        expected_attempt: int,
+        expected_lease_generation: int,
+        now: datetime,
+        provider_event_ids: tuple[str, ...],
+    ) -> ProcessingJobMetadata:
+        _validate_job_lease_input(
+            scope,
+            job_id=job_id,
+            worker_id=worker_id,
+            expected_attempt=expected_attempt,
+            expected_lease_generation=expected_lease_generation,
+            now=now,
+        )
+        _validate_provider_event_ids(provider_event_ids, allow_empty=True)
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            if provider_event_ids:
+                cursor.execute(
+                    """
+                    INSERT INTO observer.inbound_delivery_events (
+                        site_id, connector, connector_instance_id,
+                        delivery_id, provider_event_id, linked_at
+                    )
+                    SELECT
+                        job.site_id,
+                        job.connector,
+                        job.connector_instance_id,
+                        job.delivery_id,
+                        provider_event_id,
+                        %s
+                    FROM observer.processing_jobs AS job
+                    CROSS JOIN UNNEST(%s::text[]) AS provider_event_id
+                    WHERE job.site_id = %s
+                      AND job.job_id = %s
+                      AND job.status = 'processing'
+                      AND job.lease_owner = %s
+                      AND job.attempt_count = %s
+                      AND job.lease_generation = %s
+                      AND job.lease_expires_at > %s
+                    ON CONFLICT (
+                        site_id, connector, connector_instance_id,
+                        provider_event_id
+                    ) DO NOTHING
+                    """,
+                    (
+                        now,
+                        provider_event_ids,
+                        scope.site_id,
+                        job_id,
+                        worker_id,
+                        expected_attempt,
+                        expected_lease_generation,
+                        now,
+                    ),
+                )
+            cursor.execute(
+                """
+                UPDATE observer.inbound_deliveries AS delivery
+                SET processing_status = 'succeeded',
+                    last_error_code = NULL,
+                    updated_at = %s
+                FROM observer.processing_jobs AS job
+                WHERE job.site_id = %s
+                  AND job.job_id = %s
+                  AND job.status = 'processing'
+                  AND job.lease_owner = %s
+                  AND job.attempt_count = %s
+                  AND job.lease_generation = %s
+                  AND job.lease_expires_at > %s
+                  AND delivery.site_id = job.site_id
+                  AND delivery.connector = job.connector
+                  AND delivery.connector_instance_id =
+                      job.connector_instance_id
+                  AND delivery.delivery_id = job.delivery_id
+                  AND delivery.processing_status = 'processing'
+                """,
+                (
+                    now,
+                    scope.site_id,
+                    job_id,
+                    worker_id,
+                    expected_attempt,
+                    expected_lease_generation,
+                    now,
+                ),
+            )
+            cursor.execute(
+                f"""
+                UPDATE observer.processing_jobs
+                SET status = 'succeeded',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    next_retry_at = NULL,
+                    last_error_code = NULL,
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND job_id = %s
+                  AND status = 'processing'
+                  AND lease_owner = %s
+                  AND attempt_count = %s
+                  AND lease_generation = %s
+                  AND lease_expires_at > %s
+                RETURNING {_JOB_COLUMNS}
+                """,
+                (
+                    now,
+                    scope.site_id,
+                    job_id,
+                    worker_id,
+                    expected_attempt,
+                    expected_lease_generation,
+                    now,
+                ),
+            )
+            return self._leased_job_result(cursor, "job completion lease transition rejected")
+
+    def retry_processing_job(
+        self,
+        scope: TenantScope,
+        *,
+        job_id: str,
+        worker_id: str,
+        expected_attempt: int,
+        expected_lease_generation: int,
+        now: datetime,
+        next_retry_at: datetime,
+        error_code: str,
+    ) -> ProcessingJobMetadata:
+        _validate_job_lease_input(
+            scope,
+            job_id=job_id,
+            worker_id=worker_id,
+            expected_attempt=expected_attempt,
+            expected_lease_generation=expected_lease_generation,
+            now=now,
+        )
+        _require_aware(next_retry_at, "next_retry_at")
+        if next_retry_at <= now:
+            raise ValueError("next_retry_at must be in the future")
+        _require_identifier(error_code, "error_code", maximum=80)
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                f"""
+                UPDATE observer.processing_jobs
+                SET status = CASE
+                        WHEN attempt_count >= max_attempts THEN 'dead_letter'
+                        ELSE 'retry_wait'
+                    END,
+                    next_retry_at = CASE
+                        WHEN attempt_count >= max_attempts THEN NULL
+                        ELSE %s
+                    END,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    last_error_code = %s,
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND job_id = %s
+                  AND status = 'processing'
+                  AND lease_owner = %s
+                  AND attempt_count = %s
+                  AND lease_generation = %s
+                  AND lease_expires_at > %s
+                RETURNING {_JOB_COLUMNS}
+                """,
+                (
+                    next_retry_at,
+                    error_code,
+                    now,
+                    scope.site_id,
+                    job_id,
+                    worker_id,
+                    expected_attempt,
+                    expected_lease_generation,
+                    now,
+                ),
+            )
+            metadata = self._leased_job_result(cursor, "job retry lease transition rejected")
+            if metadata.status == "dead_letter":
+                self._record_dead_letter(cursor, metadata, error_code=error_code, now=now)
+                self._mark_delivery_terminal(
+                    cursor,
+                    metadata,
+                    status="failed",
+                    error_code=error_code,
+                    now=now,
+                )
+            else:
+                self._record_delivery_error(cursor, metadata, error_code=error_code, now=now)
+            return metadata
+
+    def quarantine_processing_job(
+        self,
+        scope: TenantScope,
+        *,
+        job_id: str,
+        worker_id: str,
+        expected_attempt: int,
+        expected_lease_generation: int,
+        now: datetime,
+        reason_code: str,
+    ) -> ProcessingJobMetadata:
+        _validate_job_lease_input(
+            scope,
+            job_id=job_id,
+            worker_id=worker_id,
+            expected_attempt=expected_attempt,
+            expected_lease_generation=expected_lease_generation,
+            now=now,
+        )
+        _require_identifier(reason_code, "reason_code", maximum=80)
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                f"""
+                UPDATE observer.processing_jobs
+                SET status = 'quarantined',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    next_retry_at = NULL,
+                    last_error_code = %s,
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND job_id = %s
+                  AND status = 'processing'
+                  AND lease_owner = %s
+                  AND attempt_count = %s
+                  AND lease_generation = %s
+                  AND lease_expires_at > %s
+                RETURNING {_JOB_COLUMNS}
+                """,
+                (
+                    reason_code,
+                    now,
+                    scope.site_id,
+                    job_id,
+                    worker_id,
+                    expected_attempt,
+                    expected_lease_generation,
+                    now,
+                ),
+            )
+            metadata = self._leased_job_result(cursor, "job quarantine lease transition rejected")
+            quarantine_id = hashlib.sha256(
+                f"{scope.site_id}\x1f{job_id}\x1f{expected_lease_generation}".encode()
+            ).hexdigest()
+            cursor.execute(
+                """
+                INSERT INTO observer.local_pilot_quarantine (
+                    site_id, quarantine_id, job_id, delivery_id,
+                    reason_code, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (site_id, quarantine_id) DO NOTHING
+                """,
+                (
+                    scope.site_id,
+                    quarantine_id,
+                    metadata.job_id,
+                    metadata.delivery_id,
+                    reason_code,
+                    now,
+                ),
+            )
+            self._mark_delivery_terminal(
+                cursor,
+                metadata,
+                status="quarantined",
+                error_code=reason_code,
+                now=now,
+            )
+            return metadata
+
+    def replay_delivery(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        delivery_id: str,
+        job_id: str,
+        idempotency_key: str,
+        now: datetime,
+        max_attempts: int,
+    ) -> ProcessingJobMetadata:
+        _validate_scope_key(scope, key)
+        _require_identifier(delivery_id, "delivery_id", maximum=512)
+        _require_identifier(job_id, "job_id")
+        _require_identifier(idempotency_key, "idempotency_key")
+        _require_aware(now, "now")
+        _require_attempts(max_attempts)
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                f"""
+                WITH locked_delivery AS (
+                    SELECT delivery_id
+                    FROM observer.inbound_deliveries
+                    WHERE site_id = %s
+                      AND connector = %s
+                      AND connector_instance_id = %s
+                      AND delivery_id = %s
+                      AND object_ref IS NOT NULL
+                      AND byte_size IS NOT NULL
+                    FOR UPDATE
+                ),
+                next_generation AS (
+                    SELECT COALESCE(MAX(job.generation), -1) + 1 AS generation
+                    FROM observer.processing_jobs AS job
+                    JOIN locked_delivery
+                      ON locked_delivery.delivery_id = job.delivery_id
+                    WHERE job.site_id = %s
+                      AND job.connector = %s
+                      AND job.connector_instance_id = %s
+                ),
+                inserted AS (
+                    INSERT INTO observer.processing_jobs (
+                        site_id, job_id, connector, connector_instance_id,
+                        delivery_id, stage, status, attempt_count, max_attempts,
+                        idempotency_key, generation, lease_generation,
+                        created_at, updated_at
+                    )
+                    SELECT
+                        %s, %s, %s, %s, locked_delivery.delivery_id,
+                        'normalize', 'queued', 0, %s, %s,
+                        next_generation.generation, 0, %s, %s
+                    FROM locked_delivery
+                    CROSS JOIN next_generation
+                    ON CONFLICT (site_id, idempotency_key)
+                        WHERE idempotency_key IS NOT NULL
+                    DO UPDATE SET idempotency_key =
+                        observer.processing_jobs.idempotency_key
+                    RETURNING {_JOB_COLUMNS}
+                )
+                SELECT {_qualified_columns(_JOB_COLUMNS, "inserted")}
+                FROM inserted
                 """,
                 (
                     scope.site_id,
                     key.connector,
                     key.instance_id,
                     delivery_id,
-                    exact_body_sha256,
-                    media_type,
-                    received_at,
-                    correlation_id,
-                    received_at,
-                    received_at,
+                    scope.site_id,
+                    key.connector,
+                    key.instance_id,
+                    scope.site_id,
+                    job_id,
+                    key.connector,
+                    key.instance_id,
+                    max_attempts,
+                    idempotency_key,
+                    now,
+                    now,
                 ),
             )
             row = cursor.fetchone()
             if row is None:
-                cursor.execute(
-                    f"""
-                    SELECT {_DELIVERY_COLUMNS}
-                    FROM observer.inbound_deliveries
-                    WHERE site_id = %s
-                      AND connector = %s
-                      AND connector_instance_id = %s
-                      AND delivery_id = %s
-                    """,
-                    (scope.site_id, key.connector, key.instance_id, delivery_id),
-                )
-                row = cursor.fetchone()
-                if row is None:
-                    raise RuntimeError("inbound delivery metadata is missing")
-            delivery = _delivery_from_row(row)
-            if delivery.exact_body_sha256 != exact_body_sha256:
-                raise DeliveryConflict("delivery identifier was reused with a different body")
-            return delivery
+                raise DeliveryConflict("replay delivery not found in connector scope")
+            metadata = _job_from_row(row)
+            if (
+                metadata.delivery_id != delivery_id
+                or metadata.connector != key.connector
+                or metadata.connector_instance_id != key.instance_id
+            ):
+                raise JobConflict("replay idempotency key conflicts with another delivery")
+            return metadata
+
+    def set_connector_status(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        status: str,
+        now: datetime,
+    ) -> ConnectorInstanceMetadata:
+        _validate_scope_key(scope, key)
+        _require_connector_status(status)
+        _require_aware(now, "now")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                f"""
+                UPDATE observer.connector_instances
+                SET status = %s, updated_at = %s
+                WHERE site_id = %s
+                  AND connector = %s
+                  AND connector_instance_id = %s
+                RETURNING {_CONNECTOR_COLUMNS}
+                """,
+                (status, now, scope.site_id, key.connector, key.instance_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LeaseConflict("connector status transition rejected")
+            return _connector_from_row(row)
+
+    def update_checkpoint_health(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        status: str,
+        now: datetime,
+        last_success_at: datetime | None = None,
+        error_code: str | None = None,
+    ) -> ConnectorCheckpointMetadata:
+        _validate_scope_key(scope, key)
+        _require_connector_status(status)
+        _require_aware(now, "now")
+        if last_success_at is not None:
+            _require_aware(last_success_at, "last_success_at")
+        if error_code is not None:
+            _require_identifier(error_code, "error_code", maximum=80)
+        if status == "healthy" and error_code is not None:
+            raise ValueError("healthy checkpoint cannot include an error code")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                f"""
+                UPDATE observer.connector_checkpoints
+                SET status = %s,
+                    last_success_at = COALESCE(%s, last_success_at),
+                    last_error_code = %s,
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND connector = %s
+                  AND connector_instance_id = %s
+                RETURNING {_CHECKPOINT_COLUMNS}
+                """,
+                (
+                    status,
+                    last_success_at,
+                    error_code,
+                    now,
+                    scope.site_id,
+                    key.connector,
+                    key.instance_id,
+                ),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise CheckpointConflict("checkpoint health transition rejected")
+            return _checkpoint_from_row(row)
 
     def link_delivery_events(
         self,
@@ -901,6 +1710,241 @@ class PostgresLocalPilotStorage:
             row = cursor.fetchone()
             return None if row is None else _health_from_row(row)
 
+    def _accept_inbound_delivery(
+        self,
+        cursor: Cursor,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        delivery_id: str,
+        exact_body_sha256: str,
+        object_ref: str,
+        byte_size: int,
+        media_type: str,
+        received_at: datetime,
+        correlation_id: str,
+        queued: bool,
+    ) -> InboundDeliveryMetadata:
+        processing_status = "queued" if queued else "received"
+        cursor.execute(
+            f"""
+            INSERT INTO observer.inbound_deliveries (
+                site_id, connector, connector_instance_id, delivery_id,
+                exact_body_sha256, object_ref, byte_size, media_type,
+                received_at, processing_status, attempt_count, correlation_id,
+                created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s
+            )
+            ON CONFLICT (
+                site_id, connector, connector_instance_id, delivery_id
+            ) DO NOTHING
+            RETURNING {_DELIVERY_COLUMNS}
+            """,
+            (
+                scope.site_id,
+                key.connector,
+                key.instance_id,
+                delivery_id,
+                exact_body_sha256,
+                object_ref,
+                byte_size,
+                media_type,
+                received_at,
+                processing_status,
+                correlation_id,
+                received_at,
+                received_at,
+            ),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            cursor.execute(
+                f"""
+                SELECT {_DELIVERY_COLUMNS}
+                FROM observer.inbound_deliveries
+                WHERE site_id = %s
+                  AND connector = %s
+                  AND connector_instance_id = %s
+                  AND delivery_id = %s
+                """,
+                (scope.site_id, key.connector, key.instance_id, delivery_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError("inbound delivery metadata is missing")
+        delivery = _delivery_from_row(row)
+        actual = (
+            delivery.exact_body_sha256,
+            delivery.object_ref,
+            delivery.byte_size,
+            delivery.media_type,
+        )
+        expected = (exact_body_sha256, object_ref, byte_size, media_type)
+        if actual != expected:
+            raise DeliveryConflict(
+                "delivery identifier was reused with a different body or content metadata"
+            )
+        return delivery
+
+    def _enqueue_processing_job(
+        self,
+        cursor: Cursor,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        delivery_id: str,
+        job_id: str,
+        idempotency_key: str,
+        generation: int,
+        now: datetime,
+        max_attempts: int,
+    ) -> ProcessingJobMetadata:
+        cursor.execute(
+            f"""
+            INSERT INTO observer.processing_jobs (
+                site_id, job_id, connector, connector_instance_id, delivery_id,
+                stage, status, attempt_count, max_attempts, idempotency_key,
+                generation, lease_generation, created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, 'normalize', 'queued', 0, %s, %s, %s,
+                0, %s, %s
+            )
+            ON CONFLICT (site_id, idempotency_key)
+                WHERE idempotency_key IS NOT NULL
+            DO NOTHING
+            RETURNING {_JOB_COLUMNS}
+            """,
+            (
+                scope.site_id,
+                job_id,
+                key.connector,
+                key.instance_id,
+                delivery_id,
+                max_attempts,
+                idempotency_key,
+                generation,
+                now,
+                now,
+            ),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            cursor.execute(
+                f"""
+                SELECT {_JOB_COLUMNS}
+                FROM observer.processing_jobs
+                WHERE site_id = %s AND idempotency_key = %s
+                """,
+                (scope.site_id, idempotency_key),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise JobConflict("processing job idempotency conflict")
+        metadata = _job_from_row(row)
+        if (
+            metadata.delivery_id != delivery_id
+            or metadata.connector != key.connector
+            or metadata.connector_instance_id != key.instance_id
+            or metadata.generation != generation
+        ):
+            raise JobConflict("processing job idempotency key was reused")
+        return metadata
+
+    @staticmethod
+    def _leased_job_result(cursor: Cursor, message: str) -> ProcessingJobMetadata:
+        row = cursor.fetchone()
+        if row is None:
+            raise JobConflict(message)
+        return _job_from_row(row)
+
+    @staticmethod
+    def _record_delivery_error(
+        cursor: Cursor,
+        job: ProcessingJobMetadata,
+        *,
+        error_code: str,
+        now: datetime,
+    ) -> None:
+        cursor.execute(
+            """
+            UPDATE observer.inbound_deliveries
+            SET last_error_code = %s, updated_at = %s
+            WHERE site_id = %s
+              AND connector = %s
+              AND connector_instance_id = %s
+              AND delivery_id = %s
+              AND processing_status = 'processing'
+            """,
+            (
+                error_code,
+                now,
+                job.site_id,
+                job.connector,
+                job.connector_instance_id,
+                job.delivery_id,
+            ),
+        )
+
+    @staticmethod
+    def _mark_delivery_terminal(
+        cursor: Cursor,
+        job: ProcessingJobMetadata,
+        *,
+        status: str,
+        error_code: str,
+        now: datetime,
+    ) -> None:
+        cursor.execute(
+            """
+            UPDATE observer.inbound_deliveries
+            SET processing_status = %s, last_error_code = %s, updated_at = %s
+            WHERE site_id = %s
+              AND connector = %s
+              AND connector_instance_id = %s
+              AND delivery_id = %s
+              AND processing_status = 'processing'
+            """,
+            (
+                status,
+                error_code,
+                now,
+                job.site_id,
+                job.connector,
+                job.connector_instance_id,
+                job.delivery_id,
+            ),
+        )
+
+    @staticmethod
+    def _record_dead_letter(
+        cursor: Cursor,
+        job: ProcessingJobMetadata,
+        *,
+        error_code: str,
+        now: datetime,
+    ) -> None:
+        dead_letter_id = hashlib.sha256(
+            f"{job.site_id}\x1f{job.job_id}\x1f{job.lease_generation}".encode()
+        ).hexdigest()
+        cursor.execute(
+            """
+            INSERT INTO observer.local_pilot_dead_letter (
+                site_id, dead_letter_id, job_id, reason_code,
+                attempt_count, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (site_id, dead_letter_id) DO NOTHING
+            """,
+            (
+                job.site_id,
+                dead_letter_id,
+                job.job_id,
+                error_code,
+                job.attempt_count,
+                now,
+            ),
+        )
+
     def _change_lease(
         self,
         scope: TenantScope,
@@ -977,15 +2021,44 @@ def _delivery_from_row(row: tuple[object, ...]) -> InboundDeliveryMetadata:
         connector_instance_id=str(row[2]),
         delivery_id=str(row[3]),
         exact_body_sha256=str(row[4]),
-        media_type=str(row[5]),
-        received_at=row[6],  # type: ignore[arg-type]
-        processing_status=str(row[7]),
-        attempt_count=_as_int(row[8], "attempt_count"),
-        correlation_id=str(row[9]),
-        last_attempt_at=row[10],  # type: ignore[arg-type]
-        last_error_code=None if row[11] is None else str(row[11]),
-        created_at=row[12],  # type: ignore[arg-type]
-        updated_at=row[13],  # type: ignore[arg-type]
+        object_ref=str(row[5]),
+        byte_size=_as_int(row[6], "byte_size"),
+        media_type=str(row[7]),
+        received_at=row[8],  # type: ignore[arg-type]
+        processing_status=str(row[9]),
+        attempt_count=_as_int(row[10], "attempt_count"),
+        correlation_id=str(row[11]),
+        last_attempt_at=row[12],  # type: ignore[arg-type]
+        last_error_code=None if row[13] is None else str(row[13]),
+        created_at=row[14],  # type: ignore[arg-type]
+        updated_at=row[15],  # type: ignore[arg-type]
+    )
+
+
+def _job_from_row(row: tuple[object, ...]) -> ProcessingJobMetadata:
+    delivery_id = row[4]
+    idempotency_key = row[9]
+    if delivery_id is None or idempotency_key is None:
+        raise RuntimeError("ingestion processing job is missing durable identity")
+    return ProcessingJobMetadata(
+        site_id=str(row[0]),
+        job_id=str(row[1]),
+        connector=str(row[2]),
+        connector_instance_id=str(row[3]),
+        delivery_id=str(delivery_id),
+        stage=str(row[5]),
+        status=str(row[6]),
+        attempt_count=_as_int(row[7], "attempt_count"),
+        max_attempts=_as_int(row[8], "max_attempts"),
+        idempotency_key=str(idempotency_key),
+        generation=_as_int(row[10], "generation"),
+        lease_owner=None if row[11] is None else str(row[11]),
+        lease_expires_at=row[12],  # type: ignore[arg-type]
+        lease_generation=_as_int(row[13], "lease_generation"),
+        next_retry_at=row[14],  # type: ignore[arg-type]
+        last_error_code=None if row[15] is None else str(row[15]),
+        created_at=row[16],  # type: ignore[arg-type]
+        updated_at=row[17],  # type: ignore[arg-type]
     )
 
 
@@ -1080,3 +2153,66 @@ def _require_lease_seconds(lease_seconds: int) -> None:
 def _require_attempts(max_attempts: int) -> None:
     if not isinstance(max_attempts, int) or not 1 <= max_attempts <= _MAX_ATTEMPTS:
         raise ValueError("max_attempts must be a positive bounded integer")
+
+
+def _validate_delivery_input(
+    scope: TenantScope,
+    key: ConnectorKey,
+    *,
+    delivery_id: str,
+    exact_body_sha256: str,
+    object_ref: str,
+    byte_size: int,
+    media_type: str,
+    received_at: datetime,
+    correlation_id: str,
+) -> None:
+    _validate_scope_key(scope, key)
+    _require_identifier(delivery_id, "delivery_id", maximum=512)
+    if not _SHA256.fullmatch(exact_body_sha256):
+        raise ValueError("exact_body_sha256 must be lowercase hexadecimal sha256")
+    _require_identifier(object_ref, "object_ref", maximum=512)
+    if not isinstance(byte_size, int) or isinstance(byte_size, bool) or byte_size < 0:
+        raise ValueError("byte_size must be a non-negative integer")
+    _require_identifier(media_type, "media_type", maximum=255)
+    _require_aware(received_at, "received_at")
+    _require_identifier(correlation_id, "correlation_id")
+
+
+def _validate_job_lease_input(
+    scope: TenantScope,
+    *,
+    job_id: str,
+    worker_id: str,
+    expected_attempt: int,
+    expected_lease_generation: int,
+    now: datetime,
+) -> None:
+    _validate_scope(scope)
+    _require_identifier(job_id, "job_id")
+    _require_identifier(worker_id, "worker_id")
+    if not isinstance(expected_attempt, int) or expected_attempt < 1:
+        raise ValueError("expected_attempt must be a positive integer")
+    if not isinstance(expected_lease_generation, int) or expected_lease_generation < 1:
+        raise ValueError("expected_lease_generation must be a positive integer")
+    _require_aware(now, "now")
+
+
+def _validate_provider_event_ids(
+    provider_event_ids: tuple[str, ...],
+    *,
+    allow_empty: bool,
+) -> None:
+    if not isinstance(provider_event_ids, tuple):
+        raise TypeError("provider_event_ids must be a tuple")
+    if not allow_empty and not provider_event_ids:
+        raise ValueError("provider_event_ids must not be empty")
+    if len(provider_event_ids) != len(set(provider_event_ids)):
+        raise ValueError("provider_event_ids must be unique")
+    for provider_event_id in provider_event_ids:
+        _require_identifier(provider_event_id, "provider_event_id", maximum=512)
+
+
+def _require_connector_status(status: str) -> None:
+    if status not in {"healthy", "paused", "degraded", "failed"}:
+        raise ValueError("invalid connector status")
