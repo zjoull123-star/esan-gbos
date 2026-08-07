@@ -26,6 +26,6 @@ Commit scope is restricted to `infra/local/**`, `scripts/local-pilot/**`,
 The runtime entrypoints are deliberately declared but not fabricated here.
 The actual UI is a Frappe PWA and its local composition is not present. Until
 the owning workstreams provide that composition, a runtime Containerfile, the
-declared entrypoints, and locally inspected digest-locked images, preflight
+complete declared entrypoint set, and locally inspected digest-locked images, preflight
 must return nonzero and `start` must not read credentials or run containers.
 Compose config success is syntax validation only. It is not runtime evidence.

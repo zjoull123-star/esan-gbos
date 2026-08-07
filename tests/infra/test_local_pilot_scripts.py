@@ -171,7 +171,7 @@ def test_preflight_rejects_placeholder_media_hashes(tmp_path: Path) -> None:
     assert "placeholder" in result.stderr.lower()
 
 
-def test_preflight_fails_closed_when_runtime_entrypoints_are_unavailable(tmp_path: Path) -> None:
+def test_preflight_fails_closed_when_runtime_composition_is_unavailable(tmp_path: Path) -> None:
     manifest = json.loads(_read(MANIFEST))
     manifest["local_pilot_go"] = True
     manifest["local_pilot_status"] = "ready"
@@ -182,7 +182,7 @@ def test_preflight_fails_closed_when_runtime_entrypoints_are_unavailable(tmp_pat
 
     assert result.returncode != 0
     assert "未组合，不可启动" in result.stderr
-    assert "runtime entrypoint unavailable" in result.stderr
+    assert "Frappe PWA and runtime Containerfile composition are incomplete" in result.stderr
 
 
 def test_preflight_rejects_null_digest_for_required_image() -> None:

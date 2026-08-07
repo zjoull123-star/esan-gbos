@@ -11,7 +11,8 @@ DeepSeek 默认关闭，模型 kill switch 打开，`external_send=false`，且
 当前结论是：**未组合，不可启动**。真实 PWA 是 Frappe PWA，不是独立
 Python `pilot-ui`；本地 Frappe composition 尚未设计进该 Compose。
 `infra/local/runtime-entrypoints.json` 中声明的 runtime entrypoint 尚未
-实现，本地 runtime 也没有 Containerfile 或已检查镜像。
+完整实现；即使部分入口文件已落地，本地 runtime 仍没有 Containerfile 或
+已检查镜像，不能据此解除 blocker。
 `images.lock.json` 如实记录 MinIO、Prometheus、Cloudflared 与 local
 runtime 在本机均未安装；相应本地 inspect ID/RepoDigest 为 null。
 preflight 必须因此 **fail closed**，`start` 必须在读取 Keychain 和调用
