@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
 from services.agent_runtime.agents import AgentInput, AgentKind, FactVersionRef
 from services.model_gateway.deepseek import (
     BudgetStatus,
@@ -109,3 +111,15 @@ def test_agent_provider_tokenizes_raw_context_before_gateway_and_propagates_coun
     assert output.network_calls == 1
     assert output.model_api_calls == 1
     assert output.tool_calls == 0
+
+
+def test_agent_provider_requires_explicit_phrase_resolver() -> None:
+    with pytest.raises(TypeError, match="phrase_resolver"):
+        DeepSeekAgentProvider(  # type: ignore[call-arg]
+            gateway=RecordingGateway(),
+            tokenizer=StableTokenizer(
+                hmac_key=b"k" * 32,
+                vault=InMemoryMappingVault(),
+            ),
+            clock=lambda: NOW,
+        )

@@ -89,8 +89,15 @@ class ProviderOutput:
     tool_calls: int = 0
 
     def __post_init__(self) -> None:
-        if min(self.network_calls, self.model_api_calls, self.tool_calls) < 0:
-            raise ValueError("provider counters must be non-negative")
+        if (
+            isinstance(self.confidence, bool)
+            or not isinstance(self.confidence, int | float)
+            or not 0 <= self.confidence <= 1
+        ):
+            raise ValueError("provider confidence must be a number between zero and one")
+        for counter in (self.network_calls, self.model_api_calls, self.tool_calls):
+            if isinstance(counter, bool) or not isinstance(counter, int) or counter < 0:
+                raise ValueError("provider counters must be non-negative integers")
 
 
 @runtime_checkable

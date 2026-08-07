@@ -427,3 +427,36 @@ def test_orchestrator_rejects_provider_reported_tool_calls() -> None:
 
     with pytest.raises(AgentExecutionError, match="tools"):
         runtime.execute(input_for(AgentKind.SALES), now=NOW)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"confidence": True},
+        {"confidence": -0.01},
+        {"confidence": 1.01},
+        {"network_calls": True},
+        {"network_calls": 0.5},
+        {"model_api_calls": True},
+        {"model_api_calls": -1},
+        {"tool_calls": False},
+        {"tool_calls": 0.5},
+    ],
+)
+def test_provider_output_rejects_invalid_confidence_and_counter_types(
+    mutation: dict[str, object],
+) -> None:
+    values: dict[str, object] = {
+        "action_type": "internal.work_item.propose",
+        "payload": {"summary": "Internal only."},
+        "confidence": 0.5,
+        "injection_detected": False,
+        "prompt_version": "test-prompt-v1",
+        "network_calls": 0,
+        "model_api_calls": 0,
+        "tool_calls": 0,
+    }
+    values.update(mutation)
+
+    with pytest.raises(ValueError):
+        ProviderOutput(**values)  # type: ignore[arg-type]

@@ -44,7 +44,7 @@ class DeepSeekAgentProvider:
         gateway: TokenizedGateway,
         tokenizer: StableTokenizer,
         clock: Callable[[], datetime],
-        phrase_resolver: Callable[[AgentInput], tuple[str, ...]] = lambda _: (),
+        phrase_resolver: Callable[[AgentInput], tuple[str, ...]],
     ) -> None:
         self._gateway = gateway
         self._tokenizer = tokenizer

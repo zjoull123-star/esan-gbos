@@ -94,6 +94,48 @@ def test_receipt_matches_contract_shape_and_contains_no_plaintext() -> None:
     assert "415" not in serialized
 
 
+def test_receipt_defaults_to_thirty_day_retention() -> None:
+    result = tokenizer(InMemoryMappingVault()).tokenize(
+        "alice@example.com",
+        site_id="gbos.localhost",
+        purpose="sales_follow_up",
+        now=NOW,
+    )
+
+    assert result.receipt.expires_at == NOW + timedelta(days=30)
+
+
+@pytest.mark.parametrize(
+    "expires_at",
+    [
+        NOW - timedelta(seconds=1),
+        NOW,
+        NOW + timedelta(days=30, seconds=1),
+    ],
+)
+def test_receipt_rejects_expired_or_overlong_retention(expires_at: datetime) -> None:
+    with pytest.raises(ValueError, match="expires_at"):
+        tokenizer(InMemoryMappingVault()).tokenize(
+            "alice@example.com",
+            site_id="gbos.localhost",
+            purpose="sales_follow_up",
+            now=NOW,
+            expires_at=expires_at,
+        )
+
+
+def test_receipt_accepts_exactly_thirty_day_retention() -> None:
+    result = tokenizer(InMemoryMappingVault()).tokenize(
+        "alice@example.com",
+        site_id="gbos.localhost",
+        purpose="sales_follow_up",
+        now=NOW,
+        expires_at=NOW + timedelta(days=30),
+    )
+
+    assert result.receipt.expires_at == NOW + timedelta(days=30)
+
+
 def test_obvious_residual_pii_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     active = tokenizer(InMemoryMappingVault())
     monkeypatch.setattr(active, "_replace_detected", lambda text, **_: (text, {}))

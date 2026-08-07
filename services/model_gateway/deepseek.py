@@ -20,7 +20,7 @@ DEEPSEEK_CHAT_PATH = "/chat/completions"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 MAX_INPUT_TOKENS = 32_768
 MAX_OUTPUT_TOKENS = 4_096
-LOW_CONFIDENCE_THRESHOLD = 0.65
+LOW_CONFIDENCE_THRESHOLD = 0.75
 SOFT_MONTHLY_LIMIT_USD = Decimal("50")
 HARD_MONTHLY_LIMIT_USD = Decimal("100")
 
@@ -204,8 +204,6 @@ class DeepSeekAdapter:
         if not self._network_enabled:
             raise ModelNetworkDisabled("model network is disabled")
         monthly_before = self._usage_ledger.monthly_cost_usd()
-        if monthly_before >= HARD_MONTHLY_LIMIT_USD:
-            raise BudgetHardStop("monthly model budget hard stop reached")
 
         schema = _load_schema(request.agent_kind)
         first = self._call(
@@ -216,6 +214,7 @@ class DeepSeekAdapter:
             prior_output=None,
         )
         calls = [first]
+        costs = [self._record_call(first)]
         confidence = first.output.get("confidence")
         needs_review = (
             request.complex_multi_entity
@@ -233,10 +232,10 @@ class DeepSeekAdapter:
                 prior_output=first.output,
             )
             calls.append(final)
+            costs.append(self._record_call(final))
 
         usage = _combine_usage(tuple(call.usage for call in calls))
-        cost = self._calculate_cost(usage)
-        self._usage_ledger.record(usage=usage, cost=cost)
+        cost = _combine_cost(tuple(costs))
         monthly_after = self._usage_ledger.monthly_cost_usd()
         budget_status = (
             BudgetStatus.WARNING
@@ -280,6 +279,8 @@ class DeepSeekAdapter:
         network_calls = 0
         response: httpx.Response | None = None
         for attempt in range(3):
+            if self._usage_ledger.monthly_cost_usd() >= HARD_MONTHLY_LIMIT_USD:
+                raise BudgetHardStop("monthly model budget hard stop reached")
             network_calls += 1
             try:
                 candidate = client.post(DEEPSEEK_CHAT_PATH, json=payload)
@@ -325,6 +326,11 @@ class DeepSeekAdapter:
             catalog_version=self._price_calculator.catalog_version,
         )
 
+    def _record_call(self, call: _CallResult) -> CostSnapshot:
+        cost = self._calculate_cost(call.usage)
+        self._usage_ledger.record(usage=call.usage, cost=cost)
+        return cost
+
 
 def _request_payload(
     request: TokenizedModelRequest,
@@ -342,7 +348,6 @@ def _request_payload(
     )
     user_content: dict[str, Any] = {
         "request_id": request.request_id,
-        "site_id": request.site_id,
         "purpose": request.purpose,
         "agent_kind": request.agent_kind,
         "subject_ref": request.subject_ref,
@@ -462,6 +467,20 @@ def _combine_usage(values: tuple[UsageSnapshot, ...]) -> UsageSnapshot:
     )
 
 
+def _combine_cost(values: tuple[CostSnapshot, ...]) -> CostSnapshot:
+    if any(value.status == "unknown" for value in values):
+        return CostSnapshot(status="unknown")
+    amounts = tuple(value.amount_usd for value in values)
+    versions = {value.catalog_version for value in values}
+    if any(amount is None for amount in amounts) or len(versions) != 1:
+        return CostSnapshot(status="unknown")
+    return CostSnapshot(
+        status="known",
+        amount_usd=sum((amount for amount in amounts if amount is not None), Decimal("0")),
+        catalog_version=versions.pop(),
+    )
+
+
 def _load_schema(agent_kind: str) -> dict[str, Any]:
     path = (
         Path(__file__).parents[2]
@@ -541,8 +560,10 @@ _FORBIDDEN_TEXT = (
     "正式报价",
     "正式价格",
     "正式折扣",
-    "折扣",
-    "付款",
+    "执行付款",
+    "发起付款",
+    "执行折扣",
+    "批准折扣",
     "承诺交期",
     "创建订单",
     "赢单",

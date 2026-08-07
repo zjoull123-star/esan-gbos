@@ -212,6 +212,16 @@ class StableTokenizer:
             raise ValueError("site_id and purpose are required")
         if now.tzinfo is None:
             raise ValueError("now must be timezone-aware")
+        created_at = now.astimezone(UTC)
+        if expires_at is not None and expires_at.tzinfo is None:
+            raise ValueError("expires_at must be timezone-aware")
+        expiry = (
+            expires_at.astimezone(UTC)
+            if expires_at is not None
+            else created_at + timedelta(days=30)
+        )
+        if not created_at < expiry <= created_at + timedelta(days=30):
+            raise ValueError("expires_at must be after now and no more than 30 days later")
         tokenized, mapping = self._replace_detected(
             text,
             site_id=site_id,
@@ -237,8 +247,6 @@ class StableTokenizer:
             site_id=site_id,
             purpose=purpose,
         )
-        created_at = now.astimezone(UTC)
-        expiry = (expires_at or (now + timedelta(hours=24))).astimezone(UTC)
         receipt_seed = record_seed + _timestamp(created_at).encode("ascii")
         receipt = TokenizationReceipt(
             receipt_id=f"tokenization-{hashlib.sha256(receipt_seed).hexdigest()[:32]}",

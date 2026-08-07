@@ -39,10 +39,30 @@ class FixedPriceCalculator:
         return Decimal(input_tokens + output_tokens) / Decimal("1000000")
 
 
-def request(*, complex_multi_entity: bool = False) -> TokenizedModelRequest:
+class FixedCallPriceCalculator:
+    catalog_version = "test-fixed-call-price-v1"
+
+    def __init__(self, amount: Decimal) -> None:
+        self._amount = amount
+
+    def calculate(
+        self,
+        *,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> Decimal:
+        return self._amount
+
+
+def request(
+    *,
+    complex_multi_entity: bool = False,
+    site_id: str = "gbos.localhost",
+) -> TokenizedModelRequest:
     return TokenizedModelRequest(
         request_id="model-request-SYNTH-001",
-        site_id="gbos.localhost",
+        site_id=site_id,
         purpose="sales_follow_up",
         agent_kind="sales",
         subject_ref="DEAL-SYNTH-001",
@@ -182,6 +202,29 @@ def test_low_confidence_or_complex_result_allows_exactly_one_thinking_review(
     assert result.network_calls == 2
 
 
+@pytest.mark.parametrize(
+    ("confidence", "expected_calls"),
+    [
+        (0.74, 2),
+        (0.75, 1),
+    ],
+)
+def test_thinking_review_confidence_threshold_is_point_seven_five(
+    confidence: float,
+    expected_calls: int,
+) -> None:
+    requests: list[dict[str, object]] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(http_request.content))
+        response_confidence = confidence if len(requests) == 1 else 0.9
+        return api_response(sales_output(confidence=response_confidence))
+
+    adapter(handler).invoke(request())
+
+    assert len(requests) == expected_calls
+
+
 def test_adapter_reuses_transport_across_review_and_later_invocation() -> None:
     class CloseAwareTransport(httpx.BaseTransport):
         def __init__(self) -> None:
@@ -247,6 +290,82 @@ def test_soft_budget_threshold_returns_warning_state() -> None:
     assert result.budget_status is BudgetStatus.WARNING
 
 
+def test_first_call_cost_reaching_hard_limit_blocks_review_before_second_http() -> None:
+    calls = 0
+    ledger = InMemoryUsageLedger(monthly_cost_usd=Decimal("99.99"))
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return api_response(sales_output(confidence=0.74))
+
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(handler),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedCallPriceCalculator(Decimal("0.01")),
+        usage_ledger=ledger,
+        retry_delay=lambda _: None,
+    )
+
+    with pytest.raises(BudgetHardStop):
+        active.invoke(request(complex_multi_entity=True))
+
+    assert calls == 1
+    assert ledger.monthly_cost_usd() == Decimal("100.00")
+    assert len(ledger.records) == 1
+
+
+def test_first_call_is_recorded_when_review_protocol_fails() -> None:
+    calls = 0
+    ledger = InMemoryUsageLedger()
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return api_response(sales_output(confidence=0.74))
+        return api_response("not-json")
+
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(handler),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedCallPriceCalculator(Decimal("0.01")),
+        usage_ledger=ledger,
+        retry_delay=lambda _: None,
+    )
+
+    with pytest.raises(GatewayFailure):
+        active.invoke(request(complex_multi_entity=True))
+
+    assert calls == 2
+    assert ledger.monthly_cost_usd() == Decimal("0.01")
+    assert len(ledger.records) == 1
+
+
+def test_successful_review_returns_sum_of_per_call_costs() -> None:
+    ledger = InMemoryUsageLedger()
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(lambda _: api_response(sales_output(confidence=0.74))),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedCallPriceCalculator(Decimal("0.01")),
+        usage_ledger=ledger,
+        retry_delay=lambda _: None,
+    )
+
+    result = active.invoke(request(complex_multi_entity=True))
+
+    assert result.cost.status == "known"
+    assert result.cost.amount_usd == Decimal("0.02")
+    assert ledger.monthly_cost_usd() == Decimal("0.02")
+    assert len(ledger.records) == 2
+
+
 def test_retryable_failures_retry_at_most_twice() -> None:
     outcomes: list[httpx.Response | Exception] = [
         httpx.ConnectError("synthetic connection failure"),
@@ -305,6 +424,21 @@ def test_missing_usage_and_cost_are_unknown_not_zero() -> None:
     assert result.cost.amount_usd is None
 
 
+def test_external_messages_do_not_include_local_site_identifier() -> None:
+    sentinel = "sensitive-org.example"
+    messages: list[str] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        payload = json.loads(http_request.content)
+        messages.append(json.dumps(payload["messages"], ensure_ascii=False))
+        return api_response(sales_output())
+
+    adapter(handler).invoke(request(site_id=sentinel))
+
+    assert messages
+    assert sentinel not in messages[0]
+
+
 @pytest.mark.parametrize(
     "unsafe_mutation",
     [
@@ -356,3 +490,14 @@ def test_recursive_safety_rejects_commitment_language_inside_allowed_fields(
 
     with pytest.raises(GatewayFailure):
         adapter(lambda _: api_response(output)).invoke(request())
+
+
+def test_recursive_safety_allows_non_committal_payment_and_discount_fact() -> None:
+    output = sales_output()
+    payload = output["payload"]
+    assert isinstance(payload, dict)
+    payload["summary"] = "客户询问付款条款和折扣，待人工确认。"
+
+    result = adapter(lambda _: api_response(output)).invoke(request())
+
+    assert result.output == output
