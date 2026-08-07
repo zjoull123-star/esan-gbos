@@ -27,6 +27,7 @@ from .tokenization import contains_obvious_pii
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_CHAT_PATH = "/chat/completions"
+DEEPSEEK_PROVIDER = "deepseek"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 MAX_INPUT_TOKENS = 32_768
 MAX_OUTPUT_TOKENS = 4_096
@@ -34,6 +35,12 @@ LOW_CONFIDENCE_THRESHOLD = 0.75
 SOFT_MONTHLY_LIMIT_USD = Decimal("50")
 HARD_MONTHLY_LIMIT_USD = Decimal("100")
 MODEL_GATEWAY_POLICY_VERSION = "model-gateway-policy-v1"
+OUTPUT_SCHEMA_VERSIONS = {
+    "sales": "sales-proposal-v1.0",
+    "purchase": "purchase-proposal-v1.0",
+    "product": "product-proposal-v1.0",
+    "ceo": "ceo-proposal-v1.0",
+}
 
 
 class GatewayFailure(RuntimeError):
@@ -319,7 +326,7 @@ class DeepSeekAdapter:
         prior_output: dict[str, Any] | None,
         attempt: int,
     ) -> _AuditedCall:
-        started_at = self._clock()
+        started_at = self._validated_clock_now()
         started_tick = self._monotonic()
         call: _CallResult | None = None
         try:
@@ -332,7 +339,7 @@ class DeepSeekAdapter:
             )
             cost = self._record_call(call)
         except GatewayFailure as exc:
-            completed_at = self._clock()
+            completed_at = self._validated_clock_now()
             latency_ms = max(0, int((self._monotonic() - started_tick) * 1000))
             record = self._audit_record(
                 request=request,
@@ -353,7 +360,7 @@ class DeepSeekAdapter:
             self._emit_audit(record)
             exc.audit_records = (record,)
             raise
-        completed_at = self._clock()
+        completed_at = self._validated_clock_now()
         latency_ms = max(0, int((self._monotonic() - started_tick) * 1000))
         record = self._audit_record(
             request=request,
@@ -405,11 +412,11 @@ class DeepSeekAdapter:
         return ModelInvocationRecord(
             invocation_id=invocation_id,
             site_id=request.site_id,
-            provider="deepseek",
+            provider=DEEPSEEK_PROVIDER,
             requested_model=DEEPSEEK_MODEL,
             observed_model=observed_model,
             prompt_version=request.prompt_version,
-            output_schema_version=f"{request.agent_kind}-proposal-v1.0",
+            output_schema_version=_output_schema_version(request.agent_kind),
             policy_version=MODEL_GATEWAY_POLICY_VERSION,
             tokenizer_version=request.tokenizer_version,
             request_id=request.request_id,
@@ -437,6 +444,15 @@ class DeepSeekAdapter:
             price_catalog_version=cost.catalog_version,
             output_digest=None if output is None else _output_digest(output),
         )
+
+    def _validated_clock_now(self) -> datetime:
+        value = self._clock()
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+            raise GatewayFailure(
+                "audit clock must return a timezone-aware datetime",
+                error_code="internal_error",
+            )
+        return value
 
     def _emit_audit(self, record: ModelInvocationRecord) -> None:
         if self._audit_recorder is not None:
@@ -786,11 +802,12 @@ def _combine_cost(values: tuple[CostSnapshot, ...]) -> CostSnapshot:
 
 
 def _load_schema(agent_kind: str) -> dict[str, Any]:
+    output_schema_version = _output_schema_version(agent_kind)
     path = (
         Path(__file__).parents[2]
         / "contracts"
         / "local_pilot"
-        / f"{agent_kind}-proposal-v1.0.schema.json"
+        / f"{output_schema_version}.schema.json"
     )
     schema = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(schema, dict):
@@ -930,23 +947,51 @@ def _audit_cost(cost: CostSnapshot) -> CostMetadata:
 
 
 def _stable_invocation_id(request: TokenizedModelRequest, attempt: int) -> str:
-    material = "\x1f".join(
-        (
-            request.site_id,
-            request.request_id,
-            request.prompt_version,
-            request.agent_kind,
-            str(attempt),
-        )
-    ).encode()
-    return f"invocation-{sha256(material).hexdigest()}"
+    return f"invocation-{_invocation_identity_digest(request, attempt)}"
 
 
 def _stable_idempotency_key(request: TokenizedModelRequest, attempt: int) -> str:
-    candidate = f"{request.request_id}:{attempt}"
-    if len(candidate) <= 256:
-        return candidate
-    return _stable_invocation_id(request, attempt)
+    return f"model-call-{_invocation_identity_digest(request, attempt)}"
+
+
+def _invocation_identity_digest(request: TokenizedModelRequest, attempt: int) -> str:
+    material = {
+        "agent_kind": request.agent_kind,
+        "attempt": attempt,
+        "complex_multi_entity": request.complex_multi_entity,
+        "evidence_refs": list(request.evidence_refs),
+        "mapping_digest": request.mapping_digest,
+        "output_schema_version": _output_schema_version(request.agent_kind),
+        "policy_version": MODEL_GATEWAY_POLICY_VERSION,
+        "prompt_version": request.prompt_version,
+        "provider": DEEPSEEK_PROVIDER,
+        "provider_version": DeepSeekAdapter.provider_version,
+        "purpose": request.purpose,
+        "request_id": request.request_id,
+        "requested_model": DEEPSEEK_MODEL,
+        "site_id": request.site_id,
+        "subject_ref": request.subject_ref,
+        "tokenization_receipt_id": request.tokenization_receipt_id,
+        "tokenizer_version": request.tokenizer_version,
+        "tool_version": DeepSeekAdapter.tool_version,
+    }
+    canonical = json.dumps(
+        material,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return sha256(canonical).hexdigest()
+
+
+def _output_schema_version(agent_kind: str) -> str:
+    try:
+        return OUTPUT_SCHEMA_VERSIONS[agent_kind]
+    except KeyError as exc:
+        raise GatewayFailure(
+            "agent output schema version is unavailable",
+            error_code="internal_error",
+        ) from exc
 
 
 def _output_digest(output: Mapping[str, Any]) -> str:

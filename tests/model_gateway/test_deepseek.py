@@ -9,6 +9,7 @@ from hashlib import sha256
 import httpx
 import pytest
 
+import services.model_gateway.deepseek as deepseek_module
 from services.model_gateway.deepseek import (
     BudgetHardStop,
     BudgetStatus,
@@ -17,6 +18,8 @@ from services.model_gateway.deepseek import (
     InMemoryUsageLedger,
     ModelNetworkDisabled,
     TokenizedModelRequest,
+    _stable_idempotency_key,
+    _stable_invocation_id,
 )
 
 
@@ -583,8 +586,116 @@ def test_review_has_a_distinct_stable_audit_record_per_logical_call() -> None:
     assert len(result.invocations) == 2
     assert [item.attempt for item in records] == [1, 2]
     assert records[0].invocation_id != records[1].invocation_id
-    assert records[0].idempotency_key.endswith(":1")
-    assert records[1].idempotency_key.endswith(":2")
+    assert records[0].idempotency_key != records[1].idempotency_key
+    assert records[0].idempotency_key.startswith("model-call-")
+    assert records[1].idempotency_key.startswith("model-call-")
+
+
+@pytest.mark.parametrize(
+    ("field", "changed_value"),
+    [
+        ("site_id", "other.localhost"),
+        ("request_id", "model-request-SYNTH-002"),
+        ("purpose", "purchase_review"),
+        ("agent_kind", "purchase"),
+        ("subject_ref", "DEAL-SYNTH-002"),
+        ("evidence_refs", ("evidence-SYNTH-002",)),
+        ("tokenization_receipt_id", "tokenization-SYNTH-002"),
+        ("tokenizer_version", "stable-hmac-tokenizer-v2"),
+        ("mapping_digest", "c" * 64),
+        ("prompt_version", "sales-local-pilot-v2"),
+    ],
+)
+def test_invocation_identity_changes_with_content_free_request_metadata(
+    field: str,
+    changed_value: object,
+) -> None:
+    original = request()
+    values = {name: getattr(original, name) for name in original.__dataclass_fields__}
+    values[field] = changed_value
+    changed = TokenizedModelRequest(**values)
+
+    assert _stable_invocation_id(original, 1) != _stable_invocation_id(changed, 1)
+    assert _stable_idempotency_key(original, 1) != _stable_idempotency_key(changed, 1)
+
+
+@pytest.mark.parametrize(
+    ("target", "changed_value"),
+    [
+        ("requested_model", "deepseek-v4-flash-revision-2"),
+        ("provider", "deepseek-revision-2"),
+        ("output_schema_version", "sales-proposal-v1.1"),
+        ("policy_version", "model-gateway-policy-v2"),
+        ("provider_version", "deepseek-chat-adapter-v2"),
+        ("tool_version", "no-tools-v2"),
+    ],
+)
+def test_invocation_identity_changes_with_gateway_and_policy_versions(
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    changed_value: str,
+) -> None:
+    original_id = _stable_invocation_id(request(), 1)
+    original_key = _stable_idempotency_key(request(), 1)
+    if target == "requested_model":
+        monkeypatch.setattr(deepseek_module, "DEEPSEEK_MODEL", changed_value)
+    elif target == "provider":
+        monkeypatch.setattr(deepseek_module, "DEEPSEEK_PROVIDER", changed_value)
+    elif target == "output_schema_version":
+        monkeypatch.setattr(
+            deepseek_module,
+            "OUTPUT_SCHEMA_VERSIONS",
+            {"sales": changed_value},
+            raising=False,
+        )
+    elif target == "policy_version":
+        monkeypatch.setattr(deepseek_module, "MODEL_GATEWAY_POLICY_VERSION", changed_value)
+    else:
+        monkeypatch.setattr(DeepSeekAdapter, target, changed_value)
+
+    assert _stable_invocation_id(request(), 1) != original_id
+    assert _stable_idempotency_key(request(), 1) != original_key
+
+
+def test_invocation_identity_is_stable_and_excludes_tokenized_content() -> None:
+    original = request()
+    values = {name: getattr(original, name) for name in original.__dataclass_fields__}
+    values["tokenized_context"] = "A different tokenized summary without raw identity."
+    changed_content = TokenizedModelRequest(**values)
+
+    assert _stable_invocation_id(original, 1) == _stable_invocation_id(original, 1)
+    assert _stable_idempotency_key(original, 1) == _stable_idempotency_key(original, 1)
+    assert _stable_invocation_id(original, 1) == _stable_invocation_id(changed_content, 1)
+    assert _stable_idempotency_key(original, 1) == _stable_idempotency_key(
+        changed_content,
+        1,
+    )
+
+
+def test_naive_audit_clock_fails_closed_before_http() -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return api_response(sales_output())
+
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(handler),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedPriceCalculator(),
+        usage_ledger=InMemoryUsageLedger(),
+        retry_delay=lambda _: None,
+        clock=lambda: datetime(2026, 8, 7, 1, 0),
+    )
+
+    with pytest.raises(GatewayFailure) as captured:
+        active.invoke(request())
+
+    assert calls == 0
+    assert captured.value.audit_records == ()
 
 
 def test_kill_switch_and_hard_budget_emit_zero_network_failure_audits() -> None:

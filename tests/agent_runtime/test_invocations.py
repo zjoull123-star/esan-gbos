@@ -277,3 +277,44 @@ def test_record_bundle_reserves_transaction_scope_without_claiming_proposal_atom
 
     assert stored == item
     assert connection.transactions == 1
+
+
+def test_in_memory_record_bundle_rolls_back_appends_when_body_raises() -> None:
+    repository = InMemoryModelInvocationRepository()
+    item = record(invocation_id="invocation-rollback", idempotency_key="rollback-key")
+
+    with (
+        pytest.raises(RuntimeError, match="synthetic bundle failure"),
+        repository.record_bundle("site-a") as bundle,
+    ):
+        bundle.append(item)
+        raise RuntimeError("synthetic bundle failure")
+
+    assert repository.get("site-a", item.invocation_id) is None
+    assert repository.list("site-a") == ()
+
+
+def test_in_memory_record_bundle_rolls_back_prior_append_on_later_conflict() -> None:
+    repository = InMemoryModelInvocationRepository()
+    existing = record(invocation_id="invocation-existing", idempotency_key="existing-key")
+    repository.append(existing)
+    first_in_bundle = record(
+        invocation_id="invocation-bundle-first",
+        idempotency_key="bundle-first-key",
+    )
+    conflicting = record(
+        invocation_id=existing.invocation_id,
+        idempotency_key=existing.idempotency_key,
+        output_digest="b" * 64,
+    )
+
+    with (
+        pytest.raises(IdempotencyConflict),
+        repository.record_bundle("site-a") as bundle,
+    ):
+        bundle.append(first_in_bundle)
+        bundle.append(conflicting)
+
+    assert repository.get("site-a", first_in_bundle.invocation_id) is None
+    assert repository.get("site-a", existing.invocation_id) == existing
+    assert repository.list("site-a") == (existing,)

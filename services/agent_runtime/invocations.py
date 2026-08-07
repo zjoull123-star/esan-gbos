@@ -396,7 +396,14 @@ class InMemoryModelInvocationRepository:
     def record_bundle(self, site_id: str) -> Iterator[_InMemoryBundle]:
         _validate_lookup_site(site_id)
         with self._lock:
-            yield _InMemoryBundle(self, site_id)
+            records_before = self._records.copy()
+            idempotency_before = self._idempotency.copy()
+            try:
+                yield _InMemoryBundle(self, site_id)
+            except BaseException:
+                self._records = records_before
+                self._idempotency = idempotency_before
+                raise
 
 
 class _InMemoryBundle:
