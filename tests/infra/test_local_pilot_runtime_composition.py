@@ -292,6 +292,21 @@ def test_compose_declares_full_isolated_topology_and_filesystem_cas_truth() -> N
     assert all(value.startswith("127.0.0.1:") for value in published)
 
 
+def test_local_bridge_publishes_loopback_ports_without_outbound_masquerade() -> None:
+    compose = _read(INFRA / "compose.yml")
+    networks = compose[compose.index("\nnetworks:\n") :]
+    local = networks[
+        networks.index("  local-internal:\n") : networks.index("  controlled-egress:\n")
+    ]
+
+    assert "driver: bridge" in local
+    assert "com.docker.network.bridge.enable_ip_masquerade" in local
+    assert '"false"' in local
+    assert "internal: true" not in local
+    webhook = networks[networks.index("  webhook-tunnel:\n") : networks.index("\nvolumes:\n")]
+    assert "internal: true" in webhook
+
+
 def test_frappe_pwa_uses_local_image_two_migrations_and_explicit_synthetic_bootstrap() -> None:
     compose = _read(INFRA / "compose.yml")
     lock = json.loads(_read(INFRA / "images.lock.json"))
@@ -309,10 +324,11 @@ def test_frappe_pwa_uses_local_image_two_migrations_and_explicit_synthetic_boots
 
     assert 'profiles: ["synthetic-bootstrap"]' in bootstrap
     assert "- frappe_demo_password" in bootstrap
-    assert 'export GBOS_DEMO_PASSWORD="$$(cat /run/secrets/frappe_demo_password)"' in bootstrap
+    assert 'export GBOS_DEMO_PASSWORD="$$(cat /run/secrets/frappe_demo_password)";' in bootstrap
     assert "esan_gbos.demo.seed" in bootstrap
     assert "confirm_synthetic" in bootstrap
-    assert "127.0.0.1:8080/gbos" in pwa
+    assert "127.0.0.1:8080/api/method/ping" in pwa
+    assert "127.0.0.1:8080/gbos" not in pwa
 
     frappe = next(item for item in lock["images"] if item["service"] == "frappe-pwa")
     assert frappe["source"] == "local-build"
@@ -321,6 +337,41 @@ def test_frappe_pwa_uses_local_image_two_migrations_and_explicit_synthetic_boots
     assert frappe["local_repo_digest"] is None
     assert "scripts/dev/build-custom-image" in build
     assert "--service frappe-pwa" in build
+
+
+def test_frappe_site_keeps_multiline_bench_arguments_in_one_shell_command() -> None:
+    compose = _read(INFRA / "compose.yml")
+    site = _service_block(compose, "frappe-site")
+    synthetic = _service_block(compose, "frappe-synthetic-bootstrap")
+    materializer = _service_block(compose, "frappe-materializer-bootstrap")
+
+    assert 'bench new-site "$$site" \\' in site
+    assert '--mariadb-user-host-login-scope="%" \\' in site
+    assert "--db-root-username=root \\" in site
+    assert '--db-root-password="$$(cat /run/secrets/mariadb_root_password)" \\' in site
+    assert '--admin-password="$$(cat /run/secrets/frappe_admin_password)" \\' in site
+    assert "--install-app erpnext \\" in site
+    for key in (
+        "gbos_observer_url",
+        "gbos_observer_auth_ref",
+        "gbos_observer_token_file",
+        "gbos_agent_url",
+        "gbos_agent_auth_ref",
+        "gbos_agent_token_file",
+    ):
+        needle = 'bench --site "$$site" set-config ' + "\\" + "\n" + f"          {key} "
+        assert needle in site
+    assert 'bench --site "$$site" set-config -p \\' in site
+    assert (
+        'bench --site "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}" '
+        "execute esan_gbos.demo.seed "
+        """--kwargs '{"confirm_synthetic": True}'"""
+    ) in synthetic
+    assert (
+        'bench --site "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}" '
+        "execute esan_gbos.local_pilot.provision_materializer "
+        """--kwargs "{'confirm_local_pilot': True}\""""
+    ) in materializer
 
 
 def test_materializer_identity_bootstrap_is_profile_only_and_secret_file_backed() -> None:

@@ -32,7 +32,8 @@ fi
 "${SCRIPT_DIR}/preflight" \
   --repo-root "${REPO_ROOT}" \
   --manifest "${MANIFEST}" \
-  --require-go
+  --synthetic \
+  --require-runtime-images
 
 read_secret_dir
 read_config_dir

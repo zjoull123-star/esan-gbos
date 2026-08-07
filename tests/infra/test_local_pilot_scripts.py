@@ -61,15 +61,18 @@ def test_operational_scripts_are_executable_and_shell_safe() -> None:
     assert "未组合，不可启动" in _read(SCRIPTS / "status")
 
 
-def test_synthetic_user_bootstrap_is_explicit_and_real_go_gated() -> None:
+def test_synthetic_user_bootstrap_is_explicit_image_gated_and_never_starts_stack() -> None:
     script = _read(SCRIPTS / "bootstrap-synthetic-user")
 
     assert "--acknowledge-synthetic" in script
-    assert "--require-go" in script
-    assert script.index("--require-go") < script.index(
+    assert "--synthetic" in script
+    assert "--require-runtime-images" in script
+    assert "--require-go" not in script
+    assert script.index("--require-runtime-images") < script.index(
         "run --rm --no-deps frappe-synthetic-bootstrap"
     )
     assert "--profile synthetic-bootstrap" in script
+    assert " up " not in re.sub(r"\s+", " ", script)
     assert "frappe_demo_password" not in script
 
 
@@ -129,7 +132,9 @@ def test_synthetic_start_is_explicit_image_gated_and_never_enables_external_prof
     migration = "compose --profile runtime run --rm migrations"
     bootstrap = "run --rm --no-deps frappe-materializer-bootstrap"
     runtime_up = 'compose "${profile_args[@]}" up -d --wait "${synthetic_services[@]}"'
+    demo_bootstrap = '"${SCRIPT_DIR}/bootstrap-synthetic-user" --acknowledge-synthetic'
     assert start.index(migration) < start.index(bootstrap) < start.index(runtime_up)
+    assert start.index(runtime_up) < start.index(demo_bootstrap)
 
 
 def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() -> None:

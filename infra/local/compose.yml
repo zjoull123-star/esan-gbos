@@ -494,12 +494,12 @@ services:
           { echo "Required Frappe app is absent: $$app" >&2; exit 78; };
         done;
         if [ ! -d "sites/$$site" ]; then
-          bench new-site "$$site"
-          --mariadb-user-host-login-scope="%"
-          --db-root-username=root
-          --db-root-password="$$(cat /run/secrets/mariadb_root_password)"
-          --admin-password="$$(cat /run/secrets/frappe_admin_password)"
-          --install-app erpnext
+          bench new-site "$$site" \
+          --mariadb-user-host-login-scope="%" \
+          --db-root-username=root \
+          --db-root-password="$$(cat /run/secrets/mariadb_root_password)" \
+          --admin-password="$$(cat /run/secrets/frappe_admin_password)" \
+          --install-app erpnext \
           --set-default;
         fi;
         if ! bench --site "$$site" list-apps | grep -Fqx crm; then
@@ -508,22 +508,22 @@ services:
         if ! bench --site "$$site" list-apps | grep -Fqx esan_gbos; then
           bench --site "$$site" install-app esan_gbos;
         fi;
-        bench --site "$$site" set-config
+        bench --site "$$site" set-config \
           gbos_observer_url http://observer-api:8003;
-        bench --site "$$site" set-config
+        bench --site "$$site" set-config \
           gbos_observer_auth_ref local-pilot-context-auth-v1;
-        bench --site "$$site" set-config
+        bench --site "$$site" set-config \
           gbos_observer_token_file /run/secrets/agent_api_bearer;
-        bench --site "$$site" set-config
+        bench --site "$$site" set-config \
           gbos_agent_url http://agent-api:8002;
-        bench --site "$$site" set-config
+        bench --site "$$site" set-config \
           gbos_agent_auth_ref local-pilot-context-auth-v1;
-        bench --site "$$site" set-config
+        bench --site "$$site" set-config \
           gbos_agent_token_file /run/secrets/agent_api_bearer;
-        materializer_identities="$$(printf
-          '{"agent-materializer-v1":{"user":"gbos-materializer@localhost.invalid","site_id":"%s","processing_purposes":["observation_processing","sales_follow_up","procurement_coordination","product_sample_management","metric_reporting"]}}'
+        materializer_identities="$$(printf \
+          '{"agent-materializer-v1":{"user":"gbos-materializer@localhost.invalid","site_id":"%s","processing_purposes":["observation_processing","sales_follow_up","procurement_coordination","product_sample_management","metric_reporting"]}}' \
           "$$site")";
-        bench --site "$$site" set-config -p
+        bench --site "$$site" set-config -p \
           gbos_agent_materialization_identities "$$materializer_identities";
         bench --site "$$site" migrate;
         bench --site "$$site" migrate
@@ -547,10 +547,8 @@ services:
     command:
       - >-
         test -s /run/secrets/frappe_demo_password;
-        export GBOS_DEMO_PASSWORD="$$(cat /run/secrets/frappe_demo_password)"
-        bench --site "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}"
-        execute esan_gbos.demo.seed
-        --kwargs '{"confirm_synthetic": True}'
+        export GBOS_DEMO_PASSWORD="$$(cat /run/secrets/frappe_demo_password)";
+        bench --site "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}" execute esan_gbos.demo.seed --kwargs '{"confirm_synthetic": True}'
     secrets:
       - frappe_demo_password
     volumes:
@@ -582,9 +580,7 @@ services:
         test -s /run/secrets/frappe_materializer_api_secret;
         export GBOS_MATERIALIZER_API_KEY="$$(cat /run/secrets/frappe_materializer_api_key)";
         export GBOS_MATERIALIZER_API_SECRET="$$(cat /run/secrets/frappe_materializer_api_secret)";
-        bench --site "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}"
-        execute esan_gbos.local_pilot.provision_materializer
-        --kwargs "{'confirm_local_pilot': True}"
+        bench --site "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}" execute esan_gbos.local_pilot.provision_materializer --kwargs "{'confirm_local_pilot': True}"
     secrets:
       - frappe_materializer_api_key
       - frappe_materializer_api_secret
@@ -712,7 +708,7 @@ services:
         - >-
           python -c "import urllib.request;
           request = urllib.request.Request(
-          'http://127.0.0.1:8080/gbos',
+          'http://127.0.0.1:8080/api/method/ping',
           headers={'Host': '${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}'});
           urllib.request.urlopen(request, timeout=3)"
       interval: 10s
@@ -769,7 +765,9 @@ services:
 networks:
   local-internal:
     name: esan-gbos-local-pilot-internal
-    internal: true
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
   controlled-egress:
     name: esan-gbos-local-pilot-controlled-egress
   webhook-tunnel:
