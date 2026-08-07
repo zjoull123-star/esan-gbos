@@ -32,6 +32,9 @@ ROOT = Path(__file__).parents[2]
 INGESTION_MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "004_local_pilot_ingestion.sql"
 )
+NORMALIZED_SINK_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "005_local_pilot_normalized_sink.sql"
+)
 
 pytestmark = [pytest.mark.postgres_integration]
 if not RUN_INTEGRATION:
@@ -104,10 +107,12 @@ def test_local_pilot_migration_is_ledgered_and_all_tables_force_rls() -> None:
 
 
 def test_local_pilot_ingestion_migration_can_run_twice_and_keeps_rls_forced() -> None:
-    sql = INGESTION_MIGRATION.read_text(encoding="utf-8")
+    ingestion_sql = INGESTION_MIGRATION.read_text(encoding="utf-8")
+    normalized_sink_sql = NORMALIZED_SINK_MIGRATION.read_text(encoding="utf-8")
 
-    _container_sql(sql)
-    _container_sql(sql)
+    for _ in range(2):
+        _container_sql(ingestion_sql)
+        _container_sql(normalized_sink_sql)
 
     result = _container_sql(
         """
