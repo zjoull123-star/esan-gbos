@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 MIGRATIONS = ROOT / "services" / "agent_runtime" / "migrations"
-TABLES = {"agent_tasks", "timeline", "dead_letter"}
+TABLES = {"agent_tasks", "timeline", "dead_letter", "model_invocations"}
 
 
 def migration_sql() -> str:
@@ -81,3 +81,41 @@ def test_migration_declares_a_dedicated_least_privilege_runtime_role() -> None:
     assert "grant select, insert, update on" in sql
     assert "context." not in sql
     assert "observer." not in sql
+
+
+def test_model_invocation_ledger_is_content_free_and_represents_unknown_values() -> None:
+    sql = migration_sql()
+    invocations = table_body(sql, "model_invocations")
+
+    assert "primary key (site_id, invocation_id)" in invocations
+    assert "unique (site_id, idempotency_key)" in invocations
+    assert "token_usage_status" in invocations
+    assert "cost_status" in invocations
+    assert "output_digest" in invocations
+    assert "retry_count" in invocations
+    assert "error_code" in invocations
+    assert "price_catalog_version" in invocations
+    for forbidden in (
+        "prompt_text",
+        "response_text",
+        "reasoning_content",
+        "api_key",
+        "token_map",
+        "email",
+        "phone",
+        "person_name",
+        "organization_text",
+    ):
+        assert forbidden not in invocations
+    assert "token_usage_status = 'unknown'" in invocations
+    assert "input_tokens is null" in invocations
+    assert "cost_status = 'unknown'" in invocations
+    assert "cost_amount is null" in invocations
+
+
+def test_gate4_migrate_discovers_all_additive_agent_migrations() -> None:
+    script = (ROOT / "scripts" / "dev" / "gate4-migrate").read_text(encoding="utf-8")
+
+    assert "/migrations/agent/*.sql" in script
+    assert "observer.schema_migrations" in script
+    assert "migration_checksum" in script

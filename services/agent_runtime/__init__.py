@@ -9,6 +9,15 @@ from .agents import (
     DeterministicLocalProvider,
     FactVersionRef,
 )
+from .invocations import (
+    CostMetadata,
+    InMemoryModelInvocationRepository,
+    InvocationReferences,
+    ModelInvocationRecord,
+    ModelInvocationRepository,
+    PostgresModelInvocationRepository,
+    TokenUsageMetadata,
+)
 from .models import (
     AgentTaskMetadata,
     AgentTaskSubmission,
@@ -41,10 +50,17 @@ __all__ = [
     "FailureClassification",
     "IdempotencyConflict",
     "InMemoryAgentTaskRepository",
+    "InMemoryModelInvocationRepository",
+    "InvocationReferences",
     "LeaseConflict",
+    "ModelInvocationRecord",
+    "ModelInvocationRepository",
+    "CostMetadata",
     "PostgresAgentTaskRepository",
+    "PostgresModelInvocationRepository",
     "TaskStatus",
     "TaskNotFound",
     "TimelineEventMetadata",
+    "TokenUsageMetadata",
     "ValidationError",
 ]

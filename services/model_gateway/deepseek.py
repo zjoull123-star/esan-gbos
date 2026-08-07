@@ -5,13 +5,23 @@ import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
 import httpx
 from jsonschema import Draft202012Validator
+
+from services.agent_runtime.invocations import (
+    BudgetAuditStatus,
+    CostMetadata,
+    InvocationReferences,
+    ModelInvocationRecord,
+    TokenUsageMetadata,
+)
 
 from .tokenization import contains_obvious_pii
 
@@ -23,10 +33,29 @@ MAX_OUTPUT_TOKENS = 4_096
 LOW_CONFIDENCE_THRESHOLD = 0.75
 SOFT_MONTHLY_LIMIT_USD = Decimal("50")
 HARD_MONTHLY_LIMIT_USD = Decimal("100")
+MODEL_GATEWAY_POLICY_VERSION = "model-gateway-policy-v1"
 
 
 class GatewayFailure(RuntimeError):
     """The provider failed a closed protocol or validation boundary."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "internal_error",
+        network_calls: int = 0,
+        response_id: str | None = None,
+        observed_model: str | None = None,
+        finish_code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.network_calls = network_calls
+        self.response_id = response_id
+        self.observed_model = observed_model
+        self.finish_code = finish_code
+        self.audit_records: tuple[ModelInvocationRecord, ...] = ()
 
 
 class ModelNetworkDisabled(GatewayFailure):
@@ -129,6 +158,7 @@ class GatewayResult:
     network_calls: int
     model_api_calls: int
     tool_calls: int
+    invocations: tuple[ModelInvocationRecord, ...] = ()
 
 
 class InMemoryUsageLedger:
@@ -152,7 +182,20 @@ class _CallResult:
     output: dict[str, Any]
     usage: UsageSnapshot
     observed_model: str
+    response_id: str | None
+    finish_code: str
     network_calls: int
+
+
+@dataclass(frozen=True, slots=True)
+class _AuditedCall:
+    call: _CallResult
+    cost: CostSnapshot
+    record: ModelInvocationRecord
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class DeepSeekAdapter:
@@ -171,6 +214,9 @@ class DeepSeekAdapter:
         usage_ledger: UsageLedger,
         network_enabled: bool = False,
         retry_delay: Callable[[float], None] = time.sleep,
+        clock: Callable[[], datetime] = _utc_now,
+        monotonic: Callable[[], float] = time.monotonic,
+        audit_recorder: Callable[[ModelInvocationRecord], object] | None = None,
     ) -> None:
         if not api_key:
             raise ValueError("api_key must be injected")
@@ -180,6 +226,9 @@ class DeepSeekAdapter:
         self._usage_ledger = usage_ledger
         self._network_enabled = network_enabled
         self._retry_delay = retry_delay
+        self._clock = clock
+        self._monotonic = monotonic
+        self._audit_recorder = audit_recorder
         self._client = httpx.Client(
             base_url=DEEPSEEK_BASE_URL,
             transport=transport,
@@ -201,60 +250,197 @@ class DeepSeekAdapter:
         self.close()
 
     def invoke(self, request: TokenizedModelRequest) -> GatewayResult:
-        if not self._network_enabled:
-            raise ModelNetworkDisabled("model network is disabled")
         monthly_before = self._usage_ledger.monthly_cost_usd()
 
         schema = _load_schema(request.agent_kind)
-        first = self._call(
-            self._client,
-            request,
-            schema=schema,
-            thinking=False,
-            prior_output=None,
-        )
-        calls = [first]
-        costs = [self._record_call(first)]
-        confidence = first.output.get("confidence")
-        needs_review = (
-            request.complex_multi_entity
-            or not isinstance(confidence, int | float)
-            or isinstance(confidence, bool)
-            or confidence < LOW_CONFIDENCE_THRESHOLD
-        )
-        final = first
-        if needs_review:
-            final = self._call(
+        audited_calls: list[_AuditedCall] = []
+        try:
+            first = self._invoke_logical_call(
                 self._client,
                 request,
                 schema=schema,
-                thinking=True,
-                prior_output=first.output,
+                thinking=False,
+                prior_output=None,
+                attempt=1,
             )
-            calls.append(final)
-            costs.append(self._record_call(final))
+            audited_calls.append(first)
+            confidence = first.call.output.get("confidence")
+            needs_review = (
+                request.complex_multi_entity
+                or not isinstance(confidence, int | float)
+                or isinstance(confidence, bool)
+                or confidence < LOW_CONFIDENCE_THRESHOLD
+            )
+            final = first
+            if needs_review:
+                final = self._invoke_logical_call(
+                    self._client,
+                    request,
+                    schema=schema,
+                    thinking=True,
+                    prior_output=first.call.output,
+                    attempt=2,
+                )
+                audited_calls.append(final)
+        except GatewayFailure as exc:
+            exc.audit_records = tuple(item.record for item in audited_calls) + exc.audit_records
+            raise
 
-        usage = _combine_usage(tuple(call.usage for call in calls))
-        cost = _combine_cost(tuple(costs))
+        usage = _combine_usage(tuple(item.call.usage for item in audited_calls))
+        cost = _combine_cost(tuple(item.cost for item in audited_calls))
         monthly_after = self._usage_ledger.monthly_cost_usd()
         budget_status = (
             BudgetStatus.WARNING
             if monthly_before >= SOFT_MONTHLY_LIMIT_USD or monthly_after >= SOFT_MONTHLY_LIMIT_USD
             else BudgetStatus.NORMAL
         )
-        network_calls = sum(call.network_calls for call in calls)
+        network_calls = sum(item.call.network_calls for item in audited_calls)
         return GatewayResult(
-            output=final.output,
+            output=final.call.output,
             provider_version=self.provider_version,
             tool_version=self.tool_version,
-            observed_model=final.observed_model,
+            observed_model=final.call.observed_model,
             usage=usage,
             cost=cost,
             budget_status=budget_status,
             network_calls=network_calls,
             model_api_calls=network_calls,
             tool_calls=0,
+            invocations=tuple(item.record for item in audited_calls),
         )
+
+    def _invoke_logical_call(
+        self,
+        client: httpx.Client,
+        request: TokenizedModelRequest,
+        *,
+        schema: dict[str, Any],
+        thinking: bool,
+        prior_output: dict[str, Any] | None,
+        attempt: int,
+    ) -> _AuditedCall:
+        started_at = self._clock()
+        started_tick = self._monotonic()
+        call: _CallResult | None = None
+        try:
+            call = self._call(
+                client,
+                request,
+                schema=schema,
+                thinking=thinking,
+                prior_output=prior_output,
+            )
+            cost = self._record_call(call)
+        except GatewayFailure as exc:
+            completed_at = self._clock()
+            latency_ms = max(0, int((self._monotonic() - started_tick) * 1000))
+            record = self._audit_record(
+                request=request,
+                attempt=attempt,
+                started_at=started_at,
+                completed_at=completed_at,
+                latency_ms=latency_ms,
+                status="failed",
+                usage=UsageSnapshot(status="unknown") if call is None else call.usage,
+                cost=CostSnapshot(status="unknown"),
+                network_calls=exc.network_calls if call is None else call.network_calls,
+                observed_model=(exc.observed_model if call is None else call.observed_model),
+                response_id=exc.response_id if call is None else call.response_id,
+                finish_code=exc.finish_code if call is None else call.finish_code,
+                error_code=exc.error_code,
+                output=None,
+            )
+            self._emit_audit(record)
+            exc.audit_records = (record,)
+            raise
+        completed_at = self._clock()
+        latency_ms = max(0, int((self._monotonic() - started_tick) * 1000))
+        record = self._audit_record(
+            request=request,
+            attempt=attempt,
+            started_at=started_at,
+            completed_at=completed_at,
+            latency_ms=latency_ms,
+            status="succeeded",
+            usage=call.usage,
+            cost=cost,
+            network_calls=call.network_calls,
+            observed_model=call.observed_model,
+            response_id=call.response_id,
+            finish_code=call.finish_code,
+            error_code=None,
+            output=call.output,
+        )
+        self._emit_audit(record)
+        return _AuditedCall(call=call, cost=cost, record=record)
+
+    def _audit_record(
+        self,
+        *,
+        request: TokenizedModelRequest,
+        attempt: int,
+        started_at: datetime,
+        completed_at: datetime,
+        latency_ms: int,
+        status: Literal["succeeded", "failed"],
+        usage: UsageSnapshot,
+        cost: CostSnapshot,
+        network_calls: int,
+        observed_model: str | None,
+        response_id: str | None,
+        finish_code: str | None,
+        error_code: str | None,
+        output: Mapping[str, Any] | None,
+    ) -> ModelInvocationRecord:
+        invocation_id = _stable_invocation_id(request, attempt)
+        monthly = self._usage_ledger.monthly_cost_usd()
+        if error_code == "network_disabled":
+            budget_status: BudgetAuditStatus = "network_disabled"
+        elif error_code == "budget_hard_stop":
+            budget_status = "hard_stop"
+        elif monthly >= SOFT_MONTHLY_LIMIT_USD:
+            budget_status = "warning"
+        else:
+            budget_status = "normal"
+        return ModelInvocationRecord(
+            invocation_id=invocation_id,
+            site_id=request.site_id,
+            provider="deepseek",
+            requested_model=DEEPSEEK_MODEL,
+            observed_model=observed_model,
+            prompt_version=request.prompt_version,
+            output_schema_version=f"{request.agent_kind}-proposal-v1.0",
+            policy_version=MODEL_GATEWAY_POLICY_VERSION,
+            tokenizer_version=request.tokenizer_version,
+            request_id=request.request_id,
+            response_id=response_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            latency_ms=latency_ms,
+            status=status,
+            token_usage=_audit_usage(usage),
+            cost=_audit_cost(cost),
+            network_call_count=network_calls,
+            tool_call_count=0,
+            external_send_count=0,
+            references=InvocationReferences(
+                observation_event_refs=(),
+                evidence_refs=request.evidence_refs,
+                tokenization_receipt_refs=(request.tokenization_receipt_id,),
+            ),
+            idempotency_key=_stable_idempotency_key(request, attempt),
+            attempt=attempt,
+            retry_count=max(network_calls - 1, 0),
+            finish_code=_sanitize_code(finish_code),
+            error_code=error_code,
+            budget_status=budget_status,
+            price_catalog_version=cost.catalog_version,
+            output_digest=None if output is None else _output_digest(output),
+        )
+
+    def _emit_audit(self, record: ModelInvocationRecord) -> None:
+        if self._audit_recorder is not None:
+            self._audit_recorder(record)
 
     def _call(
         self,
@@ -265,6 +451,11 @@ class DeepSeekAdapter:
         thinking: bool,
         prior_output: dict[str, Any] | None,
     ) -> _CallResult:
+        if not self._network_enabled:
+            raise ModelNetworkDisabled(
+                "model network is disabled",
+                error_code="network_disabled",
+            )
         payload = _request_payload(
             request,
             schema=schema,
@@ -275,36 +466,69 @@ class DeepSeekAdapter:
             json.dumps(payload["messages"], ensure_ascii=False, separators=(",", ":"))
         )
         if counted_input > MAX_INPUT_TOKENS:
-            raise GatewayFailure("model input token limit exceeded")
+            raise GatewayFailure(
+                "model input token limit exceeded",
+                error_code="input_token_limit",
+            )
         network_calls = 0
         response: httpx.Response | None = None
         for attempt in range(3):
             if self._usage_ledger.monthly_cost_usd() >= HARD_MONTHLY_LIMIT_USD:
-                raise BudgetHardStop("monthly model budget hard stop reached")
+                raise BudgetHardStop(
+                    "monthly model budget hard stop reached",
+                    error_code="budget_hard_stop",
+                    network_calls=network_calls,
+                )
             network_calls += 1
             try:
                 candidate = client.post(DEEPSEEK_CHAT_PATH, json=payload)
             except httpx.TransportError as exc:
                 if attempt == 2:
-                    raise GatewayFailure("model transport failed after retries") from exc
+                    raise GatewayFailure(
+                        "model transport failed after retries",
+                        error_code="transport_exhausted",
+                        network_calls=network_calls,
+                    ) from exc
                 self._retry_delay(0.1 * (2**attempt))
                 continue
             if candidate.status_code == 429 or candidate.status_code >= 500:
                 if attempt == 2:
-                    raise GatewayFailure("retryable model response exhausted retries")
+                    raise GatewayFailure(
+                        "retryable model response exhausted retries",
+                        error_code="retry_exhausted",
+                        network_calls=network_calls,
+                    )
                 self._retry_delay(0.1 * (2**attempt))
                 continue
             if not 200 <= candidate.status_code < 300:
-                raise GatewayFailure("non-retryable model response")
+                raise GatewayFailure(
+                    "non-retryable model response",
+                    error_code="provider_http_error",
+                    network_calls=network_calls,
+                )
             response = candidate
             break
         if response is None:
-            raise GatewayFailure("model response unavailable")
-        output, usage, observed_model = _parse_response(response, request=request, schema=schema)
+            raise GatewayFailure(
+                "model response unavailable",
+                error_code="internal_error",
+                network_calls=network_calls,
+            )
+        try:
+            output, usage, observed_model, response_id, finish_code = _parse_response(
+                response,
+                request=request,
+                schema=schema,
+            )
+        except GatewayFailure as exc:
+            exc.network_calls = network_calls
+            raise
         return _CallResult(
             output=output,
             usage=usage,
             observed_model=observed_model,
+            response_id=response_id,
+            finish_code=finish_code,
             network_calls=network_calls,
         )
 
@@ -319,7 +543,10 @@ class DeepSeekAdapter:
             output_tokens=usage.output_tokens,
         )
         if amount < 0:
-            raise GatewayFailure("price calculator returned a negative cost")
+            raise GatewayFailure(
+                "price calculator returned a negative cost",
+                error_code="pricing_error",
+            )
         return CostSnapshot(
             status="known",
             amount_usd=amount,
@@ -395,40 +622,117 @@ def _parse_response(
     *,
     request: TokenizedModelRequest,
     schema: dict[str, Any],
-) -> tuple[dict[str, Any], UsageSnapshot, str]:
+) -> tuple[dict[str, Any], UsageSnapshot, str, str | None, str]:
     try:
         body = response.json()
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise GatewayFailure("model HTTP response was not valid JSON") from exc
-    if not isinstance(body, dict) or body.get("model") != DEEPSEEK_MODEL:
-        raise GatewayFailure("observed model mismatch")
+        raise GatewayFailure(
+            "model HTTP response was not valid JSON",
+            error_code="response_invalid_json",
+        ) from exc
+    if not isinstance(body, dict):
+        raise GatewayFailure(
+            "model HTTP response was not an object",
+            error_code="response_protocol_error",
+        )
+    response_id = body.get("id")
+    if not isinstance(response_id, str) or not response_id or len(response_id) > 256:
+        response_id = None
+    observed_model = body.get("model")
+    safe_observed_model = (
+        observed_model
+        if isinstance(observed_model, str) and 0 < len(observed_model) <= 160
+        else None
+    )
+    if observed_model != DEEPSEEK_MODEL:
+        raise GatewayFailure(
+            "observed model mismatch",
+            error_code="model_mismatch",
+            response_id=response_id,
+            observed_model=safe_observed_model,
+        )
     choices = body.get("choices")
     if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
-        raise GatewayFailure("model response choices were invalid")
+        raise GatewayFailure(
+            "model response choices were invalid",
+            error_code="response_protocol_error",
+            response_id=response_id,
+            observed_model=DEEPSEEK_MODEL,
+        )
     choice = choices[0]
-    if choice.get("finish_reason") != "stop":
-        raise GatewayFailure("model response was rejected or truncated")
+    finish_reason = choice.get("finish_reason")
+    safe_finish_code = _sanitize_code(finish_reason if isinstance(finish_reason, str) else None)
+    if finish_reason != "stop":
+        raise GatewayFailure(
+            "model response was rejected or truncated",
+            error_code="response_protocol_error",
+            response_id=response_id,
+            observed_model=DEEPSEEK_MODEL,
+            finish_code=safe_finish_code,
+        )
     message = choice.get("message")
     if not isinstance(message, dict):
-        raise GatewayFailure("model response message was invalid")
+        raise GatewayFailure(
+            "model response message was invalid",
+            error_code="response_protocol_error",
+            response_id=response_id,
+            observed_model=DEEPSEEK_MODEL,
+            finish_code="stop",
+        )
     if "tool_calls" in message or message.get("refusal") is not None:
-        raise GatewayFailure("model response attempted tools or refusal")
+        raise GatewayFailure(
+            "model response attempted tools or refusal",
+            error_code="response_protocol_error",
+            response_id=response_id,
+            observed_model=DEEPSEEK_MODEL,
+            finish_code="stop",
+        )
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
-        raise GatewayFailure("model response content was empty")
+        raise GatewayFailure(
+            "model response content was empty",
+            error_code="response_protocol_error",
+            response_id=response_id,
+            observed_model=DEEPSEEK_MODEL,
+            finish_code="stop",
+        )
     try:
         output = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise GatewayFailure("model content was not valid JSON") from exc
+        raise GatewayFailure(
+            "model content was not valid JSON",
+            error_code="output_invalid_json",
+            response_id=response_id,
+            observed_model=DEEPSEEK_MODEL,
+            finish_code="stop",
+        ) from exc
     if not isinstance(output, dict):
-        raise GatewayFailure("model content must be a JSON object")
+        raise GatewayFailure(
+            "model content must be a JSON object",
+            error_code="output_invalid_json",
+            response_id=response_id,
+            observed_model=DEEPSEEK_MODEL,
+            finish_code="stop",
+        )
     errors = tuple(Draft202012Validator(schema).iter_errors(output))
     if errors:
-        raise GatewayFailure("model content failed the per-agent schema")
-    _validate_request_binding(output, request)
-    _validate_recursive_safety(output)
+        raise GatewayFailure(
+            "model content failed the per-agent schema",
+            error_code="output_schema_invalid",
+            response_id=response_id,
+            observed_model=DEEPSEEK_MODEL,
+            finish_code="stop",
+        )
+    try:
+        _validate_request_binding(output, request)
+        _validate_recursive_safety(output)
+    except GatewayFailure as exc:
+        exc.response_id = response_id
+        exc.observed_model = DEEPSEEK_MODEL
+        exc.finish_code = "stop"
+        raise
     usage = _parse_usage(body.get("usage"))
-    return output, usage, DEEPSEEK_MODEL
+    return output, usage, DEEPSEEK_MODEL, response_id, "stop"
 
 
 def _parse_usage(value: object) -> UsageSnapshot:
@@ -507,7 +811,10 @@ def _validate_request_binding(output: Mapping[str, Any], request: TokenizedModel
         or output.get("subject_ref") != request.subject_ref
         or output.get("evidence_refs") != list(request.evidence_refs)
     ):
-        raise GatewayFailure("model content did not bind to the request")
+        raise GatewayFailure(
+            "model content did not bind to the request",
+            error_code="request_binding_failed",
+        )
 
 
 _FORBIDDEN_KEYS = {
@@ -579,7 +886,10 @@ def _validate_recursive_safety(value: object) -> None:
         for key, nested in value.items():
             normalized = re.sub(r"[^a-z0-9]+", "_", str(key).casefold()).strip("_")
             if normalized in _FORBIDDEN_KEYS:
-                raise GatewayFailure("model content contained a forbidden result field")
+                raise GatewayFailure(
+                    "model content contained a forbidden result field",
+                    error_code="unsafe_output",
+                )
             _validate_recursive_safety(nested)
         return
     if isinstance(value, list | tuple):
@@ -593,4 +903,63 @@ def _validate_recursive_safety(value: object) -> None:
             or re.sub(r"[\s_-]+", "", marker.casefold()) in compact
             for marker in _FORBIDDEN_TEXT
         ):
-            raise GatewayFailure("model content contained forbidden action language")
+            raise GatewayFailure(
+                "model content contained forbidden action language",
+                error_code="unsafe_output",
+            )
+
+
+def _audit_usage(usage: UsageSnapshot) -> TokenUsageMetadata:
+    if usage.status == "unknown":
+        return TokenUsageMetadata.unknown()
+    assert usage.input_tokens is not None
+    assert usage.output_tokens is not None
+    assert usage.total_tokens is not None
+    return TokenUsageMetadata.known(
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.total_tokens,
+    )
+
+
+def _audit_cost(cost: CostSnapshot) -> CostMetadata:
+    if cost.status == "unknown":
+        return CostMetadata.unknown()
+    assert cost.amount_usd is not None
+    return CostMetadata.known(cost.amount_usd, "USD")
+
+
+def _stable_invocation_id(request: TokenizedModelRequest, attempt: int) -> str:
+    material = "\x1f".join(
+        (
+            request.site_id,
+            request.request_id,
+            request.prompt_version,
+            request.agent_kind,
+            str(attempt),
+        )
+    ).encode()
+    return f"invocation-{sha256(material).hexdigest()}"
+
+
+def _stable_idempotency_key(request: TokenizedModelRequest, attempt: int) -> str:
+    candidate = f"{request.request_id}:{attempt}"
+    if len(candidate) <= 256:
+        return candidate
+    return _stable_invocation_id(request, attempt)
+
+
+def _output_digest(output: Mapping[str, Any]) -> str:
+    canonical = json.dumps(
+        output,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return sha256(canonical).hexdigest()
+
+
+def _sanitize_code(value: str | None) -> str | None:
+    if value is None or re.fullmatch(r"[a-z][a-z0-9_]{0,79}", value) is None:
+        return None
+    return value

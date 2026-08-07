@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from hashlib import sha256
 
 import httpx
 import pytest
@@ -501,3 +503,219 @@ def test_recursive_safety_allows_non_committal_payment_and_discount_fact() -> No
     result = adapter(lambda _: api_response(output)).invoke(request())
 
     assert result.output == output
+
+
+def test_success_emits_schema_valid_content_free_audit_with_deterministic_timing() -> None:
+    records = []
+    instants = iter(
+        [
+            datetime(2026, 8, 7, 1, 0, tzinfo=UTC),
+            datetime(2026, 8, 7, 1, 0, 0, 250000, tzinfo=UTC),
+        ]
+    )
+    ticks = iter([10.0, 10.25])
+    output = sales_output()
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(lambda _: api_response(output)),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedPriceCalculator(),
+        usage_ledger=InMemoryUsageLedger(),
+        retry_delay=lambda _: None,
+        clock=lambda: next(instants),
+        monotonic=lambda: next(ticks),
+        audit_recorder=records.append,
+    )
+
+    result = active.invoke(request())
+
+    assert result.invocations == tuple(records)
+    assert len(records) == 1
+    audit = records[0]
+    assert audit.requested_model == "deepseek-v4-flash"
+    assert audit.observed_model == "deepseek-v4-flash"
+    assert audit.response_id == "response-SYNTH-001"
+    assert audit.prompt_version == "sales-local-pilot-v1"
+    assert audit.output_schema_version == "sales-proposal-v1.0"
+    assert audit.policy_version == "model-gateway-policy-v1"
+    assert audit.tokenizer_version == "stable-hmac-tokenizer-v1"
+    assert audit.started_at == datetime(2026, 8, 7, 1, 0, tzinfo=UTC)
+    assert audit.completed_at == datetime(2026, 8, 7, 1, 0, 0, 250000, tzinfo=UTC)
+    assert audit.latency_ms == 250
+    assert audit.status == "succeeded"
+    assert audit.network_call_count == 1
+    assert audit.retry_count == 0
+    assert audit.tool_call_count == 0
+    assert audit.external_send_count == 0
+    assert audit.references.evidence_refs == ("evidence-SYNTH-001",)
+    assert audit.references.tokenization_receipt_refs == ("tokenization-SYNTH-001",)
+    assert (
+        audit.output_digest
+        == sha256(
+            json.dumps(output, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+        ).hexdigest()
+    )
+    assert "客户内部跟进" not in repr(audit)
+    assert "reasoning_content" not in repr(audit)
+
+
+def test_review_has_a_distinct_stable_audit_record_per_logical_call() -> None:
+    records = []
+    start = datetime(2026, 8, 7, 1, 0, tzinfo=UTC)
+    instants = iter([start, start, start + timedelta(seconds=1), start + timedelta(seconds=1)])
+    ticks = iter([10.0, 10.1, 11.0, 11.2])
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(lambda _: api_response(sales_output(confidence=0.74))),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedPriceCalculator(),
+        usage_ledger=InMemoryUsageLedger(),
+        retry_delay=lambda _: None,
+        clock=lambda: next(instants),
+        monotonic=lambda: next(ticks),
+        audit_recorder=records.append,
+    )
+
+    result = active.invoke(request(complex_multi_entity=True))
+
+    assert len(result.invocations) == 2
+    assert [item.attempt for item in records] == [1, 2]
+    assert records[0].invocation_id != records[1].invocation_id
+    assert records[0].idempotency_key.endswith(":1")
+    assert records[1].idempotency_key.endswith(":2")
+
+
+def test_kill_switch_and_hard_budget_emit_zero_network_failure_audits() -> None:
+    for network_enabled, monthly_cost, exception_type, error_code, budget_status in (
+        (False, Decimal("0"), ModelNetworkDisabled, "network_disabled", "network_disabled"),
+        (True, Decimal("100"), BudgetHardStop, "budget_hard_stop", "hard_stop"),
+    ):
+        records = []
+        active = DeepSeekAdapter(
+            api_key="secret-test-key",
+            network_enabled=network_enabled,
+            transport=httpx.MockTransport(lambda _: api_response(sales_output())),
+            token_counter=CharacterTokenCounter(),
+            price_calculator=FixedPriceCalculator(),
+            usage_ledger=InMemoryUsageLedger(monthly_cost_usd=monthly_cost),
+            retry_delay=lambda _: None,
+            audit_recorder=records.append,
+        )
+
+        with pytest.raises(exception_type) as captured:
+            active.invoke(request())
+
+        assert captured.value.audit_records == tuple(records)
+        assert len(records) == 1
+        assert records[0].status == "failed"
+        assert records[0].error_code == error_code
+        assert records[0].budget_status == budget_status
+        assert records[0].network_call_count == 0
+        assert records[0].retry_count == 0
+        assert records[0].token_usage.status == "unknown"
+        assert records[0].cost.status == "unknown"
+
+
+def test_retry_exhaustion_emits_sanitized_failure_without_provider_error_body() -> None:
+    records = []
+    response = httpx.Response(
+        429,
+        json={
+            "error": {
+                "message": "alice@example.com secret provider body",
+                "reasoning_content": "hidden",
+            }
+        },
+    )
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        response.request = http_request
+        return response
+
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(handler),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedPriceCalculator(),
+        usage_ledger=InMemoryUsageLedger(),
+        retry_delay=lambda _: None,
+        audit_recorder=records.append,
+    )
+
+    with pytest.raises(GatewayFailure) as captured:
+        active.invoke(request())
+
+    assert captured.value.audit_records == tuple(records)
+    assert len(records) == 1
+    assert records[0].error_code == "retry_exhausted"
+    assert records[0].network_call_count == 3
+    assert records[0].retry_count == 2
+    assert "alice@example.com" not in repr(records[0])
+    assert "hidden" not in repr(records[0])
+
+
+@pytest.mark.parametrize(
+    ("response", "error_code"),
+    [
+        (api_response(sales_output(), model="other-model"), "model_mismatch"),
+        (api_response(""), "response_protocol_error"),
+        (api_response("not-json"), "output_invalid_json"),
+        (api_response(sales_output(), finish_reason="length"), "response_protocol_error"),
+    ],
+)
+def test_protocol_failures_emit_only_sanitized_error_codes(
+    response: httpx.Response,
+    error_code: str,
+) -> None:
+    records = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        response.request = http_request
+        return response
+
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(handler),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedPriceCalculator(),
+        usage_ledger=InMemoryUsageLedger(),
+        retry_delay=lambda _: None,
+        audit_recorder=records.append,
+    )
+
+    with pytest.raises(GatewayFailure) as captured:
+        active.invoke(request())
+
+    assert captured.value.audit_records == tuple(records)
+    assert records[0].error_code == error_code
+    assert records[0].output_digest is None
+
+
+def test_unsafe_output_failure_keeps_only_safe_provider_identifiers() -> None:
+    records = []
+    output = sales_output()
+    payload = output["payload"]
+    assert isinstance(payload, dict)
+    payload["summary"] = "Send an outbound email now"
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(lambda _: api_response(output)),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedPriceCalculator(),
+        usage_ledger=InMemoryUsageLedger(),
+        retry_delay=lambda _: None,
+        audit_recorder=records.append,
+    )
+
+    with pytest.raises(GatewayFailure):
+        active.invoke(request())
+
+    assert records[0].error_code == "unsafe_output"
+    assert records[0].observed_model == "deepseek-v4-flash"
+    assert records[0].response_id == "response-SYNTH-001"
+    assert records[0].finish_code == "stop"

@@ -3,14 +3,21 @@ from __future__ import annotations
 import json
 import os
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from psycopg.errors import InsufficientPrivilege
 
 from services.agent_runtime import (
     AgentTaskSubmission,
+    CostMetadata,
+    InvocationReferences,
+    ModelInvocationRecord,
     PostgresAgentTaskRepository,
+    PostgresModelInvocationRepository,
     TaskStatus,
+    TokenUsageMetadata,
 )
 from services.context.context_service.decision import (
     ConfirmationRequest,
@@ -57,6 +64,121 @@ def submission(site_id: str, suffix: str, *, max_attempts: int = 2) -> AgentTask
         correlation_id=f"corr-{suffix}",
         payload={"mode": "synthetic"},
     )
+
+
+def invocation(site_id: str, suffix: str) -> ModelInvocationRecord:
+    now = datetime.now(UTC)
+    return ModelInvocationRecord(
+        invocation_id=f"invocation-{suffix}",
+        site_id=site_id,
+        provider="deepseek",
+        requested_model="deepseek-v4-flash",
+        observed_model="deepseek-v4-flash",
+        prompt_version="sales-local-pilot-v1",
+        output_schema_version="sales-proposal-v1.0",
+        policy_version="model-gateway-policy-v1",
+        tokenizer_version="stable-hmac-tokenizer-v1",
+        request_id=f"request-{suffix}",
+        response_id=f"response-{suffix}",
+        started_at=now,
+        completed_at=now,
+        latency_ms=10,
+        status="succeeded",
+        token_usage=TokenUsageMetadata.known(10, 5, 15),
+        cost=CostMetadata.known(Decimal("0.001"), "USD"),
+        network_call_count=1,
+        tool_call_count=0,
+        external_send_count=0,
+        references=InvocationReferences(
+            evidence_refs=(f"evidence-{suffix}",),
+            tokenization_receipt_refs=(f"receipt-{suffix}",),
+        ),
+        idempotency_key=f"invocation-idem-{suffix}",
+        attempt=1,
+        retry_count=0,
+        finish_code="stop",
+        error_code=None,
+        budget_status="normal",
+        price_catalog_version="catalog-v1",
+        output_digest="a" * 64,
+    )
+
+
+def test_gate4_model_invocation_migration_is_ledgered_and_forces_rls() -> None:
+    conn = connection("GBOS_GATE4_OWNER_USER")
+    try:
+        with conn.transaction(), conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT migration_name
+                FROM observer.schema_migrations
+                WHERE migration_name = %s
+                """,
+                ("agent/002_local_pilot_model_runtime.sql",),
+            )
+            assert cursor.fetchone() == ("agent/002_local_pilot_model_runtime.sql",)
+            cursor.execute(
+                """
+                SELECT relrowsecurity, relforcerowsecurity
+                FROM pg_class
+                WHERE oid = 'agent_runtime.model_invocations'::regclass
+                """
+            )
+            assert cursor.fetchone() == (True, True)
+    finally:
+        conn.close()
+
+
+def test_gate4_model_invocation_repository_is_site_isolated_and_cross_write_fails() -> None:
+    suffix = uuid4().hex
+    site_a = f"gate4-invocation-a-{suffix}.localhost"
+    site_b = f"gate4-invocation-b-{suffix}.localhost"
+    record_a = invocation(site_a, f"a-{suffix}")
+    record_b = invocation(site_b, f"b-{suffix}")
+    conn = connection("GBOS_GATE4_AGENT_USER")
+    try:
+        repository = PostgresModelInvocationRepository(conn)
+        assert repository.append(record_a) == record_a
+        assert repository.append(record_a) == record_a
+        assert repository.append(record_b) == record_b
+        assert repository.get(site_a, record_b.invocation_id) is None
+        assert repository.list(site_a) == (record_a,)
+
+        with (
+            pytest.raises(InsufficientPrivilege),
+            conn.transaction(),
+            conn.cursor() as cursor,
+        ):
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (site_a,))
+            cursor.execute(
+                """
+                INSERT INTO agent_runtime.model_invocations (
+                    site_id, invocation_id, idempotency_key, provider,
+                    requested_model, prompt_version, output_schema_version,
+                    policy_version, tokenizer_version, request_id,
+                    started_at, completed_at, latency_ms, status,
+                    token_usage_status, cost_status, network_call_count,
+                    tool_call_count, external_send_count, attempt, retry_count,
+                    error_code, budget_status
+                ) VALUES (
+                    %s, %s, %s, 'deepseek', 'deepseek-v4-flash',
+                    'sales-local-pilot-v1', 'sales-proposal-v1.0',
+                    'model-gateway-policy-v1', 'stable-hmac-tokenizer-v1',
+                    %s, %s, %s, 1, 'failed', 'unknown', 'unknown',
+                    0, 0, 0, 1, 0, 'budget_hard_stop', 'hard_stop'
+                )
+                """,
+                (
+                    site_b,
+                    f"cross-{suffix}",
+                    f"cross-idem-{suffix}",
+                    f"cross-request-{suffix}",
+                    record_a.started_at,
+                    record_a.completed_at,
+                ),
+            )
+    finally:
+        conn.close()
 
 
 def test_gate4_agent_role_is_rls_scoped_and_queue_lifecycle_is_durable() -> None:
