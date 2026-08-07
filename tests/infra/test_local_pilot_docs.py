@@ -19,7 +19,7 @@ def test_runbook_documents_boundaries_and_honest_runtime_blocker() -> None:
     for statement in (
         "127.0.0.1",
         "不删除任何命名卷",
-        "保留 PostgreSQL 与对象存储",
+        "保留 PostgreSQL 与 filesystem CAS",
         "真实连接器默认关闭",
         "DeepSeek 默认关闭",
         "仅 WhatsApp webhook ingress",
@@ -28,6 +28,7 @@ def test_runbook_documents_boundaries_and_honest_runtime_blocker() -> None:
         "fail closed",
         "未组合，不可启动",
         "Frappe PWA",
+        "已声明但未运行验证",
         "Compose config 仅证明语法",
         "contracts/local_pilot",
         "Keychain",
@@ -35,8 +36,19 @@ def test_runbook_documents_boundaries_and_honest_runtime_blocker() -> None:
         "禁止下载",
         "Kingdee",
         "WhatsApp Cloud API 不存在 poller",
+        "MinIO 不属于",
+        "Prometheus",
+        "frappe-materializer-bootstrap",
+        "migrations → materializer identity bootstrap → runtime",
+        "Website User",
+        "desk_access=0",
+        "start-synthetic --acknowledge-synthetic",
+        "不启动 connector、model、media 或 tunnel",
+        "已构建并记录的本地镜像",
     ):
         assert statement in runbook
+    assert "数据库、对象存储控制台" not in runbook
+    assert "MinIO、Prometheus" not in runbook
 
 
 def test_launchagent_is_an_inert_template_not_an_installed_autostart() -> None:
@@ -62,3 +74,50 @@ def test_no_cloud_no_kingdee_no_outbound_assertions_are_operator_visible() -> No
     assert "cloud_business_storage=false" in assertions
     assert "kingdee=false" in assertions
     assert "controlled-egress" in assertions
+    assert "filesystem CAS" in assertions
+    assert "MinIO" in assertions
+    assert "Prometheus 仅抓取自身" in assertions
+    assert "Frappe PWA 尚未组合进" not in assertions
+    assert "local runtime 没有 Containerfile" not in assertions
+    assert "frappe-materializer-bootstrap" in assertions
+    assert "Website User" in assertions
+
+
+def test_runbook_documents_closed_channel_credential_json_without_real_secrets() -> None:
+    runbook = _read(DOCS / "RUNBOOK.md")
+
+    for heading in (
+        "Email credential JSON",
+        "WhatsApp credential JSON",
+        "WeCom credential JSON",
+    ):
+        assert heading in runbook
+    for field in (
+        '"instance_id"',
+        '"team_ref"',
+        '"agent_task_type"',
+        '"initial_checkpoint"',
+        '"app_secret"',
+        '"verify_token"',
+        '"private_key"',
+    ):
+        assert field in runbook
+    assert "整份 credential JSON" in runbook
+    assert "activation_time" in runbook
+    assert "blocked_official_sdk" in runbook
+    assert "trusted_phrase_lexicon" in runbook
+    assert "30 天" in runbook
+    assert "人工 attestation" in runbook
+    for field in (
+        '"resolver_version"',
+        '"approved_by"',
+        '"approved_at"',
+        '"expires_at"',
+        '"names_complete"',
+        '"organizations_complete"',
+        '"names"',
+        '"organizations"',
+    ):
+        assert field in runbook
+    assert "sk-" not in runbook
+    assert "-----BEGIN" not in runbook

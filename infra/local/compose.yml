@@ -23,7 +23,6 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
-      - postgres_app_password
     volumes:
       - local-pilot-postgres-data:/var/lib/postgresql/data
     ports:
@@ -50,7 +49,10 @@ services:
       POSTGRES_USER: gbos_local_pilot
     secrets:
       - postgres_password
-      - postgres_app_password
+      - postgres_observer_password
+      - postgres_context_password
+      - postgres_agent_password
+      - postgres_media_password
     volumes:
       - ../../services/observer/migrations:/migrations/observer:ro
       - ../../services/context/migrations:/migrations/context:ro
@@ -82,7 +84,7 @@ services:
     environment:
       <<: *runtime-environment
     secrets:
-      - postgres_app_password
+      - postgres_context_password
       - agent_api_bearer
       - context_api_bearer
       - context_client_bearer
@@ -121,7 +123,7 @@ services:
     environment:
       <<: *runtime-environment
     secrets:
-      - postgres_app_password
+      - postgres_agent_password
       - agent_api_bearer
       - context_api_bearer
       - context_client_bearer
@@ -160,7 +162,7 @@ services:
     environment:
       <<: *runtime-environment
     secrets:
-      - postgres_app_password
+      - postgres_observer_password
       - agent_api_bearer
       - cursor_hmac_key
       - context_client_bearer
@@ -197,7 +199,7 @@ services:
       <<: *runtime-environment
       GBOS_CONNECTOR_KILL_SWITCH: ${GBOS_CONNECTOR_KILL_SWITCH:-true}
     secrets:
-      - postgres_app_password
+      - postgres_observer_password
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
       - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-observer.json:/config/local-pilot-runtime.json:ro
@@ -221,13 +223,17 @@ services:
       GBOS_MODEL_PROJECTION_KILL_SWITCH: ${GBOS_MODEL_PROJECTION_KILL_SWITCH:-true}
       GBOS_DEEPSEEK_EGRESS_ENABLED: ${GBOS_DEEPSEEK_EGRESS_ENABLED:-false}
     secrets:
-      - postgres_app_password
+      - postgres_observer_password
+      - postgres_context_password
+      - postgres_agent_password
       - deepseek_api_key
       - tokenizer_hmac_key
       - mapping_vault_key
+      - trusted_phrase_lexicon
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
       - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-observer.json:/config/local-pilot-runtime.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/projection-connections.json:/config/projection-connections.json:ro
       - ../../.runtime/local-pilot:/run/gbos:ro
       - local-pilot-tokenizer-vault:/var/lib/gbos/tokenizer-vault
       - local-pilot-evidence-cas:/var/lib/gbos/evidence:ro
@@ -246,7 +252,7 @@ services:
       <<: *runtime-environment
       GBOS_MODEL_KILL_SWITCH: ${GBOS_MODEL_KILL_SWITCH:-true}
     secrets:
-      - postgres_app_password
+      - postgres_agent_password
       - context_client_bearer
       - deepseek_api_key
       - tokenizer_hmac_key
@@ -272,7 +278,7 @@ services:
       <<: *runtime-environment
       GBOS_MATERIALIZATION_KILL_SWITCH: ${GBOS_MATERIALIZATION_KILL_SWITCH:-true}
     secrets:
-      - postgres_app_password
+      - postgres_agent_password
       - agent_api_bearer
       - context_api_bearer
       - context_client_bearer
@@ -300,7 +306,7 @@ services:
       <<: *runtime-environment
       GBOS_CONNECTOR_KILL_SWITCH: ${GBOS_CONNECTOR_KILL_SWITCH:-true}
     secrets:
-      - postgres_app_password
+      - postgres_observer_password
       - whatsapp_credential
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
@@ -314,7 +320,7 @@ services:
     depends_on:
       migrations:
         condition: service_completed_successfully
-    # webhook.py currently has no executable server composition or /health.
+    # webhook.py composes a server but intentionally exposes no /health route.
     restart: unless-stopped
 
   email-poller:
@@ -327,7 +333,7 @@ services:
       GBOS_CHANNEL: email
       GBOS_CONNECTOR_KILL_SWITCH: ${GBOS_CONNECTOR_KILL_SWITCH:-true}
     secrets:
-      - postgres_app_password
+      - postgres_observer_password
       - email_credential
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
@@ -351,7 +357,7 @@ services:
       GBOS_CHANNEL: wecom
       GBOS_CONNECTOR_KILL_SWITCH: ${GBOS_CONNECTOR_KILL_SWITCH:-true}
     secrets:
-      - postgres_app_password
+      - postgres_observer_password
       - wecom_credential
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
@@ -377,7 +383,7 @@ services:
       TRANSFORMERS_OFFLINE: "1"
       PIP_NO_INDEX: "1"
     secrets:
-      - postgres_app_password
+      - postgres_media_password
       - media_runtime_key
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
@@ -502,6 +508,23 @@ services:
         if ! bench --site "$$site" list-apps | grep -Fqx esan_gbos; then
           bench --site "$$site" install-app esan_gbos;
         fi;
+        bench --site "$$site" set-config
+          gbos_observer_url http://observer-api:8003;
+        bench --site "$$site" set-config
+          gbos_observer_auth_ref local-pilot-context-auth-v1;
+        bench --site "$$site" set-config
+          gbos_observer_token_file /run/secrets/agent_api_bearer;
+        bench --site "$$site" set-config
+          gbos_agent_url http://agent-api:8002;
+        bench --site "$$site" set-config
+          gbos_agent_auth_ref local-pilot-context-auth-v1;
+        bench --site "$$site" set-config
+          gbos_agent_token_file /run/secrets/agent_api_bearer;
+        materializer_identities="$$(printf
+          '{"agent-materializer-v1":{"user":"gbos-materializer@localhost.invalid","site_id":"%s","processing_purposes":["observation_processing","sales_follow_up","procurement_coordination","product_sample_management","metric_reporting"]}}'
+          "$$site")";
+        bench --site "$$site" set-config -p
+          gbos_agent_materialization_identities "$$materializer_identities";
         bench --site "$$site" migrate;
         bench --site "$$site" migrate
     secrets:
@@ -545,10 +568,49 @@ services:
       - no-new-privileges:true
     restart: "no"
 
+  frappe-materializer-bootstrap:
+    image: *frappe-image
+    pull_policy: never
+    profiles: ["materializer-bootstrap"]
+    environment:
+      GBOS_LOCAL_PILOT_SITE_ID: "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}"
+      GBOS_PRODUCTION_ENABLED: "false"
+    entrypoint: ["/bin/sh", "-ceu"]
+    command:
+      - >-
+        test -s /run/secrets/frappe_materializer_api_key;
+        test -s /run/secrets/frappe_materializer_api_secret;
+        export GBOS_MATERIALIZER_API_KEY="$$(cat /run/secrets/frappe_materializer_api_key)";
+        export GBOS_MATERIALIZER_API_SECRET="$$(cat /run/secrets/frappe_materializer_api_secret)";
+        bench --site "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}"
+        execute esan_gbos.local_pilot.provision_materializer
+        --kwargs "{'confirm_local_pilot': True}"
+    secrets:
+      - frappe_materializer_api_key
+      - frappe_materializer_api_secret
+    volumes:
+      - local-pilot-frappe-sites:/home/frappe/frappe-bench/sites
+      - local-pilot-frappe-logs:/home/frappe/frappe-bench/logs
+    networks: [local-internal]
+    depends_on:
+      frappe-site:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
   frappe-backend:
     image: *frappe-image
     pull_policy: never
     profiles: ["runtime"]
+    secrets:
+      - source: agent_api_bearer
+        target: agent_api_bearer
+        mode: 0600
     volumes:
       - local-pilot-frappe-sites:/home/frappe/frappe-bench/sites
       - local-pilot-frappe-logs:/home/frappe/frappe-bench/logs
@@ -737,8 +799,14 @@ volumes:
 secrets:
   postgres_password:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_password
-  postgres_app_password:
-    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_app_password
+  postgres_observer_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_observer_password
+  postgres_context_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_context_password
+  postgres_agent_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_agent_password
+  postgres_media_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_media_password
   mariadb_root_password:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/mariadb_root_password
   frappe_admin_password:
@@ -757,6 +825,8 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/tokenizer_hmac_key
   mapping_vault_key:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/mapping_vault_key
+  trusted_phrase_lexicon:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/trusted_phrase_lexicon
   media_runtime_key:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/media_runtime_key
   deepseek_api_key:

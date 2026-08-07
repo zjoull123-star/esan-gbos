@@ -25,6 +25,14 @@ PLACEHOLDER_HASHES = frozenset({character * 64 for character in ("0", "1", "a", 
 SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 REMOTE_REFERENCE_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 REPO_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+PLATFORM_PATTERN = re.compile(r"^linux/(?:arm64|amd64)$")
+FROZEN_ARM64_BUILD_INPUTS = frozenset(
+    {"python-runtime-base", "uv-builder", "local-runtime", "frappe-pwa"}
+)
+CONTAINERFILE_BUILD_INPUTS = {
+    "PYTHON_BASE_IMAGE": "python-runtime-base",
+    "UV_IMAGE": "uv-builder",
+}
 
 
 def _load_object(path: Path, label: str, issues: list[str]) -> dict[str, Any]:
@@ -184,6 +192,8 @@ def _required_image_services(manifest: Mapping[str, Any]) -> set[str]:
         "redis",
         "frappe-pwa",
         "local-runtime",
+        "python-runtime-base",
+        "uv-builder",
     }
     channels = manifest.get("channels")
     if isinstance(channels, Mapping):
@@ -193,7 +203,7 @@ def _required_image_services(manifest: Mapping[str, Any]) -> set[str]:
     return required
 
 
-def _inspect_image(reference: str) -> tuple[str, tuple[str, ...]] | None:
+def _inspect_image(reference: str) -> tuple[str, tuple[str, ...], str] | None:
     result = subprocess.run(
         ["docker", "image", "inspect", reference],
         check=False,
@@ -207,11 +217,16 @@ def _inspect_image(reference: str) -> tuple[str, tuple[str, ...]] | None:
         item = payload[0]
         image_id = item["Id"]
         repo_digests = item.get("RepoDigests") or []
+        platform = f"{item['Os']}/{item['Architecture']}"
     except IndexError, KeyError, TypeError, json.JSONDecodeError:
         return None
     if not isinstance(image_id, str) or not isinstance(repo_digests, list):
         return None
-    return image_id, tuple(value for value in repo_digests if isinstance(value, str))
+    return (
+        image_id,
+        tuple(value for value in repo_digests if isinstance(value, str)),
+        platform,
+    )
 
 
 def _image_issues(
@@ -226,7 +241,7 @@ def _image_issues(
         return ["image lock must contain at least one image"]
     issues: list[str] = []
     references: set[str] = set()
-    normalized: dict[str, tuple[str, str | None, str | None]] = {}
+    normalized: dict[str, tuple[str, str | None, str | None, str | None]] = {}
     for item in images:
         if not isinstance(item, Mapping):
             issues.append("image lock entries must be objects")
@@ -234,6 +249,7 @@ def _image_issues(
         service = item.get("service")
         source = item.get("source")
         reference = item.get("reference")
+        platform = item.get("platform")
         if (
             not isinstance(service, str)
             or source not in {"remote", "local-build"}
@@ -246,6 +262,10 @@ def _image_issues(
             continue
         if reference.endswith(":latest"):
             issues.append(f"image {service} uses forbidden latest tag")
+        if not isinstance(platform, str) or not PLATFORM_PATTERN.fullmatch(platform):
+            issues.append(f"image {service} platform is invalid")
+        if service in FROZEN_ARM64_BUILD_INPUTS and platform != "linux/arm64":
+            issues.append(f"image {service} platform must be linux/arm64")
         if source == "remote" and not REMOTE_REFERENCE_PATTERN.fullmatch(reference):
             issues.append(f"remote image {service} reference must include @sha256")
         references.add(reference)
@@ -255,6 +275,7 @@ def _image_issues(
             reference,
             local_inspect_digest if isinstance(local_inspect_digest, str) else None,
             local_repo_digest if isinstance(local_repo_digest, str) else None,
+            platform if isinstance(platform, str) else None,
         )
     runtime_image = configuration.get("runtime_image")
     if isinstance(runtime_image, str) and runtime_image not in references:
@@ -265,7 +286,7 @@ def _image_issues(
         if locked is None:
             issues.append(f"required image is absent from lock: {service}")
             continue
-        _, expected_id, expected_repo_digest = locked
+        _, expected_id, expected_repo_digest, _expected_platform = locked
         if expected_id is None:
             issues.append(f"image {service} local_inspect_digest is required")
         elif not SHA256_PATTERN.fullmatch(expected_id):
@@ -294,12 +315,12 @@ def _image_issues(
         locked = normalized.get(service)
         if locked is None:
             continue
-        reference, expected_id, expected_repo_digest = locked
+        reference, expected_id, expected_repo_digest, expected_platform = locked
         inspected = _inspect_image(reference)
         if inspected is None:
             issues.append(f"required image {service} is unavailable locally: {reference}")
             continue
-        actual_id, actual_repo_digests = inspected
+        actual_id, actual_repo_digests, actual_platform = inspected
         if expected_id is not None and actual_id != expected_id:
             issues.append(
                 f"local inspect ID mismatch for {service}: locked {expected_id}, actual {actual_id}"
@@ -309,6 +330,39 @@ def _image_issues(
                 f"local RepoDigest mismatch for {service}: "
                 f"locked {expected_repo_digest}, actual {list(actual_repo_digests)}"
             )
+        if expected_platform is not None and actual_platform != expected_platform:
+            issues.append(
+                f"local platform mismatch for {service}: "
+                f"locked {expected_platform}, actual {actual_platform}"
+            )
+    return issues
+
+
+def _containerfile_lock_issues(
+    repo_root: Path,
+    image_lock: Mapping[str, Any],
+) -> list[str]:
+    containerfile = repo_root / "infra/local/Containerfile.runtime"
+    try:
+        lines = containerfile.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return [f"runtime Containerfile is unreadable: {exc}"]
+    arguments: dict[str, str] = {}
+    for line in lines:
+        if not line.startswith("ARG ") or "=" not in line:
+            continue
+        name, value = line.removeprefix("ARG ").split("=", 1)
+        arguments[name] = value
+    images = image_lock.get("images")
+    if not isinstance(images, list):
+        return ["image lock entries are unavailable for Containerfile binding"]
+    references = {
+        item.get("service"): item.get("reference") for item in images if isinstance(item, Mapping)
+    }
+    issues: list[str] = []
+    for argument, service in CONTAINERFILE_BUILD_INPUTS.items():
+        if arguments.get(argument) != references.get(service):
+            issues.append(f"Containerfile {argument} does not match image lock")
     return issues
 
 
@@ -355,6 +409,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--synthetic",
         action="store_true",
         help="Validate disabled synthetic configuration without image or composition claims.",
+    )
+    parser.add_argument(
+        "--require-runtime-images",
+        action="store_true",
+        help="With --synthetic, also require recorded and locally inspectable runtime images.",
     )
     parser.add_argument(
         "--skip-runtime-image-check",
@@ -417,7 +476,8 @@ def main(argv: list[str] | None = None) -> int:
             synthetic=args.synthetic,
         )
     )
-    if not args.synthetic:
+    if not args.synthetic or args.require_runtime_images:
+        issues.extend(_containerfile_lock_issues(repo_root, image_lock))
         issues.extend(
             _image_issues(
                 configuration,

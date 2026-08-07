@@ -5,6 +5,7 @@
     {
       "service": "postgres",
       "source": "remote",
+      "platform": "linux/arm64",
       "reference": "pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966",
       "local_inspect_digest": "sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966",
       "local_repo_digest": "pgvector/pgvector@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966"
@@ -12,6 +13,7 @@
     {
       "service": "mariadb",
       "source": "remote",
+      "platform": "linux/arm64",
       "reference": "mariadb:11.8@sha256:d9f7eb2637296652f24b484afd5d246f759f49f5babcadc6a9e344c9acb75fbf",
       "local_inspect_digest": "sha256:d9f7eb2637296652f24b484afd5d246f759f49f5babcadc6a9e344c9acb75fbf",
       "local_repo_digest": "mariadb@sha256:d9f7eb2637296652f24b484afd5d246f759f49f5babcadc6a9e344c9acb75fbf"
@@ -19,6 +21,7 @@
     {
       "service": "redis",
       "source": "remote",
+      "platform": "linux/arm64",
       "reference": "redis:6.2-alpine@sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23",
       "local_inspect_digest": "sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23",
       "local_repo_digest": "redis@sha256:ec5e187c913d422cdf60f4216a5fdfb95246792c6de6fe21ff5bed75cbfc8c23"
@@ -26,6 +29,7 @@
     {
       "service": "frappe-pwa",
       "source": "local-build",
+      "platform": "linux/arm64",
       "reference": "esan-gbos-local-pilot-frappe:2026-08-08",
       "local_inspect_digest": null,
       "local_repo_digest": null
@@ -33,6 +37,7 @@
     {
       "service": "prometheus",
       "source": "remote",
+      "platform": "linux/arm64",
       "reference": "prom/prometheus:v3.7.3@sha256:49214755b6153f90a597adcbff0252cc61069f8ab69ce8411285cd4a560e8038",
       "local_inspect_digest": null,
       "local_repo_digest": null
@@ -40,6 +45,7 @@
     {
       "service": "cloudflared",
       "source": "remote",
+      "platform": "linux/arm64",
       "reference": "cloudflare/cloudflared:2025.11.1@sha256:89ee50efb1e9cb2ae30281a8a404fed95eb8f02f0a972617526f8c5b417acae2",
       "local_inspect_digest": null,
       "local_repo_digest": null
@@ -47,7 +53,24 @@
     {
       "service": "local-runtime",
       "source": "local-build",
+      "platform": "linux/arm64",
       "reference": "esan-gbos-local-pilot-runtime:2026-08-08",
+      "local_inspect_digest": null,
+      "local_repo_digest": null
+    },
+    {
+      "service": "python-runtime-base",
+      "source": "remote",
+      "platform": "linux/arm64",
+      "reference": "python:3.14.2-slim-bookworm@sha256:977174a93ac5b559a077d2e2997bfde0d9b2c0e283a3fddb12747e35aea43689",
+      "local_inspect_digest": null,
+      "local_repo_digest": null
+    },
+    {
+      "service": "uv-builder",
+      "source": "remote",
+      "platform": "linux/arm64",
+      "reference": "ghcr.io/astral-sh/uv:0.9.28@sha256:b400c36bce7aa9a84965ad23d0e4339ccffaaa06e825d08b064a0f40a2eb90ab",
       "local_inspect_digest": null,
       "local_repo_digest": null
     }

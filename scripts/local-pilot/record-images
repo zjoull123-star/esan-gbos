@@ -35,11 +35,16 @@ def _inspect(reference: str) -> dict[str, Any]:
         item = json.loads(result.stdout)[0]
         image_id = item["Id"]
         repo_digests = item.get("RepoDigests") or []
+        platform = f"{item['Os']}/{item['Architecture']}"
     except (IndexError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"invalid image inspection result: {reference}") from exc
     if not isinstance(image_id, str) or not image_id.startswith("sha256:"):
         raise RuntimeError(f"image has no inspectable local ID: {reference}")
-    return {"image_id": image_id, "repo_digests": repo_digests}
+    return {
+        "image_id": image_id,
+        "repo_digests": repo_digests,
+        "platform": platform,
+    }
 
 
 def _matching_repo_digest(reference: str, values: list[str]) -> Optional[str]:
@@ -67,6 +72,12 @@ def main() -> int:
             if item["service"] not in selected:
                 continue
             inspected = _inspect(item["reference"])
+            expected_platform = item.get("platform")
+            if inspected["platform"] != expected_platform:
+                raise RuntimeError(
+                    f"image platform mismatch for {item['service']}: "
+                    f"expected {expected_platform}, actual {inspected['platform']}"
+                )
             item["local_inspect_digest"] = inspected["image_id"]
             item["local_repo_digest"] = (
                 _matching_repo_digest(item["reference"], inspected["repo_digests"])

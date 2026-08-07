@@ -21,6 +21,12 @@ values are read from macOS Keychain into private `0600` files under a temporary
 directory, mounted at `/run/secrets`, and removed by a normal stop. Named data
 volumes are preserved.
 
+Observer, Context, Agent, and Media use four different PostgreSQL password
+files and Keychain accounts. On the target OrbStack host, a probe confirmed
+that a host uid 501 mode-`0600` bind is visible as uid 10001 mode `0600` and is
+readable by runtime user `10001`; this is host-specific evidence and must be
+rechecked on another container runtime.
+
 The Frappe, MariaDB, Redis, backend, worker, scheduler, websocket, and PWA
 services use local-pilot-specific volume names. The Frappe services require the
 unbuilt local image `esan-gbos-local-pilot-frappe:2026-08-08`; the upstream
@@ -34,6 +40,13 @@ The helper reruns the real go/image/composition preflight and refuses to start
 missing dependencies implicitly. It is declared but has not been executed.
 `/gbos` remains unverified until that image is built and the route probe passes.
 
+After PostgreSQL migrations and Frappe site setup, `start` runs the profile-only
+`frappe-materializer-bootstrap` before the runtime services. It reads the
+materializer API key and secret from mode-`0600` files without logging them and
+invokes the bench-only provisioning helper for the exact closed service
+identity. The helper is composed but has not been executed against a real local
+Frappe image or site.
+
 Published PostgreSQL, MariaDB, API, PWA, webhook, and optional monitoring ports
 bind only to `127.0.0.1`. Cloudflare Tunnel is profile-gated, has no API network
 membership, and routes only to WhatsApp webhook ingress.
@@ -43,9 +56,19 @@ fully disabled smoke configuration. It is mutually exclusive with
 `--require-go` and does not waive the real composition, image, or governance
 gates.
 
+After the required local images have been built, recorded, and inspected,
+`scripts/local-pilot/start-synthetic --acknowledge-synthetic` can render a
+temporary core-only manifest and start the three runtime APIs plus
+Frappe/PWA. It never enables connector, model, media, or tunnel profiles and
+does not alter the checked-in manifest, composition state, or formal
+`start --require-go` gate. This path is declared but has not been executed.
+
 Build the runtime image explicitly with
-`scripts/local-pilot/build-runtime-image`. The command disables pulling and
-atomically records the inspected local image ID only after a successful build.
+`scripts/local-pilot/build-runtime-image --confirm-network-build`. Python and
+uv use fixed linux/arm64 digest references, but the explicit flag is still
+required because retrieving those images and frozen Python dependencies may
+use network access. The command atomically records their inspected IDs,
+RepoDigests, and platforms only after a successful build.
 Build the GBOS Frappe/PWA image separately with
 `scripts/local-pilot/build-frappe-image --confirm-network-build`; the explicit
 flag acknowledges that the governed upstream builder verifies remote tags.

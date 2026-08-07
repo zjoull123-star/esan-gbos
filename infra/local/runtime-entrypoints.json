@@ -38,13 +38,13 @@
     },
     "connector-worker": {
       "path": "services/local_pilot_runtime/observer_worker.py",
-      "status": "blocked",
-      "reason": "standalone main exits fail-closed without durable composition"
+      "status": "executable"
     },
     "model-projection-worker": {
       "path": "services/local_pilot_runtime/model_projection_worker.py",
-      "status": "blocked",
-      "reason": "standalone main requires injected fenced components and a trusted phrase resolver",
+      "status": "blocked_user_lexicon_and_credentials",
+      "reason": "production code is composable but an attested current user lexicon and real credentials are absent",
+      "config": "/config/projection-connections.json",
       "provider_topology": "direct_shared_provider_factory"
     },
     "agent-worker": {
@@ -57,20 +57,23 @@
       "path": "services/local_pilot_runtime/materialization_worker.py",
       "status": "executable"
     },
+    "frappe-materializer-bootstrap": {
+      "path": "apps/esan_gbos/esan_gbos/local_pilot.py",
+      "status": "executable"
+    },
     "webhook-ingress": {
       "path": "services/local_pilot_runtime/webhook.py",
-      "status": "blocked",
-      "reason": "standalone main exits fail-closed and no server health route is composed"
+      "status": "executable",
+      "health": "no health route; depend only on process start"
     },
     "email-poller": {
       "path": "services/local_pilot_runtime/pollers.py",
-      "status": "blocked",
-      "reason": "standalone main exits fail-closed without credential composition"
+      "status": "executable"
     },
     "wecom-poller": {
       "path": "services/local_pilot_runtime/pollers.py",
-      "status": "blocked",
-      "reason": "standalone main exits fail-closed without credential composition"
+      "status": "blocked_official_sdk",
+      "reason": "standalone CLI exits 78 because no official WeCom SDK factory is injected"
     },
     "media-worker": {
       "path": "services/local_pilot_runtime/media_worker.py",
@@ -82,7 +85,8 @@
     "context-api": "services/local_pilot_runtime/context_api.py",
     "agent-api": "services/local_pilot_runtime/agent_api.py",
     "observer-api": "services/local_pilot_runtime/observer_api.py",
-    "materialization-worker": "services/local_pilot_runtime/materialization_worker.py"
+    "materialization-worker": "services/local_pilot_runtime/materialization_worker.py",
+    "frappe-materializer-bootstrap": "apps/esan_gbos/esan_gbos/local_pilot.py"
   },
   "required_when_enabled": {
     "email": {

@@ -18,6 +18,13 @@ _ROLES = {
     "agent": "gbos_agent_app",
     "media": "gbos_media_app",
 }
+_ROLE_PASSWORD_FILES = {
+    "observer": "/run/secrets/postgres_observer_password",
+    "context": "/run/secrets/postgres_context_password",
+    "agent": "/run/secrets/postgres_agent_password",
+    "media": "/run/secrets/postgres_media_password",
+    "materialization": "/run/secrets/postgres_agent_password",
+}
 _CHANNEL_FILES = {
     "email": "/run/secrets/email_credential",
     "wecom": "/run/secrets/wecom_credential",
@@ -43,10 +50,16 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--synthetic",
         action="store_true",
         help="Render disabled deterministic smoke configuration only.",
+    )
+    mode.add_argument(
+        "--synthetic-runtime",
+        action="store_true",
+        help="Render an isolated core-only runtime manifest from a disabled source manifest.",
     )
     return parser.parse_args()
 
@@ -112,21 +125,28 @@ def _runtime_config(
     purpose: str,
     synthetic: bool,
 ) -> dict[str, Any]:
-    approved = manifest["local_pilot_go"] is True and not synthetic
+    approved = manifest["local_pilot_go"] is True
     deepseek_enabled = (
         approved
         and manifest["deepseek"]["enabled"] is True
         and manifest["deepseek"]["kill_switch"] is False
     )
     components = {
-        "agent_api": _component(enabled=approved and purpose == "agent"),
-        "context_api": _component(enabled=approved and purpose == "context"),
+        "agent_api": _component(
+            enabled=approved and purpose == "agent",
+            synthetic=synthetic,
+        ),
+        "context_api": _component(
+            enabled=approved and purpose == "context",
+            synthetic=synthetic,
+        ),
         "agent_worker": _component(
             enabled=(
                 (deepseek_enabled and purpose == "agent")
                 or (approved and purpose == "materialization")
             ),
             provider_mode="deepseek" if purpose == "agent" else "disabled",
+            synthetic=synthetic,
         ),
         # The runtime schema retains the model_worker component name, but the
         # enabled observer-side consumer is the direct model-projection worker.
@@ -134,6 +154,7 @@ def _runtime_config(
         "model_worker": _component(
             enabled=deepseek_enabled and purpose == "observer",
             provider_mode="deepseek",
+            synthetic=synthetic,
         ),
     }
     endpoint = (
@@ -147,14 +168,18 @@ def _runtime_config(
             "port": 5432,
             "database": "gbos_local_pilot",
             "user": role_name,
-            "password_file": "/run/secrets/postgres_app_password",
+            "password_file": _ROLE_PASSWORD_FILES[purpose],
             "connect_timeout_seconds": 5,
         },
         "auth": {
             "agent_api_bearer_file": "/run/secrets/agent_api_bearer",
             "context_api_bearer_file": "/run/secrets/context_api_bearer",
             "context_client_bearer_file": "/run/secrets/context_client_bearer",
-            "context_auth_ref": "local-pilot-context-auth-v1",
+            "context_auth_ref": (
+                "agent-materializer-v1"
+                if purpose == "materialization"
+                else "local-pilot-context-auth-v1"
+            ),
         },
         "context_endpoint": {
             "base_url": endpoint,
@@ -194,6 +219,37 @@ def _connector_config(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _projection_config(
+    manifest: dict[str, Any],
+    *,
+    synthetic: bool,
+) -> dict[str, Any]:
+    controlled_egress = (
+        not synthetic
+        and manifest["local_pilot_go"] is True
+        and manifest["deepseek"]["enabled"] is True
+        and manifest["deepseek"]["kill_switch"] is False
+    )
+    connections: dict[str, Any] = {}
+    for role in ("observer", "context", "agent"):
+        connections[role] = {
+            "host": "postgres",
+            "port": 5432,
+            "database": "gbos_local_pilot",
+            "user": _ROLES[role],
+            "password_file": _ROLE_PASSWORD_FILES[role],
+            "connect_timeout_seconds": 5,
+        }
+    return {
+        "schema_version": "1.0",
+        "site_id": manifest["site_id"],
+        "controlled_egress": controlled_egress,
+        "evidence_cas_root": "/var/lib/gbos/evidence",
+        "tokenizer_vault_root": "/var/lib/gbos/tokenizer-vault",
+        "connections": connections,
+    }
+
+
 def _atomic_private_json(output_dir: Path, name: str, payload: dict[str, Any]) -> None:
     serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{name}.", dir=output_dir)
@@ -212,7 +268,14 @@ def _atomic_private_json(output_dir: Path, name: str, payload: dict[str, Any]) -
 def main() -> int:
     args = _parse_args()
     try:
-        manifest = _load_manifest(args.manifest, synthetic=args.synthetic)
+        synthetic = args.synthetic or args.synthetic_runtime
+        manifest = _load_manifest(args.manifest, synthetic=synthetic)
+        if args.synthetic_runtime:
+            manifest = {
+                **manifest,
+                "local_pilot_go": True,
+                "local_pilot_status": "ready",
+            }
         output_dir = args.output_dir.resolve()
         if output_dir.exists() and (output_dir.is_symlink() or not output_dir.is_dir()):
             raise ValueError("output directory must be a real directory")
@@ -226,7 +289,7 @@ def main() -> int:
                     manifest,
                     role_name=role,
                     purpose=purpose,
-                    synthetic=args.synthetic,
+                    synthetic=synthetic,
                 ),
             )
         _atomic_private_json(
@@ -236,10 +299,17 @@ def main() -> int:
                 manifest,
                 role_name=_ROLES["agent"],
                 purpose="materialization",
-                synthetic=args.synthetic,
+                synthetic=synthetic,
             ),
         )
         _atomic_private_json(output_dir, "connectors.json", _connector_config(manifest))
+        _atomic_private_json(
+            output_dir,
+            "projection-connections.json",
+            _projection_config(manifest, synthetic=synthetic),
+        )
+        if args.synthetic_runtime:
+            _atomic_private_json(output_dir, "local-pilot-manifest.json", manifest)
     except (OSError, ValueError) as exc:
         print(f"CONFIG RENDER FAILED: {exc}", file=sys.stderr)
         return 78

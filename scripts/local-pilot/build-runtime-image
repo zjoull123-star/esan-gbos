@@ -5,6 +5,12 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib.sh"
 
+if [[ "${1:-}" != "--confirm-network-build" || $# -ne 1 ]]; then
+  echo "Usage: scripts/local-pilot/build-runtime-image --confirm-network-build" >&2
+  echo "The digest-pinned base images and frozen Python dependencies may require network access." >&2
+  exit 64
+fi
+
 RUNTIME_IMAGE="$(
   python3 - "${REPO_ROOT}/infra/local/runtime-entrypoints.json" <<'PY'
 import json
@@ -13,22 +19,16 @@ import sys
 print(json.load(open(sys.argv[1], encoding="utf-8"))["runtime_image"])
 PY
 )"
-PYTHON_BASE_IMAGE="$(
-  awk -F= '/^ARG PYTHON_BASE_IMAGE=/{print $2; exit}' \
-    "${REPO_ROOT}/infra/local/Containerfile.runtime"
-)"
-if [[ -z "${PYTHON_BASE_IMAGE}" ]] ||
-  ! docker image inspect "${PYTHON_BASE_IMAGE}" >/dev/null 2>&1; then
-  echo "Base image is not present locally; refusing an implicit pull." >&2
-  exit 78
-fi
 
 docker build \
-  --pull=false \
+  --pull \
+  --platform linux/arm64 \
   --file "${REPO_ROOT}/infra/local/Containerfile.runtime" \
   --tag "${RUNTIME_IMAGE}" \
   "${REPO_ROOT}"
 
 "${SCRIPT_DIR}/record-images" \
   --lock-file "${REPO_ROOT}/infra/local/images.lock.json" \
+  --service python-runtime-base \
+  --service uv-builder \
   --service local-runtime

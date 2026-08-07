@@ -37,6 +37,7 @@ def _run_preflight(
 def test_operational_scripts_are_executable_and_shell_safe() -> None:
     for name in (
         "start",
+        "start-synthetic",
         "status",
         "stop",
         "emergency-stop",
@@ -88,6 +89,47 @@ def test_start_runs_fail_closed_preflight_before_secret_or_compose_actions() -> 
     assert "export GBOS_LOCAL_PILOT_MANIFEST" in start
     assert "${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}" in compose_file
     assert "--skip-runtime-image-check" not in start
+
+
+def test_synthetic_start_is_explicit_image_gated_and_never_enables_external_profiles() -> None:
+    start = _read(SCRIPTS / "start-synthetic")
+
+    assert "--acknowledge-synthetic" in start
+    assert "--synthetic" in start
+    assert "--require-runtime-images" in start
+    assert "--require-go" not in start
+    assert "--synthetic-runtime" in start
+    assert "prepare-secrets" in start
+    assert "profile_args=(--profile runtime)" in start
+    for forbidden_profile in (
+        "connectors",
+        "email",
+        "wecom",
+        "whatsapp",
+        "media",
+        "model",
+        "tunnel",
+    ):
+        assert f'--profile "{forbidden_profile}"' not in start
+    assert 'GBOS_CONNECTOR_KILL_SWITCH="true"' in start
+    assert 'GBOS_MODEL_KILL_SWITCH="true"' in start
+    assert 'GBOS_MODEL_PROJECTION_KILL_SWITCH="true"' in start
+    assert 'GBOS_DEEPSEEK_EGRESS_ENABLED="false"' in start
+    assert 'GBOS_EXTERNAL_SEND_ENABLED="false"' in start
+    for core_service in (
+        "context-api",
+        "agent-api",
+        "observer-api",
+        "frappe-worker",
+        "frappe-scheduler",
+        "pwa",
+    ):
+        assert core_service in start
+    assert "materialization-worker" not in start
+    migration = "compose --profile runtime run --rm migrations"
+    bootstrap = "run --rm --no-deps frappe-materializer-bootstrap"
+    runtime_up = 'compose "${profile_args[@]}" up -d --wait "${synthetic_services[@]}"'
+    assert start.index(migration) < start.index(bootstrap) < start.index(runtime_up)
 
 
 def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() -> None:
@@ -169,6 +211,19 @@ def test_preflight_references_governed_manifest_schema_and_disabled_manifest_fai
     result = _run_preflight("--manifest", str(MANIFEST), "--require-go")
     assert result.returncode != 0
     assert "local_pilot_go must be true" in result.stderr
+
+
+def test_synthetic_runtime_preflight_still_requires_recorded_images() -> None:
+    result = _run_preflight(
+        "--manifest",
+        str(MANIFEST),
+        "--synthetic",
+        "--require-runtime-images",
+    )
+
+    assert result.returncode == 78
+    assert "image local-runtime local_inspect_digest is required" in result.stderr
+    assert "declared composition is not runtime verified" not in result.stderr
 
 
 def test_preflight_rejects_placeholder_media_hashes(tmp_path: Path) -> None:
@@ -290,6 +345,35 @@ def test_preflight_requires_remote_reference_digest(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "remote image mariadb reference must include @sha256" in result.stderr
+
+
+def test_preflight_requires_frozen_arm64_build_inputs_and_platform(tmp_path: Path) -> None:
+    lock = json.loads(_read(IMAGE_LOCK))
+    services = {item["service"]: item for item in lock["images"]}
+    assert services["python-runtime-base"]["platform"] == "linux/arm64"
+    assert services["uv-builder"]["platform"] == "linux/arm64"
+
+    services["python-runtime-base"]["platform"] = "linux/amd64"
+    candidate = tmp_path / "images.lock.json"
+    candidate.write_text(json.dumps(lock), encoding="utf-8")
+
+    result = _run_preflight("--image-lock", str(candidate))
+
+    assert result.returncode != 0
+    assert "python-runtime-base platform must be linux/arm64" in result.stderr
+
+
+def test_preflight_binds_containerfile_build_inputs_to_image_lock(tmp_path: Path) -> None:
+    lock = json.loads(_read(IMAGE_LOCK))
+    python_base = next(item for item in lock["images"] if item["service"] == "python-runtime-base")
+    python_base["reference"] = "python:3.14.2-slim-bookworm@sha256:" + "4" * 64
+    candidate = tmp_path / "images.lock.json"
+    candidate.write_text(json.dumps(lock), encoding="utf-8")
+
+    result = _run_preflight("--image-lock", str(candidate))
+
+    assert result.returncode != 0
+    assert "Containerfile PYTHON_BASE_IMAGE does not match image lock" in result.stderr
 
 
 def test_scripts_contain_no_embedded_secret_shaped_values() -> None:

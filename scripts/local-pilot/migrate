@@ -13,11 +13,23 @@ fi
 
 for secret_file in \
   /run/secrets/postgres_password \
-  /run/secrets/postgres_app_password; do
+  /run/secrets/postgres_observer_password \
+  /run/secrets/postgres_context_password \
+  /run/secrets/postgres_agent_password \
+  /run/secrets/postgres_media_password; do
   [[ -f "${secret_file}" && ! -L "${secret_file}" && -s "${secret_file}" ]] || {
     echo "Required migration secret is unavailable: ${secret_file}" >&2
     exit 78
   }
+  secret_value="$(< "${secret_file}")"
+  byte_count="$(wc -c < "${secret_file}")"
+  byte_count="${byte_count//[[:space:]]/}"
+  if [[ ! "${secret_value}" =~ ^[A-Za-z0-9_-]{16,128}$ ]] ||
+    [[ "${byte_count}" -ne "${#secret_value}" ]]; then
+    echo "Invalid migration secret format: ${secret_file}" >&2
+    exit 78
+  fi
+  unset secret_value byte_count
 done
 
 pgpass_file=/tmp/local-pilot.pgpass
@@ -108,18 +120,48 @@ done
 # Migrations intentionally define NOLOGIN roles. Local composition enables
 # exactly four application identities only after the full chain succeeds.
 "${PSQL[@]}" <<'SQL'
+CREATE TEMP TABLE local_role_secrets (
+  role_name text PRIMARY KEY,
+  password text NOT NULL
+);
+CREATE TEMP TABLE local_secret_input (password text NOT NULL);
+\copy local_secret_input(password) FROM '/run/secrets/postgres_observer_password' WITH (FORMAT text)
+INSERT INTO local_role_secrets
+SELECT 'gbos_observer_app', password FROM local_secret_input;
+TRUNCATE local_secret_input;
+\copy local_secret_input(password) FROM '/run/secrets/postgres_context_password' WITH (FORMAT text)
+INSERT INTO local_role_secrets
+SELECT 'gbos_context_app', password FROM local_secret_input;
+TRUNCATE local_secret_input;
+\copy local_secret_input(password) FROM '/run/secrets/postgres_agent_password' WITH (FORMAT text)
+INSERT INTO local_role_secrets
+SELECT 'gbos_agent_app', password FROM local_secret_input;
+TRUNCATE local_secret_input;
+\copy local_secret_input(password) FROM '/run/secrets/postgres_media_password' WITH (FORMAT text)
+INSERT INTO local_role_secrets
+SELECT 'gbos_media_app', password FROM local_secret_input;
+TRUNCATE local_secret_input;
+
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM local_role_secrets) <> 4
+    OR EXISTS (
+      SELECT 1
+      FROM local_role_secrets
+      WHERE password !~ '^[A-Za-z0-9_-]{16,128}$'
+    )
+  THEN
+    RAISE EXCEPTION 'local role secret import failed closed';
+  END IF;
+END
+$$;
+
 SELECT format(
   'CREATE ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD %L',
   role_name,
-  pg_read_file('/run/secrets/postgres_app_password')
+  password
 )
-FROM (
-  VALUES
-    ('gbos_observer_app'),
-    ('gbos_context_app'),
-    ('gbos_agent_app'),
-    ('gbos_media_app')
-) AS roles(role_name)
+FROM local_role_secrets
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name)
 \gexec
 
@@ -135,15 +177,9 @@ ALTER ROLE gbos_media_app
 SELECT format(
   'ALTER ROLE %I PASSWORD %L',
   role_name,
-  pg_read_file('/run/secrets/postgres_app_password')
+  password
 )
-FROM (
-  VALUES
-    ('gbos_observer_app'),
-    ('gbos_context_app'),
-    ('gbos_agent_app'),
-    ('gbos_media_app')
-) AS roles(role_name)
+FROM local_role_secrets
 \gexec
 
 GRANT USAGE ON SCHEMA media_runtime TO gbos_media_app;
