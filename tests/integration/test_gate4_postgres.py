@@ -2,23 +2,34 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
-from psycopg.errors import InsufficientPrivilege
+from psycopg.errors import InsufficientPrivilege, ObjectNotInPrerequisiteState
 
+from services.action_guard.policy import ActionGuard
 from services.agent_runtime import (
+    AgentKind,
+    AgentOrchestrator,
     AgentTaskSubmission,
     CostMetadata,
+    DeterministicLocalProvider,
+    FactVersionRef,
+    IdempotencyConflict,
     InvocationReferences,
+    LeaseConflict,
+    LocalPilotTaskPayload,
     ModelInvocationRecord,
     PostgresAgentTaskRepository,
     PostgresModelInvocationRepository,
     TaskStatus,
     TokenUsageMetadata,
 )
+from services.agent_runtime.agents import AgentInput
+from services.agent_runtime.models import canonical_payload_digest
 from services.context.context_service.decision import (
     ConfirmationRequest,
     DecisionKind,
@@ -66,7 +77,15 @@ def submission(site_id: str, suffix: str, *, max_attempts: int = 2) -> AgentTask
     )
 
 
-def invocation(site_id: str, suffix: str) -> ModelInvocationRecord:
+def invocation(
+    site_id: str,
+    suffix: str,
+    *,
+    request_id: str | None = None,
+    evidence_ref: str | None = None,
+    idempotency_key: str | None = None,
+    output_digest: str = "a" * 64,
+) -> ModelInvocationRecord:
     now = datetime.now(UTC)
     return ModelInvocationRecord(
         invocation_id=f"invocation-{suffix}",
@@ -78,7 +97,7 @@ def invocation(site_id: str, suffix: str) -> ModelInvocationRecord:
         output_schema_version="sales-proposal-v1.0",
         policy_version="model-gateway-policy-v1",
         tokenizer_version="stable-hmac-tokenizer-v1",
-        request_id=f"request-{suffix}",
+        request_id=request_id or f"request-{suffix}",
         response_id=f"response-{suffix}",
         started_at=now,
         completed_at=now,
@@ -90,17 +109,85 @@ def invocation(site_id: str, suffix: str) -> ModelInvocationRecord:
         tool_call_count=0,
         external_send_count=0,
         references=InvocationReferences(
-            evidence_refs=(f"evidence-{suffix}",),
+            evidence_refs=(evidence_ref or f"evidence-{suffix}",),
             tokenization_receipt_refs=(f"receipt-{suffix}",),
         ),
-        idempotency_key=f"invocation-idem-{suffix}",
+        idempotency_key=idempotency_key or f"invocation-idem-{suffix}",
         attempt=1,
         retry_count=0,
         finish_code="stop",
         error_code=None,
         budget_status="normal",
         price_catalog_version="catalog-v1",
-        output_digest="a" * 64,
+        output_digest=output_digest,
+    )
+
+
+def local_pilot_submission(
+    site_id: str,
+    suffix: str,
+    *,
+    max_attempts: int = 3,
+) -> AgentTaskSubmission:
+    now = datetime.now(UTC)
+    return AgentTaskSubmission(
+        task_id=f"worker-task-{suffix}",
+        site_id=site_id,
+        processing_purpose="sales_follow_up",
+        idempotency_key=f"worker-idem-{suffix}",
+        agent_type="sales",
+        subject_type="CRM Deal",
+        subject_ref=f"worker-deal-{suffix}",
+        due_at=now,
+        priority=50,
+        max_attempts=max_attempts,
+        causation_id=f"worker-cause-{suffix}",
+        correlation_id=f"worker-corr-{suffix}",
+        payload=LocalPilotTaskPayload.from_mapping(
+            {
+                "schema_version": "local-pilot-agent-task-v1",
+                "evidence_refs": [f"worker-evidence-{suffix}"],
+                "fact_version_refs": [{"fact_id": f"worker-fact-{suffix}", "fact_version": 1}],
+                "subject": {"revision": 1},
+                "request": {
+                    "requested_by": f"sales-agent-{suffix}",
+                    "decision_ref": f"worker-decision-{suffix}",
+                    "expected_action_type": "internal.work_item.propose",
+                    "candidate_refs": [],
+                },
+            }
+        ).to_mapping(),
+    )
+
+
+def agent_result(request: AgentTaskSubmission):
+    evidence_ref = f"worker-evidence-{request.task_id.removeprefix('worker-task-')}"
+    fact_ref = f"worker-fact-{request.task_id.removeprefix('worker-task-')}"
+    runtime = AgentOrchestrator(
+        provider=DeterministicLocalProvider(),
+        guard=ActionGuard(),
+        known_evidence_refs={evidence_ref},
+        known_fact_refs={(fact_ref, 1)},
+        known_subject_refs={(request.subject_type, request.subject_ref)},
+    )
+    return runtime.execute(
+        AgentInput(
+            task_id=request.task_id,
+            site_id=request.site_id,
+            processing_purpose=request.processing_purpose,
+            agent_kind=AgentKind.SALES,
+            requested_by=f"sales-agent-{request.task_id.removeprefix('worker-task-')}",
+            subject_type=request.subject_type,
+            subject_ref=request.subject_ref,
+            subject_revision=1,
+            evidence_refs=(evidence_ref,),
+            fact_version_refs=(FactVersionRef(fact_ref, 1),),
+            decision_ref=f"worker-decision-{request.task_id.removeprefix('worker-task-')}",
+            correlation_id=request.correlation_id,
+            raw_context="Tokenization input resolved at execution time.",
+            expected_action_type="internal.work_item.propose",
+        ),
+        now=request.due_at + timedelta(seconds=1),
     )
 
 
@@ -216,6 +303,7 @@ def test_gate4_agent_role_is_rls_scoped_and_queue_lifecycle_is_durable() -> None
             site_id,
             created.task_id,
             worker_id="gate4-worker-1",
+            expected_attempt=1,
             now=now + timedelta(seconds=2),
             output_artifact_refs=(f"action-proposal-{suffix}",),
         )
@@ -546,3 +634,283 @@ def test_gate4_human_confirmation_persists_exact_trace_without_mutating_proposal
             service.trace(other_site, decision_id)
     finally:
         context.close()
+
+
+def test_gate4_agent_worker_migration_is_ledgered_once_and_forces_rls() -> None:
+    conn = connection("GBOS_GATE4_OWNER_USER")
+    try:
+        with conn.transaction(), conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT migration_name, COUNT(*)
+                FROM observer.schema_migrations
+                WHERE migration_name = %s
+                GROUP BY migration_name
+                """,
+                ("agent/003_local_pilot_agent_worker.sql",),
+            )
+            assert cursor.fetchone() == ("agent/003_local_pilot_agent_worker.sql", 1)
+            cursor.execute(
+                """
+                SELECT relname, relrowsecurity, relforcerowsecurity
+                FROM pg_class
+                WHERE oid IN (
+                    'agent_runtime.action_proposals'::regclass,
+                    'agent_runtime.proposal_materialization_outbox'::regclass
+                )
+                ORDER BY relname
+                """
+            )
+            assert cursor.fetchall() == [
+                ("action_proposals", True, True),
+                ("proposal_materialization_outbox", True, True),
+            ]
+    finally:
+        conn.close()
+
+
+def test_gate4_same_worker_stale_attempt_is_rejected_after_reclaim() -> None:
+    suffix = uuid4().hex
+    site_id = f"gate4-worker-fence-{suffix}.localhost"
+    conn = connection("GBOS_GATE4_AGENT_USER")
+    try:
+        repository = PostgresAgentTaskRepository(conn)
+        request = local_pilot_submission(site_id, suffix)
+        repository.enqueue(request, now=request.due_at)
+        first = repository.claim_for_execution(
+            site_id,
+            worker_id="same-worker",
+            now=request.due_at,
+            lease_duration=timedelta(seconds=10),
+        )
+        recovered = repository.claim_for_execution(
+            site_id,
+            worker_id="same-worker",
+            now=request.due_at + timedelta(seconds=11),
+            lease_duration=timedelta(seconds=30),
+        )
+        assert first is not None
+        assert recovered is not None
+        assert recovered.metadata.attempt == 2
+
+        with pytest.raises(LeaseConflict, match="attempt"):
+            repository.heartbeat(
+                site_id,
+                request.task_id,
+                worker_id="same-worker",
+                expected_attempt=1,
+                now=request.due_at + timedelta(seconds=12),
+                lease_duration=timedelta(seconds=30),
+            )
+        with pytest.raises(LeaseConflict, match="attempt"):
+            repository.succeed(
+                site_id,
+                request.task_id,
+                worker_id="same-worker",
+                expected_attempt=1,
+                now=request.due_at + timedelta(seconds=12),
+            )
+    finally:
+        conn.close()
+
+
+def test_gate4_task_payload_is_database_immutable_for_agent_role() -> None:
+    suffix = uuid4().hex
+    site_id = f"gate4-payload-immutable-{suffix}.localhost"
+    conn = connection("GBOS_GATE4_AGENT_USER")
+    try:
+        repository = PostgresAgentTaskRepository(conn)
+        request = local_pilot_submission(site_id, suffix)
+        repository.enqueue(request, now=request.due_at)
+
+        with (
+            pytest.raises(ObjectNotInPrerequisiteState),
+            conn.transaction(),
+            conn.cursor() as cursor,
+        ):
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (site_id,))
+            cursor.execute(
+                """
+                UPDATE agent_runtime.agent_tasks
+                SET payload = %s::jsonb
+                WHERE site_id = %s AND task_id = %s
+                """,
+                (
+                    json.dumps({"raw_context": "Alice at alice@example.com"}),
+                    site_id,
+                    request.task_id,
+                ),
+            )
+
+        stored = repository.get(site_id, request.task_id)
+        assert stored is not None
+        assert stored.payload_digest == request.payload_digest
+    finally:
+        conn.close()
+
+
+def test_gate4_atomic_proposal_bundle_rolls_back_replays_and_is_site_isolated() -> None:
+    suffix = uuid4().hex
+    site_id = f"gate4-bundle-{suffix}.localhost"
+    other_site = f"gate4-bundle-other-{suffix}.localhost"
+    conn = connection("GBOS_GATE4_AGENT_USER")
+    try:
+        repository = PostgresAgentTaskRepository(conn)
+        request = local_pilot_submission(site_id, suffix)
+        repository.enqueue(request, now=request.due_at)
+        claim = repository.claim_for_execution(
+            site_id,
+            worker_id="bundle-worker",
+            now=request.due_at,
+            lease_duration=timedelta(seconds=30),
+        )
+        assert claim is not None
+        base_result = agent_result(request)
+        evidence_ref = f"worker-evidence-{suffix}"
+        duplicate_key = f"duplicate-model-key-{suffix}"
+        first_invocation = invocation(
+            site_id,
+            f"bundle-a-{suffix}",
+            request_id=request.task_id,
+            evidence_ref=evidence_ref,
+            idempotency_key=duplicate_key,
+        )
+        conflicting_invocation = invocation(
+            site_id,
+            f"bundle-b-{suffix}",
+            request_id=request.task_id,
+            evidence_ref=evidence_ref,
+            idempotency_key=duplicate_key,
+            output_digest="b" * 64,
+        )
+        with pytest.raises(IdempotencyConflict):
+            repository.complete_with_proposal(
+                site_id,
+                request.task_id,
+                worker_id="bundle-worker",
+                expected_attempt=1,
+                now=request.due_at + timedelta(seconds=2),
+                result=replace(
+                    base_result,
+                    invocations=(first_invocation, conflicting_invocation),
+                ),
+            )
+
+        with conn.transaction(), conn.cursor() as cursor:
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (site_id,))
+            cursor.execute(
+                "SELECT status FROM agent_runtime.agent_tasks WHERE site_id = %s AND task_id = %s",
+                (site_id, request.task_id),
+            )
+            assert cursor.fetchone() == ("running",)
+            for table in (
+                "model_invocations",
+                "action_proposals",
+                "proposal_materialization_outbox",
+            ):
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM agent_runtime.{table} WHERE site_id = %s",
+                    (site_id,),
+                )
+                assert cursor.fetchone() == (0,)
+
+        second_invocation = replace(
+            conflicting_invocation,
+            idempotency_key=f"unique-model-key-{suffix}",
+        )
+        result = replace(
+            base_result,
+            invocations=(first_invocation, second_invocation),
+        )
+        completed = repository.complete_with_proposal(
+            site_id,
+            request.task_id,
+            worker_id="bundle-worker",
+            expected_attempt=1,
+            now=request.due_at + timedelta(seconds=2),
+            result=result,
+        )
+        replay = repository.complete_with_proposal(
+            site_id,
+            request.task_id,
+            worker_id="bundle-worker",
+            expected_attempt=1,
+            now=request.due_at + timedelta(seconds=3),
+            result=result,
+        )
+        assert completed == replay
+        assert completed.status is TaskStatus.SUCCEEDED
+        assert repository.get(other_site, request.task_id) is None
+
+        with conn.transaction(), conn.cursor() as cursor:
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (site_id,))
+            for table, expected in (
+                ("model_invocations", 2),
+                ("action_proposals", 1),
+                ("proposal_materialization_outbox", 1),
+            ):
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM agent_runtime.{table} WHERE site_id = %s",
+                    (site_id,),
+                )
+                assert cursor.fetchone() == (expected,)
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (other_site,))
+            cursor.execute(
+                "SELECT COUNT(*) FROM agent_runtime.action_proposals WHERE site_id = %s",
+                (site_id,),
+            )
+            assert cursor.fetchone() == (0,)
+
+        with (
+            pytest.raises(InsufficientPrivilege),
+            conn.transaction(),
+            conn.cursor() as cursor,
+        ):
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (other_site,))
+            cursor.execute(
+                """
+                INSERT INTO agent_runtime.action_proposals (
+                    site_id, proposal_id, idempotency_key, task_id, task_attempt,
+                    action_type, status, origin, review_status, subject_type,
+                    subject_ref, subject_revision, evidence_refs,
+                    fact_version_refs, invocation_ids, payload_digest,
+                    bundle_digest, document, created_at
+                ) VALUES (
+                    %s, %s, %s, %s, 2, 'internal.work_item.propose',
+                    'proposed', 'AI', 'AI Draft', 'CRM Deal', %s, 1,
+                    %s::jsonb, %s::jsonb, '[]'::jsonb, %s, %s, '{}'::jsonb, %s
+                )
+                """,
+                (
+                    site_id,
+                    f"cross-proposal-{suffix}",
+                    f"cross-proposal-idem-{suffix}",
+                    request.task_id,
+                    request.subject_ref,
+                    json.dumps([evidence_ref]),
+                    json.dumps([[f"worker-fact-{suffix}", 1]]),
+                    "c" * 64,
+                    "d" * 64,
+                    request.due_at,
+                ),
+            )
+
+        changed_payload = {"summary": "different valid proposal"}
+        with pytest.raises(IdempotencyConflict):
+            repository.complete_with_proposal(
+                site_id,
+                request.task_id,
+                worker_id="bundle-worker",
+                expected_attempt=1,
+                now=request.due_at + timedelta(seconds=3),
+                result=replace(
+                    result,
+                    action_proposal={
+                        **result.action_proposal,
+                        "payload": changed_payload,
+                        "payload_digest": canonical_payload_digest(changed_payload),
+                    },
+                ),
+            )
+    finally:
+        conn.close()

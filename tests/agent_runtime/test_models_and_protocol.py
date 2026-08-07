@@ -6,6 +6,7 @@ from services.agent_runtime import (
     AgentTaskRepository,
     AgentTaskSubmission,
     InMemoryAgentTaskRepository,
+    LocalPilotTaskPayload,
     PostgresAgentTaskRepository,
     ValidationError,
 )
@@ -107,6 +108,13 @@ def test_submission_payload_is_deeply_immutable_after_digesting() -> None:
         request.payload["refs"].append("evidence-2")  # type: ignore[union-attr]
 
 
+def test_submission_repr_never_exposes_stored_payload_content() -> None:
+    request = valid_submission(payload={"message_body": "Contact Alice at alice@example.com"})
+
+    assert "alice@example.com" not in repr(request).casefold()
+    assert "message_body" not in repr(request).casefold()
+
+
 def test_submission_rejects_self_parent_reference() -> None:
     with pytest.raises(ValidationError, match="parent"):
         valid_submission(parent_task_id="task-1")
@@ -140,3 +148,63 @@ def test_repository_rejects_naive_transition_time() -> None:
 
     with pytest.raises(ValidationError):
         repository.enqueue(valid_submission(), now=datetime(2026, 8, 7, 9, 0))
+
+
+def local_pilot_payload(**overrides: object) -> dict[str, object]:
+    value: dict[str, object] = {
+        "schema_version": "local-pilot-agent-task-v1",
+        "evidence_refs": ["evidence-1"],
+        "fact_version_refs": [{"fact_id": "fact-1", "fact_version": 2}],
+        "subject": {"revision": 3},
+        "request": {
+            "requested_by": "sales-agent",
+            "decision_ref": "decision-1",
+            "expected_action_type": "internal.work_item.propose",
+            "candidate_refs": [],
+        },
+    }
+    value.update(overrides)
+    return value
+
+
+def test_local_pilot_payload_is_refs_only_immutable_and_repr_safe() -> None:
+    payload = LocalPilotTaskPayload.from_mapping(local_pilot_payload())
+
+    assert payload.evidence_refs == ("evidence-1",)
+    assert payload.fact_version_refs[0].fact_id == "fact-1"
+    assert payload.subject_revision == 3
+    assert payload.to_mapping() == local_pilot_payload()
+    assert "evidence-1" not in repr(payload)
+    assert "fact-1" not in repr(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        local_pilot_payload(raw_context="Alice at alice@example.com"),
+        local_pilot_payload(message_body="Please quote USD 5"),
+        local_pilot_payload(email="alice@example.com"),
+        local_pilot_payload(phone="+86 138 0013 8000"),
+        local_pilot_payload(
+            request={
+                "requested_by": "alice@example.com",
+                "decision_ref": "decision-1",
+                "expected_action_type": "internal.work_item.propose",
+                "candidate_refs": [],
+            }
+        ),
+        local_pilot_payload(
+            request={
+                "requested_by": "Alice Smith",
+                "decision_ref": "decision-1",
+                "expected_action_type": "internal.work_item.propose",
+                "candidate_refs": [],
+            }
+        ),
+    ],
+)
+def test_local_pilot_payload_rejects_raw_context_and_direct_pii(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        LocalPilotTaskPayload.from_mapping(payload)

@@ -8,6 +8,7 @@ from services.agent_runtime import (
     IdempotencyConflict,
     InMemoryAgentTaskRepository,
     LeaseConflict,
+    LocalPilotTaskPayload,
     TaskStatus,
 )
 
@@ -209,6 +210,7 @@ def test_heartbeat_requires_owner_and_a_live_lease() -> None:
         "site-a",
         "task-1",
         worker_id="worker-1",
+        expected_attempt=1,
         now=NOW + timedelta(seconds=10),
         lease_duration=timedelta(seconds=60),
     )
@@ -219,6 +221,7 @@ def test_heartbeat_requires_owner_and_a_live_lease() -> None:
             "site-a",
             "task-1",
             worker_id="worker-2",
+            expected_attempt=1,
             now=NOW + timedelta(seconds=20),
             lease_duration=timedelta(seconds=60),
         )
@@ -227,6 +230,7 @@ def test_heartbeat_requires_owner_and_a_live_lease() -> None:
             "site-a",
             "task-1",
             worker_id="worker-1",
+            expected_attempt=1,
             now=NOW + timedelta(seconds=71),
             lease_duration=timedelta(seconds=60),
         )
@@ -246,6 +250,7 @@ def test_succeed_clears_lease_and_appends_monotonic_lineage() -> None:
         "site-a",
         "task-1",
         worker_id="worker-1",
+        expected_attempt=1,
         now=NOW + timedelta(seconds=10),
         output_artifact_refs=("artifact-1",),
     )
@@ -278,6 +283,7 @@ def test_failure_retries_then_dead_letters_deterministically() -> None:
         "site-a",
         "task-1",
         worker_id="worker-1",
+        expected_attempt=1,
         now=NOW + timedelta(seconds=10),
         retry_at=NOW + timedelta(minutes=5),
         classification=FailureClassification.TOOL_FAILURE,
@@ -299,6 +305,7 @@ def test_failure_retries_then_dead_letters_deterministically() -> None:
         "site-a",
         "task-1",
         worker_id="worker-2",
+        expected_attempt=2,
         now=NOW + timedelta(minutes=5, seconds=10),
         retry_at=NOW + timedelta(minutes=10),
         classification=FailureClassification.TOOL_FAILURE,
@@ -359,7 +366,107 @@ def test_fail_rejects_nonfuture_retry_even_on_final_attempt() -> None:
             "site-a",
             "task-1",
             worker_id="worker-1",
+            expected_attempt=1,
             now=NOW + timedelta(seconds=1),
             retry_at=NOW,
             classification=FailureClassification.TOOL_FAILURE,
         )
+
+
+def test_same_worker_cannot_reuse_stale_attempt_after_reclaim() -> None:
+    repository = InMemoryAgentTaskRepository()
+    repository.enqueue(submission(), now=NOW)
+    first = repository.claim(
+        "site-a",
+        worker_id="same-worker",
+        now=NOW,
+        lease_duration=timedelta(seconds=10),
+    )
+    recovered = repository.claim(
+        "site-a",
+        worker_id="same-worker",
+        now=NOW + timedelta(seconds=11),
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert first is not None
+    assert recovered is not None
+    assert recovered.attempt == 2
+    for transition in (
+        lambda: repository.start(
+            "site-a",
+            "task-1",
+            worker_id="same-worker",
+            expected_attempt=first.attempt,
+            now=NOW + timedelta(seconds=12),
+        ),
+        lambda: repository.heartbeat(
+            "site-a",
+            "task-1",
+            worker_id="same-worker",
+            expected_attempt=first.attempt,
+            now=NOW + timedelta(seconds=12),
+            lease_duration=timedelta(seconds=30),
+        ),
+        lambda: repository.succeed(
+            "site-a",
+            "task-1",
+            worker_id="same-worker",
+            expected_attempt=first.attempt,
+            now=NOW + timedelta(seconds=12),
+        ),
+        lambda: repository.fail(
+            "site-a",
+            "task-1",
+            worker_id="same-worker",
+            expected_attempt=first.attempt,
+            now=NOW + timedelta(seconds=12),
+            retry_at=NOW + timedelta(minutes=5),
+            classification=FailureClassification.INTERNAL,
+        ),
+    ):
+        with pytest.raises(LeaseConflict, match="attempt"):
+            transition()
+
+
+def test_claim_for_execution_atomically_returns_redacted_refs_payload_and_running_task() -> None:
+    repository = InMemoryAgentTaskRepository()
+    task_payload = LocalPilotTaskPayload.from_mapping(
+        {
+            "schema_version": "local-pilot-agent-task-v1",
+            "evidence_refs": ["evidence-1"],
+            "fact_version_refs": [{"fact_id": "fact-1", "fact_version": 1}],
+            "subject": {"revision": 1},
+            "request": {
+                "requested_by": "sales-agent",
+                "decision_ref": "decision-1",
+                "expected_action_type": "internal.work_item.propose",
+                "candidate_refs": [],
+            },
+        }
+    )
+    repository.enqueue(
+        submission(
+            processing_purpose="sales_follow_up",
+            subject_type="CRM Deal",
+            payload=task_payload.to_mapping(),  # type: ignore[arg-type]
+        ),
+        now=NOW,
+    )
+
+    claimed = repository.claim_for_execution(
+        "site-a",
+        worker_id="worker-1",
+        now=NOW,
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert claimed is not None
+    assert claimed.metadata.status is TaskStatus.RUNNING
+    assert claimed.payload == task_payload
+    assert "evidence-1" not in repr(claimed)
+    assert [event.event_type for event in repository.timeline("site-a", "task-1")] == [
+        "created",
+        "leased",
+        "running",
+    ]

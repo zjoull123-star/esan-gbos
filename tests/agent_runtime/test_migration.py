@@ -3,7 +3,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 MIGRATIONS = ROOT / "services" / "agent_runtime" / "migrations"
-TABLES = {"agent_tasks", "timeline", "dead_letter", "model_invocations"}
+TABLES = {
+    "agent_tasks",
+    "timeline",
+    "dead_letter",
+    "model_invocations",
+    "action_proposals",
+    "proposal_materialization_outbox",
+}
 
 
 def migration_sql() -> str:
@@ -119,3 +126,49 @@ def test_gate4_migrate_discovers_all_additive_agent_migrations() -> None:
     assert "/migrations/agent/*.sql" in script
     assert "observer.schema_migrations" in script
     assert "migration_checksum" in script
+
+
+def test_action_proposal_bundle_tables_are_immutable_fenced_and_content_safe() -> None:
+    sql = migration_sql()
+    proposals = table_body(sql, "action_proposals")
+    outbox = table_body(sql, "proposal_materialization_outbox")
+
+    assert "unique (site_id, task_id, task_attempt)" in proposals
+    assert "foreign key (site_id, task_id)" in proposals
+    assert "payload_digest char(64) not null" in proposals
+    assert "bundle_digest char(64) not null" in proposals
+    assert "evidence_refs jsonb not null" in proposals
+    assert "invocation_ids jsonb not null" in proposals
+    assert "status = 'proposed'" in proposals
+    assert "origin = 'ai'" in proposals
+    assert "review_status = 'ai draft'" in proposals
+    for action_type in (
+        "internal.ai_draft.propose",
+        "internal.work_item.propose",
+        "internal.review_case.propose",
+        "internal.work_item.transition.propose",
+    ):
+        assert action_type in proposals
+    for forbidden in (
+        "draftmutation",
+        "approvedcommand",
+        "prompt_text",
+        "response_text",
+        "tokenized_context",
+        "raw_context",
+        "email",
+        "phone",
+    ):
+        assert forbidden not in proposals
+
+    assert "unique (site_id, proposal_id)" in outbox
+    assert "foreign key (site_id, proposal_id)" in outbox
+    assert "status = 'pending'" in outbox
+    assert "origin = 'ai'" in outbox
+    assert "review_status = 'ai draft'" in outbox
+    assert "prevent_agent_runtime_immutable_change" in sql
+    assert "before update or delete on agent_runtime.action_proposals" in sql
+    assert "before update or delete on agent_runtime.proposal_materialization_outbox" in sql
+    assert "prevent_agent_task_payload_change" in sql
+    assert "before update of payload, payload_digest on agent_runtime.agent_tasks" in sql
+    assert "grant select, insert on" in sql

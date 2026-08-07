@@ -129,6 +129,7 @@ def test_agents_emit_only_contract_valid_internal_proposals(
     assert result.network_calls == 0
     assert result.model_api_calls == 0
     assert result.tool_calls == 0
+    assert result.invocations == ()
     assert result.provider_version == "deterministic-local-v1"
     assert result.tool_version == "no-tools-v1"
     assert result.prompt_version

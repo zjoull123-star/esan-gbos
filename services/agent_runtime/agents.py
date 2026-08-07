@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 from services.action_guard.models import ActionRequest, EvaluationPhase, GuardDecision, GuardOutcome
 from services.action_guard.policy import ActionGuard
+
+from .invocations import ModelInvocationRecord
 
 
 class AgentExecutionError(RuntimeError):
@@ -87,6 +89,7 @@ class ProviderOutput:
     network_calls: int = 0
     model_api_calls: int = 0
     tool_calls: int = 0
+    invocations: tuple[ModelInvocationRecord, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -98,6 +101,8 @@ class ProviderOutput:
         for counter in (self.network_calls, self.model_api_calls, self.tool_calls):
             if isinstance(counter, bool) or not isinstance(counter, int) or counter < 0:
                 raise ValueError("provider counters must be non-negative integers")
+        if any(not isinstance(item, ModelInvocationRecord) for item in self.invocations):
+            raise ValueError("provider invocations must be audit records")
 
 
 @runtime_checkable
@@ -110,7 +115,7 @@ class ModelProvider(Protocol):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AgentExecutionResult:
-    action_proposal: dict[str, Any]
+    action_proposal: dict[str, Any] = field(repr=False)
     pre_guard: GuardDecision
     post_guard: GuardDecision
     provider_version: str
@@ -123,6 +128,7 @@ class AgentExecutionResult:
     model_api_calls: int
     tool_calls: int
     budget: AgentBudget
+    invocations: tuple[ModelInvocationRecord, ...] = ()
 
 
 class DeterministicLocalProvider:
@@ -314,6 +320,7 @@ class AgentOrchestrator:
             model_api_calls=provider_output.model_api_calls,
             tool_calls=provider_output.tool_calls,
             budget=active_budget,
+            invocations=provider_output.invocations,
         )
 
     def _validate_request(self, request: AgentInput, budget: AgentBudget) -> None:

@@ -107,4 +107,5 @@ class DeepSeekAgentProvider:
             network_calls=result.network_calls,
             model_api_calls=result.model_api_calls,
             tool_calls=result.tool_calls,
+            invocations=result.invocations,
         )

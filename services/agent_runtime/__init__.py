@@ -19,19 +19,37 @@ from .invocations import (
     TokenUsageMetadata,
 )
 from .models import (
+    AgentTaskClaim,
     AgentTaskMetadata,
     AgentTaskSubmission,
     DeadLetterMetadata,
     FailureClassification,
     IdempotencyConflict,
     LeaseConflict,
+    LocalPilotFactVersionRef,
+    LocalPilotTaskPayload,
     TaskNotFound,
     TaskStatus,
     TimelineEventMetadata,
     ValidationError,
 )
 from .postgres import PostgresAgentTaskRepository
+from .proposals import (
+    ActionProposalRecord,
+    MaterializationEnvelope,
+    MaterializationIntent,
+    MaterializationOutboxRecord,
+    TrustedMaterializer,
+)
 from .repository import AgentTaskRepository, InMemoryAgentTaskRepository
+from .worker import (
+    AgentWorker,
+    ContextResolutionRequest,
+    ResolvedAgentContext,
+    ThreadedHeartbeatRunner,
+    WorkerRunResult,
+    WorkerRunStatus,
+)
 
 __all__ = [
     "AgentBudget",
@@ -41,6 +59,7 @@ __all__ = [
     "AgentKind",
     "AgentOrchestrator",
     "AgentTaskMetadata",
+    "AgentTaskClaim",
     "AgentTaskRepository",
     "AgentTaskSubmission",
     "BudgetExceeded",
@@ -53,6 +72,8 @@ __all__ = [
     "InMemoryModelInvocationRepository",
     "InvocationReferences",
     "LeaseConflict",
+    "LocalPilotFactVersionRef",
+    "LocalPilotTaskPayload",
     "ModelInvocationRecord",
     "ModelInvocationRepository",
     "CostMetadata",
@@ -63,4 +84,15 @@ __all__ = [
     "TimelineEventMetadata",
     "TokenUsageMetadata",
     "ValidationError",
+    "ActionProposalRecord",
+    "MaterializationEnvelope",
+    "MaterializationIntent",
+    "MaterializationOutboxRecord",
+    "TrustedMaterializer",
+    "AgentWorker",
+    "ContextResolutionRequest",
+    "ResolvedAgentContext",
+    "ThreadedHeartbeatRunner",
+    "WorkerRunResult",
+    "WorkerRunStatus",
 ]
