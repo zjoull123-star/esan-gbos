@@ -57,6 +57,21 @@ class _Doc:
 
     def check_permission(self, permission_type: str) -> None:
         self._runtime.permissions.append((self.doctype, self.get("name"), permission_type))
+        permissions = importlib.import_module("esan_gbos.permissions")
+        if self.doctype == "Integration Request":
+            permitted = permissions.has_internal_materialization_permission(
+                self,
+                user=self._runtime.session.user,
+                permission_type=permission_type,
+            )
+        else:
+            permitted = permissions.has_gbos_permission(
+                self,
+                user=self._runtime.session.user,
+                permission_type=permission_type,
+            )
+        if not permitted:
+            raise _PermissionError
 
     def insert(self, *, set_name: str | None = None) -> _Doc:
         name = set_name or self.get("name") or f"{self.doctype}-0001"
@@ -82,7 +97,18 @@ class _Database:
     def __init__(self, runtime: _Frappe) -> None:
         self._runtime = runtime
 
-    def exists(self, doctype: str, name: str) -> bool:
+    def exists(self, doctype: str, name: str | dict[str, Any]) -> bool:
+        if doctype == "GBOS Team Member" and isinstance(name, dict):
+            team = self._runtime.docs.get(("GBOS Team", str(name.get("parent") or "")))
+            return bool(
+                team
+                and any(
+                    member.user == name.get("user") and member.enabled == name.get("enabled")
+                    for member in team.get("members", [])
+                )
+            )
+        if isinstance(name, dict):
+            return False
         return (doctype, name) in self._runtime.docs
 
     def get_value(self, doctype: str, name: str, fieldname: str, **kwargs: Any) -> Any:
@@ -128,10 +154,7 @@ class _Frappe(ModuleType):
             }
         }
         self.roles = {
-            "materializer@example.invalid": {
-                "Agent TrustedMaterializer",
-                "GBOS Admin",
-            },
+            "materializer@example.invalid": {"Agent TrustedMaterializer"},
             "reviewer@example.invalid": {"Reviewer"},
         }
         self.enabled_users = {
@@ -171,6 +194,7 @@ class _Frappe(ModuleType):
 def materialization_api() -> tuple[Any, _Frappe]:
     fake = _Frappe()
     original = sys.modules.get("frappe")
+    original_permissions = sys.modules.pop("esan_gbos.permissions", None)
     sys.modules["frappe"] = fake
     sys.modules.pop("esan_gbos.api.internal.materialization", None)
     module = importlib.import_module("esan_gbos.api.internal.materialization")
@@ -180,6 +204,8 @@ def materialization_api() -> tuple[Any, _Frappe]:
         sys.modules.pop("frappe", None)
     else:
         sys.modules["frappe"] = original
+    if original_permissions is not None:
+        sys.modules["esan_gbos.permissions"] = original_permissions
 
 
 def _bound_payload(**values: Any) -> dict[str, Any]:
@@ -266,6 +292,122 @@ def test_internal_post_boundary_never_enables_guest_or_ignores_permissions() -> 
     assert "ignore_permissions" not in source
     assert source.count('@frappe.whitelist(methods=["POST"])') == 2
     assert '"doctype": "Integration Request"' in source
+
+
+def test_materialization_permission_scope_is_minimal_and_exception_safe(
+    materialization_api: tuple[Any, _Frappe],
+) -> None:
+    _api, fake = materialization_api
+    permissions = importlib.import_module("esan_gbos.permissions")
+    subject = _subject(fake)
+    team = fake.docs[("GBOS Team", "TEM-0001")]
+    review_case = _Doc(
+        fake,
+        {
+            "doctype": "GBOS Review Case",
+            "name": "REV-0001",
+            "team": "TEM-0001",
+        },
+    )
+    observation = _Doc(
+        fake,
+        {
+            "doctype": "GBOS Informal Observation",
+            "name": "OBS-0001",
+            "team": "TEM-0001",
+        },
+    )
+    audit = _Doc(
+        fake,
+        {
+            "doctype": "Integration Request",
+            "name": "GBOS-MATERIALIZE-0001",
+        },
+    )
+    actor = fake.session.user
+
+    assert not permissions.has_gbos_permission(team, actor, "read")
+    assert not permissions.has_gbos_permission(subject, actor, "read")
+    assert not permissions.has_gbos_permission(subject, actor, "create")
+    assert not permissions.has_internal_materialization_permission(audit, actor, "read")
+    assert permissions.integration_request_permission_query(actor) == "1=0"
+    with pytest.raises(_PermissionError):
+        team.check_permission("read")
+    with pytest.raises(_PermissionError):
+        subject.check_permission("create")
+    with pytest.raises(_PermissionError):
+        audit.check_permission("write")
+
+    with permissions.internal_materialization_permission_scope("resolve"):
+        assert permissions.has_gbos_permission(team, actor, "read")
+        assert permissions.has_gbos_permission(team, actor, ptype="read")
+        assert permissions.has_gbos_permission(subject, actor, "read")
+        assert not permissions.has_gbos_permission(subject, actor, "write")
+        assert not permissions.has_gbos_permission(review_case, actor, "create")
+        assert not permissions.has_internal_materialization_permission(audit, actor, "read")
+
+    with (
+        pytest.raises(RuntimeError, match="forced"),
+        permissions.internal_materialization_permission_scope("apply"),
+    ):
+        assert permissions.has_gbos_permission(team, actor, "read")
+        assert permissions.has_gbos_permission(subject, actor, "read")
+        assert permissions.has_gbos_permission(subject, actor, "create")
+        assert permissions.has_gbos_permission(subject, actor, "write")
+        assert permissions.has_gbos_permission(review_case, actor, "create")
+        assert permissions.has_gbos_permission(review_case, actor, "write")
+        assert permissions.has_gbos_permission(observation, actor, "create")
+        assert not permissions.has_gbos_permission(observation, actor, "write")
+        assert permissions.has_internal_materialization_permission(audit, actor, "read")
+        assert permissions.has_internal_materialization_permission(
+            audit,
+            actor,
+            ptype="write",
+        )
+        assert permissions.integration_request_permission_query(actor) == "1=0"
+        assert permissions.has_internal_materialization_permission(audit, actor, "create")
+        assert permissions.has_internal_materialization_permission(audit, actor, "write")
+        for forbidden in ("delete", "export", "email", "share"):
+            assert not permissions.has_gbos_permission(subject, actor, forbidden)
+            assert not permissions.has_internal_materialization_permission(
+                audit,
+                actor,
+                forbidden,
+            )
+        raise RuntimeError("forced")
+
+    assert not permissions.has_gbos_permission(team, actor, "read")
+    assert not permissions.has_gbos_permission(subject, actor, "create")
+    assert not permissions.has_internal_materialization_permission(audit, actor, "write")
+
+
+def test_endpoint_clears_materialization_scope_after_internal_exception(
+    materialization_api: tuple[Any, _Frappe],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, fake = materialization_api
+    permissions = importlib.import_module("esan_gbos.permissions")
+    subject = _subject(fake)
+
+    def fail_context(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise RuntimeError("sensitive subject value")
+
+    monkeypatch.setattr(api, "_controlled_context", fail_context)
+    response = api.resolve_context(
+        _bound_payload(
+            task_id="task-0001",
+            proposal_id="proposal-0001",
+            subject_type="GBOS Work Item",
+            subject_ref="WRK-0001",
+            subject_revision=3,
+        )
+    )
+
+    assert fake.local.response["http_status_code"] == 500
+    assert response == {"error": {"code": "internal_error"}}
+    assert "sensitive" not in repr(response)
+    assert not permissions.has_gbos_permission(subject, fake.session.user, "read")
 
 
 def test_resolve_context_requires_token_auth_and_all_bound_headers(

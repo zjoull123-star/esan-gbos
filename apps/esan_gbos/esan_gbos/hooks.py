@@ -29,6 +29,7 @@ GBOS_ROLES = [
     "Product/R&D",
     "Reviewer",
     "Finance Readonly",
+    "Agent TrustedMaterializer",
 ]
 
 fixtures = [
@@ -75,6 +76,9 @@ permission_query_conditions = {
     "CRM Deal": "esan_gbos.permissions.crm_deal_permission_query",
     "Contact": "esan_gbos.permissions.contact_permission_query",
 }
+permission_query_conditions["Integration Request"] = (
+    "esan_gbos.permissions.integration_request_permission_query"
+)
 
 has_permission = {
     doctype: "esan_gbos.permissions.has_gbos_permission"
@@ -85,6 +89,9 @@ has_permission.update(
         doctype: "esan_gbos.permissions.has_crm_permission"
         for doctype in ("CRM Organization", "CRM Lead", "CRM Deal", "Contact")
     }
+)
+has_permission["Integration Request"] = (
+    "esan_gbos.permissions.has_internal_materialization_permission"
 )
 
 _BLOCKED_ERP_DOCTYPES = [

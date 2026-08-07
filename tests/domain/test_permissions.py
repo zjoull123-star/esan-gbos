@@ -6,6 +6,7 @@ from esan_gbos.domain.permissions import (
     can_access_crm_record,
     can_access_record,
     communication_scope,
+    role_has_doctype_permission,
 )
 
 
@@ -95,6 +96,39 @@ def test_administrator_role_is_not_a_daily_access_bypass() -> None:
         permission_type="read",
         is_team_member=False,
     )
+
+
+def test_internal_materializer_coarse_permissions_are_closed_and_non_exporting() -> None:
+    role = "Agent TrustedMaterializer"
+    allowed_subjects = {
+        "GBOS Demand Signal",
+        "GBOS Party Profile",
+        "GBOS Product Brief",
+        "GBOS Sample Feedback",
+        "GBOS Sample Iteration",
+        "GBOS Sample Project",
+        "GBOS Sample Shipment",
+        "GBOS Sourcing Event",
+        "GBOS Work Item",
+    }
+    for doctype in allowed_subjects | {"GBOS Team"}:
+        assert role_has_doctype_permission(role, doctype, "read")
+    for doctype in {"GBOS Work Item", "GBOS Review Case", "GBOS Informal Observation"}:
+        assert role_has_doctype_permission(role, doctype, "create")
+    for doctype in {"GBOS Work Item", "GBOS Review Case"}:
+        assert role_has_doctype_permission(role, doctype, "write")
+    assert not role_has_doctype_permission(
+        role,
+        "GBOS Informal Observation",
+        "write",
+    )
+    for doctype in allowed_subjects | {
+        "GBOS Team",
+        "GBOS Review Case",
+        "GBOS Informal Observation",
+    }:
+        for forbidden in ("delete", "export", "email", "share"):
+            assert not role_has_doctype_permission(role, doctype, forbidden)
 
 
 def test_buyer_is_limited_to_procurement_and_authorized_demand_summary() -> None:

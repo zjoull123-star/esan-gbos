@@ -13,7 +13,10 @@ from typing import Any
 
 import frappe
 
-_TRUSTED_ROLE = "Agent TrustedMaterializer"
+from esan_gbos.domain.permissions import INTERNAL_MATERIALIZER_ROLE
+from esan_gbos.permissions import internal_materialization_permission_scope
+
+_TRUSTED_ROLE = INTERNAL_MATERIALIZER_ROLE
 _MODEL = "deepseek-v4-flash"
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _TEXT = re.compile(r"^[^\r\n]+$")
@@ -262,11 +265,12 @@ def resolve_context(payload: dict[str, Any]) -> dict[str, Any]:
     subject_type = _text(payload["subject_type"], maximum=140)
     subject_ref = _text(payload["subject_ref"], maximum=256)
     revision = _positive_integer(payload["subject_revision"])
-    snapshot, digest, team, reviewer = _controlled_context(
-        subject_type,
-        subject_ref,
-        revision,
-    )
+    with internal_materialization_permission_scope("resolve"):
+        snapshot, digest, team, reviewer = _controlled_context(
+            subject_type,
+            subject_ref,
+            revision,
+        )
     return {
         "site_id": payload["site_id"],
         "request_id": payload["request_id"],
@@ -295,12 +299,13 @@ def apply_draft(payload: dict[str, Any]) -> dict[str, Any]:
         or canonical_request_digest(intent) != request_digest
     ):
         raise _APIError("invalid_request_digest", 422)
-    return _run_idempotent(
-        request_id=request_id,
-        request_digest=request_digest,
-        payload=payload,
-        intent=intent,
-    )
+    with internal_materialization_permission_scope("apply"):
+        return _run_idempotent(
+            request_id=request_id,
+            request_digest=request_digest,
+            payload=payload,
+            intent=intent,
+        )
 
 
 def _authenticate(payload: dict[str, Any]) -> dict[str, Any]:

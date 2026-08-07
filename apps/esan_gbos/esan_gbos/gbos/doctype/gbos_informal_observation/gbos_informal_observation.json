@@ -22,6 +22,7 @@
   ],
   "permissions": [
     {"role": "GBOS Admin", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1},
-    {"role": "CEO", "read": 1}
+    {"role": "CEO", "read": 1},
+    {"role": "Agent TrustedMaterializer", "create": 1}
   ]
 }

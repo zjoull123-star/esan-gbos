@@ -50,6 +50,27 @@ _BUSINESS_DOCTYPES = frozenset(
 )
 _INTEGRATION_DOCTYPES = frozenset({"GBOS External Identity", "GBOS External Crosswalk"})
 _ALL_PARENT_DOCTYPES = _BUSINESS_DOCTYPES | _INTEGRATION_DOCTYPES | {"GBOS Team"}
+INTERNAL_MATERIALIZER_ROLE = "Agent TrustedMaterializer"
+INTERNAL_MATERIALIZATION_SUBJECT_DOCTYPES = frozenset(
+    {
+        "GBOS Demand Signal",
+        "GBOS Party Profile",
+        "GBOS Product Brief",
+        "GBOS Sample Feedback",
+        "GBOS Sample Iteration",
+        "GBOS Sample Project",
+        "GBOS Sample Shipment",
+        "GBOS Sourcing Event",
+        "GBOS Work Item",
+    }
+)
+INTERNAL_MATERIALIZATION_DRAFT_DOCTYPES = frozenset(
+    {
+        "GBOS Work Item",
+        "GBOS Review Case",
+        "GBOS Informal Observation",
+    }
+)
 
 _SALES_DOCTYPES = frozenset(
     {
@@ -115,6 +136,14 @@ def role_has_doctype_permission(
 ) -> bool:
     """Return the coarse DocPerm capability before record-level scope is applied."""
     if doctype not in _ALL_PARENT_DOCTYPES:
+        return False
+    if role == INTERNAL_MATERIALIZER_ROLE:
+        if permission_type == "read":
+            return doctype in INTERNAL_MATERIALIZATION_SUBJECT_DOCTYPES | {"GBOS Team"}
+        if permission_type == "create":
+            return doctype in INTERNAL_MATERIALIZATION_DRAFT_DOCTYPES
+        if permission_type == "write":
+            return doctype in {"GBOS Work Item", "GBOS Review Case"}
         return False
     if role == "GBOS Admin":
         return permission_type in {"read", "write", "create", "delete"}

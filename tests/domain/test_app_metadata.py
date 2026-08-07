@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import tomllib
 from pathlib import Path
@@ -39,6 +40,19 @@ def _doctype_documents() -> dict[str, dict[str, object]]:
         data = json.loads(path.read_text(encoding="utf-8"))
         documents[str(data["name"])] = data
     return documents
+
+
+def _literal_assignment(path: Path, name: str) -> object:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == name
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"{name} is not a literal assignment in {path}")
 
 
 def test_standard_frappe_app_skeleton_exists() -> None:
@@ -132,6 +146,62 @@ def test_hooks_enforce_server_side_permissions_and_transaction_guards() -> None:
     assert '"Payment Entry"' in hooks
     assert '"Stock Entry"' in hooks
     assert '"GL Entry"' in hooks
+
+
+def test_internal_materializer_role_install_fixture_and_hooks_are_consistent() -> None:
+    hooks_path = PACKAGE_ROOT / "hooks.py"
+    install_path = PACKAGE_ROOT / "install.py"
+    fixture = json.loads((PACKAGE_ROOT / "fixtures" / "role.json").read_text(encoding="utf-8"))
+    hook_roles = set(_literal_assignment(hooks_path, "GBOS_ROLES"))
+    install_roles = set(_literal_assignment(install_path, "GBOS_ROLES"))
+    fixture_roles = {row["role_name"]: row for row in fixture}
+
+    assert hook_roles == install_roles == set(fixture_roles)
+    assert fixture_roles["Agent TrustedMaterializer"]["desk_access"] == 0
+    assert "GBOS Informal Observation" in set(_literal_assignment(install_path, "PARENT_DOCTYPES"))
+    assert _literal_assignment(
+        install_path,
+        "INTERNAL_MATERIALIZATION_AUDIT_DOCTYPES",
+    ) == ("Integration Request",)
+    hooks_source = hooks_path.read_text(encoding="utf-8")
+    assert 'has_permission["Integration Request"]' in hooks_source
+    assert "esan_gbos.permissions.has_internal_materialization_permission" in hooks_source
+    assert 'permission_query_conditions["Integration Request"]' in hooks_source
+    assert "esan_gbos.permissions.integration_request_permission_query" in hooks_source
+    install_source = install_path.read_text(encoding="utf-8")
+    assert install_source.count("ensure_internal_materialization_audit_permissions()") == 3
+
+
+def test_internal_materializer_doctype_permissions_are_exactly_the_coarse_minimum() -> None:
+    expected = {
+        "GBOS Team": {"read"},
+        "GBOS Demand Signal": {"read"},
+        "GBOS Party Profile": {"read"},
+        "GBOS Product Brief": {"read"},
+        "GBOS Sample Feedback": {"read"},
+        "GBOS Sample Iteration": {"read"},
+        "GBOS Sample Project": {"read"},
+        "GBOS Sample Shipment": {"read"},
+        "GBOS Sourcing Event": {"read"},
+        "GBOS Work Item": {"read", "write", "create"},
+        "GBOS Review Case": {"write", "create"},
+        "GBOS Informal Observation": {"create"},
+    }
+    documents = _doctype_documents()
+
+    for doctype, allowed in expected.items():
+        service_rows = [
+            row
+            for row in documents[doctype]["permissions"]
+            if row["role"] == "Agent TrustedMaterializer"
+        ]
+        assert len(service_rows) == 1, doctype
+        granted = {
+            permission_type
+            for permission_type, enabled in service_rows[0].items()
+            if permission_type != "role" and enabled == 1
+        }
+        assert granted == allowed, doctype
 
 
 def test_gbos_pwa_security_headers_are_scoped_and_deny_unsafe_defaults() -> None:
