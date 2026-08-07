@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Never, Protocol
+from typing import Literal, Never, Protocol
 
 from ..local_pilot_ingestion import DeliveryQuarantine
 from ..models import ConnectorItem, RawDelivery
@@ -95,6 +96,13 @@ class ReplayGuard(Protocol):
     def claim(self, delivery_id: str, received_at: datetime) -> str: ...
 
 
+DurableAccept = Callable[[RawDelivery], str]
+
+
+class DurableDeliveryConflict(RuntimeError):
+    """A delivery identifier was already bound to different exact bytes."""
+
+
 class WhatsAppCloudQuarantineError(DeliveryQuarantine):
     """An authenticated webhook has an unsafe or unsupported envelope."""
 
@@ -135,6 +143,15 @@ class DecodedWhatsAppCloudDelivery:
     raw_contacts: tuple[Mapping[str, object], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class WebhookReceiveResult:
+    """Immediate provider ACK outcome after a successful durable handoff."""
+
+    status_code: int
+    disposition: Literal["accepted", "duplicate"]
+    work_created: bool
+
+
 def verify_webhook_challenge(
     *,
     mode: str,
@@ -171,13 +188,12 @@ def verify_webhook_challenge(
 class WhatsAppCloudDeliveryAuthenticator:
     """Authenticate the exact callback bytes before they enter durable storage."""
 
-    __slots__ = ("_app_secret", "_max_body_bytes", "_replay_guard")
+    __slots__ = ("_app_secret", "_max_body_bytes")
 
     def __init__(
         self,
         *,
         app_secret: str,
-        replay_guard: ReplayGuard,
         max_body_bytes: int = 1_048_576,
     ) -> None:
         if (
@@ -188,11 +204,8 @@ class WhatsAppCloudDeliveryAuthenticator:
             raise ValueError("invalid app secret configuration")
         if not isinstance(max_body_bytes, int) or not 1 <= max_body_bytes <= 16_777_216:
             raise ValueError("invalid body size boundary")
-        if not callable(getattr(replay_guard, "claim", None)):
-            raise TypeError("replay_guard must provide claim")
         self._app_secret = app_secret.encode("utf-8")
         self._max_body_bytes = max_body_bytes
-        self._replay_guard = replay_guard
 
     def authenticate(
         self,
@@ -226,30 +239,104 @@ class WhatsAppCloudDeliveryAuthenticator:
         if (
             not isinstance(delivery_id, str)
             or not _IDENTIFIER.fullmatch(delivery_id)
+            or not isinstance(received_at, datetime)
             or received_at.tzinfo is None
             or received_at.utcoffset() is None
         ):
             raise WhatsAppCloudRequestError(status_code=400, reason_code="invalid_request")
-
-        try:
-            decision = self._replay_guard.claim(delivery_id, received_at)
-        except Exception:
-            raise WhatsAppCloudRequestError(
-                status_code=503,
-                reason_code="replay_check_failed",
-            ) from None
-        if decision == "replay":
-            raise WhatsAppCloudRequestError(status_code=409, reason_code="replay_rejected")
-        if decision == "expired":
-            raise WhatsAppCloudRequestError(status_code=408, reason_code="delivery_expired")
-        if decision != "accepted":
-            raise WhatsAppCloudRequestError(status_code=503, reason_code="replay_check_failed")
 
         return RawDelivery(
             delivery_id=delivery_id,
             exact_bytes=exact_body,
             media_type="application/json",
             received_at=received_at,
+        )
+
+
+class WhatsAppCloudDurableReceiver:
+    """Order the authenticated handoff as durable accept, then replay accounting."""
+
+    __slots__ = ("_authenticator", "_durable_accept", "_replay_guard")
+
+    def __init__(
+        self,
+        *,
+        authenticator: WhatsAppCloudDeliveryAuthenticator,
+        durable_accept: DurableAccept,
+        replay_guard: ReplayGuard,
+    ) -> None:
+        if not isinstance(authenticator, WhatsAppCloudDeliveryAuthenticator):
+            raise TypeError("invalid authenticator")
+        if not callable(durable_accept):
+            raise TypeError("durable_accept must be callable")
+        if not callable(getattr(replay_guard, "claim", None)):
+            raise TypeError("replay_guard must provide claim")
+        self._authenticator = authenticator
+        self._durable_accept = durable_accept
+        self._replay_guard = replay_guard
+
+    def receive(
+        self,
+        *,
+        exact_body: bytes,
+        signature_header: str | None,
+        delivery_id: str,
+        received_at: datetime,
+    ) -> WebhookReceiveResult:
+        delivery = self._authenticator.authenticate(
+            exact_body=exact_body,
+            signature_header=signature_header,
+            delivery_id=delivery_id,
+            received_at=received_at,
+        )
+        try:
+            disposition = self._durable_accept(delivery)
+        except DurableDeliveryConflict:
+            raise WhatsAppCloudRequestError(
+                status_code=409,
+                reason_code="delivery_conflict",
+            ) from None
+        except Exception:
+            raise WhatsAppCloudRequestError(
+                status_code=503,
+                reason_code="durable_accept_failed",
+            ) from None
+        if disposition not in {"accepted", "duplicate"}:
+            raise WhatsAppCloudRequestError(
+                status_code=503,
+                reason_code="durable_accept_failed",
+            )
+
+        try:
+            replay_decision = self._replay_guard.claim(
+                delivery.delivery_id,
+                delivery.received_at,
+            )
+        except Exception:
+            raise WhatsAppCloudRequestError(
+                status_code=503,
+                reason_code="replay_check_failed",
+            ) from None
+        if replay_decision not in {"accepted", "replay", "expired"}:
+            raise WhatsAppCloudRequestError(
+                status_code=503,
+                reason_code="replay_check_failed",
+            )
+
+        if disposition == "duplicate":
+            return WebhookReceiveResult(
+                status_code=200,
+                disposition="duplicate",
+                work_created=False,
+            )
+        if replay_decision == "replay":
+            raise WhatsAppCloudRequestError(status_code=409, reason_code="replay_rejected")
+        if replay_decision == "expired":
+            raise WhatsAppCloudRequestError(status_code=408, reason_code="delivery_expired")
+        return WebhookReceiveResult(
+            status_code=200,
+            disposition="accepted",
+            work_created=True,
         )
 
 
@@ -440,6 +527,8 @@ class WhatsAppCloudWebhookDecoder:
                     stack.append((child, depth + 1))
             elif isinstance(value, list):
                 stack.extend((child, depth + 1) for child in value)
+            elif isinstance(value, float) and not math.isfinite(value):
+                self._quarantine("invalid_json_number")
             elif value is not None and not isinstance(value, (bool, int, float)):
                 self._quarantine("invalid_json_value")
 

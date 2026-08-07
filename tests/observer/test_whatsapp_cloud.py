@@ -139,11 +139,19 @@ def test_get_verification_rejects_non_text_inputs_with_a_safe_error() -> None:
 
 
 class _ReplayGuard:
-    def __init__(self, decision: str = "accepted") -> None:
+    def __init__(
+        self,
+        decision: str = "accepted",
+        *,
+        events: list[str] | None = None,
+    ) -> None:
         self.decision = decision
         self.claims: list[tuple[str, datetime]] = []
+        self.events = events
 
     def claim(self, delivery_id: str, received_at: datetime) -> str:
+        if self.events is not None:
+            self.events.append("replay")
         self.claims.append((delivery_id, received_at))
         return self.decision
 
@@ -152,10 +160,8 @@ def test_post_authenticates_exact_raw_bytes_and_returns_a_durable_delivery() -> 
     from observer.connectors.whatsapp_cloud import WhatsAppCloudDeliveryAuthenticator
 
     body = b'{"exact":"bytes\\r\\n"}'
-    guard = _ReplayGuard()
     authenticator = WhatsAppCloudDeliveryAuthenticator(
         app_secret=APP_SECRET,
-        replay_guard=guard,
     )
 
     delivery = authenticator.authenticate(
@@ -169,7 +175,6 @@ def test_post_authenticates_exact_raw_bytes_and_returns_a_durable_delivery() -> 
     assert delivery.exact_bytes is body
     assert delivery.media_type == "application/json"
     assert delivery.received_at == NOW
-    assert guard.claims == [("delivery-001", NOW)]
 
 
 @pytest.mark.parametrize(
@@ -194,7 +199,6 @@ def test_post_rejects_missing_or_malformed_signatures(
     body = b"{}"
     authenticator = WhatsAppCloudDeliveryAuthenticator(
         app_secret=APP_SECRET,
-        replay_guard=_ReplayGuard(),
     )
 
     with pytest.raises(WhatsAppCloudRequestError) as raised:
@@ -217,10 +221,8 @@ def test_post_rejects_tampered_body_before_claiming_replay_identity() -> None:
 
     signed = b'{"message":"original"}'
     tampered = b'{"message":"tampered"}'
-    guard = _ReplayGuard()
     authenticator = WhatsAppCloudDeliveryAuthenticator(
         app_secret=APP_SECRET,
-        replay_guard=guard,
     )
 
     with pytest.raises(WhatsAppCloudRequestError) as raised:
@@ -233,7 +235,6 @@ def test_post_rejects_tampered_body_before_claiming_replay_identity() -> None:
 
     assert raised.value.status_code == 401
     assert raised.value.reason_code == "authentication_failed"
-    assert guard.claims == []
 
 
 def test_post_authenticates_before_any_json_parse() -> None:
@@ -246,7 +247,6 @@ def test_post_authenticates_before_any_json_parse() -> None:
     malformed_json = b"{not-json"
     authenticator = WhatsAppCloudDeliveryAuthenticator(
         app_secret=APP_SECRET,
-        replay_guard=_ReplayGuard(),
     )
 
     delivery = authenticator.authenticate(
@@ -267,10 +267,8 @@ def test_post_rejects_oversize_body_before_signature_or_replay_work() -> None:
         WhatsAppCloudRequestError,
     )
 
-    guard = _ReplayGuard()
     authenticator = WhatsAppCloudDeliveryAuthenticator(
         app_secret=APP_SECRET,
-        replay_guard=guard,
         max_body_bytes=8,
     )
 
@@ -284,7 +282,6 @@ def test_post_rejects_oversize_body_before_signature_or_replay_work() -> None:
 
     assert raised.value.status_code == 413
     assert raised.value.reason_code == "payload_too_large"
-    assert guard.claims == []
 
 
 @pytest.mark.parametrize(
@@ -301,17 +298,19 @@ def test_post_replay_seam_rejects_duplicate_or_expired_delivery(
 ) -> None:
     from observer.connectors.whatsapp_cloud import (
         WhatsAppCloudDeliveryAuthenticator,
+        WhatsAppCloudDurableReceiver,
         WhatsAppCloudRequestError,
     )
 
     body = b"{}"
-    authenticator = WhatsAppCloudDeliveryAuthenticator(
-        app_secret=APP_SECRET,
+    receiver = WhatsAppCloudDurableReceiver(
+        authenticator=WhatsAppCloudDeliveryAuthenticator(app_secret=APP_SECRET),
+        durable_accept=lambda _delivery: "accepted",
         replay_guard=_ReplayGuard(decision),
     )
 
     with pytest.raises(WhatsAppCloudRequestError) as raised:
-        authenticator.authenticate(
+        receiver.receive(
             exact_body=body,
             signature_header=_signature(body),
             delivery_id="delivery-001",
@@ -325,6 +324,7 @@ def test_post_replay_seam_rejects_duplicate_or_expired_delivery(
 def test_post_maps_replay_store_failures_to_a_safe_error() -> None:
     from observer.connectors.whatsapp_cloud import (
         WhatsAppCloudDeliveryAuthenticator,
+        WhatsAppCloudDurableReceiver,
         WhatsAppCloudRequestError,
     )
 
@@ -333,13 +333,20 @@ def test_post_maps_replay_store_failures_to_a_safe_error() -> None:
             raise RuntimeError(APP_SECRET)
 
     body = b"{}"
-    authenticator = WhatsAppCloudDeliveryAuthenticator(
-        app_secret=APP_SECRET,
+    durable_calls: list[object] = []
+
+    def durable_accept(delivery: object) -> str:
+        durable_calls.append(delivery)
+        return "accepted"
+
+    receiver = WhatsAppCloudDurableReceiver(
+        authenticator=WhatsAppCloudDeliveryAuthenticator(app_secret=APP_SECRET),
+        durable_accept=durable_accept,
         replay_guard=BrokenReplayGuard(),
     )
 
     with pytest.raises(WhatsAppCloudRequestError) as raised:
-        authenticator.authenticate(
+        receiver.receive(
             exact_body=body,
             signature_header=_signature(body),
             delivery_id="delivery-001",
@@ -350,6 +357,161 @@ def test_post_maps_replay_store_failures_to_a_safe_error() -> None:
     assert raised.value.reason_code == "replay_check_failed"
     assert APP_SECRET not in str(raised.value)
     assert APP_SECRET not in repr(raised.value)
+    assert len(durable_calls) == 1
+
+
+def test_durable_receive_happens_before_replay_state_is_consumed() -> None:
+    from observer.connectors.whatsapp_cloud import (
+        WhatsAppCloudDeliveryAuthenticator,
+        WhatsAppCloudDurableReceiver,
+    )
+
+    events: list[str] = []
+    guard = _ReplayGuard(events=events)
+
+    def durable_accept(delivery: object) -> str:
+        events.append("durable")
+        assert delivery.__class__.__name__ == "RawDelivery"
+        return "accepted"
+
+    receiver = WhatsAppCloudDurableReceiver(
+        authenticator=WhatsAppCloudDeliveryAuthenticator(app_secret=APP_SECRET),
+        durable_accept=durable_accept,
+        replay_guard=guard,
+    )
+    body = b"{not-json"
+
+    result = receiver.receive(
+        exact_body=body,
+        signature_header=_signature(body),
+        delivery_id="delivery-ordered",
+        received_at=NOW,
+    )
+
+    assert events == ["durable", "replay"]
+    assert result.status_code == 200
+    assert result.disposition == "accepted"
+    assert result.work_created is True
+
+
+def test_durable_failure_does_not_consume_replay_and_provider_retry_can_succeed() -> None:
+    from observer.connectors.whatsapp_cloud import (
+        WhatsAppCloudDeliveryAuthenticator,
+        WhatsAppCloudDurableReceiver,
+        WhatsAppCloudRequestError,
+    )
+
+    attempts = 0
+    guard = _ReplayGuard()
+
+    def durable_accept(_delivery: object) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError(APP_SECRET)
+        return "accepted"
+
+    receiver = WhatsAppCloudDurableReceiver(
+        authenticator=WhatsAppCloudDeliveryAuthenticator(app_secret=APP_SECRET),
+        durable_accept=durable_accept,
+        replay_guard=guard,
+    )
+    body = b"{}"
+
+    with pytest.raises(WhatsAppCloudRequestError) as raised:
+        receiver.receive(
+            exact_body=body,
+            signature_header=_signature(body),
+            delivery_id="delivery-retry",
+            received_at=NOW,
+        )
+    assert raised.value.status_code == 503
+    assert raised.value.reason_code == "durable_accept_failed"
+    assert guard.claims == []
+    assert APP_SECRET not in repr(raised.value)
+
+    result = receiver.receive(
+        exact_body=body,
+        signature_header=_signature(body),
+        delivery_id="delivery-retry",
+        received_at=NOW,
+    )
+    assert result.disposition == "accepted"
+    assert result.work_created is True
+    assert guard.claims == [("delivery-retry", NOW)]
+
+
+def test_duplicate_delivery_is_idempotently_acked_without_a_second_work_item() -> None:
+    from observer.connectors.whatsapp_cloud import (
+        DurableDeliveryConflict,
+        WhatsAppCloudDeliveryAuthenticator,
+        WhatsAppCloudDurableReceiver,
+        WhatsAppCloudRequestError,
+    )
+
+    stored: dict[str, str] = {}
+    work_items: list[str] = []
+
+    def durable_accept(delivery: object) -> str:
+        delivery_id = delivery.delivery_id  # type: ignore[attr-defined]
+        digest = hashlib.sha256(delivery.exact_bytes).hexdigest()  # type: ignore[attr-defined]
+        previous = stored.get(delivery_id)
+        if previous is not None:
+            if previous != digest:
+                raise DurableDeliveryConflict
+            return "duplicate"
+        stored[delivery_id] = digest
+        work_items.append(delivery_id)
+        return "accepted"
+
+    class StatefulReplayGuard:
+        def __init__(self) -> None:
+            self.seen: set[str] = set()
+
+        def claim(self, delivery_id: str, _received_at: datetime) -> str:
+            if delivery_id in self.seen:
+                return "replay"
+            self.seen.add(delivery_id)
+            return "accepted"
+
+    receiver = WhatsAppCloudDurableReceiver(
+        authenticator=WhatsAppCloudDeliveryAuthenticator(app_secret=APP_SECRET),
+        durable_accept=durable_accept,
+        replay_guard=StatefulReplayGuard(),
+    )
+    body = b'{"message":"first"}'
+
+    first = receiver.receive(
+        exact_body=body,
+        signature_header=_signature(body),
+        delivery_id="delivery-idempotent",
+        received_at=NOW,
+    )
+    duplicate = receiver.receive(
+        exact_body=body,
+        signature_header=_signature(body),
+        delivery_id="delivery-idempotent",
+        received_at=NOW,
+    )
+
+    assert first.disposition == "accepted"
+    assert first.work_created is True
+    assert duplicate.status_code == 200
+    assert duplicate.disposition == "duplicate"
+    assert duplicate.work_created is False
+    assert work_items == ["delivery-idempotent"]
+
+    conflicting_body = b'{"message":"different"}'
+    with pytest.raises(WhatsAppCloudRequestError) as raised:
+        receiver.receive(
+            exact_body=conflicting_body,
+            signature_header=_signature(conflicting_body),
+            delivery_id="delivery-idempotent",
+            received_at=NOW,
+        )
+    assert raised.value.status_code == 409
+    assert raised.value.reason_code == "delivery_conflict"
+    assert work_items == ["delivery-idempotent"]
 
 
 def test_decoder_splits_multiple_messages_and_deduplicates_wamids_stably() -> None:
@@ -525,6 +687,23 @@ def test_decoder_rejects_duplicate_json_keys_and_unsupported_message_shapes() ->
         WhatsAppCloudWebhookDecoder().decode_delivery(unsupported)
 
 
+def test_decoder_rejects_non_finite_json_numbers() -> None:
+    from observer.connectors.whatsapp_cloud import (
+        WhatsAppCloudQuarantineError,
+        WhatsAppCloudWebhookDecoder,
+    )
+
+    body = (
+        b'{"object":"whatsapp_business_account","entry":[{"id":"waba-001",'
+        b'"changes":[{"field":"messages","value":{"messaging_product":"whatsapp",'
+        b'"metadata":{"phone_number_id":"phone-number-001"},'
+        b'"errors":[{"code":1e400}]}}]}]}'
+    )
+
+    with pytest.raises(WhatsAppCloudQuarantineError, match="invalid_json_number"):
+        WhatsAppCloudWebhookDecoder().decode_delivery(body)
+
+
 def test_decoder_enforces_message_count_and_nesting_depth_bounds() -> None:
     from observer.connectors.whatsapp_cloud import (
         WhatsAppCloudQuarantineError,
@@ -565,7 +744,6 @@ def test_adapter_has_no_outbound_messaging_surface_and_secrets_are_redacted() ->
 
     authenticator = whatsapp_cloud.WhatsAppCloudDeliveryAuthenticator(
         app_secret=APP_SECRET,
-        replay_guard=_ReplayGuard(),
     )
     public_names = {
         name for name, _value in inspect.getmembers(whatsapp_cloud) if not name.startswith("_")
