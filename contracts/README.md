@@ -30,6 +30,26 @@ and
 The six `*.schema.json` primitives above remain at schema version `1.0`.
 Gate 2 does not add required fields to them.
 
+### Local channel/model pilot contracts
+
+Additive local-pilot contracts are isolated under [`local_pilot/`](./local_pilot/).
+They do not modify or activate the frozen Gate 0/1 contracts:
+
+- `CanonicalObservationEvent v1.1` and `ConnectorCheckpoint v1.1` add
+  connector-instance identity; the checkpoint also adds an optimistic version.
+- `InboundDelivery v1.0`, `ModelInvocation v1.0`, and
+  `TokenizationReceipt v1.0` are content-minimized receipts. They exclude raw
+  bodies, prompts/responses, secrets, PII, and plaintext token mappings.
+- Sales, Purchase, Product, and CEO proposal schemas are closed,
+  internal-only output shapes. They cannot add external sends, formal
+  commercial commitments, orders, Won/Lost outcomes, or official KPI fields.
+- Canonical valid and intentionally invalid examples live under
+  `local_pilot/examples/valid/` and `local_pilot/examples/invalid/`.
+
+These documents define provider-neutral pilot boundaries only. They do not
+enable a connector, model provider, network call, external send, or storage
+migration.
+
 ### Gate 2 aggregate contracts
 
 - `common.schema.json`: shared definitions for identifiers, temporal fields,

@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "proposal_id": "ceo-proposal-SYNTH-001",
+  "agent_kind": "ceo",
+  "action_type": "internal.ai_draft.propose",
+  "status": "proposed",
+  "subject_ref": "BUSINESS-SNAPSHOT-SYNTH-001",
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "confidence": 0.74,
+  "requires_human_review": true,
+  "payload": {
+    "title": "经营观察草稿（演示）",
+    "summary": "根据已确认的合成事实生成内部观察草稿，由负责人复核证据。",
+    "synthetic": true,
+    "display_label": "演示数据",
+    "source_mode": "local_pilot",
+    "is_official_metric": false,
+    "is_official_forecast": false
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/local-pilot/v1.1/connector-checkpoint.schema.json",
+  "title": "ConnectorCheckpoint v1.1",
+  "description": "Additive connector-instance and optimistic-version checkpoint for the local pilot.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "checkpoint_id",
+    "site_id",
+    "connector",
+    "connector_instance_id",
+    "checkpoint_version",
+    "replay_window_seconds",
+    "status",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.1"
+    },
+    "checkpoint_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140
+    },
+    "connector": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "connector_instance_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "checkpoint_version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cursor": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "replay_window_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 31536000
+    },
+    "lease_owner": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "lease_expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_success_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_error_code": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "healthy",
+        "paused",
+        "degraded",
+        "failed"
+      ]
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "dependentRequired": {
+    "lease_owner": [
+      "lease_expires_at"
+    ],
+    "lease_expires_at": [
+      "lease_owner"
+    ]
+  }
+}

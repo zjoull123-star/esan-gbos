@@ -5,13 +5,18 @@ from datetime import datetime
 from typing import Protocol
 
 from .models import (
+    ConnectorBatch,
+    ConnectorItem,
     ImportResult,
     ManualImportManifest,
     ManualImportMember,
+    NormalizedObservationInput,
     Participant,
     ProcessingResult,
+    RawDelivery,
     StoredObject,
     TenantScope,
+    TranscriptSegments,
 )
 
 Clock = Callable[[], datetime]
@@ -25,6 +30,22 @@ class EvidenceStore(Protocol):
     def delete(self, scope: TenantScope, object_ref: str) -> None: ...
 
     def exists(self, scope: TenantScope, object_ref: str) -> bool: ...
+
+
+class PullConnector(Protocol):
+    def fetch(self, checkpoint: str | None, limit: int) -> ConnectorBatch: ...
+
+
+class DeliveryAuthenticator(Protocol):
+    def verify(self, exact_request: bytes) -> RawDelivery: ...
+
+
+class ObservationNormalizer(Protocol):
+    def normalize(self, item: ConnectorItem) -> NormalizedObservationInput: ...
+
+
+class SpeechProvider(Protocol):
+    def transcribe(self, evidence_ref: str) -> TranscriptSegments: ...
 
 
 class ManifestValidationHook(Protocol):

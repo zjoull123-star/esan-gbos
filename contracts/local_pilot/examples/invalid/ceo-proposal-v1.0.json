@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "proposal_id": "ceo-proposal-SYNTH-INVALID",
+  "agent_kind": "ceo",
+  "action_type": "internal.ai_draft.propose",
+  "status": "proposed",
+  "subject_ref": "BUSINESS-SNAPSHOT-SYNTH-001",
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "confidence": 0.74,
+  "requires_human_review": true,
+  "payload": {
+    "title": "Forbidden official KPI",
+    "summary": "This shape must fail.",
+    "synthetic": true,
+    "display_label": "演示数据",
+    "source_mode": "local_pilot",
+    "is_official_metric": false,
+    "is_official_forecast": false,
+    "official_kpi": 42
+  }
+}

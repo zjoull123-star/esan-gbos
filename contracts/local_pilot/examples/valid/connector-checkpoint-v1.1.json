@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.1",
+  "checkpoint_id": "checkpoint-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "connector": "wecom",
+  "connector_instance_id": "sales-primary",
+  "checkpoint_version": 3,
+  "cursor": "cursor-003",
+  "replay_window_seconds": 300,
+  "last_success_at": "2026-08-07T01:30:03Z",
+  "status": "healthy",
+  "updated_at": "2026-08-07T01:30:03Z"
+}

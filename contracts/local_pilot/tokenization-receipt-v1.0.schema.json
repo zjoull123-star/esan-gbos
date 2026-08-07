@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/local-pilot/v1.0/tokenization-receipt.schema.json",
+  "title": "TokenizationReceipt v1.0",
+  "description": "Reference-only receipt proving reversible tokenization without carrying plaintext mappings.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "site_id",
+    "purpose",
+    "tokenizer_version",
+    "mapping_reference",
+    "mapping_digest",
+    "source_token_count",
+    "emitted_token_count",
+    "created_at",
+    "expires_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "receipt_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+    },
+    "purpose": {
+      "type": "string",
+      "enum": [
+        "business_operations",
+        "observation_processing",
+        "entity_resolution",
+        "customer_service",
+        "sales_follow_up",
+        "procurement_coordination",
+        "product_sample_management",
+        "risk_review",
+        "metric_reporting",
+        "audit_compliance"
+      ]
+    },
+    "tokenizer_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "mapping_reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "mapping_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "source_token_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "emitted_token_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

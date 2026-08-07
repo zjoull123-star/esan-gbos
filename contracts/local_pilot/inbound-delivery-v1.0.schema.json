@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/local-pilot/v1.0/inbound-delivery.schema.json",
+  "title": "InboundDelivery v1.0",
+  "description": "Raw-body-free metadata receipt for one exact inbound delivery.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "site_id",
+    "connector",
+    "connector_instance_id",
+    "delivery_id",
+    "exact_body_sha256",
+    "media_type",
+    "received_at",
+    "processing_status",
+    "attempt_count",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+    },
+    "connector": {
+      "type": "string",
+      "enum": [
+        "email",
+        "wecom",
+        "whatsapp",
+        "phone",
+        "meeting",
+        "file",
+        "manual_import",
+        "wechat_workphone"
+      ]
+    },
+    "connector_instance_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "delivery_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "exact_body_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "media_type": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "processing_status": {
+      "type": "string",
+      "enum": [
+        "received",
+        "authenticated",
+        "queued",
+        "processing",
+        "succeeded",
+        "failed",
+        "quarantined"
+      ]
+    },
+    "attempt_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "last_attempt_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "category",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "authentication",
+            "validation",
+            "rate_limit",
+            "provider",
+            "storage",
+            "internal"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  }
+}

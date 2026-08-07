@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "proposal_id": "sales-proposal-SYNTH-INVALID",
+  "agent_kind": "sales",
+  "action_type": "internal.work_item.propose",
+  "status": "proposed",
+  "subject_ref": "DEAL-SYNTH-001",
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "confidence": 0.82,
+  "requires_human_review": true,
+  "payload": {
+    "title": "Forbidden external action",
+    "summary": "This shape must fail.",
+    "suggested_next_step": "Internal review only.",
+    "external_send": true
+  }
+}

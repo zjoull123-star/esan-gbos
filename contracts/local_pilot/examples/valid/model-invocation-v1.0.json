@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "invocation_id": "invocation-SYNTH-001",
+  "site_id": "gbos.localhost",
+  "provider": "local-pilot-provider",
+  "requested_model": "requested-model-v1",
+  "observed_model": null,
+  "prompt_version": "sales-prompt-v1",
+  "output_schema_version": "sales-proposal-v1.0",
+  "policy_version": "local-pilot-policy-v1",
+  "tokenizer_version": "tokenizer-v1",
+  "request_id": "request-SYNTH-001",
+  "response_id": null,
+  "started_at": "2026-08-07T01:30:00Z",
+  "completed_at": "2026-08-07T01:30:01Z",
+  "latency_ms": 725,
+  "status": "succeeded",
+  "token_usage": {
+    "status": "unknown"
+  },
+  "cost": {
+    "status": "unknown"
+  },
+  "network_call_count": 1,
+  "tool_call_count": 0,
+  "external_send_count": 0,
+  "references": {
+    "observation_event_refs": [
+      "01K20B8BV5C6P4YFAT8YQ3D4S5"
+    ],
+    "evidence_refs": [
+      "evidence-SYNTH-001"
+    ],
+    "tokenization_receipt_refs": [
+      "tokenization-SYNTH-001"
+    ]
+  }
+}
