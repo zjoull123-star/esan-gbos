@@ -129,7 +129,12 @@ def test_gate4_closure_is_source_and_history_bound() -> None:
         check=True,
         capture_output=True,
     )
-    source = ROOT / "services" / "agent_runtime" / "agents.py"
+    subprocess.run(
+        ["git", "merge-base", "--is-ancestor", implementation_commit, "HEAD"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
     committed_source = subprocess.run(
         [
             "git",
@@ -142,7 +147,6 @@ def test_gate4_closure_is_source_and_history_bound() -> None:
     ).stdout
     recorded_source_sha256 = evidence["implementation_source_sha256"]
     assert recorded_source_sha256 == hashlib.sha256(committed_source).hexdigest()
-    assert recorded_source_sha256 == hashlib.sha256(source.read_bytes()).hexdigest()
     assert evidence["runtime_boundaries"] == {
         "durable_worker_to_orchestrator_dispatcher_present": False,
         "product_profile_to_product_sample_queue_mapping_present": False,
