@@ -155,6 +155,8 @@ class UploadService:
             raise UploadRejected("authentication_failed") from None
         if not authenticated:
             raise UploadRejected("authentication_failed")
+        if binding.declared_size == 0:
+            raise UploadRejected("empty_upload")
         if binding.declared_size > self._max_bytes:
             raise UploadRejected("size_limit_exceeded")
 

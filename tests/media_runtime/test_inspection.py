@@ -135,6 +135,26 @@ def test_invalid_magic_detector_output_is_generic_and_not_exposed() -> None:
     assert archive.calls == []
 
 
+def test_zero_byte_file_is_quarantined_before_detection_or_scanning() -> None:
+    detector = StaticDetector("audio/wav")
+    scanner = RecordingScanner()
+    archive = StaticArchiveInspector()
+    processor = MediaPreprocessor(
+        magic_detector=detector,
+        malware_scanner=scanner,
+        archive_inspector=archive,
+        policy=_policy(),
+    )
+
+    result = processor.inspect(_asset(byte_size=0), idempotency_key="inspect:01")
+
+    assert result.status is PipelineStatus.QUARANTINED
+    assert result.reason_codes == ("file_size_invalid",)
+    assert detector.calls == []
+    assert scanner.calls == []
+    assert archive.calls == []
+
+
 @pytest.mark.parametrize(
     ("asset", "reason"),
     (

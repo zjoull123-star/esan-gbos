@@ -7,14 +7,18 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
 
+from .ffmpeg import ArtifactIdentity, valid_artifact_identity
+
 WHISPER_MODEL_NAME = "large-v3-turbo"
-WHISPER_MODEL_SHA256 = "c" * 64
+WHISPER_MODEL_VERSION = "large-v3-turbo-ct2-local-v1"
+WHISPER_MODEL_MOUNT = "/models/large-v3-turbo"
 FASTER_WHISPER_VERSION = "faster-whisper-local-v1"
 
 _LANGUAGE = re.compile(r"^[a-z]{2,3}(?:-[A-Z]{2})?$")
 _MAX_SEGMENTS = 10_000
 _MAX_SEGMENT_TEXT = 4_000
 _SPEAKER_THRESHOLD = 0.5
+_TRANSCRIPT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$")
 _TEXT_REFERENCE = re.compile(r"^localtext://[A-Za-z0-9][A-Za-z0-9._~:/-]{0,500}$")
 _EVIDENCE_REFERENCE = re.compile(r"^evidence://[A-Za-z0-9][A-Za-z0-9._~:/-]{0,500}$")
 
@@ -31,10 +35,11 @@ class SpeechRejected(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class EngineConfig:
-    model_name: str = WHISPER_MODEL_NAME
-    model_sha256: str = WHISPER_MODEL_SHA256
+    model_name: str
+    model_version: str
+    model_sha256: str
+    model_mount: str = field(repr=False)
     engine_version: str = FASTER_WHISPER_VERSION
-    model_mount: str = "/models/large-v3-turbo"
     read_only_model_mount: bool = True
     offline: bool = True
     allow_runtime_download: bool = False
@@ -59,7 +64,7 @@ class EngineTranscript:
 @dataclass(frozen=True, slots=True)
 class SpeechRequest:
     site_id: str
-    audio_ref: str
+    audio_ref: str = field(repr=False)
     source_evidence_ref: str
     duration_ms: int
     language_hint: str | None = None
@@ -171,13 +176,14 @@ class FasterWhisperAdapter:
         evidence_factory: EvidenceLocatorFactory,
         clock: Callable[[], datetime],
         transcript_id_factory: Callable[[], str],
+        artifact_identity: ArtifactIdentity | None,
     ) -> None:
         self._engine = engine
         self._text_store = text_store
         self._evidence_factory = evidence_factory
         self._clock = clock
         self._transcript_id_factory = transcript_id_factory
-        self._config = EngineConfig()
+        self._artifact_identity = artifact_identity
 
     def transcribe(
         self,
@@ -188,18 +194,34 @@ class FasterWhisperAdapter:
         if not idempotency_key:
             raise SpeechRejected("idempotency_key_required")
         self._validate_request(request)
+        identity = self._bound_identity()
+        config = EngineConfig(
+            model_name=identity.name,
+            model_version=identity.version,
+            model_sha256=identity.sha256,
+            model_mount=identity.read_only_path,
+        )
         try:
             raw = self._engine.transcribe(
                 request.audio_ref,
-                config=self._config,
+                config=config,
                 language_hint=request.language_hint,
             )
         except Exception:
             raise SpeechRejected("speech_engine_unavailable", retryable=True) from None
         validated = self._validate_output(raw, duration_ms=request.duration_ms)
-        transcript_id = self._transcript_id_factory()
-        generated_at = self._clock()
-        if generated_at.tzinfo is None or generated_at.utcoffset() is None:
+        try:
+            transcript_id = self._transcript_id_factory()
+            generated_at = self._clock()
+        except Exception:
+            raise SpeechRejected("transcript_metadata_unavailable", retryable=True) from None
+        if not isinstance(transcript_id, str) or _TRANSCRIPT_ID.fullmatch(transcript_id) is None:
+            raise SpeechRejected("transcript_id_invalid")
+        if (
+            not isinstance(generated_at, datetime)
+            or generated_at.tzinfo is None
+            or generated_at.utcoffset() is None
+        ):
             raise SpeechRejected("clock_invalid")
 
         segments: list[TranscriptSegment] = []
@@ -241,13 +263,26 @@ class FasterWhisperAdapter:
             site_id=request.site_id,
             source_evidence_ref=request.source_evidence_ref,
             model_provider="local_faster_whisper",
-            model_name=WHISPER_MODEL_NAME,
-            model_version=FASTER_WHISPER_VERSION,
-            model_sha256=WHISPER_MODEL_SHA256,
+            model_name=identity.name,
+            model_version=identity.version,
+            model_sha256=identity.sha256,
             language=raw.language,
             segments=tuple(segments),
             generated_at=generated_at,
         )
+
+    def _bound_identity(self) -> ArtifactIdentity:
+        identity = self._artifact_identity
+        if identity is None:
+            raise SpeechRejected("artifact_identity_unbound")
+        if not valid_artifact_identity(
+            identity,
+            expected_name=WHISPER_MODEL_NAME,
+            expected_version=WHISPER_MODEL_VERSION,
+            expected_path=WHISPER_MODEL_MOUNT,
+        ):
+            raise SpeechRejected("artifact_identity_invalid")
+        return identity
 
     def _validate_request(self, request: SpeechRequest) -> None:
         if not request.site_id:

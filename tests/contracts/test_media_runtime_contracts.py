@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -49,8 +50,8 @@ def _transcript() -> dict[str, Any]:
         "model": {
             "provider": "local_faster_whisper",
             "name": "large-v3-turbo",
-            "version": "faster-whisper-local-v1",
-            "sha256": "c" * 64,
+            "version": "large-v3-turbo-ct2-local-v1",
+            "sha256": hashlib.sha256(b"bound-test-model-artifact").hexdigest(),
         },
         "language": "en",
         "segments": [
@@ -71,6 +72,13 @@ def _transcript() -> dict[str, Any]:
 def test_upload_receipt_schema_is_strict_2020_12_and_accepts_reference_only_payload() -> None:
     validator = _validator("upload-receipt-v1.0.schema.json")
     validator.validate(_upload_receipt())
+
+
+def test_upload_receipt_rejects_zero_byte_payload() -> None:
+    with pytest.raises(ValidationError):
+        _validator("upload-receipt-v1.0.schema.json").validate(
+            {**_upload_receipt(), "byte_size": 0}
+        )
 
 
 @pytest.mark.parametrize(
@@ -168,6 +176,8 @@ def test_transcript_schema_fixes_local_whisper_model_identity() -> None:
         {"provider": "remote"},
         {"version": "runtime-selected"},
         {"sha256": "not-a-digest"},
+        {"sha256": "c" * 64},
+        {"sha256": "0123456789abcdef" * 4},
     ):
         with pytest.raises(ValidationError):
             validator.validate(
@@ -176,3 +186,15 @@ def test_transcript_schema_fixes_local_whisper_model_identity() -> None:
                     "model": {**transcript["model"], **model_change},
                 }
             )
+
+
+def test_transcript_schema_records_any_bound_non_placeholder_artifact_sha() -> None:
+    transcript = _transcript()
+    second_bound_sha = hashlib.sha256(b"second-bound-test-model-artifact").hexdigest()
+
+    _validator("transcript-segments-v1.0.schema.json").validate(
+        {
+            **transcript,
+            "model": {**transcript["model"], "sha256": second_bound_sha},
+        }
+    )

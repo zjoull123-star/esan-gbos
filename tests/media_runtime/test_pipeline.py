@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 
 import pytest
@@ -39,12 +40,15 @@ class RecordingNormalizer:
         return NormalizedAudio(
             audio_ref="localmedia://normalized/request-01.wav",
             media_type="audio/wav",
+            byte_size=64_044,
+            content_sha256=hashlib.sha256(b"verified-pipeline-audio").hexdigest(),
             duration_ms=request.duration_ms,
             codec="pcm_s16le",
             channels=1,
             sample_rate=16_000,
+            executable_name="ffmpeg",
             executable_version="ffmpeg-local-v1",
-            executable_sha256="d" * 64,
+            executable_sha256=hashlib.sha256(b"bound-pipeline-ffmpeg").hexdigest(),
         )
 
 
@@ -63,8 +67,8 @@ class RecordingSpeech:
             source_evidence_ref="evidence://site-a/upload-01",
             model_provider="local_faster_whisper",
             model_name="large-v3-turbo",
-            model_version="faster-whisper-local-v1",
-            model_sha256="c" * 64,
+            model_version="large-v3-turbo-ct2-local-v1",
+            model_sha256=hashlib.sha256(b"bound-pipeline-model").hexdigest(),
             language="en",
             segments=(),
             generated_at=datetime(2026, 8, 7, 3, 1, tzinfo=UTC),
@@ -322,3 +326,24 @@ def test_normalization_failure_never_calls_speech(
     assert outcome.status is expected
     assert speech.calls == []
     assert len(outcome.stage_idempotency_keys) == 2
+
+
+def test_invalid_ffmpeg_output_proof_quarantines_and_never_calls_speech() -> None:
+    preprocessor = RecordingPreprocessor(
+        InspectionResult(
+            status=PipelineStatus.READY,
+            detected_mime="audio/wav",
+            reason_codes=(),
+        )
+    )
+    speech = RecordingSpeech()
+
+    outcome = MediaPipeline(
+        preprocessor=preprocessor,
+        normalizer=RecordingNormalizer(failure=FFmpegRejected("ffmpeg_output_invalid")),
+        speech_provider=speech,
+    ).run(_request())
+
+    assert outcome.status is PipelineStatus.QUARANTINED
+    assert outcome.reason_codes == ("ffmpeg_output_invalid",)
+    assert speech.calls == []

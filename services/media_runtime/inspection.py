@@ -114,7 +114,9 @@ class MediaPreprocessor:
     def inspect(self, asset: MediaAsset, *, idempotency_key: str) -> InspectionResult:
         if not idempotency_key:
             raise ValueError("idempotency_key_required")
-        if asset.byte_size < 0 or asset.byte_size > self._policy.max_file_bytes:
+        if asset.byte_size <= 0:
+            return _quarantine(None, "file_size_invalid")
+        if asset.byte_size > self._policy.max_file_bytes:
             return _quarantine(None, "file_size_exceeded")
         if asset.declared_mime not in self._policy.allowed_media_types:
             return _quarantine(None, "media_type_not_allowed")

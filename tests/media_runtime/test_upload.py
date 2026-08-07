@@ -162,6 +162,16 @@ def test_authenticator_exception_is_redacted_and_closed() -> None:
     assert sentinel not in repr(caught.value)
 
 
+def test_zero_byte_upload_is_rejected_before_temporary_object_creation() -> None:
+    service, verifier, sink = _service()
+
+    with pytest.raises(UploadRejected, match="empty_upload"):
+        service.receive(_request(declared_size=0), [])
+
+    assert verifier.calls == [("credential-SENTINEL", _request(declared_size=0).binding)]
+    assert sink.calls == []
+
+
 @pytest.mark.parametrize(
     ("declared_size", "chunks", "code"),
     (
