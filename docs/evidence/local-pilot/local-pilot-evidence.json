@@ -1,15 +1,54 @@
 {
   "schema_version": "1.0",
-  "evidence_id": "local-pilot-synthetic-core-20260808",
-  "captured_at": "2026-08-07T20:07:28Z",
+  "evidence_id": "local-pilot-final-validation-20260808",
+  "captured_at": "2026-08-07T20:18:53Z",
   "commit_sha": "64dc48cb5d6efb62c662f638d8da5f5c12c3a7de",
-  "commit_scope": "source/runtime baseline before this documentation-only evidence commit",
+  "commit_scope": "historical source/runtime baseline retained for the compact evidence schema",
+  "validation_reference_commit": "9d64a7860adc6692d4321439ea3295ff9dc45cd6",
+  "evidence_commit_predecessor": "9d64a7860adc6692d4321439ea3295ff9dc45cd6",
+  "validation_reference_role": "final local validation and security-scan predecessor before this evidence-only commit",
   "environment": {
     "host_scope": "current Mac local runtime",
     "runtime_architecture": "linux/arm64 containers",
     "data_mode": "synthetic only",
     "external_systems_contacted": false,
     "secrets_retained_in_evidence": false
+  },
+  "security_scan": {
+    "sequence": [
+      {
+        "step": "initial_trivy_scan",
+        "finding": "cryptography 46.0.7",
+        "high_findings": 3,
+        "result": "remediation_required"
+      },
+      {
+        "step": "remediation",
+        "action": "upgrade and lock cryptography",
+        "version": "50.0.0",
+        "result": "applied"
+      },
+      {
+        "step": "trivy_rescan",
+        "scope": [
+          "uv dependencies",
+          "pnpm dependencies",
+          "npm dependencies",
+          "infra/dev/Containerfile.final",
+          "infra/local/Containerfile.runtime"
+        ],
+        "vulnerabilities": 0,
+        "secrets": 0,
+        "misconfigurations": 0,
+        "exit_code": 0
+      },
+      {
+        "step": "repository_secret_scan",
+        "command": "scripts/dev/secret-scan",
+        "exit_code": 0
+      }
+    ],
+    "production_authorization": false
   },
   "verdict": {
     "formal": {
@@ -101,30 +140,65 @@
     }
   },
   "browser_validation": {
-    "tool": "Playwright",
-    "user": "synthetic.ceo@example.invalid",
-    "route": "/gbos/ceo",
-    "result": "success",
-    "visible_text": ["经营总览", "演示 / 合成数据"],
-    "viewports_px": [375, 768, 1440],
-    "horizontal_overflow": false,
+    "synthetic_ceo": {
+      "tool": "Playwright",
+      "user": "synthetic.ceo@example.invalid",
+      "route": "/gbos/ceo",
+      "result": "success",
+      "visible_text": ["经营总览", "演示 / 合成数据"],
+      "viewports_px": [375, 768, 1440],
+      "horizontal_overflow": false,
+      "console_errors": 0,
+      "console_warnings": 0,
+      "cache": {
+        "static_precache_entries": 21,
+        "api_cached": false
+      }
+    },
+    "frontend_harness": {
+      "tool": "Playwright",
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0
+    },
+    "frappe_site": {
+      "tool": "Playwright",
+      "passed": 6,
+      "skipped": 1,
+      "failed": 0,
+      "skip_reason": "pure_frontend_route_sentinel",
+      "administrator_storage_state": {
+        "scope": "temporary_test_only",
+        "cookie_clear_performed": true,
+        "storage_state_file_overwritten": true,
+        "retained_after_test": false
+      },
+      "assertions": {
+        "five_workbenches_axe": "pass",
+        "viewports_px": [375, 768, 1440],
+        "keyboard_order": "pass",
+        "ceo_synthetic_values_and_provenance": "pass",
+        "channels_disabled_empty_states": "pass",
+        "api_cache": false,
+        "gbos_business_storage": false,
+        "offline_fail_closed": "pass"
+      }
+    },
     "console_errors": 0,
-    "console_warnings": 0,
-    "cache": {
-      "static_precache_entries": 21,
-      "api_cached": false
-    }
+    "console_warnings": 0
   },
   "verification_snapshot": {
     "status": "captured_snapshot_not_final_signoff",
+    "final_local_validation": true,
     "pytest": {
-      "passed": 2151,
+      "passed": 2155,
       "skipped": 37,
-      "failed": 0
+      "failed": 0,
+      "warnings": 1
     },
     "python_static": {
-      "ruff": "pass",
-      "format": "pass",
+      "ruff": "pass_all",
+      "format": "pass_445_files",
       "mypy": "pass",
       "mypy_service_source_files": 117
     },
@@ -134,7 +208,13 @@
       "vitest_passed": 88,
       "build": "pass"
     },
-    "rerun_required": true
+    "playwright": {
+      "frontend_harness_passed": 7,
+      "frappe_site_passed": 6,
+      "frappe_site_skipped": 1,
+      "frappe_site_skip_reason": "pure_frontend_route_sentinel"
+    },
+    "release_signoff": false
   },
   "recoverable_failure": {
     "first_partial_site": "moved_recoverably",
@@ -145,7 +225,7 @@
     "This is a local synthetic evidence snapshot, not a completed 72-hour pilot.",
     "The formal composition remains not_composed and formal preflight remains a required No-Go gate.",
     "No real channel, DeepSeek, Kingdee, cloud deployment, production credential, or external send was used.",
-    "The full verification counts above are a captured mainline snapshot; the primary agent must rerun them before final sign-off.",
+    "The final local verification counts above are captured at the validation reference commit; they are not release sign-off.",
     "Synthetic fixture values and local browser success do not establish business outcomes or production availability."
   ],
   "redaction": {

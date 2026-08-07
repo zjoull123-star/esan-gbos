@@ -1,8 +1,9 @@
-# Local pilot synthetic-core evidence snapshot
+# Local pilot final local-validation evidence snapshot
 
-Captured at `2026-08-07T20:07:28Z` against source/runtime baseline
-`64dc48cb5d6efb62c662f638d8da5f5c12c3a7de` (`64dc48c`). This is a redacted,
-local synthetic snapshot; it is not a 72-hour pilot completion or final sign-off.
+Captured at `2026-08-07T20:18:53Z` against validation commit
+`9d64a7860adc6692d4321439ea3295ff9dc45cd6` (`9d64a78`), immediately before this
+evidence-only commit. This is a redacted local validation snapshot; it is not a
+72-hour pilot completion, production approval, or final release sign-off.
 
 ## Split verdict
 
@@ -34,17 +35,41 @@ PostgreSQL `127.0.0.1:55432`, and MariaDB `127.0.0.1:53306`.
   Sample Project, Iteration, Shipment, Feedback, Demand and Sourcing, plus 280
   Work Item and 280 Review Case.
 
-## Browser and verification snapshot
+## Browser and final onsite validation
 
 Playwright logged in as `synthetic.ceo@example.invalid` and reached `/gbos/ceo`,
 showing “经营总览” and “演示 / 合成数据”. Viewports 375, 768 and 1440 had no
 horizontal overflow; console errors and warnings were both 0. The cache contained
 21 static precached entries and `cached=false` for API responses.
 
-The mainline verification snapshot recorded pytest `2151 passed/37 skipped`,
-ruff/format/mypy passing with 117 service source files, and frontend
-lint/typecheck/Vitest 88/build passing. The primary agent must rerun the full suite
-before final sign-off; these numbers are not a release certificate.
+The final local validation snapshot recorded:
+
+- Backend: pytest `2155 passed, 37 skipped, 1 warning`; no failures.
+- Python static checks: ruff all green; format check passed for 445 files; mypy
+  passed for 117 service source files.
+- Frontend: lint, typecheck, Vitest `88`, and build all green.
+- Frontend harness Playwright: `7 passed`.
+- Real local Frappe site Playwright: `6 passed, 1 skipped`; the only skipped item
+  was the pure-frontend route sentinel.
+
+The real-site check used an Administrator storage state only as temporary test
+authorization. Cookies were cleared afterwards and the storage-state file was
+overwritten; no state was retained as evidence.
+
+The Frappe-site run also passed five-workbench axe checks, 375/768/1440 viewport
+checks, keyboard ordering, CEO synthetic values and provenance, disabled-channel
+empty states, no API cache or GBOS business storage, and offline fail-closed
+behavior. These are local validation assertions, not production or business-outcome
+evidence.
+
+## Security scan sequence
+
+The initial Trivy scan found three High findings in `cryptography 46.0.7`. The
+dependency was upgraded and locked to `50.0.0`. The subsequent Trivy scan across
+uv, pnpm, npm, `infra/dev/Containerfile.final`, and
+`infra/local/Containerfile.runtime` reported 0 vulnerabilities, 0 secrets, and 0
+misconfigurations with exit 0. `scripts/dev/secret-scan` also exited 0. This is a
+local scan result and does not grant production authorization.
 
 The first partial site failure was moved recoverably inside the data volume to
 `.failed-gbos.localhost-20260808T033521`; it was not deleted.
@@ -52,7 +77,9 @@ The first partial site failure was moved recoverably inside the data volume to
 ## Limits and redaction
 
 This evidence does not claim completion of a 72-hour pilot, production readiness,
-real-channel delivery, real DeepSeek or Kingdee activity, cloud deployment, external
-send, or business outcomes. Secrets, cookies, Keychain values, and full logs are
-omitted. The JSON record is the machine-readable source; verify both compact files
-with `shasum -a 256 -c SHA256SUMS`.
+real-channel delivery, real model or Kingdee activity, cloud deployment, external
+send, or business outcomes. Formal composition remains `not_composed`,
+`local_pilot_go=false`, and the formal preflight remains No-Go (exit 78). Secrets,
+cookies, Keychain values, storage-state contents, and full logs are omitted. The
+JSON record is the machine-readable source; verify both compact files with
+`shasum -a 256 -c SHA256SUMS`.
