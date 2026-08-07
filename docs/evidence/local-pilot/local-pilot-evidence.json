@@ -11,7 +11,8 @@
     "host_scope": "current Mac local runtime",
     "runtime_architecture": "linux/arm64 containers",
     "data_mode": "synthetic only",
-    "external_systems_contacted": false,
+    "business_external_systems_contacted": false,
+    "build_and_security_registry_network_used": true,
     "secrets_retained_in_evidence": false
   },
   "security_scan": {
