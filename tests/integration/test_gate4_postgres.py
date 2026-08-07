@@ -1119,6 +1119,61 @@ def test_gate4_materialization_lease_fence_receipt_replay_and_rls() -> None:
         conn.close()
 
 
+def test_gate4_materialization_claim_carries_only_trusted_task_and_model_metadata() -> None:
+    suffix = uuid4().hex
+    site_id = f"gate4-materialization-context-{suffix}.localhost"
+    conn = connection("GBOS_GATE4_AGENT_USER")
+    try:
+        repository = PostgresAgentTaskRepository(conn)
+        request = local_pilot_submission(site_id, suffix)
+        repository.enqueue(request, now=request.due_at)
+        claimed_task = repository.claim_for_execution(
+            site_id,
+            worker_id="materialization-context-source",
+            now=request.due_at,
+            lease_duration=timedelta(seconds=30),
+        )
+        assert claimed_task is not None
+        result = agent_result(request)
+        evidence_ref = f"worker-evidence-{suffix}"
+        model_record = invocation(
+            site_id,
+            f"materialization-context-{suffix}",
+            request_id=request.task_id,
+            evidence_ref=evidence_ref,
+        )
+        repository.complete_with_proposal(
+            site_id,
+            request.task_id,
+            worker_id="materialization-context-source",
+            expected_attempt=1,
+            now=request.due_at + timedelta(seconds=2),
+            result=replace(result, invocations=(model_record,)),
+        )
+
+        materialization = repository.claim_materialization(
+            site_id,
+            worker_id="materialization-context-worker",
+            now=request.due_at + timedelta(seconds=3),
+            lease_duration=timedelta(seconds=10),
+        )
+
+        assert materialization is not None
+        envelope = materialization.envelope
+        assert envelope.proposal_id == materialization.proposal_id
+        assert envelope.task_id == request.task_id
+        assert envelope.processing_purpose == request.processing_purpose
+        assert envelope.subject_type == request.subject_type
+        assert envelope.subject_ref == request.subject_ref
+        assert envelope.subject_revision == 1
+        assert envelope.evidence_refs == (evidence_ref,)
+        assert envelope.model_name == model_record.requested_model
+        assert envelope.model_version == model_record.observed_model
+        assert "raw_context" not in repr(envelope)
+    finally:
+        conn.close()
+
+
 def test_gate4_materialization_migration_is_ledgered_once_and_keeps_rls() -> None:
     conn = connection("GBOS_GATE4_OWNER_USER")
     try:

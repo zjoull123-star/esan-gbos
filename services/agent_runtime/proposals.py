@@ -299,13 +299,59 @@ class MaterializationOutboxRecord:
 
 @dataclass(frozen=True, slots=True, repr=False, kw_only=True)
 class MaterializationEnvelope:
+    proposal_id: str = ""
+    task_id: str = ""
+    processing_purpose: str = ""
     origin: str
     review_status: str
     action_type: str
+    subject_type: str = ""
+    subject_ref: str = ""
+    subject_revision: int = 0
+    evidence_refs: tuple[str, ...] = ()
+    model_name: str | None = None
+    model_version: str | None = None
+    policy_version: str | None = None
     proposal: Mapping[str, Any] = field(repr=False)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False, kw_only=True)
+class MaterializationContext:
+    """Trusted task scope resolved outside provider-controlled proposal content."""
+
+    team: str
+    assigned_reviewer: str | None = None
+    subject_snapshot: Mapping[str, Any] | None = field(default=None, repr=False)
+    subject_payload_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_text(self.team, "materialization team", maximum=140)
+        if self.assigned_reviewer is not None:
+            _require_text(
+                self.assigned_reviewer,
+                "materialization assigned reviewer",
+                maximum=256,
+            )
+        if self.subject_snapshot is None:
+            if self.subject_payload_digest is not None:
+                raise ValidationError(
+                    "subject payload digest requires a controlled subject snapshot"
+                )
+            return
+        snapshot = thaw_json(freeze_json(self.subject_snapshot))
+        if not isinstance(snapshot, dict):
+            raise ValidationError("controlled subject snapshot must be an object")
+        if (
+            not isinstance(self.subject_payload_digest, str)
+            or re.fullmatch(r"[a-f0-9]{64}", self.subject_payload_digest) is None
+        ):
+            raise ValidationError("controlled subject snapshot requires a SHA-256 digest")
+        if _frappe_payload_digest(snapshot) != self.subject_payload_digest:
+            raise ValidationError("controlled subject snapshot digest does not match")
+        object.__setattr__(self, "subject_snapshot", freeze_json(snapshot))
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class MaterializationIntent:
     operation: Literal["create", "submit"]
     doctype: Literal[
@@ -313,13 +359,24 @@ class MaterializationIntent:
         "GBOS Review Case",
         "GBOS Informal Observation",
     ]
-    values: Mapping[str, Any]
+    values: Mapping[str, Any] = field(repr=False)
+
+    def __repr__(self) -> str:
+        return (
+            "MaterializationIntent("
+            f"operation={self.operation!r}, doctype={self.doctype!r}, values=<redacted>)"
+        )
 
 
 class TrustedMaterializer:
     """Pure trusted boundary that can only shape reversible internal AI drafts."""
 
-    def materialize(self, envelope: MaterializationEnvelope) -> MaterializationIntent:
+    def materialize(
+        self,
+        envelope: MaterializationEnvelope,
+        *,
+        context: MaterializationContext | None = None,
+    ) -> MaterializationIntent:
         if envelope.origin != "AI" or envelope.review_status != "AI Draft":
             raise ValidationError("materializer only accepts AI Draft proposals")
         if envelope.action_type not in _ALLOWED_ACTION_TYPES:
@@ -352,26 +409,183 @@ class TrustedMaterializer:
                     "review_status": "Pending",
                 },
             )
+        if context is None:
+            raise ValidationError("controlled materialization team is required")
+        team = _require_text(context.team, "materialization team", maximum=140)
+        proposal_id = _require_text(
+            envelope.proposal_id,
+            "materialization proposal_id",
+            maximum=256,
+        )
+        title = _require_text(payload.get("title"), "proposal title", maximum=140)
+        values: dict[str, Any]
         if envelope.action_type == "internal.work_item.propose":
             doctype: Literal[
                 "GBOS Work Item",
                 "GBOS Review Case",
                 "GBOS Informal Observation",
             ] = "GBOS Work Item"
-            values = {**payload, "origin": "AI", "review_status": "AI Draft"}
+            subject_type = _require_text(
+                envelope.subject_type,
+                "materialization subject_type",
+                maximum=140,
+            )
+            subject_ref = _require_text(
+                envelope.subject_ref,
+                "materialization subject_ref",
+                maximum=256,
+            )
+            values = {
+                "title": title,
+                "team": team,
+                "reference_doctype": subject_type,
+                "reference_name": subject_ref,
+                "origin": "AI",
+                "origin_reference": proposal_id,
+                "business_status": "Open",
+                "review_status": "AI Draft",
+            }
         elif envelope.action_type == "internal.ai_draft.propose":
             doctype = "GBOS Informal Observation"
-            values = {**payload, "origin": "AI", "review_status": "AI Draft"}
-        else:
-            doctype = "GBOS Review Case"
-            values = {**payload, "origin": "AI", "review_status": "AI Draft"}
-        if envelope.action_type == "internal.ai_draft.propose":
             if payload.get("is_official_metric") is not False:
                 raise ValidationError("CEO observations cannot become formal metrics")
-            values["observation_kind"] = "informal_communication_observation"
-            values["source_basis"] = "communications"
-            values["is_official_metric"] = False
+            summary = _require_text(
+                payload.get("summary"),
+                "proposal summary",
+                maximum=2000,
+            )
+            model_name = _require_text(
+                envelope.model_name,
+                "materialization model_name",
+                maximum=160,
+            )
+            model_version = _require_text(
+                envelope.model_version,
+                "materialization model_version",
+                maximum=160,
+            )
+            if model_name != "deepseek-v4-flash":
+                raise ValidationError("informal observations require the approved model")
+            evidence_refs = _trusted_evidence_refs(envelope.evidence_refs)
+            values = {
+                "subject": title,
+                "summary_zh": summary,
+                "team": team,
+                "evidence_refs": [
+                    {"evidence_ref": reference, "locator_ref": reference}
+                    for reference in evidence_refs
+                ],
+                "model_name": model_name,
+                "model_version": model_version,
+                "is_official_metric": False,
+                "origin": "AI",
+                "origin_reference": proposal_id,
+                "review_status": "AI Draft",
+            }
+        else:
+            doctype = "GBOS Review Case"
+            assigned_reviewer = _require_text(
+                context.assigned_reviewer,
+                "materialization assigned reviewer",
+                maximum=256,
+            )
+            subject_type = _require_text(
+                envelope.subject_type,
+                "materialization subject_type",
+                maximum=140,
+            )
+            subject_ref = _require_text(
+                envelope.subject_ref,
+                "materialization subject_ref",
+                maximum=256,
+            )
+            if (
+                not isinstance(envelope.subject_revision, int)
+                or isinstance(envelope.subject_revision, bool)
+                or envelope.subject_revision < 1
+            ):
+                raise ValidationError("materialization subject_revision must be positive")
+            snapshot = (
+                thaw_json(context.subject_snapshot)
+                if context.subject_snapshot is not None
+                else None
+            )
+            if not isinstance(snapshot, dict):
+                raise ValidationError("review case requires a controlled subject snapshot")
+            if (
+                snapshot.get("doctype") != subject_type
+                or snapshot.get("name") != subject_ref
+                or snapshot.get("revision") != envelope.subject_revision
+            ):
+                raise ValidationError("controlled subject snapshot is not bound to the proposal")
+            subject_digest = context.subject_payload_digest
+            if (
+                not isinstance(subject_digest, str)
+                or _frappe_payload_digest(snapshot) != subject_digest
+            ):
+                raise ValidationError("controlled subject snapshot digest does not match")
+            evidence_refs = _trusted_evidence_refs(envelope.evidence_refs)
+            policy_version = _require_text(
+                envelope.policy_version,
+                "materialization policy_version",
+                maximum=140,
+            )
+            case_payload: dict[str, Any] = {
+                "title": title,
+                "team": team,
+                "assigned_reviewer": assigned_reviewer,
+                "subject_doctype": subject_type,
+                "subject_name": subject_ref,
+                "subject_revision": envelope.subject_revision,
+                "subject_payload_sha256": subject_digest,
+                "subject_snapshot": snapshot,
+                "evidence_refs": list(evidence_refs),
+                "policy_version": policy_version,
+            }
+            values = {
+                **case_payload,
+                "subject_snapshot": _canonical_json_text(snapshot),
+                "evidence_refs": _canonical_json_text(list(evidence_refs)),
+                "case_payload_sha256": _frappe_payload_digest(case_payload),
+                "origin": "AI",
+                "origin_reference": proposal_id,
+                "business_status": "Pending",
+                "review_status": "AI Draft",
+            }
         return MaterializationIntent(operation="create", doctype=doctype, values=values)
+
+
+def _require_text(value: object, field_name: str, *, maximum: int) -> str:
+    if not isinstance(value, str):
+        raise ValidationError(f"{field_name} must be a nonempty string")
+    normalized = value.strip()
+    if not normalized or len(normalized) > maximum:
+        raise ValidationError(f"{field_name} must contain 1 to {maximum} characters")
+    return normalized
+
+
+def _trusted_evidence_refs(values: tuple[str, ...]) -> tuple[str, ...]:
+    if not values or len(values) != len(set(values)):
+        raise ValidationError("materialization evidence refs must be nonempty and unique")
+    return tuple(
+        _require_text(value, "materialization evidence ref", maximum=500) for value in values
+    )
+
+
+def _canonical_json_text(value: object) -> str:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("materialization metadata must be canonical JSON") from exc
+
+
+def _frappe_payload_digest(value: Mapping[str, Any]) -> str:
+    return hashlib.sha256(_canonical_json_text(value).encode()).hexdigest()
 
 
 def _reject_unsafe_content(value: Any) -> None:

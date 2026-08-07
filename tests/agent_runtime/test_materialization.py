@@ -8,10 +8,15 @@ from typing import Any
 import pytest
 
 import services.agent_runtime as agent_runtime
-from services.agent_runtime import MaterializationEnvelope, TrustedMaterializer
+from services.agent_runtime import (
+    MaterializationContext,
+    MaterializationEnvelope,
+    TrustedMaterializer,
+)
 from services.agent_runtime.materialization import (
     FrappeDraftReceipt,
     MaterializationClaim,
+    MaterializationContextRequest,
     MaterializationWorker,
 )
 from services.agent_runtime.models import IdempotencyConflict, LeaseConflict
@@ -112,6 +117,7 @@ class _Frappe:
         self.crash_once = crash_once
         self.calls = 0
         self.created: dict[str, tuple[str, FrappeDraftReceipt]] = {}
+        self.intents: list[Any] = []
 
     def apply(
         self,
@@ -121,6 +127,7 @@ class _Frappe:
         request_digest: str,
     ) -> FrappeDraftReceipt:
         self.calls += 1
+        self.intents.append(intent)
         existing = self.created.get(request_id)
         if existing is not None:
             if existing[0] != request_digest:
@@ -150,11 +157,22 @@ def _claim(now: datetime) -> MaterializationClaim:
         lease_owner="",
         lease_expires_at=now,
         envelope=MaterializationEnvelope(
+            proposal_id="proposal-1",
+            task_id="task-1",
+            processing_purpose="metric_reporting",
             origin="AI",
             review_status="AI Draft",
             action_type="internal.ai_draft.propose",
+            subject_type="GBOS Synthetic Executive Snapshot",
+            subject_ref="snapshot-1",
+            subject_revision=1,
+            evidence_refs=("evidence-1",),
+            model_name="deepseek-v4-flash",
+            model_version="deepseek-v4-flash",
+            policy_version="action-guard-v1",
             proposal={
                 "payload": {
+                    "title": "Communication-based observation",
                     "summary": "Leadership communication pattern",
                     "is_official_metric": False,
                 }
@@ -163,19 +181,44 @@ def _claim(now: datetime) -> MaterializationClaim:
     )
 
 
+class _ContextResolver:
+    def __init__(self, context: MaterializationContext | None) -> None:
+        self.context = context
+        self.requests: list[MaterializationContextRequest] = []
+
+    def resolve(
+        self,
+        request: MaterializationContextRequest,
+    ) -> MaterializationContext | None:
+        self.requests.append(request)
+        return self.context
+
+
 def test_ceo_proposal_materializes_as_non_formal_informal_observation() -> None:
     intent = TrustedMaterializer().materialize(
         MaterializationEnvelope(
+            proposal_id="proposal-1",
+            task_id="task-1",
+            processing_purpose="metric_reporting",
             origin="AI",
             review_status="AI Draft",
             action_type="internal.ai_draft.propose",
+            subject_type="GBOS Synthetic Executive Snapshot",
+            subject_ref="snapshot-1",
+            subject_revision=1,
+            evidence_refs=("evidence-1",),
+            model_name="deepseek-v4-flash",
+            model_version="deepseek-v4-flash",
+            policy_version="action-guard-v1",
             proposal={
                 "payload": {
+                    "title": "Communication-based observation",
                     "summary": "Leadership communication pattern",
                     "is_official_metric": False,
                 }
             },
-        )
+        ),
+        context=MaterializationContext(team="team-a"),
     )
 
     assert intent.operation == "create"
@@ -188,10 +231,12 @@ def test_worker_recovers_after_crash_without_creating_a_second_frappe_draft() ->
     clock = _Clock(now)
     repository = _Repository(_claim(now))
     client = _Frappe(crash_once=True)
+    context_resolver = _ContextResolver(MaterializationContext(team="team-a"))
     worker = MaterializationWorker(
         repository=repository,
         client=client,
         materializer=TrustedMaterializer(),
+        context_resolver=context_resolver,
         worker_id="worker-a",
         clock=clock,
         lease_duration=timedelta(seconds=10),
@@ -207,6 +252,16 @@ def test_worker_recovers_after_crash_without_creating_a_second_frappe_draft() ->
     assert result.status == "succeeded"
     assert client.calls == 2
     assert len(client.created) == 1
+    assert context_resolver.requests[0] == MaterializationContextRequest(
+        site_id="site-a",
+        task_id="task-1",
+        processing_purpose="metric_reporting",
+        proposal_id="proposal-1",
+        subject_type="GBOS Synthetic Executive Snapshot",
+        subject_ref="snapshot-1",
+        subject_revision=1,
+    )
+    assert client.intents[0].values["team"] == "team-a"
     assert repository.receipt is not None
     assert set(repository.receipt.__dataclass_fields__) == {
         "doctype",
@@ -227,6 +282,7 @@ def test_worker_reports_lease_loss_without_retrying_a_stale_ack() -> None:
         repository=repository,
         client=client,
         materializer=TrustedMaterializer(),
+        context_resolver=_ContextResolver(MaterializationContext(team="team-a")),
         worker_id="worker-a",
         clock=clock,
         lease_duration=timedelta(seconds=10),
@@ -264,6 +320,7 @@ def test_worker_reports_dead_letter_when_final_attempt_fails() -> None:
         repository=final_repository,
         client=FailingFrappe(),
         materializer=TrustedMaterializer(),
+        context_resolver=_ContextResolver(MaterializationContext(team="team-a")),
         worker_id="worker-a",
         clock=clock,
         lease_duration=timedelta(seconds=10),
@@ -274,6 +331,28 @@ def test_worker_reports_dead_letter_when_final_attempt_fails() -> None:
 
     assert result.status == "dead_letter"
     assert "sensitive" not in repr(result)
+
+
+def test_worker_fails_closed_when_controlled_team_context_is_missing() -> None:
+    now = datetime(2026, 8, 7, 12, tzinfo=UTC)
+    repository = _Repository(_claim(now))
+    client = _Frappe()
+    worker = MaterializationWorker(
+        repository=repository,
+        client=client,
+        materializer=TrustedMaterializer(),
+        context_resolver=_ContextResolver(None),
+        worker_id="worker-a",
+        clock=_Clock(now),
+        lease_duration=timedelta(seconds=10),
+        retry_delay=timedelta(seconds=1),
+    )
+
+    result = worker.run_once("site-a")
+
+    assert result.status == "retry"
+    assert result.error_code == "materialization_failed"
+    assert client.calls == 0
 
 
 def test_ack_replay_is_idempotent_and_changed_receipt_is_a_body_conflict() -> None:
@@ -376,6 +455,9 @@ def test_materialization_public_api_exposes_only_safe_boundary_types() -> None:
         "FrappeDraftClient",
         "FrappeDraftReceipt",
         "MaterializationClaim",
+        "MaterializationContext",
+        "MaterializationContextRequest",
+        "MaterializationContextResolver",
         "MaterializationHealth",
         "MaterializationWorker",
         "PostgresAgentReadService",

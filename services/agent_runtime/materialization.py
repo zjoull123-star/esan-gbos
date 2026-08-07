@@ -16,6 +16,7 @@ from .models import (
     thaw_json,
 )
 from .proposals import (
+    MaterializationContext,
     MaterializationEnvelope,
     MaterializationIntent,
     TrustedMaterializer,
@@ -93,6 +94,56 @@ class FrappeDraftClient(Protocol):
     ) -> FrappeDraftReceipt: ...
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class MaterializationContextRequest:
+    """Closed metadata used to resolve controlled Frappe scope, never provider output."""
+
+    site_id: str
+    task_id: str
+    processing_purpose: str
+    proposal_id: str
+    subject_type: str
+    subject_ref: str
+    subject_revision: int
+
+    def __post_init__(self) -> None:
+        for field_name, maximum in (
+            ("site_id", 140),
+            ("task_id", 256),
+            ("processing_purpose", 80),
+            ("proposal_id", 256),
+            ("subject_type", 140),
+            ("subject_ref", 256),
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+                raise ValidationError(f"materialization context {field_name} is invalid")
+        if (
+            not isinstance(self.subject_revision, int)
+            or isinstance(self.subject_revision, bool)
+            or self.subject_revision < 0
+        ):
+            raise ValidationError("materialization context subject_revision is invalid")
+
+    def __repr__(self) -> str:
+        return (
+            "MaterializationContextRequest("
+            f"site_id={self.site_id!r}, task_id={self.task_id!r}, "
+            f"processing_purpose={self.processing_purpose!r}, "
+            f"proposal_id={self.proposal_id!r}, subject_type={self.subject_type!r}, "
+            f"subject_ref=<redacted>, subject_revision={self.subject_revision})"
+        )
+
+
+class MaterializationContextResolver(Protocol):
+    """Maps trusted task scope metadata to the Frappe team/review context."""
+
+    def resolve(
+        self,
+        request: MaterializationContextRequest,
+    ) -> MaterializationContext | None: ...
+
+
 class MaterializationRepository(Protocol):
     def claim_materialization(
         self,
@@ -164,6 +215,7 @@ class MaterializationWorker:
         "_clock",
         "_lease_duration",
         "_materializer",
+        "_context_resolver",
         "_repository",
         "_retry_delay",
         "_worker_id",
@@ -175,6 +227,7 @@ class MaterializationWorker:
         repository: MaterializationRepository,
         client: FrappeDraftClient,
         materializer: TrustedMaterializer,
+        context_resolver: MaterializationContextResolver,
         worker_id: str,
         clock: Callable[[], datetime],
         lease_duration: timedelta = timedelta(seconds=30),
@@ -187,6 +240,7 @@ class MaterializationWorker:
         self._repository = repository
         self._client = client
         self._materializer = materializer
+        self._context_resolver = context_resolver
         self._worker_id = worker_id
         self._clock = clock
         self._lease_duration = lease_duration
@@ -214,7 +268,25 @@ class MaterializationWorker:
                 attempt=None,
             )
         try:
-            intent = self._materializer.materialize(claim.envelope)
+            context = None
+            if claim.envelope.action_type != "internal.work_item.transition.propose":
+                context = self._context_resolver.resolve(
+                    MaterializationContextRequest(
+                        site_id=claim.site_id,
+                        task_id=claim.envelope.task_id,
+                        processing_purpose=claim.envelope.processing_purpose,
+                        proposal_id=claim.proposal_id,
+                        subject_type=claim.envelope.subject_type,
+                        subject_ref=claim.envelope.subject_ref,
+                        subject_revision=claim.envelope.subject_revision,
+                    )
+                )
+                if context is None:
+                    raise ValidationError("controlled materialization team context is unavailable")
+            intent = self._materializer.materialize(
+                claim.envelope,
+                context=context,
+            )
             request_digest = _intent_digest(intent)
             receipt = self._client.apply(
                 intent,
@@ -313,6 +385,8 @@ __all__ = [
     "FrappeDraftClient",
     "FrappeDraftReceipt",
     "MaterializationClaim",
+    "MaterializationContextRequest",
+    "MaterializationContextResolver",
     "MaterializationHealth",
     "MaterializationRepository",
     "MaterializationRunResult",

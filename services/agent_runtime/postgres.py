@@ -783,20 +783,65 @@ class PostgresAgentTaskRepository:
                 return None
             cursor.execute(
                 """
-                SELECT action_type, origin, review_status, document
-                FROM agent_runtime.action_proposals
-                WHERE site_id = %s AND proposal_id = %s
+                SELECT proposal.action_type, proposal.origin, proposal.review_status,
+                       proposal.subject_type, proposal.subject_ref,
+                       proposal.subject_revision, proposal.evidence_refs,
+                       proposal.invocation_ids, proposal.document,
+                       task.task_id, task.processing_purpose
+                FROM agent_runtime.action_proposals AS proposal
+                JOIN agent_runtime.agent_tasks AS task
+                  ON task.site_id = proposal.site_id
+                 AND task.task_id = proposal.task_id
+                WHERE proposal.site_id = %s AND proposal.proposal_id = %s
                 """,
                 (site_id, str(outbox_row[1])),
             )
             proposal_row = cursor.fetchone()
             if proposal_row is None:
                 raise ValidationError("materialization proposal bundle is unavailable")
-            document = proposal_row[3]
+            evidence_refs = proposal_row[6]
+            if isinstance(evidence_refs, str):
+                evidence_refs = json.loads(evidence_refs)
+            invocation_ids = proposal_row[7]
+            if isinstance(invocation_ids, str):
+                invocation_ids = json.loads(invocation_ids)
+            if (
+                not isinstance(evidence_refs, list)
+                or not all(isinstance(value, str) for value in evidence_refs)
+                or not isinstance(invocation_ids, list)
+                or not all(isinstance(value, str) for value in invocation_ids)
+            ):
+                raise ValidationError("materialization proposal metadata is invalid")
+            model_name: str | None = None
+            model_version: str | None = None
+            if invocation_ids:
+                cursor.execute(
+                    """
+                    SELECT requested_model, COALESCE(observed_model, requested_model)
+                    FROM agent_runtime.model_invocations
+                    WHERE site_id = %s
+                      AND invocation_id IN (
+                          SELECT jsonb_array_elements_text(%s::jsonb)
+                      )
+                    ORDER BY invocation_id ASC
+                    """,
+                    (site_id, json.dumps(invocation_ids)),
+                )
+                model_rows = cursor.fetchall()
+                if len(model_rows) != len(invocation_ids):
+                    raise ValidationError("materialization model invocation metadata is incomplete")
+                identities = {(str(row[0]), str(row[1])) for row in model_rows}
+                if len(identities) != 1:
+                    raise ValidationError("materialization model invocation identity is ambiguous")
+                model_name, model_version = next(iter(identities))
+            document = proposal_row[8]
             if isinstance(document, str):
                 document = json.loads(document)
             if not isinstance(document, dict):
                 raise ValidationError("materialization proposal document is invalid")
+            policy_version = document.get("policy_version")
+            if policy_version is not None and not isinstance(policy_version, str):
+                raise ValidationError("materialization proposal policy version is invalid")
             return MaterializationClaim(
                 materialization_id=str(outbox_row[0]),
                 proposal_id=str(outbox_row[1]),
@@ -806,9 +851,19 @@ class PostgresAgentTaskRepository:
                 lease_owner=str(outbox_row[4]),
                 lease_expires_at=outbox_row[5],
                 envelope=MaterializationEnvelope(
+                    proposal_id=str(outbox_row[1]),
+                    task_id=str(proposal_row[9]),
+                    processing_purpose=str(proposal_row[10]),
                     origin=str(proposal_row[1]),
                     review_status=str(proposal_row[2]),
                     action_type=str(proposal_row[0]),
+                    subject_type=str(proposal_row[3]),
+                    subject_ref=str(proposal_row[4]),
+                    subject_revision=int(proposal_row[5]),
+                    evidence_refs=tuple(evidence_refs),
+                    model_name=model_name,
+                    model_version=model_version,
+                    policy_version=policy_version,
                     proposal=document,
                 ),
             )

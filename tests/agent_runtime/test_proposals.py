@@ -19,6 +19,7 @@ from services.agent_runtime import (
     InvocationReferences,
     LeaseConflict,
     LocalPilotTaskPayload,
+    MaterializationContext,
     MaterializationEnvelope,
     ModelInvocationRecord,
     TaskStatus,
@@ -314,41 +315,165 @@ def test_trusted_materializer_recursively_rejects_authoritative_or_outbound_shap
         TrustedMaterializer().materialize(envelope)
 
 
-def test_trusted_materializer_only_emits_ai_draft_work_items_or_review_cases() -> None:
+def _materialization_envelope(
+    action_type: str,
+    payload: dict[str, object],
+    *,
+    subject_type: str,
+    subject_ref: str,
+) -> MaterializationEnvelope:
+    return MaterializationEnvelope(
+        proposal_id="proposal-1",
+        task_id="task-1",
+        processing_purpose="metric_reporting",
+        origin="AI",
+        review_status="AI Draft",
+        action_type=action_type,
+        subject_type=subject_type,
+        subject_ref=subject_ref,
+        subject_revision=3,
+        evidence_refs=("evidence-1",),
+        model_name="deepseek-v4-flash",
+        model_version="deepseek-v4-flash",
+        policy_version="action-guard-v1",
+        proposal={"payload": payload},
+    )
+
+
+def test_trusted_materializer_emits_only_closed_frappe_doctype_fields() -> None:
     materializer = TrustedMaterializer()
+    context = MaterializationContext(team="team-a")
 
     work_item = materializer.materialize(
-        MaterializationEnvelope(
-            origin="AI",
-            review_status="AI Draft",
-            action_type="internal.work_item.propose",
-            proposal={"payload": {"title": "Internal follow-up"}},
-        )
+        _materialization_envelope(
+            "internal.work_item.propose",
+            {
+                "title": "Internal follow-up",
+                "summary": "Provider prose must not leak into an unsupported field.",
+                "subject_ref": "untrusted-ref",
+            },
+            subject_type="CRM Deal",
+            subject_ref="deal-1",
+        ),
+        context=context,
     )
     ceo_observation = materializer.materialize(
-        MaterializationEnvelope(
-            origin="AI",
-            review_status="AI Draft",
-            action_type="internal.ai_draft.propose",
-            proposal={
-                "payload": {
-                    "title": "Communication-based observation",
-                    "is_official_metric": False,
-                }
+        _materialization_envelope(
+            "internal.ai_draft.propose",
+            {
+                "title": "Communication-based observation",
+                "summary": "Leadership communication pattern",
+                "synthetic": True,
+                "display_label": "Synthetic",
+                "source_mode": "communications",
+                "is_official_metric": False,
+                "is_official_forecast": False,
+                "requires_human_review": True,
             },
-        )
+            subject_type="GBOS Synthetic Executive Snapshot",
+            subject_ref="snapshot-1",
+        ),
+        context=context,
     )
 
-    assert (work_item.doctype, work_item.values["origin"], work_item.values["review_status"]) == (
-        "GBOS Work Item",
-        "AI",
-        "AI Draft",
-    )
-    assert ceo_observation.doctype == "GBOS Review Case"
-    assert ceo_observation.values["observation_kind"] == "informal_communication_observation"
-    assert ceo_observation.values["source_basis"] == "communications"
+    assert work_item.doctype == "GBOS Work Item"
+    assert set(work_item.values) == {
+        "title",
+        "team",
+        "reference_doctype",
+        "reference_name",
+        "origin",
+        "origin_reference",
+        "business_status",
+        "review_status",
+    }
+    assert work_item.values["origin_reference"] == "proposal-1"
+    assert work_item.values["reference_name"] == "deal-1"
+    assert ceo_observation.doctype == "GBOS Informal Observation"
+    assert set(ceo_observation.values) == {
+        "subject",
+        "summary_zh",
+        "team",
+        "evidence_refs",
+        "model_name",
+        "model_version",
+        "is_official_metric",
+        "origin",
+        "origin_reference",
+        "review_status",
+    }
+    assert ceo_observation.values["origin_reference"] == "proposal-1"
+    assert ceo_observation.values["evidence_refs"] == [
+        {"evidence_ref": "evidence-1", "locator_ref": "evidence-1"}
+    ]
     assert ceo_observation.values["is_official_metric"] is False
-    assert "Metrics" not in repr(ceo_observation)
+    assert "Communication-based observation" not in repr(ceo_observation)
+    assert "Leadership communication pattern" not in repr(ceo_observation)
+    assert "evidence-1" not in repr(ceo_observation)
+
+
+def test_trusted_materializer_pins_review_case_from_trusted_metadata() -> None:
+    subject_snapshot = {
+        "doctype": "GBOS Sourcing Event",
+        "name": "source-1",
+        "revision": 3,
+        "title": "Trusted sourcing event",
+    }
+    subject_digest = canonical_payload_digest(subject_snapshot)
+    intent = TrustedMaterializer().materialize(
+        _materialization_envelope(
+            "internal.review_case.propose",
+            {
+                "title": "Supplier review",
+                "summary": "Unsupported provider prose",
+                "candidate_refs": ["untrusted-candidate"],
+                "recommendation": "untrusted-recommendation",
+                "subject_ref": "untrusted-ref",
+            },
+            subject_type="GBOS Sourcing Event",
+            subject_ref="source-1",
+        ),
+        context=MaterializationContext(
+            team="team-a",
+            assigned_reviewer="reviewer@example.com",
+            subject_snapshot=subject_snapshot,
+            subject_payload_digest=subject_digest,
+        ),
+    )
+
+    assert intent.doctype == "GBOS Review Case"
+    assert set(intent.values) == {
+        "title",
+        "team",
+        "assigned_reviewer",
+        "subject_doctype",
+        "subject_name",
+        "subject_revision",
+        "subject_payload_sha256",
+        "subject_snapshot",
+        "case_payload_sha256",
+        "evidence_refs",
+        "policy_version",
+        "origin",
+        "origin_reference",
+        "business_status",
+        "review_status",
+    }
+    assert intent.values["origin_reference"] == "proposal-1"
+    assert intent.values["subject_name"] == "source-1"
+    assert intent.values["evidence_refs"] == '["evidence-1"]'
+
+
+def test_trusted_materializer_fails_closed_without_controlled_team() -> None:
+    envelope = _materialization_envelope(
+        "internal.work_item.propose",
+        {"title": "Internal follow-up"},
+        subject_type="CRM Deal",
+        subject_ref="deal-1",
+    )
+
+    with pytest.raises(ValidationError, match="team"):
+        TrustedMaterializer().materialize(envelope)
 
 
 def test_trusted_materializer_can_only_submit_existing_ai_draft_to_pending() -> None:

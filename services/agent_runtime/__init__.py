@@ -22,6 +22,8 @@ from .materialization import (
     FrappeDraftClient,
     FrappeDraftReceipt,
     MaterializationClaim,
+    MaterializationContextRequest,
+    MaterializationContextResolver,
     MaterializationHealth,
     MaterializationRepository,
     MaterializationRunResult,
@@ -45,6 +47,7 @@ from .models import (
 from .postgres import PostgresAgentTaskRepository
 from .proposals import (
     ActionProposalRecord,
+    MaterializationContext,
     MaterializationEnvelope,
     MaterializationIntent,
     MaterializationOutboxRecord,
@@ -93,6 +96,8 @@ __all__ = [
     "LocalPilotFactVersionRef",
     "LocalPilotTaskPayload",
     "MaterializationClaim",
+    "MaterializationContextRequest",
+    "MaterializationContextResolver",
     "MaterializationHealth",
     "MaterializationRepository",
     "MaterializationRunResult",
@@ -109,6 +114,7 @@ __all__ = [
     "TokenUsageMetadata",
     "ValidationError",
     "ActionProposalRecord",
+    "MaterializationContext",
     "MaterializationEnvelope",
     "MaterializationIntent",
     "MaterializationOutboxRecord",
