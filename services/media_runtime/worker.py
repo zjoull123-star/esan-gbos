@@ -201,11 +201,19 @@ class MediaWorker:
                 reason_codes=("pipeline_status_invalid",),
             )
         if not claim.receipt.media_type.startswith("audio/"):
+            try:
+                manifest_ref = self._observer_bridge.publish_media_evidence(
+                    claim.receipt,
+                    idempotency_key=f"media-evidence:{claim.job_id}",
+                )
+            except Exception:
+                return self._retry(claim, ("observer_bridge_unavailable",))
             return self._complete(
                 claim,
                 status=MediaJobStatus.READY,
                 worker_status=WorkerRunStatus.SUCCEEDED,
                 reason_codes=(),
+                transcript_ref=manifest_ref,
             )
         transcript = outcome.transcript
         if (

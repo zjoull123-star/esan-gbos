@@ -5,7 +5,11 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from services.media_runtime.common import PipelineStatus
-from services.media_runtime.observer_bridge import ObserverBridge
+from services.media_runtime.observer_bridge import (
+    MediaEvidenceManifest,
+    ObserverBridge,
+    TranscriptReferenceSubmission,
+)
 from services.media_runtime.pipeline import MediaPipelineOutcome
 from services.media_runtime.repository import (
     InMemoryMediaJobRepository,
@@ -45,9 +49,29 @@ class FixedResolver:
 class RecordingObserverClient:
     def __init__(self, *, fail_after_first_commit: bool = False) -> None:
         self.keys: list[str] = []
+        self.transcript_submissions: list[TranscriptReferenceSubmission] = []
+        self.manifest_submissions: list[MediaEvidenceManifest] = []
         self.fail_after_first_commit = fail_after_first_commit
 
-    def submit_transcript_refs(self, _submission: object, *, idempotency_key: str) -> None:
+    def submit_transcript_refs(
+        self,
+        submission: TranscriptReferenceSubmission,
+        *,
+        idempotency_key: str,
+    ) -> None:
+        self.transcript_submissions.append(submission)
+        self._record(idempotency_key)
+
+    def submit_evidence_manifest(
+        self,
+        manifest: MediaEvidenceManifest,
+        *,
+        idempotency_key: str,
+    ) -> None:
+        self.manifest_submissions.append(manifest)
+        self._record(idempotency_key)
+
+    def _record(self, idempotency_key: str) -> None:
         self.keys.append(idempotency_key)
         if self.fail_after_first_commit and len(self.keys) == 1:
             raise RuntimeError("response lost after observer commit")
@@ -61,14 +85,14 @@ class FixedProofProvider:
         return self.proof
 
 
-def _receipt() -> UploadReceipt:
+def _receipt(*, media_type: str = "audio/wav") -> UploadReceipt:
     return UploadReceipt(
         receipt_id="receipt-01",
         site_id="site-a",
         purpose="meeting_capture",
         request_id="request-01",
         source_kind=SourceKind.MEETING,
-        media_type="audio/wav",
+        media_type=media_type,
         byte_size=7,
         sha256="a" * 64,
         object_ref="object://site-a/object-01",
@@ -123,7 +147,11 @@ def _worker(
     return MediaWorker(
         repository=repository,
         pipeline=pipeline,
-        observer_bridge=ObserverBridge(client=observer),
+        observer_bridge=ObserverBridge(
+            client=observer,
+            site_id="site-a",
+            team_ref="team-sales",
+        ),
         path_resolver=FixedResolver(),
         proof_provider=FixedProofProvider(proof),
         site_id="site-a",
@@ -168,6 +196,44 @@ def test_worker_calls_pipeline_and_publishes_refs_before_ready() -> None:
     assert stored.status is MediaJobStatus.READY
     assert stored.transcript_ref is not None
     assert stored.artifact_proof == _proof()
+
+
+def test_ready_non_audio_publishes_refs_before_ready() -> None:
+    repository = InMemoryMediaJobRepository()
+    job = repository.enqueue(
+        MediaJobSubmission(
+            receipt=_receipt(media_type="application/pdf"),
+            duration_ms=1_000,
+            channels=1,
+            sample_rate=16_000,
+            language_hint=None,
+            max_attempts=3,
+        ),
+        now=NOW,
+    )
+    pipeline = RecordingPipeline(
+        MediaPipelineOutcome(
+            status=PipelineStatus.READY,
+            reason_codes=(),
+            stage_idempotency_keys=(),
+        )
+    )
+    observer = RecordingObserverClient()
+
+    result = _worker(repository, pipeline, observer, proof=None).run_once()
+
+    assert result.status is WorkerRunStatus.SUCCEEDED
+    assert observer.keys == [f"media-evidence:{job.job_id}"]
+    assert len(observer.manifest_submissions) == 1
+    manifest = observer.manifest_submissions[0]
+    assert (
+        manifest.site_id,
+        manifest.team_ref,
+        manifest.source_evidence_ref,
+    ) == ("site-a", "team-sales", job.receipt.evidence_ref)
+    stored = repository.get("site-a", job.job_id)
+    assert stored is not None
+    assert stored.transcript_ref == manifest.manifest_ref
 
 
 def test_missing_runtime_artifact_proof_fails_closed_to_quarantine() -> None:
@@ -287,3 +353,60 @@ def test_observer_response_loss_replays_with_same_idempotency_key() -> None:
     stored = repository.get("site-a", job.job_id)
     assert stored is not None
     assert stored.status is MediaJobStatus.READY
+
+
+def test_non_audio_observer_response_loss_replays_without_scope_drift() -> None:
+    class MutableClock:
+        now = NOW
+
+        def __call__(self) -> datetime:
+            return self.now
+
+    clock = MutableClock()
+    repository = InMemoryMediaJobRepository()
+    job = repository.enqueue(
+        MediaJobSubmission(
+            receipt=_receipt(media_type="application/pdf"),
+            duration_ms=1_000,
+            channels=1,
+            sample_rate=16_000,
+            language_hint=None,
+            max_attempts=3,
+        ),
+        now=clock.now,
+    )
+    pipeline = RecordingPipeline(
+        MediaPipelineOutcome(
+            status=PipelineStatus.READY,
+            reason_codes=(),
+            stage_idempotency_keys=(),
+        )
+    )
+    observer = RecordingObserverClient(fail_after_first_commit=True)
+    worker = _worker(
+        repository,
+        pipeline,
+        observer,
+        proof=None,
+        clock=clock,
+    )
+
+    first = worker.run_once()
+    clock.now += timedelta(minutes=2)
+    replay = worker.run_once()
+
+    assert first.status is WorkerRunStatus.RETRY
+    assert replay.status is WorkerRunStatus.SUCCEEDED
+    assert observer.keys == [f"media-evidence:{job.job_id}"] * 2
+    assert observer.manifest_submissions[0] == observer.manifest_submissions[1]
+    manifest = observer.manifest_submissions[0]
+    assert (
+        manifest.site_id,
+        manifest.team_ref,
+        manifest.source_evidence_ref,
+    ) == ("site-a", "team-sales", job.receipt.evidence_ref)
+    assert "application/pdf" not in repr(manifest)
+    stored = repository.get("site-a", job.job_id)
+    assert stored is not None
+    assert stored.status is MediaJobStatus.READY
+    assert stored.transcript_ref == manifest.manifest_ref
