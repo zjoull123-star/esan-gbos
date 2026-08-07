@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/local-pilot/v1.0/local-pilot-manifest.schema.json",
+  "title": "ESAN GBOS Local Pilot Manifest v1.0",
+  "description": "Fail-closed runtime declaration for the local real-channel and DeepSeek shadow pilot.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "site_id",
+    "compliance_state",
+    "retention_days",
+    "production_go",
+    "local_pilot_go",
+    "local_pilot_status",
+    "capabilities",
+    "deepseek",
+    "channels"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "mode": {
+      "const": "local_pilot"
+    },
+    "site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+    },
+    "compliance_state": {
+      "const": "pilot_deferred_review"
+    },
+    "retention_days": {
+      "const": 30
+    },
+    "production_go": {
+      "const": false
+    },
+    "local_pilot_go": {
+      "type": "boolean"
+    },
+    "local_pilot_status": {
+      "type": "string",
+      "enum": ["disabled", "ready", "running", "stopped", "complete"]
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kingdee",
+        "cloud_server",
+        "cloud_business_storage",
+        "external_send",
+        "formal_business_commands"
+      ],
+      "properties": {
+        "kingdee": {
+          "const": false
+        },
+        "cloud_server": {
+          "const": false
+        },
+        "cloud_business_storage": {
+          "const": false
+        },
+        "external_send": {
+          "const": false
+        },
+        "formal_business_commands": {
+          "const": false
+        }
+      }
+    },
+    "deepseek": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "base_url",
+        "model",
+        "keychain_ref",
+        "kill_switch",
+        "thinking_default",
+        "max_input_tokens",
+        "max_output_tokens",
+        "soft_limit_usd",
+        "hard_limit_usd"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "base_url": {
+          "const": "https://api.deepseek.com"
+        },
+        "model": {
+          "const": "deepseek-v4-flash"
+        },
+        "keychain_ref": {
+          "$ref": "#/$defs/keychainRefOrNull"
+        },
+        "kill_switch": {
+          "type": "boolean"
+        },
+        "thinking_default": {
+          "const": "disabled"
+        },
+        "max_input_tokens": {
+          "const": 32768
+        },
+        "max_output_tokens": {
+          "const": 4096
+        },
+        "soft_limit_usd": {
+          "const": 50
+        },
+        "hard_limit_usd": {
+          "const": 100
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": ["enabled"]
+          },
+          "then": {
+            "properties": {
+              "keychain_ref": {
+                "$ref": "#/$defs/keychainRef"
+              },
+              "kill_switch": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "channels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["email", "wecom", "whatsapp", "media"],
+      "properties": {
+        "email": {
+          "$ref": "#/$defs/pullChannel"
+        },
+        "wecom": {
+          "$ref": "#/$defs/pullChannel"
+        },
+        "whatsapp": {
+          "$ref": "#/$defs/whatsappChannel"
+        },
+        "media": {
+          "$ref": "#/$defs/mediaChannel"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "keychainRef": {
+      "type": "string",
+      "minLength": 12,
+      "maxLength": 256,
+      "pattern": "^keychain://[A-Za-z0-9][A-Za-z0-9._/-]+$"
+    },
+    "keychainRefOrNull": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/keychainRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "activationTime": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pullChannel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "activation_time",
+        "backfill_history",
+        "credential_ref"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "activation_time": {
+          "$ref": "#/$defs/activationTime"
+        },
+        "backfill_history": {
+          "const": false
+        },
+        "credential_ref": {
+          "$ref": "#/$defs/keychainRefOrNull"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": ["enabled"]
+          },
+          "then": {
+            "properties": {
+              "activation_time": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "credential_ref": {
+                "$ref": "#/$defs/keychainRef"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "whatsappChannel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "activation_time",
+        "backfill_history",
+        "credential_ref",
+        "named_tunnel_ref"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "activation_time": {
+          "$ref": "#/$defs/activationTime"
+        },
+        "backfill_history": {
+          "const": false
+        },
+        "credential_ref": {
+          "$ref": "#/$defs/keychainRefOrNull"
+        },
+        "named_tunnel_ref": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 256,
+              "pattern": "^cloudflare://tunnel/[A-Za-z0-9-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": ["enabled"]
+          },
+          "then": {
+            "properties": {
+              "activation_time": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "credential_ref": {
+                "$ref": "#/$defs/keychainRef"
+              },
+              "named_tunnel_ref": {
+                "type": "string",
+                "minLength": 20,
+                "maxLength": 256,
+                "pattern": "^cloudflare://tunnel/[A-Za-z0-9-]+$"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifactDigest": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "mediaChannel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "activation_time",
+        "backfill_history",
+        "local_only",
+        "ffmpeg_sha256",
+        "whisper_model_sha256"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "activation_time": {
+          "$ref": "#/$defs/activationTime"
+        },
+        "backfill_history": {
+          "const": false
+        },
+        "local_only": {
+          "const": true
+        },
+        "ffmpeg_sha256": {
+          "$ref": "#/$defs/artifactDigest"
+        },
+        "whisper_model_sha256": {
+          "$ref": "#/$defs/artifactDigest"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": ["enabled"]
+          },
+          "then": {
+            "properties": {
+              "activation_time": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "ffmpeg_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "whisper_model_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

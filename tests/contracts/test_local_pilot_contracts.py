@@ -18,6 +18,7 @@ SCHEMAS = {
     "connector-checkpoint-v1.1.schema.json",
     "inbound-delivery-v1.0.schema.json",
     "model-invocation-v1.0.schema.json",
+    "local-pilot-manifest-v1.0.schema.json",
     "tokenization-receipt-v1.0.schema.json",
     "upload-receipt-v1.0.schema.json",
     "transcript-segments-v1.0.schema.json",
@@ -100,6 +101,29 @@ def test_v11_checkpoint_requires_instance_and_non_negative_version() -> None:
     negative_version = dict(valid, checkpoint_version=-1)
     with pytest.raises(ValidationError):
         validator.validate(negative_version)
+
+
+def test_local_pilot_manifest_keeps_deferred_capabilities_closed_and_budget_explicit() -> None:
+    manifest = _load(LOCAL_PILOT / "examples" / "valid" / "local-pilot-manifest-v1.0.json")
+    validator = _validator("local-pilot-manifest-v1.0.schema.json")
+
+    validator.validate(manifest)
+    assert manifest["compliance_state"] == "pilot_deferred_review"
+    assert manifest["retention_days"] == 30
+    assert manifest["production_go"] is False
+    assert manifest["capabilities"] == {
+        "kingdee": False,
+        "cloud_server": False,
+        "cloud_business_storage": False,
+        "external_send": False,
+        "formal_business_commands": False,
+    }
+    assert manifest["deepseek"]["base_url"] == "https://api.deepseek.com"
+    assert manifest["deepseek"]["model"] == "deepseek-v4-flash"
+    assert manifest["deepseek"]["soft_limit_usd"] == 50
+    assert manifest["deepseek"]["hard_limit_usd"] == 100
+    for channel in ("email", "wecom", "whatsapp"):
+        assert manifest["channels"][channel]["backfill_history"] is False
 
 
 def test_model_invocation_allows_unknown_tokens_but_not_implicit_zero_or_content() -> None:
