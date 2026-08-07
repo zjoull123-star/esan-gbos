@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import frappe
 
+from esan_gbos.ceo_access import backfill_ceo_full_access
 from esan_gbos.domain.permissions import (
     INTERNAL_MATERIALIZER_ROLE,
     role_has_crm_doctype_permission,
@@ -45,6 +46,7 @@ INTERNAL_MATERIALIZATION_AUDIT_DOCTYPES = ("Integration Request",)
 
 def after_install() -> None:
     ensure_roles()
+    backfill_ceo_full_access()
     ensure_permissions()
     ensure_internal_materialization_audit_permissions()
     ensure_crm_permissions()
@@ -54,6 +56,7 @@ def after_install() -> None:
 
 def after_migrate() -> None:
     ensure_roles()
+    backfill_ceo_full_access()
     ensure_permissions()
     ensure_internal_materialization_audit_permissions()
     ensure_crm_permissions()

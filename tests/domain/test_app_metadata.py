@@ -148,6 +148,15 @@ def test_hooks_enforce_server_side_permissions_and_transaction_guards() -> None:
     assert '"GL Entry"' in hooks
 
 
+def test_hooks_and_migrations_auto_elevate_every_ceo_user() -> None:
+    hooks = (PACKAGE_ROOT / "hooks.py").read_text(encoding="utf-8")
+    install = (PACKAGE_ROOT / "install.py").read_text(encoding="utf-8")
+
+    assert 'doc_events["User"]' in hooks
+    assert "esan_gbos.ceo_access.ensure_ceo_full_access" in hooks
+    assert install.count("backfill_ceo_full_access()") == 2
+
+
 def test_internal_materializer_role_install_fixture_and_hooks_are_consistent() -> None:
     hooks_path = PACKAGE_ROOT / "hooks.py"
     install_path = PACKAGE_ROOT / "install.py"

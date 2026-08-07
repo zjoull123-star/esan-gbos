@@ -121,6 +121,10 @@ doc_events = {
     for doctype in _BLOCKED_ERP_DOCTYPES
 }
 
+doc_events["User"] = {
+    "before_validate": "esan_gbos.ceo_access.ensure_ceo_full_access",
+}
+
 for _draft_doctype in (
     "GBOS Work Item",
     "GBOS Review Case",
