@@ -48,6 +48,14 @@ class DeepSeekAssembly:
 DeepSeekFactory = Callable[[DeepSeekAssembly], object]
 
 
+def validate_deepseek_manifest(
+    manifest: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Validate the exact no-business-effect DeepSeek runtime declaration."""
+
+    return _enabled_exact_deepseek_manifest(manifest)
+
+
 def compose_local_provider(
     manifest: Mapping[str, Any],
     *,
@@ -74,7 +82,7 @@ def compose_local_provider(
     if model_kill_switch:
         raise LocalRuntimeDisabled("model kill switch is enabled")
 
-    deepseek = _enabled_exact_deepseek_manifest(manifest)
+    deepseek = validate_deepseek_manifest(manifest)
     if key_file is None:
         raise LocalRuntimeError("DeepSeek key file is required")
     api_key = _read_secret_file(key_file)
@@ -170,4 +178,5 @@ __all__ = [
     "LocalRuntimeError",
     "ProviderMode",
     "compose_local_provider",
+    "validate_deepseek_manifest",
 ]

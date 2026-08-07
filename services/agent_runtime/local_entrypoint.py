@@ -68,7 +68,7 @@ def require_component_enabled(
         "running",
     }:
         raise LocalEntrypointDisabled(f"{component} is disabled by manifest")
-    if component in {"agent-worker", "model-worker"}:
+    if component == "model-worker":
         deepseek = manifest.get("deepseek")
         if (
             not isinstance(deepseek, Mapping)
