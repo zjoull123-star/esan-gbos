@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "transcript_id": "transcript_01",
+  "site_id": "site-a",
+  "source_evidence_ref": "evidence://site-a/upload_01",
+  "model": {
+    "provider": "local_faster_whisper",
+    "name": "large-v3-turbo",
+    "version": "large-v3-turbo-ct2-local-v1",
+    "sha256": "fa3c86f6a5f24c523e7d6e8c815206d4e2a8119704d7896b980b3a968d608935"
+  },
+  "language": "en",
+  "segments": [
+    {
+      "segment_id": "segment_000001",
+      "start_ms": 0,
+      "end_ms": 1250,
+      "speaker": "Speaker 1",
+      "confidence": 0.92,
+      "text_ref": "localtext://site-a/transcript_01/segment_000001",
+      "evidence_ref": "evidence://site-a/upload_01/t/0-1250"
+    }
+  ],
+  "generated_at": "2026-08-07T03:01:00Z"
+}

@@ -19,6 +19,8 @@ SCHEMAS = {
     "inbound-delivery-v1.0.schema.json",
     "model-invocation-v1.0.schema.json",
     "tokenization-receipt-v1.0.schema.json",
+    "upload-receipt-v1.0.schema.json",
+    "transcript-segments-v1.0.schema.json",
     "sales-proposal-v1.0.schema.json",
     "purchase-proposal-v1.0.schema.json",
     "product-proposal-v1.0.schema.json",

@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "transcript_id": "transcript_unsafe",
+  "site_id": "site-a",
+  "source_evidence_ref": "evidence://site-a/upload_01",
+  "model": {
+    "provider": "remote",
+    "name": "unknown",
+    "version": "runtime-selected",
+    "sha256": "not-a-digest"
+  },
+  "language": "en",
+  "segments": [
+    {
+      "segment_id": "segment_000001",
+      "start_ms": 0,
+      "end_ms": 1250,
+      "speaker": "Alice",
+      "confidence": 1.2,
+      "text": "forbidden raw transcript"
+    }
+  ],
+  "generated_at": "2026-08-07T03:01:00Z"
+}
