@@ -19,6 +19,31 @@ import sys
 print(json.load(open(sys.argv[1], encoding="utf-8"))["runtime_image"])
 PY
 )"
+IMAGE_LOCK="${REPO_ROOT}/infra/local/images.lock.json"
+locked_reference() {
+  python3 - "${IMAGE_LOCK}" "$1" <<'PY'
+import json
+import sys
+
+service = sys.argv[2]
+matches = [
+    item["reference"]
+    for item in json.load(open(sys.argv[1], encoding="utf-8"))["images"]
+    if item["service"] == service
+]
+if len(matches) != 1 or not isinstance(matches[0], str):
+    raise SystemExit(f"invalid locked image reference for {service}")
+print(matches[0])
+PY
+}
+PYTHON_BASE_IMAGE="$(locked_reference python-runtime-base)"
+UV_IMAGE="$(locked_reference uv-builder)"
+
+# BuildKit may consume pinned bases without installing them in the local image
+# store. Install both exact references so record-images can verify their IDs
+# and RepoDigests rather than inventing evidence from the Containerfile.
+docker pull --platform linux/arm64 "${PYTHON_BASE_IMAGE}"
+docker pull --platform linux/arm64 "${UV_IMAGE}"
 
 docker build \
   --pull \

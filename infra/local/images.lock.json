@@ -1,5 +1,5 @@
 {
-  "recorded_at": "2026-08-07T18:30:22.574152+00:00",
+  "recorded_at": "2026-08-07T19:33:02.993786+00:00",
   "recording_scope": "local docker image inspect after an explicit build or local image installation; null means not yet recorded and is fail-closed",
   "images": [
     {
@@ -31,7 +31,7 @@
       "source": "local-build",
       "platform": "linux/arm64",
       "reference": "esan-gbos-local-pilot-frappe:2026-08-08",
-      "local_inspect_digest": null,
+      "local_inspect_digest": "sha256:70794b811a208a68dc8d3b9b1510eb29784cfb8b5c42ce137950476d71bfc1cb",
       "local_repo_digest": null
     },
     {
@@ -55,7 +55,7 @@
       "source": "local-build",
       "platform": "linux/arm64",
       "reference": "esan-gbos-local-pilot-runtime:2026-08-08",
-      "local_inspect_digest": null,
+      "local_inspect_digest": "sha256:7f91afbe932cf1a0e55bcb3936b809754084d4aecbe6b7506b90f7a81b58cb93",
       "local_repo_digest": null
     },
     {
@@ -63,16 +63,16 @@
       "source": "remote",
       "platform": "linux/arm64",
       "reference": "python:3.14.2-slim-bookworm@sha256:977174a93ac5b559a077d2e2997bfde0d9b2c0e283a3fddb12747e35aea43689",
-      "local_inspect_digest": null,
-      "local_repo_digest": null
+      "local_inspect_digest": "sha256:977174a93ac5b559a077d2e2997bfde0d9b2c0e283a3fddb12747e35aea43689",
+      "local_repo_digest": "python@sha256:977174a93ac5b559a077d2e2997bfde0d9b2c0e283a3fddb12747e35aea43689"
     },
     {
       "service": "uv-builder",
       "source": "remote",
       "platform": "linux/arm64",
       "reference": "ghcr.io/astral-sh/uv:0.9.28@sha256:b400c36bce7aa9a84965ad23d0e4339ccffaaa06e825d08b064a0f40a2eb90ab",
-      "local_inspect_digest": null,
-      "local_repo_digest": null
+      "local_inspect_digest": "sha256:b400c36bce7aa9a84965ad23d0e4339ccffaaa06e825d08b064a0f40a2eb90ab",
+      "local_repo_digest": "ghcr.io/astral-sh/uv@sha256:b400c36bce7aa9a84965ad23d0e4339ccffaaa06e825d08b064a0f40a2eb90ab"
     }
   ]
 }

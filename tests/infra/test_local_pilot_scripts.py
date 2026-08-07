@@ -213,7 +213,7 @@ def test_preflight_references_governed_manifest_schema_and_disabled_manifest_fai
     assert "local_pilot_go must be true" in result.stderr
 
 
-def test_synthetic_runtime_preflight_still_requires_recorded_images() -> None:
+def test_synthetic_runtime_preflight_accepts_recorded_images_without_waiving_go() -> None:
     result = _run_preflight(
         "--manifest",
         str(MANIFEST),
@@ -221,8 +221,8 @@ def test_synthetic_runtime_preflight_still_requires_recorded_images() -> None:
         "--require-runtime-images",
     )
 
-    assert result.returncode == 78
-    assert "image local-runtime local_inspect_digest is required" in result.stderr
+    assert result.returncode == 0
+    assert "passed without enabling any capability" in result.stdout
     assert "declared composition is not runtime verified" not in result.stderr
 
 
@@ -274,7 +274,7 @@ def test_preflight_rejects_null_digest_for_required_image(tmp_path: Path) -> Non
     assert result.returncode != 0
     assert "image mariadb local_inspect_digest is required" in result.stderr
     assert "image mariadb local_repo_digest is required" in result.stderr
-    assert "image local-runtime local_inspect_digest is required" in result.stderr
+    assert "image local-runtime local_inspect_digest is required" not in result.stderr
     assert "image local-runtime local_repo_digest is required" not in result.stderr
 
 

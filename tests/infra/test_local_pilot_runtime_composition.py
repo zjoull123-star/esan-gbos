@@ -57,12 +57,28 @@ def test_runtime_containerfile_is_frozen_nonroot_and_contains_runtime_sources() 
         image = next(item for item in lock["images"] if item["service"] == service)
         assert image["reference"] == reference
         assert image["platform"] == "linux/arm64"
-        assert image["local_inspect_digest"] is None
+        assert re.fullmatch(r"sha256:[0-9a-f]{64}", image["local_inspect_digest"])
+        assert image["local_repo_digest"].endswith(f"@{reference.split('@', 1)[1]}")
     assert "--confirm-network-build" in build
     assert "--platform linux/arm64" in build
     assert "--pull" in build
     assert "--service python-runtime-base" in build
     assert "--service uv-builder" in build
+
+
+def test_runtime_build_installs_pinned_base_images_before_recording_them() -> None:
+    build = _read(SCRIPTS / "build-runtime-image")
+
+    python_pull = 'docker pull --platform linux/arm64 "${PYTHON_BASE_IMAGE}"'
+    uv_pull = 'docker pull --platform linux/arm64 "${UV_IMAGE}"'
+    image_build = "docker build"
+    image_record = '"${SCRIPT_DIR}/record-images"'
+
+    assert python_pull in build
+    assert uv_pull in build
+    assert build.index(python_pull) < build.index(image_build)
+    assert build.index(uv_pull) < build.index(image_build)
+    assert build.index(image_build) < build.index(image_record)
 
 
 def test_one_shot_migration_is_checksum_ordered_repeatable_and_least_privilege() -> None:
@@ -301,7 +317,7 @@ def test_frappe_pwa_uses_local_image_two_migrations_and_explicit_synthetic_boots
     frappe = next(item for item in lock["images"] if item["service"] == "frappe-pwa")
     assert frappe["source"] == "local-build"
     assert frappe["reference"] == "esan-gbos-local-pilot-frappe:2026-08-08"
-    assert frappe["local_inspect_digest"] is None
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", frappe["local_inspect_digest"])
     assert frappe["local_repo_digest"] is None
     assert "scripts/dev/build-custom-image" in build
     assert "--service frappe-pwa" in build
