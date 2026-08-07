@@ -17,15 +17,27 @@ from observer.local_pilot_storage import (
     JobConflict,
     LeaseConflict,
     NonceReplay,
+    NormalizedBatchConflict,
     OutboxConflict,
     PostgresLocalPilotStorage,
+    ProcessingJobMetadata,
 )
-from observer.models import ConnectorKey, TenantScope
+from observer.models import (
+    ConnectorItem,
+    ConnectorKey,
+    EvidenceArtifact,
+    NormalizedObservationInput,
+    Participant,
+    TenantScope,
+)
 
 ROOT = Path(__file__).parents[2]
 MIGRATION = ROOT / "services" / "observer" / "migrations" / "003_local_pilot_runtime.sql"
 INGESTION_MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "004_local_pilot_ingestion.sql"
+)
+NORMALIZED_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "005_local_pilot_normalized_sink.sql"
 )
 MIGRATION_SCRIPT = ROOT / "scripts" / "dev" / "gate3-migrate"
 NOW = datetime(2026, 8, 7, 9, 30, tzinfo=UTC)
@@ -262,7 +274,7 @@ def test_local_pilot_migration_is_metadata_only_instance_scoped_and_rls_forced()
 def test_gate3_migration_runner_discovers_the_additive_local_pilot_migration() -> None:
     script = MIGRATION_SCRIPT.read_text(encoding="utf-8")
 
-    assert "/migrations/observer/00[1-4]_*.sql" in script
+    assert "/migrations/observer/[0-9][0-9][0-9]_*.sql" in script
 
 
 def test_ingestion_migration_is_additive_repeatable_and_preserves_forced_rls() -> None:
@@ -284,6 +296,263 @@ def test_ingestion_migration_is_additive_repeatable_and_preserves_forced_rls() -
     assert "force row level security" in sql
     assert "raw_body" not in sql
     assert "exact_bytes" not in sql
+
+
+def test_normalized_sink_migration_separates_connector_jobs_without_touching_manual_import() -> (
+    None
+):
+    sql = NORMALIZED_MIGRATION.read_text(encoding="utf-8").lower()
+
+    for column in (
+        "processing_job_id",
+        "delivery_id",
+        "team_ref",
+        "party_ref",
+        "normalized_payload_sha256",
+        "retention_until",
+    ):
+        assert f"add column if not exists {column}" in sql
+    assert "connector <> 'manual_import'" in sql
+    assert "job_id is null" in sql
+    assert "processing_job_id is not null" in sql
+    assert "references observer.processing_jobs (site_id, job_id)" in sql
+    assert "references observer.inbound_deliveries" in sql
+    assert "site_id, connector, connector_instance_id, provider_event_id" in sql
+    assert "add column if not exists content_object_ref" in sql
+    assert "old.processing_status = 'failed'" in sql
+    assert "new.processing_status = 'queued'" in sql
+    for table in (
+        "observation_events",
+        "evidence_refs",
+        "context_publication_outbox",
+    ):
+        assert f"alter table observer.{table} force row level security" in sql
+    assert "grant select, insert on" in sql
+    assert "drop table" not in sql
+    assert "delete from observer.manual_import" not in sql
+
+
+def _normalized_item(
+    provider_event_id: str,
+    *,
+    source_ref: str = "obs:v1:site-partition:sha256:" + "a" * 64,
+    role: str = "unknown",
+) -> tuple[ConnectorItem, NormalizedObservationInput]:
+    item = ConnectorItem(
+        provider_event_id=provider_event_id,
+        occurred_at=NOW,
+        source_cursor=f"cursor:{provider_event_id}",
+        payload={"opaque": True},
+    )
+    normalized = NormalizedObservationInput(
+        channel="chat",
+        participants=(
+            Participant(
+                role=role,
+                identity_ref=f"unresolved:delivery:{hashlib.sha256(provider_event_id.encode()).hexdigest()}",
+            ),
+        ),
+        evidence=(
+            EvidenceArtifact(
+                media_type="application/json",
+                locator="delivery",
+                role="source",
+                reference=source_ref,
+            ),
+        ),
+        consent_basis="pilot_deferred_review",
+        data_classification="Restricted",
+        retention_class="R1-operational",
+        original_language="und",
+        correlation_id=f"corr-{provider_event_id}",
+    )
+    return item, normalized
+
+
+def _processing_job() -> ProcessingJobMetadata:
+    return ProcessingJobMetadata(
+        site_id=SCOPE.site_id,
+        job_id="job-001",
+        connector=KEY.connector,
+        connector_instance_id=KEY.instance_id,
+        delivery_id="delivery-001",
+        stage="normalize",
+        status="processing",
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key="delivery:wecom:sales-primary:delivery-001:g0",
+        generation=0,
+        lease_owner="worker-a",
+        lease_expires_at=NOW + timedelta(seconds=30),
+        lease_generation=1,
+        next_retry_at=None,
+        last_error_code=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def test_persist_normalized_batch_uses_one_transaction_and_one_outbox_per_event() -> None:
+    item1, normalized1 = _normalized_item("event-001")
+    item2, normalized2 = _normalized_item("event-002")
+    connection = FakeConnection(
+        [
+            _delivery_row(status="processing"),
+            [(None,), (None,)],
+            [],
+            ("raw-object-001", "obs:v1:site-partition:sha256:" + "a" * 64),
+        ]
+    )
+
+    result = PostgresLocalPilotStorage(connection).persist_normalized_batch(
+        SCOPE,
+        KEY,
+        _processing_job(),
+        (item1, item2),
+        (normalized1, normalized2),
+    )
+
+    assert connection.transactions == 1
+    assert tuple(value.provider_event_id for value in result.observations) == (
+        "event-001",
+        "event-002",
+    )
+    inserts = [sql for sql, _ in connection.executed]
+    assert any("pg_advisory_xact_lock" in sql for sql in inserts)
+    raw_insert = next(sql for sql in inserts if "INSERT INTO observer.raw_objects" in sql)
+    assert "DO NOTHING" in raw_insert
+    assert "DO UPDATE" not in raw_insert
+    assert "retention_until" in raw_insert
+    event_insert = next(sql for sql in inserts if "INSERT INTO observer.observation_events" in sql)
+    assert "retention_until" in event_insert
+    assert sum("INSERT INTO observer.observation_events" in sql for sql in inserts) == 2
+    assert sum("INSERT INTO observer.context_publication_outbox" in sql for sql in inserts) == 2
+    assert all(value.replayed is False for value in result.observations)
+
+
+def test_persist_normalized_batch_replay_returns_original_and_conflict_is_fail_closed() -> None:
+    item, normalized = _normalized_item("event-001")
+    probe = FakeConnection(
+        [
+            _delivery_row(status="processing"),
+            [(None,)],
+            [],
+            ("raw-object-001", "obs:v1:site-partition:sha256:" + "a" * 64),
+        ]
+    )
+    original = (
+        PostgresLocalPilotStorage(probe)
+        .persist_normalized_batch(
+            SCOPE,
+            KEY,
+            _processing_job(),
+            (item,),
+            (normalized,),
+        )
+        .observations[0]
+    )
+
+    replay = FakeConnection(
+        [
+            _delivery_row(status="processing"),
+            [(None,)],
+            [
+                (
+                    item.provider_event_id,
+                    original.event_id,
+                    original.payload_sha256,
+                    original.outbox_id,
+                )
+            ],
+        ]
+    )
+    replayed = PostgresLocalPilotStorage(replay).persist_normalized_batch(
+        SCOPE,
+        KEY,
+        _processing_job(),
+        (item,),
+        (normalized,),
+    )
+    assert replayed.observations[0].event_id == original.event_id
+    assert replayed.observations[0].replayed is True
+    assert not any(
+        "INSERT INTO observer.observation_events" in sql for sql, _params in replay.executed
+    )
+    assert not any(
+        "INSERT INTO observer.context_publication_outbox" in sql for sql, _params in replay.executed
+    )
+
+    conflict = FakeConnection(
+        [
+            _delivery_row(status="processing"),
+            [(None,)],
+            [
+                (
+                    item.provider_event_id,
+                    original.event_id,
+                    "f" * 64,
+                    original.outbox_id,
+                )
+            ],
+        ]
+    )
+    with pytest.raises(NormalizedBatchConflict, match="payload conflict"):
+        PostgresLocalPilotStorage(conflict).persist_normalized_batch(
+            SCOPE,
+            KEY,
+            _processing_job(),
+            (item,),
+            (normalized,),
+        )
+    assert not any(
+        "INSERT INTO observer.observation_events" in sql for sql, _params in conflict.executed
+    )
+
+
+def test_persist_normalized_batch_rejects_inline_content_and_wrong_scope_before_writes() -> None:
+    item, normalized = _normalized_item("event-001")
+    inline = NormalizedObservationInput(
+        channel=normalized.channel,
+        participants=normalized.participants,
+        evidence=(
+            EvidenceArtifact(
+                media_type="text/plain",
+                locator="delivery",
+                role="source",
+                content=b"private body",
+            ),
+        ),
+        consent_basis=normalized.consent_basis,
+        data_classification=normalized.data_classification,
+        retention_class=normalized.retention_class,
+        original_language=normalized.original_language,
+        correlation_id=normalized.correlation_id,
+    )
+    connection = FakeConnection([])
+    repository = PostgresLocalPilotStorage(connection)
+
+    with pytest.raises(ValueError, match="evidence references"):
+        repository.persist_normalized_batch(
+            SCOPE,
+            KEY,
+            _processing_job(),
+            (item,),
+            (inline,),
+        )
+    assert connection.transactions == 0
+    assert b"private body".decode() not in repr((item, inline.evidence[0].reference))
+
+    wrong_job = _processing_job()
+    object.__setattr__(wrong_job, "site_id", "other.example")
+    with pytest.raises(ValueError, match="job scope"):
+        repository.persist_normalized_batch(
+            SCOPE,
+            KEY,
+            wrong_job,
+            (item,),
+            (normalized,),
+        )
+    assert connection.transactions == 0
 
 
 def test_local_pilot_storage_exposes_provider_neutral_repository_contract() -> None:
@@ -849,7 +1118,15 @@ def test_connector_pause_resume_checkpoint_health_and_replay_are_safe() -> None:
     assert "payload" not in flattened
     assert "provider_event_id" not in flattened
 
-    replay_connection = FakeConnection([_job_row(generation=1)])
+    replay_connection = FakeConnection(
+        [
+            (None,),
+            None,
+            ("delivery-001", "a" * 64, "evidence-ref-001", 17),
+            (1,),
+            _job_row(generation=1),
+        ]
+    )
     replayed = PostgresLocalPilotStorage(replay_connection).replay_delivery(
         SCOPE,
         KEY,
@@ -860,9 +1137,46 @@ def test_connector_pause_resume_checkpoint_health_and_replay_are_safe() -> None:
         max_attempts=3,
     )
     assert replayed.generation == 1
-    replay_sql = replay_connection.executed[-1][0]
+    replay_sql = " ".join(sql for sql, _params in replay_connection.executed)
     assert "FOR UPDATE" in replay_sql
+    assert "processing_status = 'queued'" in replay_sql
+    assert "processing_status = 'failed'" in replay_sql
+    assert "received_at >= %s" in replay_sql
+    assert "received_at <= %s" in replay_sql
+    assert "object_ref IS NOT NULL" in replay_sql
+    assert "byte_size IS NOT NULL" in replay_sql
     assert "ON CONFLICT (site_id, idempotency_key)" in replay_sql
+    assert "DO NOTHING" in replay_sql
+    assert "exact_body_sha256 =" not in replay_sql
+    assert "object_ref =" not in replay_sql
+    assert "byte_size =" not in replay_sql
+
+    ineligible = FakeConnection([(None,), None, None])
+    with pytest.raises(DeliveryConflict, match="eligible failed"):
+        PostgresLocalPilotStorage(ineligible).replay_delivery(
+            SCOPE,
+            KEY,
+            delivery_id="delivery-001",
+            job_id="job-replay-old",
+            idempotency_key="replay:ticket-old",
+            now=NOW,
+            max_attempts=3,
+        )
+
+    existing = FakeConnection([(None,), _job_row(generation=1)])
+    same = PostgresLocalPilotStorage(existing).replay_delivery(
+        SCOPE,
+        KEY,
+        delivery_id="delivery-001",
+        job_id="ignored",
+        idempotency_key="replay:ticket-001",
+        now=NOW,
+        max_attempts=3,
+    )
+    assert same.generation == 1
+    assert not any(
+        "UPDATE observer.inbound_deliveries" in sql for sql, _params in existing.executed
+    )
 
 
 def test_link_delivery_events_is_instance_scoped_and_supports_one_batch_many_events() -> None:

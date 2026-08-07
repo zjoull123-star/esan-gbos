@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
 import pytest
+from observer.connectors.whatsapp_cloud import WhatsAppCloudDeliveryAuthenticator
 from observer.evidence_store import ContentAddressedEvidenceStore, SiteIsolationError
 from observer.local_pilot_ingestion import (
     AuthenticatedDeliveryAcceptance,
@@ -14,10 +16,12 @@ from observer.local_pilot_ingestion import (
     DeliveryQuarantine,
     DeliveryWorker,
     DurableDeliveryInbox,
+    compose_whatsapp_authenticated_pilot,
 )
 from observer.local_pilot_storage import (
     AuthenticatedIngressMetadata,
     InboundDeliveryMetadata,
+    NormalizedBatchConflict,
     ProcessingJobMetadata,
 )
 from observer.models import (
@@ -29,6 +33,7 @@ from observer.models import (
     RawDelivery,
     TenantScope,
 )
+from observer.normalizers import NormalizationRejected
 
 NOW = datetime(2026, 8, 7, 9, 30, tzinfo=UTC)
 SCOPE = TenantScope("alpha.example", "observation_processing")
@@ -209,6 +214,52 @@ def test_authenticated_inbox_db_failure_leaves_only_unaccepted_object_orphan(
     assert evidence.read(SCOPE, str(call["object_ref"])) == exact
 
 
+def test_pure_whatsapp_composition_routes_authenticated_inbox_to_worker_job(
+    tmp_path: Path,
+) -> None:
+    exact = b'{"object":"whatsapp_business_account","entry":[]}'
+    secret = "app-secret"
+    signature = (
+        "sha256="
+        + hmac.new(
+            secret.encode(),
+            exact,
+            hashlib.sha256,
+        ).hexdigest()
+    )
+    evidence = ContentAddressedEvidenceStore(tmp_path)
+    storage = InboxStorage()
+    scope = TenantScope("alpha.example", "observation_processing")
+    key = ConnectorKey("whatsapp", "primary")
+
+    composed = compose_whatsapp_authenticated_pilot(
+        scope=scope,
+        key=key,
+        storage=storage,
+        evidence_store=evidence,
+        authenticator=WhatsAppCloudDeliveryAuthenticator(app_secret=secret),
+        decoder=BinaryDecoder(()),
+        normalizer=Normalizer(),
+        sink=Sink(),
+        worker_id="worker-a",
+        clock=lambda: NOW,
+    )
+    received = composed.receiver.receive(
+        exact_body=exact,
+        signature_header=signature,
+        delivery_id="delivery-001",
+        received_at=NOW,
+    )
+
+    assert received.status_code == 200
+    assert received.disposition == "accepted"
+    assert received.work_created is True
+    assert isinstance(composed.worker, DeliveryWorker)
+    assert storage.calls[0]["key"] == key
+    assert storage.calls[0]["scope"] == scope
+    assert storage.calls[0]["job_id"]
+
+
 class WorkerStorage(Protocol):
     claimed: ProcessingJobMetadata
     delivery: InboundDeliveryMetadata
@@ -270,11 +321,21 @@ class BinaryDecoder:
 
 
 class Normalizer:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_on_event: str | None = None) -> None:
         self.items: list[ConnectorItem] = []
+        self.source_refs: list[str] = []
+        self.fail_on_event = fail_on_event
 
-    def normalize(self, item: ConnectorItem) -> NormalizedObservationInput:
+    def normalize(
+        self,
+        item: ConnectorItem,
+        *,
+        source_ref: str,
+    ) -> NormalizedObservationInput:
         self.items.append(item)
+        self.source_refs.append(source_ref)
+        if item.provider_event_id == self.fail_on_event:
+            raise ValueError("invalid normalized item")
         return NormalizedObservationInput(
             channel="chat",
             participants=(Participant("external", "party:opaque"),),
@@ -297,20 +358,23 @@ class Normalizer:
 class Sink:
     def __init__(self) -> None:
         self.normalized: list[NormalizedObservationInput] = []
+        self.batch_calls = 0
 
-    def accept(
+    def accept_batch(
         self,
         scope: TenantScope,
         key: ConnectorKey,
         job: ProcessingJobMetadata,
-        item: ConnectorItem,
-        normalized: NormalizedObservationInput,
+        items: tuple[ConnectorItem, ...],
+        normalized: tuple[NormalizedObservationInput, ...],
     ) -> None:
         assert scope == SCOPE
         assert key == KEY
         assert job.job_id == "job-001"
-        assert item.provider_event_id
-        self.normalized.append(normalized)
+        assert all(item.provider_event_id for item in items)
+        assert len(items) == len(normalized)
+        self.batch_calls += 1
+        self.normalized.extend(normalized)
 
 
 def _items() -> tuple[ConnectorItem, ...]:
@@ -348,8 +412,49 @@ def test_worker_reads_site_scoped_binary_decodes_many_items_and_completes(tmp_pa
     assert result.normalized_count == 2
     assert decoder.received == [exact]
     assert len(normalizer.items) == 2
+    assert normalizer.source_refs == [stored.object_ref, stored.object_ref]
+    assert sink.batch_calls == 1
     assert len(sink.normalized) == 2
     assert storage.completed_event_ids == ("event-001", "event-002")
+
+
+def test_worker_validates_the_whole_normalized_batch_before_sink_accept(
+    tmp_path: Path,
+) -> None:
+    exact = b"binary"
+    evidence = ContentAddressedEvidenceStore(tmp_path)
+    stored = evidence.put(SCOPE, exact, media_type="application/octet-stream")
+    storage = FakeWorkerStorage(
+        claimed=_job(),
+        delivery=_delivery(
+            object_ref=stored.object_ref,
+            size=stored.size,
+            digest=stored.sha256,
+        ),
+    )
+    sink = Sink()
+    normalizer = Normalizer(fail_on_event="event-002")
+    worker = DeliveryWorker(
+        storage=storage,
+        evidence_store=evidence,
+        decoder=BinaryDecoder(_items()),
+        normalizer=normalizer,
+        sink=sink,
+        worker_id="worker-a",
+        clock=lambda: NOW,
+    )
+
+    result = worker.run_once(SCOPE)
+
+    assert result is not None
+    assert result.status == "retry_wait"
+    assert [item.provider_event_id for item in normalizer.items] == [
+        "event-001",
+        "event-002",
+    ]
+    assert sink.batch_calls == 0
+    assert sink.normalized == []
+    assert storage.completed_event_ids == ()
 
 
 def test_worker_checks_scope_hash_and_size_before_decode(tmp_path: Path) -> None:
@@ -428,8 +533,80 @@ def test_worker_quarantines_explicit_decoder_rejection_and_retries_transient_fai
 
 
 class _FailingSink:
-    def accept(self, *_args: object, **_kwargs: object) -> None:
+    def accept_batch(self, *_args: object, **_kwargs: object) -> None:
         raise RuntimeError("transient sink failure")
+
+
+class _ConflictingSink:
+    def accept_batch(self, *_args: object, **_kwargs: object) -> None:
+        raise NormalizedBatchConflict("provider event normalized payload conflict")
+
+
+class _RejectingNormalizer:
+    def normalize(self, *_args: object, **_kwargs: object) -> NormalizedObservationInput:
+        raise NormalizationRejected("wecom.media_pending")
+
+
+def test_worker_quarantines_stable_provider_event_payload_conflict(tmp_path: Path) -> None:
+    exact = b"binary"
+    evidence = ContentAddressedEvidenceStore(tmp_path)
+    stored = evidence.put(SCOPE, exact, media_type="application/octet-stream")
+    storage = FakeWorkerStorage(
+        claimed=_job(),
+        delivery=_delivery(
+            object_ref=stored.object_ref,
+            size=stored.size,
+            digest=stored.sha256,
+        ),
+    )
+    worker = DeliveryWorker(
+        storage=storage,
+        evidence_store=evidence,
+        decoder=BinaryDecoder(_items()),
+        normalizer=Normalizer(),
+        sink=_ConflictingSink(),
+        worker_id="worker-a",
+        clock=lambda: NOW,
+    )
+
+    result = worker.run_once(SCOPE)
+
+    assert result is not None
+    assert result.status == "quarantined"
+    assert storage.quarantines == ["normalized_payload_conflict"]
+    assert storage.retries == []
+
+
+def test_worker_quarantines_stable_fail_closed_normalizer_rejection(
+    tmp_path: Path,
+) -> None:
+    exact = b"binary"
+    evidence = ContentAddressedEvidenceStore(tmp_path)
+    stored = evidence.put(SCOPE, exact, media_type="application/octet-stream")
+    storage = FakeWorkerStorage(
+        claimed=_job(),
+        delivery=_delivery(
+            object_ref=stored.object_ref,
+            size=stored.size,
+            digest=stored.sha256,
+        ),
+    )
+    worker = DeliveryWorker(
+        storage=storage,
+        evidence_store=evidence,
+        decoder=BinaryDecoder(_items()),
+        normalizer=_RejectingNormalizer(),
+        sink=Sink(),
+        worker_id="worker-a",
+        clock=lambda: NOW,
+    )
+
+    result = worker.run_once(SCOPE)
+
+    assert result is not None
+    assert result.status == "quarantined"
+    assert storage.quarantines == ["wecom.media_pending"]
+    assert storage.retries == []
 
 
 def test_worker_rejects_wrong_site_or_instance_metadata(tmp_path: Path) -> None:

@@ -27,16 +27,21 @@ from services.observer.observer.local_pilot_storage import (
     DeliveryConflict,
     IngressExpired,
     NonceReplay,
+    NormalizedBatchConflict,
     PostgresLocalPilotStorage,
+    ProcessingJobMetadata,
 )
 from services.observer.observer.models import (
     ByteLocator,
     CanonicalObservation,
+    ConnectorItem,
     ConnectorKey,
+    EvidenceArtifact,
     EvidenceRecord,
     ImportResult,
     ManualImportManifest,
     ManualImportMember,
+    NormalizedObservationInput,
     Participant,
     RawDelivery,
 )
@@ -109,7 +114,7 @@ def _container_sql(
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 4
+    assert _migration_ledger_count() == 6
     result = _container_sql(
         """
         SELECT count(*)
@@ -148,6 +153,8 @@ def _migration_ledger_count() -> int:
             'observer/001_gate3_observer.sql',
             'observer/002_gate3_observer_runtime.sql',
             'observer/003_local_pilot_runtime.sql',
+            'observer/004_local_pilot_ingestion.sql',
+            'observer/005_local_pilot_normalized_sink.sql',
             'context/001_gate3_context.sql'
         )
         """
@@ -990,6 +997,525 @@ def _authenticated_ingress_counts(
         row = cursor.fetchone()
         assert row is not None
         return int(row[0]), int(row[1]), int(row[2])
+
+
+def _normalized_input(
+    *,
+    provider_event_id: str,
+    source_ref: str,
+    correlation_suffix: str = "",
+) -> tuple[ConnectorItem, NormalizedObservationInput]:
+    item = ConnectorItem(
+        provider_event_id=provider_event_id,
+        occurred_at=datetime(2026, 8, 7, 9, 30, tzinfo=UTC),
+        source_cursor=f"cursor:{provider_event_id}",
+        payload={"opaque": True},
+    )
+    normalized = NormalizedObservationInput(
+        channel="chat",
+        participants=(
+            Participant(
+                role="unknown",
+                identity_ref=(
+                    "unresolved:delivery:" + hashlib.sha256(provider_event_id.encode()).hexdigest()
+                ),
+            ),
+        ),
+        evidence=(
+            EvidenceArtifact(
+                media_type="application/json",
+                locator="delivery",
+                role="source",
+                reference=source_ref,
+            ),
+        ),
+        consent_basis="pilot_deferred_review",
+        data_classification="Restricted",
+        retention_class="R1-operational",
+        original_language="und",
+        correlation_id=f"corr-{provider_event_id}{correlation_suffix}",
+    )
+    return item, normalized
+
+
+def _claim_normalized_job(
+    *,
+    repository: PostgresLocalPilotStorage,
+    evidence_store: ContentAddressedEvidenceStore,
+    scope: ObserverTenantScope,
+    key: ConnectorKey,
+    suffix: str,
+    now: datetime,
+) -> tuple[ProcessingJobMetadata, str]:
+    repository.register_connector_instance(
+        scope,
+        key,
+        now=now,
+        replay_window_seconds=60,
+    )
+    accepted = DurableDeliveryInbox(
+        storage=repository,
+        evidence_store=evidence_store,
+    ).accept(
+        scope,
+        key,
+        RawDelivery(
+            delivery_id=f"delivery-{suffix}",
+            exact_bytes=f'{{"fixture":"{suffix}"}}'.encode(),
+            media_type="application/json",
+            received_at=now,
+        ),
+        correlation_id=f"corr-{suffix}",
+    )
+    claimed = repository.claim_processing_job(
+        scope,
+        worker_id=f"worker-{suffix}",
+        now=now + timedelta(seconds=1),
+        lease_seconds=60,
+    )
+    assert claimed is not None
+    assert claimed.job_id == accepted.job.job_id
+    return claimed, accepted.delivery.object_ref
+
+
+def test_normalized_batch_is_atomic_replay_safe_and_site_instance_isolated(
+    tmp_path: Path,
+) -> None:
+    if not all((CONTEXT_HOST, CONTEXT_PORT, CONTEXT_DATABASE, CONTEXT_PASSWORD)):
+        pytest.fail("Gate 3 Observer app-role connection components are required")
+    connection = connect_postgres_components(
+        host=str(CONTEXT_HOST),
+        port=int(str(CONTEXT_PORT)),
+        database=str(CONTEXT_DATABASE),
+        user="gbos_observer_app",
+        password=str(CONTEXT_PASSWORD),
+    )
+    try:
+        suffix = uuid.uuid4().hex[:12]
+        now = datetime.now(UTC)
+        scope = ObserverTenantScope(
+            f"normalized-{suffix}",
+            "observation_processing",
+        )
+        other_scope = ObserverTenantScope(
+            f"normalized-other-{suffix}",
+            "observation_processing",
+        )
+        key = ConnectorKey("wecom", f"primary-{suffix}")
+        other_key = ConnectorKey("wecom", f"secondary-{suffix}")
+        repository = PostgresLocalPilotStorage(connection)
+        evidence_store = ContentAddressedEvidenceStore(tmp_path / "objects")
+        job, source_ref = _claim_normalized_job(
+            repository=repository,
+            evidence_store=evidence_store,
+            scope=scope,
+            key=key,
+            suffix=f"base-{suffix}",
+            now=now,
+        )
+        first_item, first_normalized = _normalized_input(
+            provider_event_id=f"provider-{suffix}",
+            source_ref=source_ref,
+        )
+        second_item, second_normalized = _normalized_input(
+            provider_event_id=f"provider-second-{suffix}",
+            source_ref=source_ref,
+        )
+
+        first = repository.persist_normalized_batch(
+            scope,
+            key,
+            job,
+            (first_item,),
+            (first_normalized,),
+        )
+        cross_batch = repository.persist_normalized_batch(
+            scope,
+            key,
+            job,
+            (first_item, second_item),
+            (first_normalized, second_normalized),
+        )
+        assert first.observations[0].replayed is False
+        assert cross_batch.observations[0].replayed is True
+        assert cross_batch.observations[1].replayed is False
+
+        rollback_item, rollback_normalized = _normalized_input(
+            provider_event_id=f"provider-rollback-{suffix}",
+            source_ref=source_ref,
+        )
+        _, conflicting_normalized = _normalized_input(
+            provider_event_id=first_item.provider_event_id,
+            source_ref=source_ref,
+            correlation_suffix="-different",
+        )
+        with pytest.raises(NormalizedBatchConflict, match="payload conflict"):
+            repository.persist_normalized_batch(
+                scope,
+                key,
+                job,
+                (rollback_item, first_item),
+                (rollback_normalized, conflicting_normalized),
+            )
+        assert _normalized_counts(
+            connection,
+            scope,
+            key,
+            (rollback_item.provider_event_id,),
+        ) == (0, 0, 0)
+
+        retried = repository.retry_processing_job(
+            scope,
+            job_id=job.job_id,
+            worker_id=str(job.lease_owner),
+            expected_attempt=job.attempt_count,
+            expected_lease_generation=job.lease_generation,
+            now=now + timedelta(seconds=2),
+            next_retry_at=now + timedelta(seconds=3),
+            error_code="synthetic_crash",
+        )
+        assert retried.status == "retry_wait"
+        reclaimed = repository.claim_processing_job(
+            scope,
+            worker_id=f"worker-retry-{suffix}",
+            now=now + timedelta(seconds=4),
+            lease_seconds=60,
+        )
+        assert reclaimed is not None
+        replay_after_crash = repository.persist_normalized_batch(
+            scope,
+            key,
+            reclaimed,
+            (first_item, second_item),
+            (first_normalized, second_normalized),
+        )
+        assert all(value.replayed for value in replay_after_crash.observations)
+        repository.complete_processing_job(
+            scope,
+            job_id=reclaimed.job_id,
+            worker_id=str(reclaimed.lease_owner),
+            expected_attempt=reclaimed.attempt_count,
+            expected_lease_generation=reclaimed.lease_generation,
+            now=now + timedelta(seconds=5),
+            provider_event_ids=(
+                first_item.provider_event_id,
+                second_item.provider_event_id,
+            ),
+        )
+        assert _normalized_counts(
+            connection,
+            scope,
+            key,
+            (
+                first_item.provider_event_id,
+                second_item.provider_event_id,
+            ),
+        ) == (2, 2, 2)
+        assert _normalized_retention_is_30_days(connection, scope, key)
+
+        for isolated_scope, isolated_key, label in (
+            (scope, other_key, "instance"),
+            (other_scope, key, "site"),
+        ):
+            isolated_job, isolated_ref = _claim_normalized_job(
+                repository=repository,
+                evidence_store=evidence_store,
+                scope=isolated_scope,
+                key=isolated_key,
+                suffix=f"{label}-{suffix}",
+                now=now + timedelta(seconds=10),
+            )
+            isolated_item, isolated_normalized = _normalized_input(
+                provider_event_id=first_item.provider_event_id,
+                source_ref=isolated_ref,
+            )
+            isolated_result = repository.persist_normalized_batch(
+                isolated_scope,
+                isolated_key,
+                isolated_job,
+                (isolated_item,),
+                (isolated_normalized,),
+            )
+            assert isolated_result.observations[0].replayed is False
+            assert _normalized_counts(
+                connection,
+                isolated_scope,
+                isolated_key,
+                (isolated_item.provider_event_id,),
+            ) == (1, 1, 1)
+    finally:
+        connection.close()
+
+
+def _normalized_counts(
+    connection: object,
+    scope: ObserverTenantScope,
+    key: ConnectorKey,
+    provider_event_ids: tuple[str, ...],
+) -> tuple[int, int, int]:
+    with connection.transaction(), connection.cursor() as cursor:  # type: ignore[attr-defined]
+        cursor.execute(
+            "SELECT set_config('app.site_id', %s, true)",
+            (scope.site_id,),
+        )
+        cursor.execute(
+            """
+            SELECT
+                count(*),
+                count(outbox.outbox_id),
+                count(*) FILTER (
+                    WHERE event.team_ref IS NULL AND event.party_ref IS NULL
+                )
+            FROM observer.observation_events AS event
+            LEFT JOIN observer.context_publication_outbox AS outbox
+              ON outbox.site_id = event.site_id
+             AND outbox.observation_event_id = event.event_id
+            WHERE event.site_id = %s
+              AND event.connector = %s
+              AND event.connector_instance_id = %s
+              AND event.provider_event_id = ANY(%s::text[])
+            """,
+            (
+                scope.site_id,
+                key.connector,
+                key.instance_id,
+                list(provider_event_ids),
+            ),
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        return int(row[0]), int(row[1]), int(row[2])
+
+
+def _normalized_retention_is_30_days(
+    connection: object,
+    scope: ObserverTenantScope,
+    key: ConnectorKey,
+) -> bool:
+    with connection.transaction(), connection.cursor() as cursor:  # type: ignore[attr-defined]
+        cursor.execute(
+            "SELECT set_config('app.site_id', %s, true)",
+            (scope.site_id,),
+        )
+        cursor.execute(
+            """
+            SELECT bool_and(
+                event.retention_class = 'R1-operational'
+                AND event.retention_until = event.ingested_at + interval '30 days'
+                AND raw.retention_class = 'R1-operational'
+                AND raw.retention_until = raw.created_at + interval '30 days'
+            )
+            FROM observer.observation_events AS event
+            JOIN observer.raw_objects AS raw
+              ON raw.site_id = event.site_id
+             AND raw.object_id = event.raw_object_id
+            WHERE event.site_id = %s
+              AND event.connector = %s
+              AND event.connector_instance_id = %s
+            """,
+            (scope.site_id, key.connector, key.instance_id),
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        return row[0] is True
+
+
+def test_failed_delivery_replay_is_bounded_cas_and_preserves_evidence(
+    tmp_path: Path,
+) -> None:
+    if not all((CONTEXT_HOST, CONTEXT_PORT, CONTEXT_DATABASE, CONTEXT_PASSWORD)):
+        pytest.fail("Gate 3 Observer app-role connection components are required")
+    connection = connect_postgres_components(
+        host=str(CONTEXT_HOST),
+        port=int(str(CONTEXT_PORT)),
+        database=str(CONTEXT_DATABASE),
+        user="gbos_observer_app",
+        password=str(CONTEXT_PASSWORD),
+    )
+    try:
+        suffix = uuid.uuid4().hex[:12]
+        now = datetime.now(UTC)
+        scope = ObserverTenantScope(
+            f"replay-cas-{suffix}",
+            "observation_processing",
+        )
+        key = ConnectorKey("wecom", f"primary-{suffix}")
+        wrong_key = ConnectorKey("wecom", f"other-{suffix}")
+        repository = PostgresLocalPilotStorage(connection)
+        evidence_store = ContentAddressedEvidenceStore(tmp_path / "objects")
+        repository.register_connector_instance(scope, key, now=now)
+        repository.register_connector_instance(scope, wrong_key, now=now)
+        accepted = DurableDeliveryInbox(
+            storage=repository,
+            evidence_store=evidence_store,
+        ).accept(
+            scope,
+            key,
+            RawDelivery(
+                f"delivery-{suffix}",
+                b'{"failed":"fixture"}',
+                "application/json",
+                now,
+            ),
+            correlation_id=f"corr-{suffix}",
+            max_attempts=1,
+        )
+        claimed = repository.claim_processing_job(
+            scope,
+            worker_id=f"worker-{suffix}",
+            now=now + timedelta(seconds=1),
+            lease_seconds=60,
+        )
+        assert claimed is not None
+        repository.retry_processing_job(
+            scope,
+            job_id=claimed.job_id,
+            worker_id=str(claimed.lease_owner),
+            expected_attempt=claimed.attempt_count,
+            expected_lease_generation=claimed.lease_generation,
+            now=now + timedelta(seconds=2),
+            next_retry_at=now + timedelta(seconds=3),
+            error_code="synthetic_terminal_failure",
+        )
+        failed = repository.get_inbound_delivery(
+            scope,
+            key,
+            delivery_id=accepted.delivery.delivery_id,
+        )
+        assert failed.processing_status == "failed"
+        evidence_metadata = (
+            failed.exact_body_sha256,
+            failed.object_ref,
+            failed.byte_size,
+            failed.media_type,
+            failed.received_at,
+        )
+
+        replayed = repository.replay_delivery(
+            scope,
+            key,
+            delivery_id=failed.delivery_id,
+            job_id=f"replay-{suffix}",
+            idempotency_key=f"replay:ticket-{suffix}",
+            now=now + timedelta(seconds=3),
+            max_attempts=2,
+        )
+        same_replay = repository.replay_delivery(
+            scope,
+            key,
+            delivery_id=failed.delivery_id,
+            job_id=f"ignored-{suffix}",
+            idempotency_key=f"replay:ticket-{suffix}",
+            now=now + timedelta(seconds=4),
+            max_attempts=2,
+        )
+        assert same_replay == replayed
+        queued = repository.get_inbound_delivery(
+            scope,
+            key,
+            delivery_id=failed.delivery_id,
+        )
+        assert queued.processing_status == "queued"
+        assert (
+            queued.exact_body_sha256,
+            queued.object_ref,
+            queued.byte_size,
+            queued.media_type,
+            queued.received_at,
+        ) == evidence_metadata
+        with pytest.raises(DeliveryConflict, match="eligible failed"):
+            repository.replay_delivery(
+                scope,
+                wrong_key,
+                delivery_id=failed.delivery_id,
+                job_id=f"wrong-instance-{suffix}",
+                idempotency_key=f"replay:wrong-instance-{suffix}",
+                now=now + timedelta(seconds=4),
+                max_attempts=2,
+            )
+
+        reclaimed = repository.claim_processing_job(
+            scope,
+            worker_id=f"replay-worker-{suffix}",
+            now=now + timedelta(seconds=5),
+            lease_seconds=60,
+        )
+        assert reclaimed is not None
+        assert reclaimed.job_id == replayed.job_id
+        repository.complete_processing_job(
+            scope,
+            job_id=reclaimed.job_id,
+            worker_id=str(reclaimed.lease_owner),
+            expected_attempt=reclaimed.attempt_count,
+            expected_lease_generation=reclaimed.lease_generation,
+            now=now + timedelta(seconds=6),
+            provider_event_ids=(),
+        )
+        succeeded = repository.get_inbound_delivery(
+            scope,
+            key,
+            delivery_id=failed.delivery_id,
+        )
+        assert succeeded.processing_status == "succeeded"
+        assert (
+            succeeded.exact_body_sha256,
+            succeeded.object_ref,
+            succeeded.byte_size,
+            succeeded.media_type,
+            succeeded.received_at,
+        ) == evidence_metadata
+
+        old_scope = ObserverTenantScope(
+            f"replay-old-{suffix}",
+            "observation_processing",
+        )
+        old_key = ConnectorKey("wecom", f"old-{suffix}")
+        old_now = now - timedelta(days=31)
+        repository.register_connector_instance(old_scope, old_key, now=old_now)
+        old_accepted = DurableDeliveryInbox(
+            storage=repository,
+            evidence_store=evidence_store,
+        ).accept(
+            old_scope,
+            old_key,
+            RawDelivery(
+                f"old-delivery-{suffix}",
+                b'{"old":"fixture"}',
+                "application/json",
+                old_now,
+            ),
+            correlation_id=f"old-corr-{suffix}",
+            max_attempts=1,
+        )
+        old_claimed = repository.claim_processing_job(
+            old_scope,
+            worker_id=f"old-worker-{suffix}",
+            now=old_now + timedelta(seconds=1),
+            lease_seconds=60,
+        )
+        assert old_claimed is not None
+        repository.retry_processing_job(
+            old_scope,
+            job_id=old_claimed.job_id,
+            worker_id=str(old_claimed.lease_owner),
+            expected_attempt=old_claimed.attempt_count,
+            expected_lease_generation=old_claimed.lease_generation,
+            now=old_now + timedelta(seconds=2),
+            next_retry_at=old_now + timedelta(seconds=3),
+            error_code="synthetic_terminal_failure",
+        )
+        with pytest.raises(DeliveryConflict, match="eligible failed"):
+            repository.replay_delivery(
+                old_scope,
+                old_key,
+                delivery_id=old_accepted.delivery.delivery_id,
+                job_id=f"old-replay-{suffix}",
+                idempotency_key=f"replay:old-{suffix}",
+                now=now,
+                max_attempts=2,
+            )
+    finally:
+        connection.close()
 
 
 def test_gate3_backup_restore_smoke() -> None:

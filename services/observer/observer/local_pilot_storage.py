@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from .models import ConnectorKey, TenantScope, _require_aware
+from .connectors.serialization import canonical_observation_event_v11
+from .models import (
+    ConnectorItem,
+    ConnectorKey,
+    NormalizedObservationInput,
+    TenantScope,
+    _require_aware,
+    stable_ulid,
+)
 from .storage import Connection, Cursor
 
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
@@ -62,6 +71,10 @@ class OutboxConflict(ValueError):
 
 class JobConflict(ValueError):
     """A processing job idempotency, lease, or state transition was rejected."""
+
+
+class NormalizedBatchConflict(ValueError):
+    """A provider event identifier was reused for a different normalized payload."""
 
 
 class IngressExpired(ValueError):
@@ -188,6 +201,32 @@ class ConnectorHealthMetadata:
     pending_outbox: int
 
 
+@dataclass(frozen=True, slots=True)
+class PersistedNormalizedObservation:
+    provider_event_id: str
+    event_id: str
+    outbox_id: str
+    payload_sha256: str
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedNormalizedBatch:
+    observations: tuple[PersistedNormalizedObservation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _NormalizedCandidate:
+    provider_event_id: str
+    event_id: str
+    outbox_id: str
+    payload_sha256: str
+    evidence_ids: tuple[str, ...]
+    document: str
+    item: ConnectorItem
+    normalized: NormalizedObservationInput
+
+
 class LocalPilotStorage(Protocol):
     """Provider-neutral durable storage boundary for local connector pilots."""
 
@@ -301,6 +340,15 @@ class LocalPilotStorage(Protocol):
         now: datetime,
         provider_event_ids: tuple[str, ...],
     ) -> ProcessingJobMetadata: ...
+
+    def persist_normalized_batch(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        job: ProcessingJobMetadata,
+        items: tuple[ConnectorItem, ...],
+        normalized: tuple[NormalizedObservationInput, ...],
+    ) -> PersistedNormalizedBatch: ...
 
     def retry_processing_job(
         self,
@@ -835,6 +883,336 @@ class PostgresLocalPilotStorage:
                 raise DeliveryConflict("delivery not found in connector scope")
             return _delivery_from_row(row)
 
+    def persist_normalized_batch(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        job: ProcessingJobMetadata,
+        items: tuple[ConnectorItem, ...],
+        normalized: tuple[NormalizedObservationInput, ...],
+    ) -> PersistedNormalizedBatch:
+        _validate_normalized_batch(scope, key, job, items, normalized)
+        candidates = tuple(
+            _normalized_candidate(
+                scope=scope,
+                key=key,
+                job=job,
+                item=item,
+                normalized=value,
+            )
+            for item, value in zip(items, normalized, strict=True)
+        )
+        if not candidates:
+            return PersistedNormalizedBatch(observations=())
+
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                f"""
+                SELECT {_qualified_columns(_DELIVERY_COLUMNS, "delivery")}
+                FROM observer.processing_jobs AS job
+                JOIN observer.inbound_deliveries AS delivery
+                  ON delivery.site_id = job.site_id
+                 AND delivery.connector = job.connector
+                 AND delivery.connector_instance_id = job.connector_instance_id
+                 AND delivery.delivery_id = job.delivery_id
+                WHERE job.site_id = %s
+                  AND job.job_id = %s
+                  AND job.connector = %s
+                  AND job.connector_instance_id = %s
+                  AND job.delivery_id = %s
+                  AND job.status = 'processing'
+                  AND job.lease_owner = %s
+                  AND job.attempt_count = %s
+                  AND job.lease_generation = %s
+                FOR UPDATE OF job, delivery
+                """,
+                (
+                    scope.site_id,
+                    job.job_id,
+                    key.connector,
+                    key.instance_id,
+                    job.delivery_id,
+                    job.lease_owner,
+                    job.attempt_count,
+                    job.lease_generation,
+                ),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise JobConflict("normalized batch processing job lease is stale")
+            delivery = _delivery_from_row(row)
+            if delivery.processing_status != "processing":
+                raise JobConflict("normalized batch delivery is not processing")
+            for value in normalized:
+                if all(artifact.reference != delivery.object_ref for artifact in value.evidence):
+                    raise NormalizedBatchConflict(
+                        "normalized payload omits the durable delivery evidence reference"
+                    )
+
+            provider_event_ids = tuple(item.provider_event_id for item in items)
+            normalized_lock_keys = [
+                hashlib.sha256(
+                    "\x1f".join(
+                        (
+                            scope.site_id,
+                            key.connector,
+                            key.instance_id,
+                            provider_event_id,
+                        )
+                    ).encode()
+                ).hexdigest()
+                for provider_event_id in provider_event_ids
+            ]
+            cursor.execute(
+                """
+                SELECT pg_advisory_xact_lock(hashtextextended(lock_key, 0))
+                FROM UNNEST(%s::text[]) AS lock_key
+                ORDER BY lock_key
+                """,
+                (normalized_lock_keys,),
+            )
+            cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT
+                    event.provider_event_id,
+                    event.event_id,
+                    event.normalized_payload_sha256,
+                    outbox.outbox_id
+                FROM observer.observation_events AS event
+                LEFT JOIN observer.context_publication_outbox AS outbox
+                  ON outbox.site_id = event.site_id
+                 AND outbox.observation_event_id = event.event_id
+                WHERE event.site_id = %s
+                  AND event.connector = %s
+                  AND event.connector_instance_id = %s
+                  AND event.provider_event_id = ANY(%s::text[])
+                ORDER BY event.provider_event_id
+                """,
+                (
+                    scope.site_id,
+                    key.connector,
+                    key.instance_id,
+                    list(provider_event_ids),
+                ),
+            )
+            existing = {str(existing_row[0]): existing_row for existing_row in cursor.fetchall()}
+            replayed: dict[str, PersistedNormalizedObservation] = {}
+            for candidate in candidates:
+                existing_row = existing.get(candidate.provider_event_id)
+                if existing_row is None:
+                    continue
+                if (
+                    str(existing_row[1]) != candidate.event_id
+                    or str(existing_row[2]) != candidate.payload_sha256
+                    or str(existing_row[3]) != candidate.outbox_id
+                ):
+                    raise NormalizedBatchConflict("provider event normalized payload conflict")
+                replayed[candidate.provider_event_id] = PersistedNormalizedObservation(
+                    provider_event_id=candidate.provider_event_id,
+                    event_id=candidate.event_id,
+                    outbox_id=candidate.outbox_id,
+                    payload_sha256=candidate.payload_sha256,
+                    replayed=True,
+                )
+
+            new_candidates = tuple(
+                candidate for candidate in candidates if candidate.provider_event_id not in replayed
+            )
+            raw_object_id: str | None = None
+            retention_until = job.created_at + timedelta(days=30)
+            if new_candidates:
+                raw_object_id = stable_ulid(
+                    "normalized-raw-object",
+                    scope.site_id,
+                    delivery.exact_body_sha256,
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO observer.raw_objects (
+                        site_id, object_id, object_ref, sha256, media_type,
+                        byte_size, retention_class, retention_until, created_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s,
+                        'R1-operational', %s, %s
+                    )
+                    ON CONFLICT (site_id, sha256)
+                    DO NOTHING
+                    RETURNING object_id, object_ref
+                    """,
+                    (
+                        scope.site_id,
+                        raw_object_id,
+                        delivery.object_ref,
+                        delivery.exact_body_sha256,
+                        delivery.media_type,
+                        delivery.byte_size,
+                        retention_until,
+                        job.created_at,
+                    ),
+                )
+                object_row = cursor.fetchone()
+                if object_row is None:
+                    cursor.execute(
+                        """
+                        SELECT object_id, object_ref
+                        FROM observer.raw_objects
+                        WHERE site_id = %s AND sha256 = %s
+                        """,
+                        (scope.site_id, delivery.exact_body_sha256),
+                    )
+                    object_row = cursor.fetchone()
+                if object_row is None:
+                    raise RuntimeError("normalized source object is missing")
+                raw_object_id = str(object_row[0])
+                if str(object_row[1]) != delivery.object_ref:
+                    raise NormalizedBatchConflict(
+                        "source object digest conflicts with another object reference"
+                    )
+
+            persisted = dict(replayed)
+            for candidate in new_candidates:
+                assert raw_object_id is not None
+                cursor.execute(
+                    """
+                    INSERT INTO observer.observation_events (
+                        site_id, event_id, job_id, processing_job_id,
+                        raw_object_id, delivery_id, provider_event_id,
+                        connector, connector_instance_id, channel,
+                        processing_purpose, consent_basis, data_classification,
+                        retention_class, retention_until, correlation_id,
+                        occurred_at, ingested_at, document, raw_sha256,
+                        occurred_minute, team_ref, party_ref,
+                        normalized_payload_sha256
+                    ) VALUES (
+                        %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
+                        date_trunc('minute', %s::timestamptz), NULL, NULL, %s
+                    )
+                    """,
+                    (
+                        scope.site_id,
+                        candidate.event_id,
+                        job.job_id,
+                        raw_object_id,
+                        job.delivery_id,
+                        candidate.provider_event_id,
+                        key.connector,
+                        key.instance_id,
+                        candidate.normalized.channel,
+                        scope.processing_purpose,
+                        candidate.normalized.consent_basis,
+                        candidate.normalized.data_classification,
+                        candidate.normalized.retention_class,
+                        retention_until,
+                        candidate.normalized.correlation_id,
+                        candidate.item.occurred_at,
+                        job.created_at,
+                        candidate.document,
+                        delivery.exact_body_sha256,
+                        candidate.item.occurred_at,
+                        candidate.payload_sha256,
+                    ),
+                )
+                for index, participant in enumerate(candidate.normalized.participants):
+                    participant_id = stable_ulid(
+                        "normalized-participant",
+                        scope.site_id,
+                        candidate.event_id,
+                        str(index),
+                        participant.identity_ref,
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO observer.participants (
+                            site_id, event_id, participant_id, role,
+                            identity_ref, display_name
+                        ) VALUES (%s, %s, %s, %s, %s, NULL)
+                        """,
+                        (
+                            scope.site_id,
+                            candidate.event_id,
+                            participant_id,
+                            participant.role,
+                            participant.identity_ref,
+                        ),
+                    )
+                for index, artifact in enumerate(candidate.normalized.evidence):
+                    evidence_id = candidate.evidence_ids[index]
+                    cursor.execute(
+                        """
+                        INSERT INTO observer.evidence_refs (
+                            site_id, evidence_id, event_id, raw_object_id,
+                            raw_sha256, media_type, locator, created_at,
+                            content_object_ref
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                        """,
+                        (
+                            scope.site_id,
+                            evidence_id,
+                            candidate.event_id,
+                            raw_object_id,
+                            delivery.exact_body_sha256,
+                            artifact.media_type,
+                            json.dumps(
+                                {
+                                    "locator": artifact.locator,
+                                    "role": artifact.role,
+                                },
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            job.created_at,
+                            artifact.reference,
+                        ),
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO observer.event_evidence (
+                            site_id, event_id, evidence_id, evidence_ordinal
+                        ) VALUES (%s, %s, %s, %s)
+                        """,
+                        (
+                            scope.site_id,
+                            candidate.event_id,
+                            evidence_id,
+                            index,
+                        ),
+                    )
+                cursor.execute(
+                    """
+                    INSERT INTO observer.context_publication_outbox (
+                        site_id, outbox_id, observation_event_id,
+                        idempotency_key, payload_digest, status, attempt_count,
+                        max_attempts, next_retry_at, created_at, updated_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, 'queued', 0, %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        scope.site_id,
+                        candidate.outbox_id,
+                        candidate.event_id,
+                        f"context-normalized:{candidate.event_id}",
+                        candidate.payload_sha256,
+                        job.max_attempts,
+                        job.created_at,
+                        job.created_at,
+                        job.created_at,
+                    ),
+                )
+                persisted[candidate.provider_event_id] = PersistedNormalizedObservation(
+                    provider_event_id=candidate.provider_event_id,
+                    event_id=candidate.event_id,
+                    outbox_id=candidate.outbox_id,
+                    payload_sha256=candidate.payload_sha256,
+                    replayed=False,
+                )
+            return PersistedNormalizedBatch(
+                observations=tuple(persisted[item.provider_event_id] for item in items)
+            )
+
     def claim_processing_job(
         self,
         scope: TenantScope,
@@ -1038,7 +1416,7 @@ class PostgresLocalPilotStorage:
                     """,
                     (
                         now,
-                        provider_event_ids,
+                        list(provider_event_ids),
                         scope.site_id,
                         job_id,
                         worker_id,
@@ -1282,81 +1660,110 @@ class PostgresLocalPilotStorage:
         _require_identifier(idempotency_key, "idempotency_key")
         _require_aware(now, "now")
         _require_attempts(max_attempts)
+        oldest_eligible_at = now - timedelta(days=30)
         with self._connection.transaction(), self._connection.cursor() as cursor:
             self._set_site(cursor, scope)
+            replay_lock_key = hashlib.sha256(
+                "\x1f".join(
+                    (
+                        scope.site_id,
+                        key.connector,
+                        key.instance_id,
+                        idempotency_key,
+                    )
+                ).encode()
+            ).hexdigest()
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (replay_lock_key,),
+            )
+            cursor.fetchone()
             cursor.execute(
                 f"""
-                WITH locked_delivery AS (
-                    SELECT delivery_id
-                    FROM observer.inbound_deliveries
-                    WHERE site_id = %s
-                      AND connector = %s
-                      AND connector_instance_id = %s
-                      AND delivery_id = %s
-                      AND object_ref IS NOT NULL
-                      AND byte_size IS NOT NULL
-                    FOR UPDATE
+                SELECT {_JOB_COLUMNS}
+                FROM observer.processing_jobs
+                WHERE site_id = %s AND idempotency_key = %s
+                FOR UPDATE
+                """,
+                (
+                    scope.site_id,
+                    idempotency_key,
                 ),
-                next_generation AS (
-                    SELECT COALESCE(MAX(job.generation), -1) + 1 AS generation
-                    FROM observer.processing_jobs AS job
-                    JOIN locked_delivery
-                      ON locked_delivery.delivery_id = job.delivery_id
-                    WHERE job.site_id = %s
-                      AND job.connector = %s
-                      AND job.connector_instance_id = %s
+            )
+            row = cursor.fetchone()
+            if row is not None:
+                metadata = _job_from_row(row)
+                if (
+                    metadata.delivery_id != delivery_id
+                    or metadata.connector != key.connector
+                    or metadata.connector_instance_id != key.instance_id
+                ):
+                    raise JobConflict("replay idempotency key conflicts with another delivery")
+                return metadata
+
+            cursor.execute(
+                """
+                UPDATE observer.inbound_deliveries
+                SET processing_status = 'queued',
+                    last_error_code = NULL,
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND connector = %s
+                  AND connector_instance_id = %s
+                  AND delivery_id = %s
+                  AND processing_status = 'failed'
+                  AND received_at >= %s
+                  AND received_at <= %s
+                  AND object_ref IS NOT NULL
+                  AND byte_size IS NOT NULL
+                RETURNING
+                    delivery_id, exact_body_sha256, object_ref, byte_size
+                """,
+                (
+                    now,
+                    scope.site_id,
+                    key.connector,
+                    key.instance_id,
+                    delivery_id,
+                    oldest_eligible_at,
+                    now,
                 ),
-                inserted AS (
-                    INSERT INTO observer.processing_jobs (
-                        site_id, job_id, connector, connector_instance_id,
-                        delivery_id, stage, status, attempt_count, max_attempts,
-                        idempotency_key, generation, lease_generation,
-                        created_at, updated_at
-                    )
-                    SELECT
-                        %s, %s, %s, %s, locked_delivery.delivery_id,
-                        'normalize', 'queued', 0, %s, %s,
-                        next_generation.generation, 0, %s, %s
-                    FROM locked_delivery
-                    CROSS JOIN next_generation
-                    ON CONFLICT (site_id, idempotency_key)
-                        WHERE idempotency_key IS NOT NULL
-                    DO UPDATE SET idempotency_key =
-                        observer.processing_jobs.idempotency_key
-                    RETURNING {_JOB_COLUMNS}
+            )
+            delivery_row = cursor.fetchone()
+            if delivery_row is None:
+                raise DeliveryConflict(
+                    "replay requires an eligible failed delivery in connector scope"
                 )
-                SELECT {_qualified_columns(_JOB_COLUMNS, "inserted")}
-                FROM inserted
+            cursor.execute(
+                """
+                SELECT COALESCE(MAX(generation), -1) + 1
+                FROM observer.processing_jobs
+                WHERE site_id = %s
+                  AND connector = %s
+                  AND connector_instance_id = %s
+                  AND delivery_id = %s
                 """,
                 (
                     scope.site_id,
                     key.connector,
                     key.instance_id,
                     delivery_id,
-                    scope.site_id,
-                    key.connector,
-                    key.instance_id,
-                    scope.site_id,
-                    job_id,
-                    key.connector,
-                    key.instance_id,
-                    max_attempts,
-                    idempotency_key,
-                    now,
-                    now,
                 ),
             )
-            row = cursor.fetchone()
-            if row is None:
-                raise DeliveryConflict("replay delivery not found in connector scope")
-            metadata = _job_from_row(row)
-            if (
-                metadata.delivery_id != delivery_id
-                or metadata.connector != key.connector
-                or metadata.connector_instance_id != key.instance_id
-            ):
-                raise JobConflict("replay idempotency key conflicts with another delivery")
-            return metadata
+            generation_row = cursor.fetchone()
+            if generation_row is None or not isinstance(generation_row[0], int):
+                raise RuntimeError("replay generation query returned no value")
+            return self._enqueue_processing_job(
+                cursor,
+                scope,
+                key,
+                delivery_id=delivery_id,
+                job_id=job_id,
+                idempotency_key=idempotency_key,
+                generation=generation_row[0],
+                now=now,
+                max_attempts=max_attempts,
+            )
 
     def set_connector_status(
         self,
@@ -2317,6 +2724,141 @@ def _as_int(value: object, field_name: str) -> int:
     if not isinstance(value, int):
         raise RuntimeError(f"invalid persisted {field_name}")
     return value
+
+
+def _validate_normalized_batch(
+    scope: TenantScope,
+    key: ConnectorKey,
+    job: ProcessingJobMetadata,
+    items: tuple[ConnectorItem, ...],
+    normalized: tuple[NormalizedObservationInput, ...],
+) -> None:
+    _validate_scope_key(scope, key)
+    if key.connector == "manual_import":
+        raise ValueError("normalized connector jobs cannot use manual_import")
+    if (
+        not isinstance(job, ProcessingJobMetadata)
+        or job.site_id != scope.site_id
+        or job.connector != key.connector
+        or job.connector_instance_id != key.instance_id
+    ):
+        raise ValueError("processing job scope does not match normalized batch")
+    if (
+        job.status != "processing"
+        or job.lease_owner is None
+        or job.lease_expires_at is None
+        or job.delivery_id is None
+    ):
+        raise ValueError("processing job is not actively leased")
+    if (
+        not isinstance(items, tuple)
+        or not isinstance(normalized, tuple)
+        or len(items) != len(normalized)
+        or len(items) > 1_000
+    ):
+        raise ValueError("normalized batch shape is invalid")
+    if not all(isinstance(item, ConnectorItem) for item in items) or not all(
+        isinstance(value, NormalizedObservationInput) for value in normalized
+    ):
+        raise TypeError("normalized batch contains invalid values")
+    provider_event_ids = tuple(item.provider_event_id for item in items)
+    if len(provider_event_ids) != len(set(provider_event_ids)):
+        raise ValueError("normalized batch provider event identifiers must be unique")
+    for value in normalized:
+        if (
+            value.consent_basis != "pilot_deferred_review"
+            or value.retention_class != "R1-operational"
+            or value.data_classification != "Restricted"
+            or value.original_language != "und"
+        ):
+            raise ValueError("normalized batch policy fields are invalid")
+        if not 1 <= len(value.participants) <= 100:
+            raise ValueError("normalized batch participant count is invalid")
+        for participant in value.participants:
+            if (
+                not participant.identity_ref.startswith("unresolved:delivery:")
+                or participant.display_name is not None
+            ):
+                raise ValueError("normalized participants must remain unresolved")
+        if not 1 <= len(value.evidence) <= 1_000:
+            raise ValueError("normalized batch evidence count is invalid")
+        for artifact in value.evidence:
+            if artifact.content is not None or artifact.reference is None:
+                raise ValueError("normalized evidence references are required")
+            _require_identifier(
+                artifact.reference,
+                "normalized evidence reference",
+                maximum=512,
+            )
+            if (
+                artifact.locator
+                not in {
+                    "delivery",
+                    "decrypted-message",
+                    "message",
+                }
+                and re.fullmatch(r"attachment:[1-9][0-9]{0,3}", artifact.locator) is None
+            ):
+                raise ValueError("normalized evidence locator is invalid")
+            if artifact.role not in {"source", "attachment"}:
+                raise ValueError("normalized evidence role is invalid")
+
+
+def _normalized_candidate(
+    *,
+    scope: TenantScope,
+    key: ConnectorKey,
+    job: ProcessingJobMetadata,
+    item: ConnectorItem,
+    normalized: NormalizedObservationInput,
+) -> _NormalizedCandidate:
+    event_id = stable_ulid(
+        "normalized-observation-event",
+        scope.site_id,
+        key.connector,
+        key.instance_id,
+        item.provider_event_id,
+    )
+    evidence_ids = tuple(
+        stable_ulid(
+            "normalized-evidence",
+            scope.site_id,
+            event_id,
+            str(index),
+            str(artifact.reference),
+        )
+        for index, artifact in enumerate(normalized.evidence)
+    )
+    document_value = canonical_observation_event_v11(
+        scope=scope,
+        connector_key=key,
+        item=item,
+        normalized=normalized,
+        event_id=event_id,
+        evidence_ids=evidence_ids,
+        ingested_at=job.created_at,
+    )
+    document = json.dumps(
+        document_value,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    payload_sha256 = hashlib.sha256(document.encode()).hexdigest()
+    outbox_id = stable_ulid(
+        "normalized-context-outbox",
+        scope.site_id,
+        event_id,
+    )
+    return _NormalizedCandidate(
+        provider_event_id=item.provider_event_id,
+        event_id=event_id,
+        outbox_id=outbox_id,
+        payload_sha256=payload_sha256,
+        evidence_ids=evidence_ids,
+        document=document,
+        item=item,
+        normalized=normalized,
+    )
 
 
 def _validate_scope(scope: TenantScope) -> None:

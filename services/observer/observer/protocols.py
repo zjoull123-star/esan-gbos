@@ -52,17 +52,28 @@ class ObservationNormalizer(Protocol):
     def normalize(self, item: ConnectorItem) -> NormalizedObservationInput: ...
 
 
+class DeliveryObservationNormalizer(Protocol):
+    """Normalizer that receives the opaque source object reference for one delivery."""
+
+    def normalize(
+        self,
+        item: ConnectorItem,
+        *,
+        source_ref: str,
+    ) -> NormalizedObservationInput: ...
+
+
 class NormalizedObservationSink(Protocol):
     """Durable handoff for normalized envelopes emitted by a delivery job."""
 
-    def accept(
+    def accept_batch(
         self,
         scope: TenantScope,
         key: ConnectorKey,
         job: ProcessingJobMetadata,
-        item: ConnectorItem,
-        normalized: NormalizedObservationInput,
-    ) -> None: ...
+        items: tuple[ConnectorItem, ...],
+        normalized: tuple[NormalizedObservationInput, ...],
+    ) -> object: ...
 
 
 class SpeechProvider(Protocol):

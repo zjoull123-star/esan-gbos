@@ -5,6 +5,7 @@ import hmac
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
 from .evidence_store import EvidenceIntegrityError, SiteIsolationError
 from .local_pilot_storage import (
@@ -12,16 +13,24 @@ from .local_pilot_storage import (
     InboundDeliveryMetadata,
     JobConflict,
     LocalPilotStorage,
+    NormalizedBatchConflict,
     ProcessingJobMetadata,
 )
 from .models import ConnectorItem, ConnectorKey, RawDelivery, TenantScope, stable_ulid
+from .normalizers import NormalizationRejected
 from .protocols import (
     Clock,
     DeliveryDecoder,
+    DeliveryObservationNormalizer,
     EvidenceStore,
     NormalizedObservationSink,
-    ObservationNormalizer,
 )
+
+if TYPE_CHECKING:
+    from .connectors.whatsapp_cloud import (
+        WhatsAppCloudDeliveryAuthenticator,
+        WhatsAppCloudDurableReceiver,
+    )
 
 _REASON_CODE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,79}$")
 
@@ -60,6 +69,14 @@ class DeliveryWorkResult:
     job_id: str
     status: str
     normalized_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class WhatsAppPilotComposition:
+    """Inert composition result; constructing it starts no service or network client."""
+
+    receiver: WhatsAppCloudDurableReceiver
+    worker: DeliveryWorker
 
 
 class DurableDeliveryInbox:
@@ -171,7 +188,7 @@ class DeliveryWorker:
         storage: LocalPilotStorage,
         evidence_store: EvidenceStore,
         decoder: DeliveryDecoder,
-        normalizer: ObservationNormalizer,
+        normalizer: DeliveryObservationNormalizer,
         sink: NormalizedObservationSink,
         worker_id: str,
         clock: Clock,
@@ -228,11 +245,25 @@ class DeliveryWorker:
             )
             items = self._decoder.decode(exact_bytes)
             self._validate_items(items)
-            for item in items:
-                normalized = self._normalizer.normalize(item)
-                self._sink.accept(scope, key, job, item, normalized)
+            normalized = tuple(
+                self._normalizer.normalize(
+                    item,
+                    source_ref=delivery.object_ref,
+                )
+                for item in items
+            )
+            self._validate_normalized(items, normalized)
+            self._sink.accept_batch(scope, key, job, items, normalized)
         except JobConflict:
             raise
+        except NormalizedBatchConflict:
+            return self._quarantine(
+                scope,
+                job,
+                "normalized_payload_conflict",
+            )
+        except NormalizationRejected as exc:
+            return self._quarantine(scope, job, exc.code)
         except DeliveryQuarantine as exc:
             return self._quarantine(scope, job, exc.reason_code)
         except (
@@ -311,6 +342,18 @@ class DeliveryWorker:
         if len(provider_event_ids) != len(set(provider_event_ids)):
             raise DeliveryQuarantine("duplicate_provider_event")
 
+    @staticmethod
+    def _validate_normalized(
+        items: tuple[ConnectorItem, ...],
+        normalized: tuple[object, ...],
+    ) -> None:
+        from .models import NormalizedObservationInput
+
+        if len(items) != len(normalized) or not all(
+            isinstance(value, NormalizedObservationInput) for value in normalized
+        ):
+            raise DeliveryQuarantine("invalid_normalizer_result")
+
     def _quarantine(
         self,
         scope: TenantScope,
@@ -353,3 +396,72 @@ class DeliveryWorker:
             status=retried.status,
             normalized_count=0,
         )
+
+
+def compose_whatsapp_authenticated_pilot(
+    *,
+    scope: TenantScope,
+    key: ConnectorKey,
+    storage: LocalPilotStorage,
+    evidence_store: EvidenceStore,
+    authenticator: WhatsAppCloudDeliveryAuthenticator,
+    decoder: DeliveryDecoder,
+    normalizer: DeliveryObservationNormalizer,
+    sink: NormalizedObservationSink,
+    worker_id: str,
+    clock: Clock,
+    replay_window_seconds: int = 300,
+) -> WhatsAppPilotComposition:
+    """Wire the authenticated WhatsApp inbox to durable work without starting it."""
+
+    if key.connector != "whatsapp":
+        raise ValueError("WhatsApp pilot composition requires a whatsapp connector key")
+    from .connectors.whatsapp_cloud import WhatsAppCloudDurableReceiver
+
+    inbox = DurableDeliveryInbox(
+        storage=storage,
+        evidence_store=evidence_store,
+    )
+
+    def accept_authenticated(
+        delivery: RawDelivery,
+        *,
+        nonce: str,
+        nonce_expires_at: datetime,
+        now: datetime,
+    ) -> str:
+        accepted = inbox.accept_authenticated(
+            scope,
+            key,
+            delivery,
+            correlation_id=stable_ulid(
+                "whatsapp-authenticated-delivery",
+                scope.site_id,
+                key.instance_id,
+                delivery.delivery_id,
+            ),
+            nonce=nonce,
+            nonce_expires_at=nonce_expires_at,
+            now=now,
+        )
+        return accepted.disposition
+
+    receiver = WhatsAppCloudDurableReceiver(
+        authenticator=authenticator,
+        authenticated_accept=accept_authenticated,
+        clock=clock,
+        replay_window_seconds=replay_window_seconds,
+    )
+    worker = DeliveryWorker(
+        storage=storage,
+        evidence_store=evidence_store,
+        decoder=decoder,
+        normalizer=normalizer,
+        sink=sink,
+        worker_id=worker_id,
+        clock=clock,
+    )
+    return WhatsAppPilotComposition(
+        receiver=receiver,
+        worker=worker,
+    )
