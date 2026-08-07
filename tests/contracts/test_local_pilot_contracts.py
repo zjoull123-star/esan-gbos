@@ -26,7 +26,9 @@ SCHEMAS = {
     "purchase-proposal-v1.0.schema.json",
     "product-proposal-v1.0.schema.json",
     "ceo-proposal-v1.0.schema.json",
+    "communication-intelligence-v1.0.schema.json",
 }
+EXAMPLE_SCHEMAS = SCHEMAS - {"communication-intelligence-v1.0.schema.json"}
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -65,7 +67,7 @@ def test_local_pilot_contract_set_is_complete_and_valid_2020_12() -> None:
         assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
 
 
-@pytest.mark.parametrize("filename", sorted(SCHEMAS))
+@pytest.mark.parametrize("filename", sorted(EXAMPLE_SCHEMAS))
 def test_valid_examples_pass_and_invalid_examples_fail(filename: str) -> None:
     stem = filename.removesuffix(".schema.json")
     validator = _validator(filename)
@@ -73,6 +75,58 @@ def test_valid_examples_pass_and_invalid_examples_fail(filename: str) -> None:
     validator.validate(_load(LOCAL_PILOT / "examples" / "valid" / f"{stem}.json"))
     with pytest.raises(ValidationError):
         validator.validate(_load(LOCAL_PILOT / "examples" / "invalid" / f"{stem}.json"))
+
+
+def test_communication_intelligence_is_closed_and_keeps_rich_evidence_binding() -> None:
+    validator = _validator("communication-intelligence-v1.0.schema.json")
+    valid = {
+        "schema_version": "1.0",
+        "site_id": "alpha.example",
+        "observation_id": "event-001",
+        "evidence_refs": ["evidence-001"],
+        "summary_zh": "客户希望确认样品交期。",
+        "original_language": "zh-CN",
+        "confidence": 0.93,
+        "review_status": "AI Draft",
+        "fact_proposals": [
+            {
+                "subject_ref": "party-001",
+                "predicate": "sample_delivery_intent",
+                "value_display": "希望确认样品交期",
+                "type": "text",
+                "unit": None,
+                "confidence": 0.91,
+                "evidence_refs": ["evidence-001"],
+                "status": "proposed",
+            }
+        ],
+        "association_suggestions": [
+            {
+                "type": "party",
+                "target_ref": "party-001",
+                "confidence": 0.88,
+                "evidence_refs": ["evidence-001"],
+            }
+        ],
+    }
+
+    validator.validate(valid)
+    for invalid in (
+        {**valid, "raw_text": "forbidden"},
+        {**valid, "review_status": "Approved"},
+        {
+            **valid,
+            "fact_proposals": [{**valid["fact_proposals"][0], "status": "accepted"}],
+        },
+        {
+            **valid,
+            "association_suggestions": [
+                {**valid["association_suggestions"][0], "secret": "forbidden"}
+            ],
+        },
+    ):
+        with pytest.raises(ValidationError):
+            validator.validate(invalid)
 
 
 def test_v11_observation_preserves_v1_enums_and_adds_only_pilot_consent() -> None:

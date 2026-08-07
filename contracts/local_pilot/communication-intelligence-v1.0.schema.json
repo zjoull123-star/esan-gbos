@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/local-pilot/v1.0/communication-intelligence.schema.json",
+  "title": "CommunicationIntelligence v1.0",
+  "description": "Closed model output for a site-bound normalized communication. It contains proposals only and never raw source content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "site_id",
+    "observation_id",
+    "evidence_refs",
+    "summary_zh",
+    "original_language",
+    "confidence",
+    "review_status",
+    "fact_proposals",
+    "association_suggestions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+    },
+    "observation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/reference"
+      }
+    },
+    "summary_zh": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "original_language": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 35,
+      "pattern": "^[A-Za-z][A-Za-z0-9-]*$"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "review_status": {
+      "const": "AI Draft"
+    },
+    "fact_proposals": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/factProposal"
+      }
+    },
+    "association_suggestions": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/associationSuggestion"
+      }
+    }
+  },
+  "$defs": {
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "factProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subject_ref",
+        "predicate",
+        "value_display",
+        "type",
+        "unit",
+        "confidence",
+        "evidence_refs",
+        "status"
+      ],
+      "properties": {
+        "subject_ref": {
+          "$ref": "#/$defs/reference"
+        },
+        "predicate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[a-z][a-z0-9_.-]*$"
+        },
+        "value_display": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z][a-z0-9_.-]*$"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "status": {
+          "const": "proposed"
+        }
+      }
+    },
+    "associationSuggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "target_ref",
+        "confidence",
+        "evidence_refs"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z][a-z0-9_.-]*$"
+        },
+        "target_ref": {
+          "$ref": "#/$defs/reference"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        }
+      }
+    }
+  }
+}

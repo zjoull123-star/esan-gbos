@@ -13,11 +13,16 @@ from services.observer.observer.control_service import (
     PostgresControlRepository,
 )
 from services.observer.observer.local_pilot_storage import PostgresLocalPilotStorage
+from services.observer.observer.model_projection import (
+    CommunicationIntelligenceResponse,
+    LocalTokenizationResult,
+    ObservationModelRequest,
+    ObservationProjectionPublisher,
+    PostgresObservationProjectionRepository,
+)
 from services.observer.observer.models import ConnectorKey, TenantScope
 from services.observer.observer.read_service import (
     CommunicationAccess,
-    CommunicationDetail,
-    CommunicationSummary,
     LocalPilotReadService,
     PostgresCommunicationRepository,
 )
@@ -33,6 +38,9 @@ PASSWORD = os.getenv("GBOS_GATE3_CONTEXT_PASSWORD")
 USER = os.getenv("GBOS_GATE3_OBSERVER_USER", "gbos_observer_app")
 ROOT = Path(__file__).parents[2]
 MIGRATION = ROOT / "services" / "observer" / "migrations" / "006_local_pilot_control.sql"
+ROUTING_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "007_local_pilot_connector_routing.sql"
+)
 
 pytestmark = [pytest.mark.postgres_integration]
 if not RUN_INTEGRATION:
@@ -78,9 +86,11 @@ def _connect() -> object:
 
 def test_postgres_control_communication_and_polling_survive_repository_restart() -> None:
     _container_sql(MIGRATION.read_text(encoding="utf-8"))
+    _container_sql(ROUTING_MIGRATION.read_text(encoding="utf-8"))
     suffix = uuid.uuid4().hex[:12]
     scope = TenantScope(f"runtime-{suffix}", "observation_processing")
     other_scope = TenantScope(f"other-{suffix}", "observation_processing")
+    wrong_purpose_scope = TenantScope(scope.site_id, "audit_compliance")
     key = ConnectorKey("email", f"inbox-{suffix}")
     now = datetime.now(UTC)
     connection = _connect()
@@ -257,7 +267,7 @@ def test_postgres_control_communication_and_polling_survive_repository_restart()
                   raw_object_id, retention_until, team_ref, party_ref
                 ) VALUES (
                   %s, %s, 'manual_import', 'email', %s, 'pilot',
-                  'Internal', 'R1', %s, %s, %s, '{}'::jsonb,
+                  'Restricted', 'R1', %s, %s, %s, '{}'::jsonb,
                   %s, %s, 'team-sales', 'party-1'
                 )
                 """,
@@ -309,32 +319,141 @@ def test_postgres_control_communication_and_polling_survive_repository_restart()
                 (scope.site_id, event_id, evidence_id),
             )
 
-        communication_repository = PostgresCommunicationRepository(connection=connection)
-        communication_repository.store_projection(
-            scope,
-            CommunicationDetail(
-                summary=CommunicationSummary(
-                    observation_id=event_id,
-                    channel="email",
-                    occurred_at=now,
-                    summary_zh="客户询问交期",
-                    original_language="zh-CN",
-                    classification="Internal",
-                    review_status="unreviewed",
-                    team_ref="team-sales",
-                    party_ref="party-1",
-                    evidence_count=1,
-                ),
-                evidence=(),
-                fact_proposals=(),
-                association_suggestions=(),
-                model={
+        provider_requests: list[ObservationModelRequest] = []
+
+        class Provider:
+            def project(
+                self,
+                request: ObservationModelRequest,
+            ) -> CommunicationIntelligenceResponse:
+                provider_requests.append(request)
+                return CommunicationIntelligenceResponse(
+                    output={
+                        "schema_version": "1.0",
+                        "site_id": scope.site_id,
+                        "observation_id": event_id,
+                        "evidence_refs": [evidence_id],
+                        "summary_zh": "客户询问交期",
+                        "original_language": "zh-CN",
+                        "confidence": 0.92,
+                        "review_status": "AI Draft",
+                        "fact_proposals": [
+                            {
+                                "subject_ref": "party-1",
+                                "predicate": "delivery_intent",
+                                "value_display": "询问交期",
+                                "type": "text",
+                                "unit": None,
+                                "confidence": 0.9,
+                                "evidence_refs": [evidence_id],
+                                "status": "proposed",
+                            }
+                        ],
+                        "association_suggestions": [
+                            {
+                                "type": "party",
+                                "target_ref": "party-1",
+                                "confidence": 0.88,
+                                "evidence_refs": [evidence_id],
+                            }
+                        ],
+                    },
+                    model_name="deepseek-v4-flash",
+                    model_version="2026-08-08",
+                    invocation_refs=(f"invocation-{suffix}",),
+                )
+
+        context_keys: set[str] = set()
+
+        class ContextPublisher:
+            def publish(
+                self,
+                published_scope: TenantScope,
+                publication: object,
+                *,
+                idempotency_key: str,
+            ) -> None:
+                assert published_scope == scope
+                assert publication.fact_proposals[0]["evidence_refs"] == [evidence_id]
+                assert publication.model == {
                     "name": "deepseek-v4-flash",
                     "version": "2026-08-08",
-                },
-                original_text=None,
-            ),
-            projected_at=now,
+                }
+                assert publication.invocation_refs == (f"invocation-{suffix}",)
+                context_keys.add(idempotency_key)
+
+        def tokenize(
+            token_scope: TenantScope,
+            observation_id: str,
+            raw_text: str,
+        ) -> LocalTokenizationResult:
+            assert token_scope == scope and observation_id == event_id
+            assert raw_text == "raw customer message"
+            return LocalTokenizationResult(
+                text="tokenized customer message",
+                receipt_ref=f"tokenization-{suffix}",
+                tokenizer_version="stable-tokenizer-v1",
+                mapping_digest="b" * 64,
+            )
+
+        def project(
+            active_connection: object,
+            *,
+            projected_at: datetime,
+        ) -> None:
+            projection_store = PostgresCommunicationRepository(connection=active_connection)
+            projection_repository = PostgresObservationProjectionRepository(
+                connection=active_connection,
+                projection_store=projection_store,
+                raw_loader=lambda _scope, _ref: "raw customer message",
+            )
+            publisher = ObservationProjectionPublisher(
+                repository=projection_repository,
+                raw_loader=projection_repository.raw_loader,
+                tokenizer=tokenize,
+                provider=Provider(),
+                context_publisher=ContextPublisher(),
+                clock=lambda: projected_at,
+                restricted_policy="local_tokenized",
+            )
+            publisher(
+                scope,
+                event_id,
+                f"context-normalized:{event_id}",
+            )
+
+        project(connection, projected_at=now)
+        projection_restart = _connect()
+        try:
+            project(
+                projection_restart,
+                projected_at=now + timedelta(hours=1),
+            )
+        finally:
+            projection_restart.close()
+        with connection.transaction(), connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('app.site_id', %s, true)",
+                (scope.site_id,),
+            )
+            cursor.execute(
+                """
+                SELECT count(*), min(projected_at), max(projected_at)
+                FROM observer.communication_projections
+                WHERE site_id = %s AND observation_event_id = %s
+                """,
+                (scope.site_id, event_id),
+            )
+            projection_count = cursor.fetchone()
+        assert projection_count == (1, now, now)
+        assert context_keys == {f"context-normalized:{event_id}"}
+        assert len(provider_requests) == 2
+        assert all(
+            request.input_mode == "local_tokenized"
+            and request.evidence_refs == (evidence_id,)
+            and request.tokenization_refs == (f"tokenization-{suffix}",)
+            and request.mapping_digest == "b" * 64
+            for request in provider_requests
         )
         read_service = LocalPilotReadService(
             repository=PostgresCommunicationRepository(connection=connection),
@@ -355,6 +474,13 @@ def test_postgres_control_communication_and_polling_survive_repository_restart()
                 allow_all_teams=True,
             ),
         )
+        cross_purpose = read_service.list_communications(
+            wrong_purpose_scope,
+            CommunicationAccess(
+                team_refs=frozenset({"*"}),
+                allow_all_teams=True,
+            ),
+        )
         detail = read_service.get_communication(
             scope,
             CommunicationAccess(team_refs=frozenset({"team-sales"})),
@@ -363,10 +489,21 @@ def test_postgres_control_communication_and_polling_survive_repository_restart()
         assert [row.observation_id for row in allowed.communications] == [event_id]
         assert denied.communications == ()
         assert cross_site.communications == ()
+        assert cross_purpose.communications == ()
         assert detail.evidence == (
             {
                 "ref": evidence_id,
                 "locator": f"obs:v1:{suffix}:sha256:{digest}",
+            },
+        )
+        assert detail.summary.classification == "Restricted"
+        assert detail.summary.review_status == "AI Draft"
+        assert detail.fact_proposals == (
+            {
+                "status": "proposed",
+                "confidence": 0.9,
+                "type": "text",
+                "value_display": "询问交期",
             },
         )
         assert detail.original_text is None

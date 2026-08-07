@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from .connectors.whatsapp_cloud import (
     DurableDeliveryConflict,
@@ -126,6 +126,8 @@ class PostgresLocalPilotRuntime:
     control: Any
     reader: Any
     outbox: Any
+    projection_repository: Any | None
+    projection_publisher: Any | None
     app: Any
     connection: Any
     storage: Any
@@ -156,12 +158,21 @@ def compose_postgres_local_pilot_runtime(
     enabled: bool,
     kill_switch: bool,
     raw_loader: Callable[[Any, str], str | None] | None = None,
+    model_provider: Any | None = None,
+    model_raw_loader: Callable[[Any, str], str] | None = None,
+    model_tokenizer: Callable[[Any, str, str], Any] | None = None,
+    intelligence_publisher: Any | None = None,
+    restricted_model_policy: Literal["deny", "local_tokenized"] = "deny",
 ) -> PostgresLocalPilotRuntime:
     """Wire the PostgreSQL repositories, worker and authenticated internal app."""
 
     from .context_outbox import ContextOutboxPublisherWorker
     from .control_service import LocalPilotControlService, PostgresControlRepository
     from .local_pilot_api import create_local_pilot_app
+    from .model_projection import (
+        ObservationProjectionPublisher,
+        PostgresObservationProjectionRepository,
+    )
     from .read_service import LocalPilotReadService, PostgresCommunicationRepository
 
     guard = LocalPilotRuntimeGuard(enabled=enabled, kill_switch=kill_switch)
@@ -178,9 +189,39 @@ def compose_postgres_local_pilot_runtime(
         repository=communication_repository,
         cursor_secret=cursor_secret,
     )
+    projection_repository = None
+    projection_publisher = None
+    effective_publisher: Callable[[Any, str, str], Any] = publisher
+    projection_requested = any(
+        value is not None
+        for value in (
+            model_provider,
+            model_raw_loader,
+            model_tokenizer,
+            intelligence_publisher,
+        )
+    )
+    if projection_requested:
+        if model_raw_loader is None or intelligence_publisher is None:
+            raise ValueError("model projection requires raw loader and Context publisher")
+        projection_repository = PostgresObservationProjectionRepository(
+            connection=connection,
+            projection_store=communication_repository,
+            raw_loader=model_raw_loader,
+        )
+        projection_publisher = ObservationProjectionPublisher(
+            repository=projection_repository,
+            raw_loader=projection_repository.raw_loader,
+            tokenizer=model_tokenizer,
+            provider=model_provider,
+            context_publisher=intelligence_publisher,
+            clock=clock,
+            restricted_policy=restricted_model_policy,
+        )
+        effective_publisher = projection_publisher
     outbox = ContextOutboxPublisherWorker(
         storage=storage,
-        publisher=publisher,
+        publisher=effective_publisher,
         worker_id=outbox_worker_id,
         clock=clock,
     )
@@ -198,6 +239,8 @@ def compose_postgres_local_pilot_runtime(
         control=control,
         reader=reader,
         outbox=outbox,
+        projection_repository=projection_repository,
+        projection_publisher=projection_publisher,
         app=app,
         connection=connection,
         storage=storage,

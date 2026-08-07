@@ -194,11 +194,27 @@ class PostgresCommunicationRepository:
         """Persist model output without copying 005 team/classification authority."""
 
         _require_aware(projected_at, "projected_at")
+        if detail.summary.review_status != "AI Draft" or any(
+            proposal.get("status") != "proposed" for proposal in detail.fact_proposals
+        ):
+            raise ValueError("communication projection requires AI Draft/proposed state")
+        if detail.original_text is not None:
+            raise ValueError("communication projection cannot persist original text")
+        fact_proposals = json.dumps(
+            detail.fact_proposals,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        association_suggestions = json.dumps(
+            detail.association_suggestions,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         with self._connection.transaction(), self._connection.cursor() as cursor:
             _set_site(cursor, scope)
             cursor.execute(
                 """
-                INSERT INTO observer.communication_projections (
+                INSERT INTO observer.communication_projections AS existing (
                   site_id, observation_event_id, summary_zh,
                   original_language, review_status, model_name,
                   model_version, fact_proposals, association_suggestions,
@@ -207,17 +223,11 @@ class PostgresCommunicationRepository:
                 SELECT %s, event.event_id, %s, %s, %s, %s, %s,
                        %s::jsonb, %s::jsonb, %s
                 FROM observer.observation_events AS event
-                WHERE event.site_id = %s AND event.event_id = %s
+                WHERE event.site_id = %s
+                  AND event.processing_purpose = %s
+                  AND event.event_id = %s
                 ON CONFLICT (site_id, observation_event_id)
-                DO UPDATE SET
-                  summary_zh = EXCLUDED.summary_zh,
-                  original_language = EXCLUDED.original_language,
-                  review_status = EXCLUDED.review_status,
-                  model_name = EXCLUDED.model_name,
-                  model_version = EXCLUDED.model_version,
-                  fact_proposals = EXCLUDED.fact_proposals,
-                  association_suggestions = EXCLUDED.association_suggestions,
-                  projected_at = EXCLUDED.projected_at
+                DO NOTHING
                 RETURNING observation_event_id
                 """,
                 (
@@ -227,23 +237,52 @@ class PostgresCommunicationRepository:
                     detail.summary.review_status,
                     detail.model["name"],
                     detail.model["version"],
-                    json.dumps(
-                        detail.fact_proposals,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ),
-                    json.dumps(
-                        detail.association_suggestions,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ),
+                    fact_proposals,
+                    association_suggestions,
                     projected_at,
                     scope.site_id,
+                    scope.processing_purpose,
                     detail.summary.observation_id,
                 ),
             )
             if cursor.fetchone() is None:
-                raise CommunicationNotFound(detail.summary.observation_id)
+                cursor.execute(
+                    """
+                    SELECT
+                      projection.summary_zh IS NOT DISTINCT FROM %s
+                      AND projection.original_language IS NOT DISTINCT FROM %s
+                      AND projection.review_status IS NOT DISTINCT FROM %s
+                      AND projection.model_name IS NOT DISTINCT FROM %s
+                      AND projection.model_version IS NOT DISTINCT FROM %s
+                      AND projection.fact_proposals IS NOT DISTINCT FROM %s::jsonb
+                      AND projection.association_suggestions
+                          IS NOT DISTINCT FROM %s::jsonb
+                    FROM observer.communication_projections AS projection
+                    JOIN observer.observation_events AS event
+                      ON event.site_id = projection.site_id
+                     AND event.event_id = projection.observation_event_id
+                    WHERE projection.site_id = %s
+                      AND projection.observation_event_id = %s
+                      AND event.processing_purpose = %s
+                    """,
+                    (
+                        detail.summary.summary_zh,
+                        detail.summary.original_language,
+                        detail.summary.review_status,
+                        detail.model["name"],
+                        detail.model["version"],
+                        fact_proposals,
+                        association_suggestions,
+                        scope.site_id,
+                        detail.summary.observation_id,
+                        scope.processing_purpose,
+                    ),
+                )
+                existing = cursor.fetchone()
+                if existing is None:
+                    raise CommunicationNotFound(detail.summary.observation_id)
+                if existing[0] is not True:
+                    raise ValueError("communication projection idempotency conflict")
 
     def list_communications(
         self,
@@ -258,9 +297,10 @@ class PostgresCommunicationRepository:
     ) -> tuple[CommunicationSummary, ...]:
         predicates = [
             "event.site_id = %s",
+            "event.processing_purpose = %s",
             "(event.retention_until IS NULL OR event.retention_until > current_timestamp)",
         ]
-        params: list[Any] = [scope.site_id]
+        params: list[Any] = [scope.site_id, scope.processing_purpose]
         if not access.allow_all_teams:
             predicates.append(
                 """
@@ -334,12 +374,13 @@ class PostgresCommunicationRepository:
                  AND projection.observation_event_id = event.event_id
                 WHERE event.site_id = %s
                   AND event.event_id = %s
+                  AND event.processing_purpose = %s
                   AND (
                     event.retention_until IS NULL
                     OR event.retention_until > current_timestamp
                   )
                 """,
-                (scope.site_id, observation_id),
+                (scope.site_id, observation_id, scope.processing_purpose),
             )
             row = cursor.fetchone()
             if row is None:
