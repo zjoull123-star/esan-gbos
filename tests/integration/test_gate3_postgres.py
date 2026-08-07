@@ -24,6 +24,7 @@ from services.observer.observer.application import ManualImportPipeline, canonic
 from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
 from services.observer.observer.local_pilot_ingestion import DurableDeliveryInbox
 from services.observer.observer.local_pilot_storage import (
+    ConnectorRoutingConflict,
     DeliveryConflict,
     IngressExpired,
     NonceReplay,
@@ -114,7 +115,7 @@ def _container_sql(
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 6
+    assert _migration_ledger_count() == 8
     result = _container_sql(
         """
         SELECT count(*)
@@ -155,6 +156,8 @@ def _migration_ledger_count() -> int:
             'observer/003_local_pilot_runtime.sql',
             'observer/004_local_pilot_ingestion.sql',
             'observer/005_local_pilot_normalized_sink.sql',
+            'observer/006_local_pilot_control.sql',
+            'observer/007_local_pilot_connector_routing.sql',
             'context/001_gate3_context.sql'
         )
         """
@@ -1046,12 +1049,16 @@ def _claim_normalized_job(
     key: ConnectorKey,
     suffix: str,
     now: datetime,
+    team_ref: str | None = None,
+    agent_task_type: str | None = None,
 ) -> tuple[ProcessingJobMetadata, str]:
     repository.register_connector_instance(
         scope,
         key,
         now=now,
         replay_window_seconds=60,
+        team_ref=team_ref,
+        agent_task_type=agent_task_type,
     )
     accepted = DurableDeliveryInbox(
         storage=repository,
@@ -1076,6 +1083,156 @@ def _claim_normalized_job(
     assert claimed is not None
     assert claimed.job_id == accepted.job.job_id
     return claimed, accepted.delivery.object_ref
+
+
+def test_connector_routing_is_revisioned_rls_isolated_and_projects_db_team(
+    tmp_path: Path,
+) -> None:
+    if not all((CONTEXT_HOST, CONTEXT_PORT, CONTEXT_DATABASE, CONTEXT_PASSWORD)):
+        pytest.fail("Gate 3 Observer app-role connection components are required")
+    connection = connect_postgres_components(
+        host=str(CONTEXT_HOST),
+        port=int(str(CONTEXT_PORT)),
+        database=str(CONTEXT_DATABASE),
+        user="gbos_observer_app",
+        password=str(CONTEXT_PASSWORD),
+    )
+    try:
+        suffix = uuid.uuid4().hex[:12]
+        now = datetime.now(UTC)
+        scope_a = ObserverTenantScope(
+            f"routing-a-{suffix}",
+            "observation_processing",
+        )
+        scope_b = ObserverTenantScope(
+            f"routing-b-{suffix}",
+            "observation_processing",
+        )
+        key = ConnectorKey("wecom", f"primary-{suffix}")
+        repository = PostgresLocalPilotStorage(connection)
+
+        original = repository.register_connector_instance(
+            scope_a,
+            key,
+            now=now,
+            team_ref=f"team:sales-{suffix}",
+            agent_task_type="sales",
+        )
+        replay = repository.register_connector_instance(
+            scope_a,
+            key,
+            now=now + timedelta(seconds=1),
+            team_ref=f"team:sales-{suffix}",
+            agent_task_type="sales",
+        )
+        assert replay == original
+        with pytest.raises(ConnectorRoutingConflict, match="metadata conflict"):
+            repository.register_connector_instance(
+                scope_a,
+                key,
+                now=now + timedelta(seconds=2),
+                team_ref=f"team:sales-{suffix}",
+                agent_task_type="purchase",
+            )
+
+        site_b = repository.register_connector_instance(
+            scope_b,
+            key,
+            now=now,
+            team_ref=f"team:purchase-{suffix}",
+            agent_task_type="purchase",
+        )
+        updated = repository.update_connector_routing(
+            scope_a,
+            key,
+            expected_control_revision=0,
+            team_ref=f"team:visible-{suffix}",
+            agent_task_type=None,
+            now=now + timedelta(seconds=3),
+        )
+        assert updated.control_revision == 1
+        assert updated.team_ref == f"team:visible-{suffix}"
+        assert updated.agent_task_type is None
+        with pytest.raises(ConnectorRoutingConflict, match="compare-and-swap"):
+            repository.update_connector_routing(
+                scope_a,
+                key,
+                expected_control_revision=0,
+                team_ref=None,
+                agent_task_type=None,
+                now=now + timedelta(seconds=4),
+            )
+        assert repository.get_connector_instance(scope_b, key) == site_b
+
+        with connection.transaction(), connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('app.site_id', %s, true)",
+                (scope_a.site_id,),
+            )
+            cursor.execute(
+                """
+                SELECT team_ref, agent_task_type
+                FROM observer.connector_instances
+                WHERE site_id = %s
+                  AND connector = %s
+                  AND connector_instance_id = %s
+                """,
+                (scope_b.site_id, key.connector, key.instance_id),
+            )
+            assert cursor.fetchone() is None
+
+        evidence_store = ContentAddressedEvidenceStore(tmp_path / "routing-objects")
+        job, source_ref = _claim_normalized_job(
+            repository=repository,
+            evidence_store=evidence_store,
+            scope=scope_a,
+            key=key,
+            suffix=f"routing-{suffix}",
+            now=now + timedelta(seconds=5),
+            team_ref=updated.team_ref,
+            agent_task_type=updated.agent_task_type,
+        )
+        item, normalized = _normalized_input(
+            provider_event_id=f"routing-provider-{suffix}",
+            source_ref=source_ref,
+        )
+        persisted = repository.persist_normalized_batch(
+            scope_a,
+            key,
+            job,
+            (item,),
+            (normalized,),
+        )
+        with connection.transaction(), connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('app.site_id', %s, true)",
+                (scope_a.site_id,),
+            )
+            cursor.execute(
+                """
+                SELECT team_ref, party_ref
+                FROM observer.observation_events
+                WHERE site_id = %s AND event_id = %s
+                """,
+                (scope_a.site_id, persisted.observations[0].event_id),
+            )
+            assert cursor.fetchone() == (f"team:visible-{suffix}", None)
+
+            cursor.execute(
+                "SELECT set_config('app.site_id', %s, true)",
+                (scope_b.site_id,),
+            )
+            cursor.execute(
+                """
+                SELECT event_id
+                FROM observer.observation_events
+                WHERE site_id = %s AND event_id = %s
+                """,
+                (scope_a.site_id, persisted.observations[0].event_id),
+            )
+            assert cursor.fetchone() is None
+    finally:
+        connection.close()
 
 
 def test_normalized_batch_is_atomic_replay_safe_and_site_instance_isolated(

@@ -23,7 +23,8 @@ _MAX_LEASE_SECONDS = 86_400
 _MAX_ATTEMPTS = 100
 
 _CONNECTOR_COLUMNS = """
-    site_id, connector, connector_instance_id, status, registered_at, updated_at
+    site_id, connector, connector_instance_id, status, registered_at, updated_at,
+    control_revision, team_ref, agent_task_type
 """
 _DELIVERY_COLUMNS = """
     site_id, connector, connector_instance_id, delivery_id, exact_body_sha256,
@@ -77,11 +78,15 @@ class NormalizedBatchConflict(ValueError):
     """A provider event identifier was reused for a different normalized payload."""
 
 
+class ConnectorRoutingConflict(ValueError):
+    """Connector routing metadata or its compare-and-swap revision conflicted."""
+
+
 class IngressExpired(ValueError):
     """An authenticated nonce or delivery fell outside its acceptance window."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class ConnectorInstanceMetadata:
     site_id: str
     connector: str
@@ -89,6 +94,18 @@ class ConnectorInstanceMetadata:
     status: str
     registered_at: datetime
     updated_at: datetime
+    control_revision: int
+    team_ref: str | None
+    agent_task_type: str | None
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(site_id={self.site_id!r}, "
+            f"connector={self.connector!r}, "
+            f"connector_instance_id={self.connector_instance_id!r}, "
+            f"status={self.status!r}, control_revision={self.control_revision}, "
+            "team_ref=<redacted>, agent_task_type=<redacted>)"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +254,8 @@ class LocalPilotStorage(Protocol):
         *,
         now: datetime,
         replay_window_seconds: int = 0,
+        team_ref: str | None = None,
+        agent_task_type: str | None = None,
     ) -> ConnectorInstanceMetadata: ...
 
     def get_connector_instance(
@@ -249,6 +268,17 @@ class LocalPilotStorage(Protocol):
         self,
         scope: TenantScope,
     ) -> tuple[ConnectorInstanceMetadata, ...]: ...
+
+    def update_connector_routing(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        expected_control_revision: int,
+        team_ref: str | None,
+        agent_task_type: str | None,
+        now: datetime,
+    ) -> ConnectorInstanceMetadata: ...
 
     def accept_inbound_delivery(
         self,
@@ -520,9 +550,12 @@ class PostgresLocalPilotStorage:
         *,
         now: datetime,
         replay_window_seconds: int = 0,
+        team_ref: str | None = None,
+        agent_task_type: str | None = None,
     ) -> ConnectorInstanceMetadata:
         _validate_scope_key(scope, key)
         _require_aware(now, "now")
+        _validate_connector_routing(team_ref, agent_task_type)
         if not 0 <= replay_window_seconds <= 31_536_000:
             raise ValueError("replay_window_seconds is outside the valid range")
         with self._connection.transaction(), self._connection.cursor() as cursor:
@@ -531,17 +564,43 @@ class PostgresLocalPilotStorage:
                 f"""
                 INSERT INTO observer.connector_instances (
                     site_id, connector, connector_instance_id, status,
-                    registered_at, updated_at
-                ) VALUES (%s, %s, %s, 'healthy', %s, %s)
+                    registered_at, updated_at, team_ref, agent_task_type
+                ) VALUES (%s, %s, %s, 'healthy', %s, %s, %s, %s)
                 ON CONFLICT (site_id, connector, connector_instance_id)
-                DO UPDATE SET updated_at = EXCLUDED.updated_at
+                DO NOTHING
                 RETURNING {_CONNECTOR_COLUMNS}
                 """,
-                (scope.site_id, key.connector, key.instance_id, now, now),
+                (
+                    scope.site_id,
+                    key.connector,
+                    key.instance_id,
+                    now,
+                    now,
+                    team_ref,
+                    agent_task_type,
+                ),
             )
             row = cursor.fetchone()
             if row is None:
-                raise RuntimeError("connector instance metadata insert returned no row")
+                cursor.execute(
+                    f"""
+                    SELECT {_CONNECTOR_COLUMNS}
+                    FROM observer.connector_instances
+                    WHERE site_id = %s
+                      AND connector = %s
+                      AND connector_instance_id = %s
+                    FOR UPDATE
+                    """,
+                    (scope.site_id, key.connector, key.instance_id),
+                )
+                row = cursor.fetchone()
+            if row is None:
+                raise ConnectorRoutingConflict(
+                    "connector routing metadata conflict: instance is unavailable"
+                )
+            metadata = _connector_from_row(row)
+            if metadata.team_ref != team_ref or metadata.agent_task_type != agent_task_type:
+                raise ConnectorRoutingConflict("connector routing metadata conflict")
             cursor.execute(
                 """
                 INSERT INTO observer.connector_checkpoints (
@@ -559,7 +618,7 @@ class PostgresLocalPilotStorage:
                     now,
                 ),
             )
-            return _connector_from_row(row)
+            return metadata
 
     def get_connector_instance(
         self,
@@ -599,6 +658,55 @@ class PostgresLocalPilotStorage:
                 (scope.site_id,),
             )
             return tuple(_connector_from_row(row) for row in cursor.fetchall())
+
+    def update_connector_routing(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        expected_control_revision: int,
+        team_ref: str | None,
+        agent_task_type: str | None,
+        now: datetime,
+    ) -> ConnectorInstanceMetadata:
+        _validate_scope_key(scope, key)
+        _require_aware(now, "now")
+        _validate_connector_routing(team_ref, agent_task_type)
+        if (
+            isinstance(expected_control_revision, bool)
+            or not isinstance(expected_control_revision, int)
+            or expected_control_revision < 0
+        ):
+            raise ValueError("invalid routing control revision")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                f"""
+                UPDATE observer.connector_instances
+                SET team_ref = %s,
+                    agent_task_type = %s,
+                    control_revision = control_revision + 1,
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND connector = %s
+                  AND connector_instance_id = %s
+                  AND control_revision = %s
+                RETURNING {_CONNECTOR_COLUMNS}
+                """,
+                (
+                    team_ref,
+                    agent_task_type,
+                    now,
+                    scope.site_id,
+                    key.connector,
+                    key.instance_id,
+                    expected_control_revision,
+                ),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise ConnectorRoutingConflict("routing compare-and-swap rejected")
+            return _connector_from_row(row)
 
     def accept_inbound_delivery(
         self,
@@ -908,6 +1016,21 @@ class PostgresLocalPilotStorage:
         with self._connection.transaction(), self._connection.cursor() as cursor:
             self._set_site(cursor, scope)
             cursor.execute(
+                """
+                SELECT control_revision, team_ref, agent_task_type
+                FROM observer.connector_instances
+                WHERE site_id = %s
+                  AND connector = %s
+                  AND connector_instance_id = %s
+                FOR UPDATE
+                """,
+                (scope.site_id, key.connector, key.instance_id),
+            )
+            routing_row = cursor.fetchone()
+            if routing_row is None:
+                raise ConnectorRoutingConflict("connector routing is unavailable")
+            team_ref, _agent_task_type = _trusted_connector_routing_from_row(routing_row)
+            cursor.execute(
                 f"""
                 SELECT {_qualified_columns(_DELIVERY_COLUMNS, "delivery")}
                 FROM observer.processing_jobs AS job
@@ -1088,7 +1211,7 @@ class PostgresLocalPilotStorage:
                     ) VALUES (
                         %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
-                        date_trunc('minute', %s::timestamptz), NULL, NULL, %s
+                        date_trunc('minute', %s::timestamptz), %s, NULL, %s
                     )
                     """,
                     (
@@ -1112,6 +1235,7 @@ class PostgresLocalPilotStorage:
                         candidate.document,
                         delivery.exact_body_sha256,
                         candidate.item.occurred_at,
+                        team_ref,
                         candidate.payload_sha256,
                     ),
                 )
@@ -2601,6 +2725,12 @@ class PostgresLocalPilotStorage:
 
 
 def _connector_from_row(row: tuple[object, ...]) -> ConnectorInstanceMetadata:
+    team_ref = None if row[7] is None else str(row[7])
+    agent_task_type = None if row[8] is None else str(row[8])
+    _validate_connector_routing(team_ref, agent_task_type)
+    control_revision = _as_int(row[6], "control_revision")
+    if control_revision < 0:
+        raise RuntimeError("invalid persisted control_revision")
     return ConnectorInstanceMetadata(
         site_id=str(row[0]),
         connector=str(row[1]),
@@ -2608,7 +2738,35 @@ def _connector_from_row(row: tuple[object, ...]) -> ConnectorInstanceMetadata:
         status=str(row[3]),
         registered_at=row[4],  # type: ignore[arg-type]
         updated_at=row[5],  # type: ignore[arg-type]
+        control_revision=control_revision,
+        team_ref=team_ref,
+        agent_task_type=agent_task_type,
     )
+
+
+def _trusted_connector_routing_from_row(
+    row: tuple[object, ...],
+) -> tuple[str | None, str | None]:
+    if len(row) != 3:
+        raise ConnectorRoutingConflict("invalid persisted connector routing")
+    control_revision = row[0]
+    if (
+        isinstance(control_revision, bool)
+        or not isinstance(control_revision, int)
+        or control_revision < 0
+    ):
+        raise ConnectorRoutingConflict("invalid persisted connector routing")
+    team_ref = row[1]
+    agent_task_type = row[2]
+    if (team_ref is not None and not isinstance(team_ref, str)) or (
+        agent_task_type is not None and not isinstance(agent_task_type, str)
+    ):
+        raise ConnectorRoutingConflict("invalid persisted connector routing")
+    try:
+        _validate_connector_routing(team_ref, agent_task_type)
+    except ValueError:
+        raise ConnectorRoutingConflict("invalid persisted connector routing") from None
+    return team_ref, agent_task_type
 
 
 def _delivery_from_row(row: tuple[object, ...]) -> InboundDeliveryMetadata:
@@ -2948,6 +3106,27 @@ def _validate_provider_event_ids(
 def _require_connector_status(status: str) -> None:
     if status not in {"healthy", "paused", "degraded", "failed"}:
         raise ValueError("invalid connector status")
+
+
+def _validate_connector_routing(
+    team_ref: str | None,
+    agent_task_type: str | None,
+) -> None:
+    if team_ref is not None and (
+        not isinstance(team_ref, str)
+        or not 1 <= len(team_ref) <= 256
+        or any(character in team_ref for character in ("\x00", "\r", "\n"))
+    ):
+        raise ValueError("invalid connector routing team_ref")
+    if agent_task_type is not None and agent_task_type not in {
+        "sales",
+        "purchase",
+        "product_sample",
+        "ceo",
+    }:
+        raise ValueError("invalid connector routing agent_task_type")
+    if agent_task_type is not None and team_ref is None:
+        raise ValueError("invalid connector routing: agent task requires team_ref")
 
 
 def _authenticated_identity_ref(key: ConnectorKey) -> str:

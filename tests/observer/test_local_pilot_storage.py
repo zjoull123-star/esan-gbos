@@ -39,6 +39,9 @@ INGESTION_MIGRATION = (
 NORMALIZED_MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "005_local_pilot_normalized_sink.sql"
 )
+ROUTING_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "007_local_pilot_connector_routing.sql"
+)
 MIGRATION_SCRIPT = ROOT / "scripts" / "dev" / "gate3-migrate"
 NOW = datetime(2026, 8, 7, 9, 30, tzinfo=UTC)
 SCOPE = TenantScope("alpha.example", "observation_processing")
@@ -99,6 +102,9 @@ def _connector_row(
     connector: str = KEY.connector,
     instance_id: str = KEY.instance_id,
     status: str = "healthy",
+    control_revision: int = 0,
+    team_ref: str | None = None,
+    agent_task_type: str | None = None,
 ) -> tuple[Any, ...]:
     return (
         SCOPE.site_id,
@@ -107,6 +113,9 @@ def _connector_row(
         status,
         NOW,
         NOW,
+        control_revision,
+        team_ref,
+        agent_task_type,
     )
 
 
@@ -137,6 +146,15 @@ def _delivery_row(
         NOW,
         NOW,
     )
+
+
+def _routing_row(
+    *,
+    control_revision: int = 0,
+    team_ref: str | None = None,
+    agent_task_type: str | None = None,
+) -> tuple[Any, ...]:
+    return control_revision, team_ref, agent_task_type
 
 
 def _job_row(
@@ -332,6 +350,26 @@ def test_normalized_sink_migration_separates_connector_jobs_without_touching_man
     assert "delete from observer.manual_import" not in sql
 
 
+def test_connector_routing_migration_is_repeatable_bounded_and_site_scoped() -> None:
+    sql = ROUTING_MIGRATION.read_text(encoding="utf-8").lower()
+
+    assert "add column if not exists team_ref" in sql
+    assert "add column if not exists agent_task_type" in sql
+    assert "char_length(team_ref) between 1 and 256" in sql
+    assert "team_ref !~ e'[\\r\\n]'" in sql
+    assert "agent_task_type in (" in sql
+    for task_type in ("sales", "purchase", "product_sample", "ceo"):
+        assert f"'{task_type}'" in sql
+    assert "agent_task_type is null or team_ref is not null" in sql
+    assert "create index if not exists connector_instances_routing_idx" in sql
+    assert "alter table observer.connector_instances enable row level security" in sql
+    assert "alter table observer.connector_instances force row level security" in sql
+    assert "current_setting('app.site_id', true)" in sql
+    assert "grant select, insert, update on observer.connector_instances" in sql
+    assert "drop table" not in sql
+    assert "delete from observer.connector_instances" not in sql
+
+
 def _normalized_item(
     provider_event_id: str,
     *,
@@ -397,6 +435,7 @@ def test_persist_normalized_batch_uses_one_transaction_and_one_outbox_per_event(
     item2, normalized2 = _normalized_item("event-002")
     connection = FakeConnection(
         [
+            _routing_row(team_ref="team:db-sales", agent_task_type="sales"),
             _delivery_row(status="processing"),
             [(None,), (None,)],
             [],
@@ -419,12 +458,23 @@ def test_persist_normalized_batch_uses_one_transaction_and_one_outbox_per_event(
     )
     inserts = [sql for sql, _ in connection.executed]
     assert any("pg_advisory_xact_lock" in sql for sql in inserts)
+    routing_select = next(
+        sql for sql in inserts if "SELECT control_revision, team_ref, agent_task_type" in sql
+    )
+    assert "FOR UPDATE" in routing_select
     raw_insert = next(sql for sql in inserts if "INSERT INTO observer.raw_objects" in sql)
     assert "DO NOTHING" in raw_insert
     assert "DO UPDATE" not in raw_insert
     assert "retention_until" in raw_insert
     event_insert = next(sql for sql in inserts if "INSERT INTO observer.observation_events" in sql)
     assert "retention_until" in event_insert
+    assert "date_trunc('minute', %s::timestamptz), %s, NULL, %s" in event_insert
+    event_params = [
+        params
+        for sql, params in connection.executed
+        if "INSERT INTO observer.observation_events" in sql
+    ]
+    assert all(params is not None and params[-2] == "team:db-sales" for params in event_params)
     assert sum("INSERT INTO observer.observation_events" in sql for sql in inserts) == 2
     assert sum("INSERT INTO observer.context_publication_outbox" in sql for sql in inserts) == 2
     assert all(value.replayed is False for value in result.observations)
@@ -434,6 +484,7 @@ def test_persist_normalized_batch_replay_returns_original_and_conflict_is_fail_c
     item, normalized = _normalized_item("event-001")
     probe = FakeConnection(
         [
+            _routing_row(),
             _delivery_row(status="processing"),
             [(None,)],
             [],
@@ -454,6 +505,7 @@ def test_persist_normalized_batch_replay_returns_original_and_conflict_is_fail_c
 
     replay = FakeConnection(
         [
+            _routing_row(),
             _delivery_row(status="processing"),
             [(None,)],
             [
@@ -484,6 +536,7 @@ def test_persist_normalized_batch_replay_returns_original_and_conflict_is_fail_c
 
     conflict = FakeConnection(
         [
+            _routing_row(),
             _delivery_row(status="processing"),
             [(None,)],
             [
@@ -506,6 +559,63 @@ def test_persist_normalized_batch_replay_returns_original_and_conflict_is_fail_c
         )
     assert not any(
         "INSERT INTO observer.observation_events" in sql for sql, _params in conflict.executed
+    )
+
+
+def test_persist_normalized_batch_preserves_null_db_team_routing() -> None:
+    item, normalized = _normalized_item("event-null-route")
+    connection = FakeConnection(
+        [
+            _routing_row(),
+            _delivery_row(status="processing"),
+            [(None,)],
+            [],
+            ("raw-object-001", "obs:v1:site-partition:sha256:" + "a" * 64),
+        ]
+    )
+
+    PostgresLocalPilotStorage(connection).persist_normalized_batch(
+        SCOPE,
+        KEY,
+        _processing_job(),
+        (item,),
+        (normalized,),
+    )
+
+    event_params = next(
+        params
+        for sql, params in connection.executed
+        if "INSERT INTO observer.observation_events" in sql
+    )
+    assert event_params is not None
+    assert event_params[-2] is None
+
+
+@pytest.mark.parametrize(
+    "routing_row",
+    [
+        None,
+        _routing_row(team_ref=None, agent_task_type="sales"),
+        _routing_row(team_ref="team\ninvalid", agent_task_type=None),
+    ],
+)
+def test_persist_normalized_batch_fails_closed_for_missing_or_invalid_db_route(
+    routing_row: tuple[Any, ...] | None,
+) -> None:
+    item, normalized = _normalized_item("event-invalid-route")
+    connection = FakeConnection([routing_row])
+
+    with pytest.raises(ValueError, match="connector routing"):
+        PostgresLocalPilotStorage(connection).persist_normalized_batch(
+            SCOPE,
+            KEY,
+            _processing_job(),
+            (item,),
+            (normalized,),
+        )
+
+    assert not any(
+        "INSERT INTO observer.observation_events" in sql for sql, _params in connection.executed
     )
 
 
@@ -565,9 +675,21 @@ def test_local_pilot_storage_exposes_provider_neutral_repository_contract() -> N
 def test_register_get_and_list_connector_instances_use_per_call_site_transactions() -> None:
     connection = FakeConnection(
         [
-            _connector_row(),
-            _connector_row(),
-            [_connector_row(), _connector_row(connector="email", instance_id="support")],
+            _connector_row(
+                team_ref="team:sales",
+                agent_task_type="product_sample",
+            ),
+            _connector_row(
+                team_ref="team:sales",
+                agent_task_type="product_sample",
+            ),
+            [
+                _connector_row(
+                    team_ref="team:sales",
+                    agent_task_type="product_sample",
+                ),
+                _connector_row(connector="email", instance_id="support"),
+            ],
         ]
     )
     repository = PostgresLocalPilotStorage(connection)
@@ -577,6 +699,8 @@ def test_register_get_and_list_connector_instances_use_per_call_site_transaction
         KEY,
         now=NOW,
         replay_window_seconds=60,
+        team_ref="team:sales",
+        agent_task_type="product_sample",
     )
     loaded = repository.get_connector_instance(SCOPE, KEY)
     listed = repository.list_connector_instances(SCOPE)
@@ -589,8 +713,128 @@ def test_register_get_and_list_connector_instances_use_per_call_site_transaction
     ]
     assert registered == loaded
     assert [item.connector for item in listed] == ["wecom", "email"]
+    assert registered.team_ref == "team:sales"
+    assert registered.agent_task_type == "product_sample"
+    assert registered.control_revision == 0
+    assert "team:sales" not in repr(registered)
+    assert "product_sample" not in repr(registered)
     assert not hasattr(registered, "config")
     assert not hasattr(registered, "secret")
+
+
+def test_register_connector_routing_replay_is_idempotent_and_different_metadata_conflicts() -> None:
+    team_ref = "team:trusted-sales"
+    same = _connector_row(team_ref=team_ref, agent_task_type="sales")
+    different = _connector_row(team_ref="team:other", agent_task_type="sales")
+    connection = FakeConnection([same, None, same, None, different])
+    repository = PostgresLocalPilotStorage(connection)
+
+    first = repository.register_connector_instance(
+        SCOPE,
+        KEY,
+        now=NOW,
+        team_ref=team_ref,
+        agent_task_type="sales",
+    )
+    replay = repository.register_connector_instance(
+        SCOPE,
+        KEY,
+        now=NOW + timedelta(seconds=1),
+        team_ref=team_ref,
+        agent_task_type="sales",
+    )
+
+    assert first == replay
+    assert replay.updated_at == NOW
+    register_statements = [
+        sql
+        for sql, _params in connection.executed
+        if "INSERT INTO observer.connector_instances" in sql
+    ]
+    assert len(register_statements) == 2
+    assert all("DO NOTHING" in sql for sql in register_statements)
+    with pytest.raises(ValueError, match="routing metadata conflict"):
+        repository.register_connector_instance(
+            SCOPE,
+            KEY,
+            now=NOW + timedelta(seconds=2),
+            team_ref=team_ref,
+            agent_task_type="purchase",
+        )
+    assert team_ref not in repr(first)
+
+
+@pytest.mark.parametrize(
+    ("team_ref", "agent_task_type"),
+    [
+        ("", None),
+        ("team\nsales", None),
+        ("team\rsales", None),
+        ("team\x00sales", None),
+        ("t" * 257, None),
+        ("team:sales", "unknown"),
+        (None, "sales"),
+    ],
+)
+def test_connector_routing_rejects_invalid_metadata_before_opening_a_transaction(
+    team_ref: str | None,
+    agent_task_type: str | None,
+) -> None:
+    connection = FakeConnection([])
+
+    with pytest.raises(ValueError, match="routing"):
+        PostgresLocalPilotStorage(connection).register_connector_instance(
+            SCOPE,
+            KEY,
+            now=NOW,
+            team_ref=team_ref,
+            agent_task_type=agent_task_type,
+        )
+
+    assert connection.transactions == 0
+
+
+def test_update_connector_routing_uses_site_scoped_control_revision_cas() -> None:
+    connection = FakeConnection(
+        [
+            _connector_row(
+                control_revision=4,
+                team_ref="team:ceo-visible",
+                agent_task_type=None,
+            ),
+            None,
+        ]
+    )
+    repository = PostgresLocalPilotStorage(connection)
+
+    updated = repository.update_connector_routing(
+        SCOPE,
+        KEY,
+        expected_control_revision=3,
+        team_ref="team:ceo-visible",
+        agent_task_type=None,
+        now=NOW,
+    )
+    assert updated.control_revision == 4
+    assert updated.team_ref == "team:ceo-visible"
+    update_sql, update_params = connection.executed[1]
+    assert "control_revision = control_revision + 1" in update_sql
+    assert "control_revision = %s" in update_sql
+    assert update_params is not None
+    assert SCOPE.site_id in update_params
+    assert KEY.connector in update_params
+    assert KEY.instance_id in update_params
+    assert 3 in update_params
+
+    with pytest.raises(ValueError, match="routing compare-and-swap"):
+        repository.update_connector_routing(
+            SCOPE,
+            KEY,
+            expected_control_revision=3,
+            team_ref=None,
+            agent_task_type=None,
+            now=NOW + timedelta(seconds=1),
+        )
 
 
 def test_accept_delivery_is_idempotent_for_same_digest_and_rejects_changed_body() -> None:
@@ -631,7 +875,7 @@ def test_accept_delivery_is_idempotent_for_same_digest_and_rejects_changed_body(
         )
 
     with pytest.raises(TypeError, match="exact_bytes"):
-        repository.accept_inbound_delivery(  # type: ignore[call-arg]
+        repository.accept_inbound_delivery(
             SCOPE,
             KEY,
             delivery_id="delivery-002",
@@ -659,13 +903,13 @@ def test_accept_delivery_rejects_changed_content_metadata(
     changed: str,
     value: str | int,
 ) -> None:
-    existing = {
+    existing: dict[str, str | int] = {
         "object_ref": "obs:v1:site-partition:sha256:" + "a" * 64,
         "byte_size": 17,
         "media_type": "application/json",
     }
     connection = FakeConnection([None, _delivery_row()])
-    arguments = dict(existing)
+    arguments: dict[str, str | int] = dict(existing)
     arguments[changed] = value
 
     with pytest.raises(DeliveryConflict, match="content metadata"):
@@ -888,7 +1132,7 @@ def test_authenticated_ingress_rejects_expired_nonce_and_old_delivery_before_wri
             job_id="job-001",
             max_attempts=3,
         )
-    assert repository._connection.executed == []  # type: ignore[attr-defined]
+    assert repository._connection.executed == []
 
     old_connection = FakeConnection([(30,)])
     with pytest.raises(IngressExpired, match="replay window"):
