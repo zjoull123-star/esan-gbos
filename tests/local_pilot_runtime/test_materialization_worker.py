@@ -188,6 +188,7 @@ def test_main_composes_real_scoped_worker_without_db_or_http_until_preflight_pas
     worker, site_id, stop_event, idle_delay = seen[0]
     assert isinstance(worker._repository, PostgresAgentTaskRepository)
     assert isinstance(worker._client, HttpFrappeDraftClient)
+    assert worker._client._processing_purpose is None
     assert isinstance(worker._context_resolver, HttpMaterializationContextResolver)
     assert worker._lease_duration.total_seconds() == 10
     assert site_id == "gbos.localhost"
@@ -196,6 +197,13 @@ def test_main_composes_real_scoped_worker_without_db_or_http_until_preflight_pas
     assert transport.calls == []
     assert connection.closed is True
     assert "frappe-secret" not in repr(worker)
+
+
+def test_materialization_entrypoint_never_invents_a_fixed_processing_purpose() -> None:
+    source = Path(materialization_worker.__file__).read_text(encoding="utf-8")
+
+    assert "agent_materialization" not in source
+    assert "processing_purpose=" not in source
 
 
 @pytest.mark.parametrize(

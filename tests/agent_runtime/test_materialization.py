@@ -146,6 +146,7 @@ class _Frappe:
         self.calls = 0
         self.created: dict[str, tuple[str, FrappeDraftReceipt]] = {}
         self.intents: list[Any] = []
+        self.processing_purposes: list[str | None] = []
 
     def apply(
         self,
@@ -153,9 +154,11 @@ class _Frappe:
         *,
         request_id: str,
         request_digest: str,
+        processing_purpose: str | None = None,
     ) -> FrappeDraftReceipt:
         self.calls += 1
         self.intents.append(intent)
+        self.processing_purposes.append(processing_purpose)
         existing = self.created.get(request_id)
         if existing is not None:
             if existing[0] != request_digest:
@@ -279,6 +282,7 @@ def test_worker_recovers_after_crash_without_creating_a_second_frappe_draft() ->
 
     assert result.status == "succeeded"
     assert client.calls == 2
+    assert client.processing_purposes == ["metric_reporting", "metric_reporting"]
     assert len(client.created) == 1
     assert context_resolver.requests[0] == MaterializationContextRequest(
         site_id="site-a",

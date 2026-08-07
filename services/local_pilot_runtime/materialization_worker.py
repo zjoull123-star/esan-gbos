@@ -45,7 +45,6 @@ DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
 DEFAULT_FRAPPE_API_KEY_FILE = Path("/run/secrets/frappe_materializer_api_key")
 DEFAULT_FRAPPE_API_SECRET_FILE = Path("/run/secrets/frappe_materializer_api_secret")
-_FRAPPE_PROCESSING_PURPOSE = "agent_materialization"
 _FRAPPE_INTERNAL_BASE_URL = "http://frappe-backend:8000"
 _FRAPPE_INTERNAL_HOSTS = frozenset({"frappe-backend"})
 _LEASE_INTERVAL_MULTIPLIER = 10
@@ -82,7 +81,6 @@ def build_worker(
         api_secret=frappe_api_secret.reveal(),
         auth_ref=config.auth.context_auth_ref,
         site_id=config.site_id,
-        processing_purpose=_FRAPPE_PROCESSING_PURPOSE,
         timeout_seconds=frappe_timeout_seconds,
         transport=frappe_transport,
         allowed_internal_hosts=allowed_internal_hosts,
@@ -169,7 +167,6 @@ def main(
             api_secret=frappe_api_secret.reveal(),
             auth_ref=config.auth.context_auth_ref,
             site_id=config.site_id,
-            processing_purpose=_FRAPPE_PROCESSING_PURPOSE,
             timeout_seconds=frappe_timeout_seconds,
             transport=frappe_transport,
             allowed_internal_hosts=allowed_internal_hosts,

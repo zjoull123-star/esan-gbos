@@ -14,7 +14,15 @@ _USER = "gbos-materializer@localhost.invalid"
 _ROLE = "Agent TrustedMaterializer"
 _AUTH_REF = "agent-materializer-v1"
 _DEFAULT_SITE = "gbos.localhost"
-_PURPOSES = frozenset({"observation_processing", "sales_follow_up"})
+_PURPOSES = frozenset(
+    {
+        "observation_processing",
+        "sales_follow_up",
+        "procurement_coordination",
+        "product_sample_management",
+        "metric_reporting",
+    }
+)
 _PRODUCTION_VALUES = frozenset({"1", "true", "yes"})
 _SITE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,138}[a-z0-9])?")
 _CREDENTIAL = re.compile(r"[A-Za-z0-9_-]{15,128}")

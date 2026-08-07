@@ -16,7 +16,13 @@ ROLE = "Agent TrustedMaterializer"
 AUTH_REF = "agent-materializer-v1"
 API_KEY = "MaterializerKey_0123456789ABCDEF"
 API_SECRET = "MaterializerSecret_0123456789ABCDEF"
-PURPOSES = ["observation_processing", "sales_follow_up"]
+PURPOSES = [
+    "observation_processing",
+    "sales_follow_up",
+    "procurement_coordination",
+    "product_sample_management",
+    "metric_reporting",
+]
 
 
 class _Database:

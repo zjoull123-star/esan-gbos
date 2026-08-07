@@ -210,7 +210,7 @@ class HttpFrappeDraftClient:
         api_secret: str,
         auth_ref: str,
         site_id: str,
-        processing_purpose: str,
+        processing_purpose: str | None = None,
         timeout_seconds: float = 3.0,
         transport: FrappeJsonTransport | None = None,
         allowed_internal_hosts: frozenset[str] = frozenset(),
@@ -225,9 +225,10 @@ class HttpFrappeDraftClient:
             transport=transport,
             allowed_internal_hosts=allowed_internal_hosts,
         )
-        self._processing_purpose = _header(
-            processing_purpose,
-            "processing purpose",
+        self._processing_purpose = (
+            None
+            if processing_purpose is None
+            else _header(processing_purpose, "processing purpose")
         )
 
     def __repr__(self) -> str:
@@ -243,7 +244,12 @@ class HttpFrappeDraftClient:
         *,
         request_id: str,
         request_digest: str,
+        processing_purpose: str | None = None,
     ) -> FrappeDraftReceipt:
+        resolved_purpose = _resolve_processing_purpose(
+            fixed=self._processing_purpose,
+            requested=processing_purpose,
+        )
         values = thaw_json(intent.values)
         if not isinstance(values, dict):
             raise ValidationError("materialization intent values must be an object")
@@ -259,11 +265,11 @@ class HttpFrappeDraftClient:
             raise ValidationError("materialization request digest does not match intent")
         response = self._boundary.post(
             path=_APPLY_PATH,
-            purpose=self._processing_purpose,
+            purpose=resolved_purpose,
             request_id=request_id,
             payload={
                 "site_id": self._boundary.site_id,
-                "processing_purpose": self._processing_purpose,
+                "processing_purpose": resolved_purpose,
                 "request_id": request_id,
                 "auth_ref": self._boundary.auth_ref,
                 "request_digest": request_digest,
@@ -279,6 +285,17 @@ class HttpFrappeDraftClient:
         ):
             raise FrappeClientError("Frappe returned a mismatched materialization receipt")
         return receipt
+
+
+def _resolve_processing_purpose(*, fixed: str | None, requested: str | None) -> str:
+    requested_value = None if requested is None else _header(requested, "processing purpose")
+    if requested_value is None:
+        if fixed is None:
+            raise FrappeClientError("Frappe processing purpose is required")
+        return fixed
+    if fixed is not None and fixed != requested_value:
+        raise FrappeClientError("Frappe processing purpose conflicts with fixed scope")
+    return requested_value
 
 
 def _receipt(value: Mapping[str, Any]) -> FrappeDraftReceipt:

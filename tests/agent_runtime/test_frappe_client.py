@@ -194,6 +194,90 @@ def test_frappe_client_uses_standard_token_auth_and_governed_headers() -> None:
     assert call["payload"]["payload"]["request_digest"] == digest
 
 
+def test_frappe_client_uses_explicit_per_apply_purpose_for_headers_and_payload() -> None:
+    intent = _intent()
+    digest = _digest(intent)
+    transport = _Transport(
+        {
+            "message": {
+                "site_id": "gbos.localhost",
+                "doctype": "GBOS Work Item",
+                "name": "WRK-AI-0001",
+                "revision": 1,
+                "request_id": "materialization-0001",
+                "request_digest": digest,
+            }
+        }
+    )
+    client = HttpFrappeDraftClient(
+        base_url="http://127.0.0.1:8000",
+        api_key="materializer-key",
+        api_secret="materializer-secret",
+        auth_ref="agent-materializer-v1",
+        site_id="gbos.localhost",
+        transport=transport,
+    )
+
+    client.apply(
+        intent,
+        request_id="materialization-0001",
+        request_digest=digest,
+        processing_purpose="procurement_coordination",
+    )
+
+    call = transport.calls[0]
+    assert call["headers"]["X-Processing-Purpose"] == "procurement_coordination"
+    assert call["payload"]["payload"]["processing_purpose"] == "procurement_coordination"
+
+
+def test_frappe_client_requires_one_resolvable_processing_purpose() -> None:
+    intent = _intent()
+    digest = _digest(intent)
+    transport = _Transport({})
+    client = HttpFrappeDraftClient(
+        base_url="http://127.0.0.1:8000",
+        api_key="materializer-key",
+        api_secret="materializer-secret",
+        auth_ref="agent-materializer-v1",
+        site_id="gbos.localhost",
+        transport=transport,
+    )
+
+    with pytest.raises(FrappeClientError, match="processing purpose"):
+        client.apply(
+            intent,
+            request_id="materialization-0001",
+            request_digest=digest,
+        )
+
+    assert transport.calls == []
+
+
+def test_frappe_client_rejects_conflicting_fixed_and_per_apply_purposes() -> None:
+    intent = _intent()
+    digest = _digest(intent)
+    transport = _Transport({})
+    client = HttpFrappeDraftClient(
+        base_url="http://127.0.0.1:8000",
+        api_key="materializer-key",
+        api_secret="materializer-secret",
+        auth_ref="agent-materializer-v1",
+        site_id="gbos.localhost",
+        processing_purpose="sales_follow_up",
+        transport=transport,
+    )
+
+    with pytest.raises(FrappeClientError, match="processing purpose"):
+        client.apply(
+            intent,
+            request_id="materialization-0001",
+            request_digest=digest,
+            processing_purpose="metric_reporting",
+        )
+
+    assert transport.calls == []
+
+
 def test_frappe_client_rejects_receipt_site_or_revision_mismatch() -> None:
     intent = _intent()
     digest = _digest(intent)
