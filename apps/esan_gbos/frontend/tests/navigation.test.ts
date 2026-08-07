@@ -22,7 +22,6 @@ describe("角色裁剪导航", () => {
   });
 
   it.each([
-    [["CEO"], ["经营总览", "沟通观察"]],
     [["Sales User"], ["销售协同", "沟通观察"]],
     [["Purchase Manager"], ["采购协同"]],
     [["Product/R&D"], ["产品与样品"]],
@@ -30,6 +29,25 @@ describe("角色裁剪导航", () => {
     [["Integration Admin"], ["集成状态"]],
   ])("%j 只显示授权工作台", (roles, expected) => {
     expect(navigationForRoles(roles).map((item) => item.label)).toEqual(expected);
+  });
+
+  it("CEO 可见并可进入全部一级菜单", () => {
+    const expected = [
+      ["经营总览", "/gbos/ceo"],
+      ["销售协同", "/gbos/sales"],
+      ["采购协同", "/gbos/purchase"],
+      ["产品与样品", "/gbos/product"],
+      ["审核队列", "/gbos/review"],
+      ["集成状态", "/gbos/integrations"],
+      ["沟通观察", "/gbos/communications"],
+    ];
+
+    expect(
+      navigationForRoles(["CEO"]).map((item) => [item.label, item.to]),
+    ).toEqual(expected);
+    expect(expected.every(([, path]) => isRouteAllowed(path, ["CEO"]))).toBe(
+      true,
+    );
   });
 
   it("GBOS Admin 可见全部工作台但仍不伪装业务审批角色", () => {
@@ -48,8 +66,9 @@ describe("角色裁剪导航", () => {
     expect(isRouteAllowed("/gbos/party/CUST-1", ["Sales User"])).toBe(true);
     expect(isRouteAllowed("/gbos/party/CUST-1", ["Buyer"])).toBe(false);
     expect(isRouteAllowed("/gbos/sample/SAMPLE-1", ["Product/R&D"])).toBe(true);
-    expect(isRouteAllowed("/gbos/review", ["CEO"])).toBe(false);
+    expect(isRouteAllowed("/gbos/review", ["CEO"])).toBe(true);
     expect(isRouteAllowed("/gbos/review/REVIEW-1", ["Reviewer"])).toBe(true);
+    expect(isRouteAllowed("/gbos/review/REVIEW-1", ["CEO"])).toBe(false);
     expect(isRouteAllowed("/gbos/review/REVIEW-1", ["Sales User"])).toBe(false);
     expect(isRouteAllowed("/gbos/integrations", ["Integration Admin"])).toBe(true);
     expect(isRouteAllowed("/gbos/integrations", ["Sales User"])).toBe(false);

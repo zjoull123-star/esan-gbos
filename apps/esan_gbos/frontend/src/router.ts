@@ -1,5 +1,10 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from "vue-router";
 
+import {
+  hasFullNavigationAccess,
+  WORKSPACE_NAVIGATION,
+} from "./navigation";
+
 const CEO_ROLES = ["CEO"] as const;
 const SALES_ROLES = ["Sales Manager", "Sales User"] as const;
 const PURCHASE_ROLES = ["Purchase Manager", "Buyer"] as const;
@@ -95,6 +100,12 @@ const pathMatches = (pattern: string, actual: string) => {
 
 export const isRouteAllowed = (path: string, roles: readonly string[]) => {
   if (roles.includes("GBOS Admin")) {
+    return true;
+  }
+  if (
+    hasFullNavigationAccess(roles) &&
+    WORKSPACE_NAVIGATION.some((item) => pathMatches(item.to, path))
+  ) {
     return true;
   }
   const route = APP_ROUTES.find((candidate) => pathMatches(candidate.path, path));
