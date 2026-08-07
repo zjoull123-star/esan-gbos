@@ -125,6 +125,18 @@ def test_local_pilot_manifest_keeps_deferred_capabilities_closed_and_budget_expl
     for channel in ("email", "wecom", "whatsapp"):
         assert manifest["channels"][channel]["backfill_history"] is False
 
+    placeholder_artifact = json.loads(json.dumps(manifest))
+    placeholder_artifact["channels"]["media"].update(
+        {
+            "enabled": True,
+            "activation_time": "2026-08-08T00:00:00Z",
+            "ffmpeg_sha256": "a" * 64,
+            "whisper_model_sha256": "b" * 64,
+        }
+    )
+    with pytest.raises(ValidationError):
+        validator.validate(placeholder_artifact)
+
 
 def test_model_invocation_allows_unknown_tokens_but_not_implicit_zero_or_content() -> None:
     valid = _load(LOCAL_PILOT / "examples" / "valid" / "model-invocation-v1.0.json")
