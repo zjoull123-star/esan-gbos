@@ -59,6 +59,7 @@ from .runtime_support import (
     reject_plaintext_secret_environment,
     validate_manifest_binding,
 )
+from .trusted_phrase_lexicon import load_trusted_phrase_resolver
 
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
@@ -66,6 +67,7 @@ DEFAULT_PROJECTION_CONFIG = Path("/config/projection-connections.json")
 DEFAULT_DEEPSEEK_API_KEY_FILE = Path("/run/secrets/deepseek_api_key")
 DEFAULT_TOKENIZER_HMAC_KEY_FILE = Path("/run/secrets/tokenizer_hmac_key")
 DEFAULT_MAPPING_VAULT_KEY_FILE = Path("/run/secrets/mapping_vault_key")
+DEFAULT_TRUSTED_PHRASE_LEXICON_FILE = Path("/run/secrets/trusted_phrase_lexicon")
 MODEL_PROJECTION_PROCESSING_PURPOSE = "observation_processing"
 _LEASE_INTERVAL_MULTIPLIER = 10
 _RETRY_DELAY = timedelta(seconds=30)
@@ -756,6 +758,7 @@ def main(
     manifest_path: Path = DEFAULT_MANIFEST,
     runtime_config_path: Path = DEFAULT_RUNTIME_CONFIG,
     projection_config_path: Path = DEFAULT_PROJECTION_CONFIG,
+    trusted_phrase_lexicon_path: Path = DEFAULT_TRUSTED_PHRASE_LEXICON_FILE,
     secret_paths: ProjectionSecretPaths | None = None,
     environ: Mapping[str, str] | None = None,
     components_factory: ComponentsFactory | None = None,
@@ -784,8 +787,14 @@ def main(
         if configured.provider_mode != "deepseek":
             raise RuntimeSupportError("model projection requires DeepSeek provider mode")
         validate_deepseek_manifest(manifest)
-        if phrase_resolver is None:
-            raise RuntimeSupportError("trusted phrase resolver is not injected")
+        active_clock = clock or (lambda: datetime.now(UTC))
+        active_resolver = phrase_resolver
+        if active_resolver is None:
+            active_resolver = load_trusted_phrase_resolver(
+                trusted_phrase_lexicon_path,
+                expected_site_id=config.site_id,
+                clock=active_clock,
+            )
         active_paths = secret_paths or ProjectionSecretPaths(
             deepseek_api_key=DEFAULT_DEEPSEEK_API_KEY_FILE,
             tokenizer_hmac_key=DEFAULT_TOKENIZER_HMAC_KEY_FILE,
@@ -803,17 +812,16 @@ def main(
                 runtime_config=config,
                 secret_paths=active_paths,
                 projection_config_path=projection_config_path,
-                phrase_resolver=phrase_resolver,
+                phrase_resolver=active_resolver,
             )
         else:
             components = components_factory(manifest, config, active_paths)
-        active_clock = clock or (lambda: datetime.now(UTC))
         worker = build_worker(
             components=components,
             site_id=config.site_id,
             processing_purpose=MODEL_PROJECTION_PROCESSING_PURPOSE,
             worker_id=config.worker.worker_id,
-            phrase_resolver=phrase_resolver,
+            phrase_resolver=active_resolver,
             clock=active_clock,
             heartbeat_interval=config.worker.heartbeat_interval_seconds,
         )
@@ -892,6 +900,7 @@ __all__ = [
     "DEFAULT_MAPPING_VAULT_KEY_FILE",
     "DEFAULT_PROJECTION_CONFIG",
     "DEFAULT_TOKENIZER_HMAC_KEY_FILE",
+    "DEFAULT_TRUSTED_PHRASE_LEXICON_FILE",
     "ModelProjectionComponents",
     "ModelProjectionWorker",
     "ProjectionLeaseConflict",

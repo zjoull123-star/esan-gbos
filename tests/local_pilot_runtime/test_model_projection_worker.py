@@ -33,6 +33,10 @@ from services.local_pilot_runtime.model_projection_worker import (
 )
 from services.local_pilot_runtime.projection_config import ProjectionConfigError
 from services.local_pilot_runtime.runtime_support import load_runtime_config
+from services.local_pilot_runtime.trusted_phrase_lexicon import (
+    TrustedPhraseLexiconResolver,
+    load_trusted_phrase_resolver,
+)
 from services.model_gateway.deepseek import DEEPSEEK_MODEL
 from services.model_gateway.observation_provider import DeepSeekObservationProvider
 from services.model_gateway.tokenization import InMemoryMappingVault, StableTokenizer
@@ -521,6 +525,31 @@ def _projection_config(tmp_path: Path) -> Path:
     return path
 
 
+def _phrase_lexicon(
+    tmp_path: Path,
+    *,
+    site_id: str = SCOPE.site_id,
+    approved_at: datetime = NOW - timedelta(minutes=5),
+    expires_at: datetime = NOW + timedelta(days=7),
+) -> Path:
+    value = {
+        "schema_version": "1.0",
+        "site_id": site_id,
+        "resolver_version": "manual-attestation-2026-08-08",
+        "approved_by": "local-data-steward",
+        "approved_at": approved_at.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "names_complete": True,
+        "organizations_complete": True,
+        "names": ["Alice Zhang"],
+        "organizations": ["Example Trading LLC"],
+    }
+    path = tmp_path / "trusted-phrase-lexicon"
+    path.write_text(json.dumps(value), encoding="utf-8")
+    os.chmod(path, 0o600)
+    return path
+
+
 class _NoNetworkTransport(httpx.BaseTransport):
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         raise AssertionError("component construction cannot perform HTTP")
@@ -752,6 +781,83 @@ def test_valid_main_builds_only_after_preflight_and_closes_components(
     assert result == 0
     assert events == ["factory", "runner", "close"]
     assert stop.is_set()
+
+
+def test_main_loads_site_bound_lexicon_before_factory_when_resolver_is_not_injected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, config_path, secret_paths = _runtime_files(tmp_path)
+    phrase_path = _phrase_lexicon(tmp_path)
+    events: list[str] = []
+
+    def load_resolver(
+        path: Path,
+        *,
+        expected_site_id: str,
+        clock: Callable[[], datetime],
+    ) -> TrustedPhraseLexiconResolver:
+        assert path == phrase_path
+        assert expected_site_id == SCOPE.site_id
+        events.append("lexicon")
+        return load_trusted_phrase_resolver(
+            path,
+            expected_site_id=expected_site_id,
+            clock=clock,
+        )
+
+    def factory(*_: object) -> ModelProjectionComponents:
+        events.append("factory")
+        return _components()
+
+    monkeypatch.setattr(model_projection_worker, "load_trusted_phrase_resolver", load_resolver)
+
+    result = main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        trusted_phrase_lexicon_path=phrase_path,
+        secret_paths=secret_paths,
+        environ=_environment(),
+        components_factory=factory,
+        worker_runner=lambda *_: events.append("runner"),
+        clock=lambda: NOW,
+    )
+
+    assert result == 0
+    assert events == ["lexicon", "factory", "runner"]
+
+
+@pytest.mark.parametrize("case", ["absent", "expired", "site_mismatch"])
+def test_main_rejects_untrusted_default_lexicon_before_factory_or_http(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    manifest_path, config_path, secret_paths = _runtime_files(tmp_path)
+    if case == "absent":
+        phrase_path = tmp_path / "absent-phrase-lexicon"
+    elif case == "expired":
+        phrase_path = _phrase_lexicon(tmp_path, expires_at=NOW)
+    else:
+        phrase_path = _phrase_lexicon(tmp_path, site_id="other.localhost")
+    calls: list[str] = []
+
+    def forbidden_factory(*_: object) -> ModelProjectionComponents:
+        calls.append("factory")
+        return _components()
+
+    result = main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        trusted_phrase_lexicon_path=phrase_path,
+        secret_paths=secret_paths,
+        environ=_environment(),
+        components_factory=forbidden_factory,
+        worker_runner=lambda *_: calls.append("runner"),
+        clock=lambda: NOW,
+    )
+
+    assert result == 78
+    assert calls == []
 
 
 def test_default_main_uses_closed_projection_factory_not_runtime_broad_connection(
