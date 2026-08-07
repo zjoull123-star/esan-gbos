@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import NoReturn
@@ -82,6 +83,32 @@ def _multipart_with_broken_second_attachment() -> bytes:
         b"!!!!\r\n"
         b"--BOUNDARY--\r\n"
     )
+
+
+def _multipart_with_repr_sentinels() -> tuple[bytes, tuple[str, ...]]:
+    message_id = "message-id-repr-sentinel"
+    filename = "filename-repr-sentinel.bin"
+    raw_body = "raw-body-repr-sentinel"
+    attachment = b"attachment-bytes-repr-sentinel"
+    raw = (
+        f"Message-ID: <{message_id}>\r\n".encode()
+        + b"Content-Type: multipart/mixed; boundary=BOUNDARY\r\n"
+        + b"\r\n"
+        + b"--BOUNDARY\r\n"
+        + b"Content-Type: text/plain\r\n"
+        + b"\r\n"
+        + raw_body.encode()
+        + b"\r\n"
+        + b"--BOUNDARY\r\n"
+        + b"Content-Type: application/octet-stream\r\n"
+        + f"Content-Disposition: attachment; filename={filename}\r\n".encode()
+        + b"Content-Transfer-Encoding: base64\r\n"
+        + b"\r\n"
+        + base64.b64encode(attachment)
+        + b"\r\n"
+        + b"--BOUNDARY--\r\n"
+    )
+    return raw, (message_id, filename, raw_body, attachment.decode())
 
 
 def _fetch_response(
@@ -362,7 +389,7 @@ def test_initial_poll_filters_by_internaldate_not_date_header_and_advances_past_
     result = connector.poll(None, username=USERNAME, password=PASSWORD)
 
     assert [message.uid for message in result.messages] == [7]
-    assert ImapCheckpoint.parse(result.next_checkpoint or "").uid == 7
+    assert ImapCheckpoint.parse(result.checkpoint_candidate or "").uid == 7
     assert ("UID", "SEARCH", None, "SINCE", "07-Aug-2026") in client.commands
 
 
@@ -381,48 +408,89 @@ def test_exact_message_bytes_and_binary_attachment_candidates_are_preserved() ->
         "data.bin",
         "second.bin",
     ]
+    assert message.attachment_status == "ready"
+    assert message.attachment_error_code is None
+    assert message.checkpoint_candidate == result.checkpoint_candidate
     assert message.evidence_candidates[0].content == b"\x00\xff\x80binary"
     assert isinstance(message.evidence_candidates[0].content, bytes)
 
 
 def test_success_result_repr_redacts_exact_message_and_attachment_bytes() -> None:
-    raw = _raw_message(body=PASSWORD.encode())
+    raw, sentinels = _multipart_with_repr_sentinels()
     client = FakeImapClient(messages={7: raw})
     connector, _ = _connector(client)
 
     result = connector.poll(None, username=USERNAME, password=PASSWORD)
 
     assert result.messages[0].raw_delivery.exact_bytes == raw
-    assert PASSWORD not in repr(result)
-    assert b"\x00\xff\x80binary".hex() not in repr(result)
+    rendered = repr(
+        (
+            result.messages[0].evidence_candidates[0],
+            result.messages[0],
+            result,
+        )
+    )
+    assert all(sentinel not in rendered for sentinel in sentinels)
 
 
-def test_attachment_limit_rejects_whole_fetch_without_partial_output_or_checkpoint_advance() -> (
-    None
-):
+def test_attachment_limit_quarantines_candidates_but_preserves_raw_delivery() -> None:
     previous = ImapCheckpoint("pilot-primary", 42, 6).serialize()
-    client = FakeImapClient(messages={7: _multipart_message()})
+    raw = _multipart_message()
+    client = FakeImapClient(messages={7: raw})
     connector, _ = _connector(client, config=_config(max_attachments=1))
 
     result = connector.poll(previous, username=USERNAME, password=PASSWORD)
 
-    assert result.status == "rejected"
-    assert result.error_code == "attachment_limit_exceeded"
-    assert result.messages == ()
-    assert result.next_checkpoint == previous
+    assert result.status == "ok"
+    assert result.error_code is None
+    assert len(result.messages) == 1
+    message = result.messages[0]
+    assert message.raw_delivery.exact_bytes is raw
+    assert message.attachment_status == "quarantined"
+    assert message.attachment_error_code == "attachment_limit_exceeded"
+    assert message.evidence_candidates == ()
+    assert message.checkpoint_candidate == result.checkpoint_candidate
+    assert message.checkpoint_candidate != previous
 
 
-def test_broken_second_attachment_discards_valid_first_attachment_and_checkpoint() -> None:
+def test_oversized_attachment_quarantines_candidates_but_preserves_raw_delivery() -> None:
     previous = ImapCheckpoint("pilot-primary", 42, 6).serialize()
-    client = FakeImapClient(messages={7: _multipart_with_broken_second_attachment()})
+    raw = _multipart_message()
+    client = FakeImapClient(messages={7: raw})
+    connector, _ = _connector(client, config=_config(max_attachment_bytes=1))
+
+    result = connector.poll(previous, username=USERNAME, password=PASSWORD)
+
+    assert result.status == "ok"
+    message = result.messages[0]
+    assert message.raw_delivery.exact_bytes is raw
+    assert message.attachment_status == "quarantined"
+    assert message.attachment_error_code == "attachment_too_large"
+    assert message.evidence_candidates == ()
+    assert message.checkpoint_candidate == result.checkpoint_candidate
+
+
+def test_broken_second_attachment_quarantines_all_candidates_but_preserves_raw() -> None:
+    previous = ImapCheckpoint("pilot-primary", 42, 6).serialize()
+    raw = _multipart_with_broken_second_attachment()
+    client = FakeImapClient(messages={7: raw})
     connector, _ = _connector(client)
 
     result = connector.poll(previous, username=USERNAME, password=PASSWORD)
 
-    assert result.status == "rejected"
-    assert result.error_code == "attachment_decode_failed"
-    assert result.messages == ()
-    assert result.next_checkpoint == previous
+    assert result.status == "ok"
+    assert len(result.messages) == 1
+    message = result.messages[0]
+    assert message.raw_delivery.exact_bytes is raw
+    assert message.attachment_status == "quarantined"
+    assert message.attachment_error_code == "attachment_decode_failed"
+    assert message.evidence_candidates == ()
+    assert ImapCheckpoint.parse(message.checkpoint_candidate).uid == 7
+    assert message.checkpoint_candidate == result.checkpoint_candidate
+    assert "durably accepted" in (type(message).__doc__ or "")
+    assert "MUST NOT be committed" in (type(result).__doc__ or "")
+    assert not hasattr(message, "checkpoint")
+    assert not hasattr(result, "next_checkpoint")
 
 
 def test_uidvalidity_change_pauses_with_bounded_rescan_plan_and_keeps_checkpoint() -> None:
@@ -441,7 +509,7 @@ def test_uidvalidity_change_pauses_with_bounded_rescan_plan_and_keeps_checkpoint
 
     assert result.status == "paused"
     assert result.error_code == "uidvalidity_changed"
-    assert result.next_checkpoint == previous
+    assert result.checkpoint_candidate == previous
     assert result.messages == ()
     assert result.rescan_plan is not None
     assert result.rescan_plan.previous_uidvalidity == 41
@@ -475,7 +543,7 @@ def test_invalid_or_partial_fetch_does_not_advance_checkpoint(
     assert result.status == "retry"
     assert result.error_code == error_code
     assert result.messages == ()
-    assert result.next_checkpoint == previous
+    assert result.checkpoint_candidate == previous
 
 
 def test_disconnect_during_second_fetch_discards_partial_batch_and_keeps_checkpoint() -> None:
@@ -494,4 +562,4 @@ def test_disconnect_during_second_fetch_discards_partial_batch_and_keeps_checkpo
     assert result.status == "retry"
     assert result.error_code == "fetch_failed"
     assert result.messages == ()
-    assert result.next_checkpoint == previous
+    assert result.checkpoint_candidate == previous

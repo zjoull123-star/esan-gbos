@@ -173,15 +173,53 @@ class AttachmentEvidenceCandidate:
     filename: str | None
     content: bytes = field(repr=False)
 
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(part_index={self.part_index}, "
+            "metadata=<redacted>, "
+            f"content=<redacted bytes={len(self.content)}>)"
+        )
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class EmailImapMessage:
+    """One raw email whose checkpoint candidate is usable only after it is durably accepted."""
+
     uid: int
     provider_event_id: str
-    checkpoint: str
+    checkpoint_candidate: str
     raw_delivery: RawDelivery = field(repr=False)
     message_id: str | None
     evidence_candidates: tuple[AttachmentEvidenceCandidate, ...]
+    attachment_status: Literal["ready", "quarantined"]
+    attachment_error_code: str | None
+
+    def __post_init__(self) -> None:
+        if self.attachment_status == "ready":
+            if self.attachment_error_code is not None:
+                raise ValueError("ready attachments cannot have an error code")
+        elif self.attachment_status == "quarantined":
+            if self.attachment_error_code not in {
+                "attachment_limit_exceeded",
+                "attachment_too_large",
+                "attachment_decode_failed",
+            }:
+                raise ValueError("quarantined attachments require a safe error code")
+            if self.evidence_candidates:
+                raise ValueError("quarantined attachments cannot expose partial candidates")
+        else:
+            raise ValueError("invalid attachment status")
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(uid={self.uid}, "
+            f"provider_event_id={self.provider_event_id!r}, "
+            "checkpoint_candidate=<redacted>, raw_delivery=<redacted>, "
+            "message_id=<redacted>, "
+            f"attachment_status={self.attachment_status!r}, "
+            f"attachment_error_code={self.attachment_error_code!r}, "
+            f"evidence_candidate_count={len(self.evidence_candidates)})"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,13 +232,24 @@ class ImapRescanPlan:
     max_uids: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class ImapPollResult:
+    """Checkpoint candidates MUST NOT be committed until raw deliveries are durably accepted."""
+
     status: Literal["ok", "retry", "paused", "rejected"]
-    next_checkpoint: str | None
+    checkpoint_candidate: str | None
     messages: tuple[EmailImapMessage, ...] = ()
     error_code: str | None = None
     rescan_plan: ImapRescanPlan | None = None
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(status={self.status!r}, "
+            "checkpoint_candidate=<redacted>, "
+            f"message_count={len(self.messages)}, "
+            f"error_code={self.error_code!r}, "
+            f"has_rescan_plan={self.rescan_plan is not None})"
+        )
 
 
 class _FetchFailure(Exception):
@@ -312,7 +361,7 @@ class EmailImapConnector:
                 )
                 return ImapPollResult(
                     status="paused",
-                    next_checkpoint=checkpoint,
+                    checkpoint_candidate=checkpoint,
                     error_code="uidvalidity_changed",
                     rescan_plan=ImapRescanPlan(
                         mailbox=self._config.mailbox,
@@ -348,20 +397,12 @@ class EmailImapConnector:
                             uidvalidity=uidvalidity,
                             raw=raw,
                             received_at=received_at,
-                            checkpoint=next_checkpoint.serialize(),
+                            checkpoint_candidate=next_checkpoint.serialize(),
                         )
                     )
             except _FetchFailure as exc:
                 status: Literal["retry", "rejected"] = (
-                    "rejected"
-                    if exc.error_code
-                    in {
-                        "message_too_large",
-                        "attachment_limit_exceeded",
-                        "attachment_too_large",
-                        "attachment_decode_failed",
-                    }
-                    else "retry"
+                    "rejected" if exc.error_code == "message_too_large" else "retry"
                 )
                 return self._failure(status, checkpoint, exc.error_code)
             except Exception:
@@ -369,7 +410,7 @@ class EmailImapConnector:
 
             return ImapPollResult(
                 status="ok",
-                next_checkpoint=next_checkpoint.serialize(),
+                checkpoint_candidate=next_checkpoint.serialize(),
                 messages=tuple(messages),
             )
         finally:
@@ -454,14 +495,33 @@ class EmailImapConnector:
         uidvalidity: int,
         raw: bytes,
         received_at: datetime,
-        checkpoint: str,
+        checkpoint_candidate: str,
     ) -> EmailImapMessage:
+        provider_event_id = stable_ulid(
+            "email-imap",
+            self._connector_instance_id,
+            self._config.mailbox,
+            str(uidvalidity),
+            str(uid),
+        )
+        raw_delivery = RawDelivery(
+            delivery_id=provider_event_id,
+            exact_bytes=raw,
+            media_type="message/rfc822",
+            received_at=received_at,
+        )
+        message_id: str | None = None
+        candidates: tuple[AttachmentEvidenceCandidate, ...] = ()
+        attachment_status: Literal["ready", "quarantined"] = "ready"
+        attachment_error_code: str | None = None
         try:
             parsed = BytesParser(policy=policy.default).parsebytes(raw)
+            raw_message_id = parsed.get("Message-ID")
+            message_id = str(raw_message_id) if raw_message_id is not None else None
             attachments = tuple(parsed.iter_attachments())
             if len(attachments) > self._config.max_attachments:
                 raise _FetchFailure("attachment_limit_exceeded")
-            candidates: list[AttachmentEvidenceCandidate] = []
+            candidate_list: list[AttachmentEvidenceCandidate] = []
             for index, attachment in enumerate(attachments, start=1):
                 if attachment.defects:
                     raise _FetchFailure("attachment_decode_failed")
@@ -470,7 +530,7 @@ class EmailImapConnector:
                     raise _FetchFailure("attachment_decode_failed")
                 if len(content) > self._config.max_attachment_bytes:
                     raise _FetchFailure("attachment_too_large")
-                candidates.append(
+                candidate_list.append(
                     AttachmentEvidenceCandidate(
                         part_index=index,
                         media_type=attachment.get_content_type(),
@@ -478,32 +538,24 @@ class EmailImapConnector:
                         content=content,
                     )
                 )
-            raw_message_id = parsed.get("Message-ID")
-            message_id = str(raw_message_id) if raw_message_id is not None else None
-        except _FetchFailure:
-            raise
+            candidates = tuple(candidate_list)
+        except _FetchFailure as exc:
+            attachment_status = "quarantined"
+            attachment_error_code = exc.error_code
+            candidates = ()
         except Exception:
-            raise _FetchFailure("attachment_decode_failed") from None
-
-        provider_event_id = stable_ulid(
-            "email-imap",
-            self._connector_instance_id,
-            self._config.mailbox,
-            str(uidvalidity),
-            str(uid),
-        )
+            attachment_status = "quarantined"
+            attachment_error_code = "attachment_decode_failed"
+            candidates = ()
         return EmailImapMessage(
             uid=uid,
             provider_event_id=provider_event_id,
-            checkpoint=checkpoint,
-            raw_delivery=RawDelivery(
-                delivery_id=provider_event_id,
-                exact_bytes=raw,
-                media_type="message/rfc822",
-                received_at=received_at,
-            ),
+            checkpoint_candidate=checkpoint_candidate,
+            raw_delivery=raw_delivery,
             message_id=message_id,
-            evidence_candidates=tuple(candidates),
+            evidence_candidates=candidates,
+            attachment_status=attachment_status,
+            attachment_error_code=attachment_error_code,
         )
 
     @staticmethod
@@ -514,7 +566,7 @@ class EmailImapConnector:
     ) -> ImapPollResult:
         return ImapPollResult(
             status=status,
-            next_checkpoint=checkpoint,
+            checkpoint_candidate=checkpoint,
             error_code=error_code,
         )
 
