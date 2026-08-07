@@ -2,6 +2,37 @@ from __future__ import annotations
 
 from collections.abc import Collection
 
+
+class PermissionScopeError(ValueError):
+    """The current actor cannot be resolved to a safe downstream scope."""
+
+
+def communication_scope(
+    *,
+    roles: Collection[str],
+    actor_ref: str,
+    team_refs: Collection[str],
+) -> dict[str, object]:
+    actor = actor_ref.strip()
+    if not actor:
+        raise PermissionScopeError("actor reference is required")
+    assigned_roles = frozenset(roles)
+    if assigned_roles & {"CEO", "GBOS Admin"}:
+        allowed = ["*"]
+        scope = "all_business_projection"
+    else:
+        allowed = sorted({team.strip() for team in team_refs if team.strip()})
+        if not allowed:
+            raise PermissionScopeError("a resolved team scope is required")
+        scope = "team_and_self"
+    return {
+        "actor_ref": actor,
+        "allowed_team_refs": allowed,
+        "scope": scope,
+        "include_raw": False,
+    }
+
+
 _BUSINESS_DOCTYPES = frozenset(
     {
         "GBOS Party Profile",
@@ -14,6 +45,7 @@ _BUSINESS_DOCTYPES = frozenset(
         "GBOS Sourcing Event",
         "GBOS Work Item",
         "GBOS Review Case",
+        "GBOS Informal Observation",
     }
 )
 _INTEGRATION_DOCTYPES = frozenset({"GBOS External Identity", "GBOS External Crosswalk"})

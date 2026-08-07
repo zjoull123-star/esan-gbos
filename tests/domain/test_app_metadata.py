@@ -22,8 +22,13 @@ PARENT_DOCTYPES = {
     "GBOS Sourcing Event",
     "GBOS Work Item",
     "GBOS Review Case",
+    "GBOS Informal Observation",
 }
-CHILD_DOCTYPES = {"GBOS Team Member", "GBOS Sourcing Candidate"}
+CHILD_DOCTYPES = {
+    "GBOS Team Member",
+    "GBOS Sourcing Candidate",
+    "GBOS Informal Evidence Ref",
+}
 GATE4_AUDIT_DOCTYPES = {"GBOS Review Decision"}
 COMMON_FIELDS = {"origin", "business_status", "review_status", "revision"}
 
@@ -69,7 +74,12 @@ def test_every_parent_has_governed_fields_and_is_not_submittable() -> None:
     for name in PARENT_DOCTYPES:
         document = documents[name]
         fields = {field["fieldname"] for field in document["fields"]}
-        assert fields >= COMMON_FIELDS, name
+        required = (
+            COMMON_FIELDS - {"business_status"}
+            if name == "GBOS Informal Observation"
+            else COMMON_FIELDS
+        )
+        assert fields >= required, name
         if name != "GBOS Team":
             assert "team" in fields, name
         assert not document.get("is_submittable"), name
@@ -177,3 +187,61 @@ def test_bff_dispatch_reaches_the_uniform_auth_and_method_guard() -> None:
     assert endpoint_sources.count(dispatch_decorator) == 8
     assert endpoint_sources.count('@bff_endpoint("GET")') == 4
     assert endpoint_sources.count('@bff_endpoint("POST")') == 4
+
+
+def test_v4_dotted_endpoints_match_the_ten_frozen_operations() -> None:
+    api_root = PACKAGE_ROOT / "api" / "v4"
+    sources = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in (
+            api_root / "integration.py",
+            api_root / "communication.py",
+            api_root / "model.py",
+            api_root / "ai_draft.py",
+        )
+    }
+
+    assert sources["integration.py"].count("@frappe.whitelist") == 4
+    assert sources["integration.py"].count('@bff_endpoint("POST")') == 3
+    assert sources["integration.py"].count('@bff_endpoint("GET")') == 1
+    assert sources["communication.py"].count('@bff_endpoint("GET")') == 2
+    assert sources["model.py"].count('@bff_endpoint("GET")') == 1
+    assert sources["ai_draft.py"].count('@bff_endpoint("GET")') == 2
+    assert sources["ai_draft.py"].count('@bff_endpoint("POST")') == 1
+
+
+def test_v4_informal_observation_contains_no_raw_or_official_metric_surface() -> None:
+    document = _doctype_documents()["GBOS Informal Observation"]
+    fields = {field["fieldname"]: field for field in document["fields"]}
+
+    assert {
+        "subject",
+        "summary_zh",
+        "team",
+        "evidence_refs",
+        "model_name",
+        "model_version",
+        "is_official_metric",
+        "origin",
+        "origin_reference",
+        "review_status",
+        "revision",
+        "last_request_id",
+    } <= set(fields)
+    assert fields["is_official_metric"]["default"] == "0"
+    assert fields["is_official_metric"]["read_only"] == 1
+    assert not {
+        "raw",
+        "original_text",
+        "prompt",
+        "response",
+        "business_status",
+        "metric_value",
+    } & set(fields)
+
+
+def test_all_versioned_bff_responses_are_no_store_and_v4_csrf_is_normalized() -> None:
+    source = (PACKAGE_ROOT / "api" / "v1" / "http.py").read_text(encoding="utf-8")
+
+    assert '"/api/method/esan_gbos.api.v4."' in source
+    assert 'response.headers["Cache-Control"] = "no-store"' in source

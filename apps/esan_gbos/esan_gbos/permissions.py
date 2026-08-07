@@ -88,6 +88,25 @@ def work_item_permission_query(user: str | None = None) -> str:
     return f"({' or '.join(conditions)})" if conditions else "1=0"
 
 
+def informal_observation_permission_query(user: str | None = None) -> str:
+    actor = user or frappe.session.user
+    if _is_global_reader(actor):
+        return ""
+    if "Reviewer" not in _roles(actor):
+        return "1=0"
+    escaped = frappe.db.escape(actor)
+    return (
+        "(`tabGBOS Informal Observation`.`name` in ("
+        "select `subject_name` from `tabGBOS Review Case` "
+        "where `assigned_reviewer` = "
+        f"{escaped} and `subject_doctype` = 'GBOS Informal Observation') "
+        "or `tabGBOS Informal Observation`.`name` in ("
+        "select `reference_name` from `tabGBOS Work Item` "
+        "where `assigned_to` = "
+        f"{escaped} and `reference_doctype` = 'GBOS Informal Observation'))"
+    )
+
+
 def _crm_permission_query(doctype: str, user: str | None = None) -> str:
     actor = user or frappe.session.user
     if _is_global_reader(actor):
@@ -131,7 +150,7 @@ def _is_assigned_review_subject(
 ) -> bool:
     if not name:
         return False
-    return bool(
+    if bool(
         frappe.db.exists(
             "GBOS Review Case",
             {
@@ -139,6 +158,17 @@ def _is_assigned_review_subject(
                 "subject_doctype": doctype,
                 "subject_name": name,
                 "business_status": "Pending",
+            },
+        )
+    ):
+        return True
+    return doctype == "GBOS Informal Observation" and bool(
+        frappe.db.exists(
+            "GBOS Work Item",
+            {
+                "assigned_to": user,
+                "reference_doctype": doctype,
+                "reference_name": name,
             },
         )
     )
@@ -179,6 +209,24 @@ def has_gbos_permission(
             getattr(doc, "name", None),
         ),
     )
+
+
+def protect_ai_draft_command(doc: object, method: str | None = None) -> None:
+    """Block generic DocType saves from bypassing the v4 draft command."""
+    del method
+    before = doc.get_doc_before_save()  # type: ignore[attr-defined]
+    if not before or getattr(before, "review_status", None) != "AI Draft":
+        return
+    if getattr(doc, "review_status", None) == getattr(before, "review_status", None):
+        return
+    if not getattr(doc, "flags", {}).get("gbos_ai_draft_command"):
+        raise frappe.PermissionError
+    if (
+        getattr(before, "origin", None) != "AI"
+        or getattr(doc, "review_status", None) != "Pending"
+        or getattr(doc, "business_status", None) != getattr(before, "business_status", None)
+    ):
+        raise frappe.PermissionError
 
 
 def has_crm_permission(

@@ -79,3 +79,8 @@ def validate_transition(workflow: str, before: str, after: str) -> None:
         return
     if after not in transitions_for(workflow, before):
         raise InvalidTransition(f"illegal {workflow} transition: {before} -> {after}")
+
+
+def validate_ai_draft_transition(*, origin: str, before: str, after: str) -> None:
+    if origin != "AI" or before != "AI Draft" or after != "Pending":
+        raise InvalidTransition("only an AI-origin AI Draft may transition to Pending")

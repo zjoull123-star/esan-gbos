@@ -90,3 +90,18 @@ def test_success_contract_always_has_schema_version() -> None:
             "replayed": False,
         },
     }
+
+
+def test_v4_success_contract_can_opt_in_without_changing_old_versions() -> None:
+    old = build_success_envelope(
+        data={"name": "SAM-01"},
+        request_id="REQ-12345678",
+    )
+    current = build_success_envelope(
+        data={"name": "OBS-01"},
+        request_id="REQ-12345678",
+        schema_version="4.0",
+    )
+
+    assert old["meta"]["schema_version"] == "1.0"
+    assert current["meta"]["schema_version"] == "4.0"

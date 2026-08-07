@@ -49,6 +49,7 @@ _PARENT_DOCTYPES = [
     "GBOS Sourcing Event",
     "GBOS Work Item",
     "GBOS Review Case",
+    "GBOS Informal Observation",
 ]
 
 permission_query_conditions = {
@@ -68,6 +69,7 @@ permission_query_conditions = {
     "GBOS External Crosswalk": "esan_gbos.permissions.integration_permission_query",
     "GBOS Review Case": "esan_gbos.permissions.review_case_permission_query",
     "GBOS Work Item": "esan_gbos.permissions.work_item_permission_query",
+    "GBOS Informal Observation": ("esan_gbos.permissions.informal_observation_permission_query"),
     "CRM Organization": "esan_gbos.permissions.crm_organization_permission_query",
     "CRM Lead": "esan_gbos.permissions.crm_lead_permission_query",
     "CRM Deal": "esan_gbos.permissions.crm_deal_permission_query",
@@ -111,6 +113,15 @@ doc_events = {
     }
     for doctype in _BLOCKED_ERP_DOCTYPES
 }
+
+for _draft_doctype in (
+    "GBOS Work Item",
+    "GBOS Review Case",
+    "GBOS Informal Observation",
+):
+    doc_events.setdefault(_draft_doctype, {})["validate"] = (
+        "esan_gbos.permissions.protect_ai_draft_command"
+    )
 
 has_permission.update(
     {

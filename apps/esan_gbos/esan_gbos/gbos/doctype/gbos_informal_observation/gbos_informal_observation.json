@@ -1,0 +1,27 @@
+{
+  "doctype": "DocType",
+  "name": "GBOS Informal Observation",
+  "module": "GBOS",
+  "engine": "InnoDB",
+  "track_changes": 1,
+  "title_field": "subject",
+  "field_order": ["subject", "summary_zh", "team", "evidence_refs", "model_name", "model_version", "is_official_metric", "origin", "origin_reference", "review_status", "revision", "last_request_id"],
+  "fields": [
+    {"fieldname": "subject", "label": "Subject", "fieldtype": "Data", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "summary_zh", "label": "Chinese Summary", "fieldtype": "Small Text", "reqd": 1},
+    {"fieldname": "team", "label": "Team", "fieldtype": "Link", "options": "GBOS Team", "reqd": 1, "in_standard_filter": 1},
+    {"fieldname": "evidence_refs", "label": "Evidence References", "fieldtype": "Table", "options": "GBOS Informal Evidence Ref"},
+    {"fieldname": "model_name", "label": "Model Name", "fieldtype": "Data", "reqd": 1, "read_only": 1},
+    {"fieldname": "model_version", "label": "Model Version", "fieldtype": "Data", "reqd": 1, "read_only": 1},
+    {"fieldname": "is_official_metric", "label": "Official Metric", "fieldtype": "Check", "default": "0", "read_only": 1},
+    {"fieldname": "origin", "label": "Origin", "fieldtype": "Select", "options": "AI", "default": "AI", "reqd": 1, "read_only": 1},
+    {"fieldname": "origin_reference", "label": "Origin Reference", "fieldtype": "Data", "reqd": 1, "read_only": 1},
+    {"fieldname": "review_status", "label": "Review Status", "fieldtype": "Select", "options": "AI Draft\nPending", "default": "AI Draft", "reqd": 1, "in_list_view": 1, "in_standard_filter": 1},
+    {"fieldname": "revision", "label": "Revision", "fieldtype": "Int", "default": "0", "read_only": 1},
+    {"fieldname": "last_request_id", "label": "Last Request ID", "fieldtype": "Data", "read_only": 1}
+  ],
+  "permissions": [
+    {"role": "GBOS Admin", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1},
+    {"role": "CEO", "read": 1}
+  ]
+}
