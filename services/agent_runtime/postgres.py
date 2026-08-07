@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import AbstractContextManager
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from .models import (
     AgentTaskClaim,
@@ -23,6 +24,11 @@ from .models import (
 if TYPE_CHECKING:
     from .agents import AgentExecutionResult
     from .invocations import ModelInvocationRecord
+    from .materialization import (
+        FrappeDraftReceipt,
+        MaterializationClaim,
+        MaterializationHealth,
+    )
     from .proposals import ActionProposalRecord
 
 _METADATA_COLUMNS = """
@@ -636,9 +642,11 @@ class PostgresAgentTaskRepository:
                 """
                 INSERT INTO agent_runtime.proposal_materialization_outbox (
                     site_id, materialization_id, proposal_id, task_id,
-                    task_attempt, status, origin, review_status, created_at
+                    task_attempt, status, origin, review_status, created_at,
+                    next_attempt_at, updated_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, 'pending', 'AI', 'AI Draft', %s
+                    %s, %s, %s, %s, %s, 'pending', 'AI', 'AI Draft',
+                    %s, %s, %s
                 )
                 """,
                 (
@@ -648,6 +656,8 @@ class PostgresAgentTaskRepository:
                     materialization.task_id,
                     materialization.task_attempt,
                     materialization.created_at,
+                    materialization.next_attempt_at,
+                    materialization.updated_at,
                 ),
             )
             cursor.execute(
@@ -689,6 +699,290 @@ class PostgresAgentTaskRepository:
                 actor_ref=worker_id,
             )
             return completed
+
+    def claim_materialization(
+        self,
+        site_id: str,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> MaterializationClaim | None:
+        from .materialization import MaterializationClaim
+        from .proposals import MaterializationEnvelope
+
+        _require_aware(now, "now")
+        if not site_id or not worker_id:
+            raise ValidationError("site_id and worker_id are required")
+        if lease_duration <= timedelta(0):
+            raise ValidationError("lease_duration must be positive")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                """
+                UPDATE agent_runtime.proposal_materialization_outbox
+                SET status = 'dead_letter',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    last_error_code = 'lease_expired_max_attempts',
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND status = 'running'
+                  AND lease_expires_at <= %s
+                  AND attempt >= max_attempts
+                """,
+                (now, site_id, now),
+            )
+            cursor.execute(
+                """
+                WITH candidate AS (
+                    SELECT site_id, materialization_id
+                    FROM agent_runtime.proposal_materialization_outbox
+                    WHERE site_id = %s
+                      AND attempt < max_attempts
+                      AND (
+                          (
+                              status IN ('pending', 'retry')
+                              AND next_attempt_at <= %s
+                          )
+                          OR
+                          (
+                              status = 'running'
+                              AND lease_expires_at <= %s
+                          )
+                      )
+                    ORDER BY next_attempt_at ASC, created_at ASC, materialization_id ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE agent_runtime.proposal_materialization_outbox AS outbox
+                SET status = 'running',
+                    attempt = outbox.attempt + 1,
+                    lease_owner = %s,
+                    lease_expires_at = %s,
+                    last_error_code = NULL,
+                    updated_at = %s
+                FROM candidate
+                WHERE outbox.site_id = candidate.site_id
+                  AND outbox.materialization_id = candidate.materialization_id
+                RETURNING outbox.materialization_id, outbox.proposal_id,
+                          outbox.attempt, outbox.max_attempts,
+                          outbox.lease_owner, outbox.lease_expires_at
+                """,
+                (
+                    site_id,
+                    now,
+                    now,
+                    worker_id,
+                    now + lease_duration,
+                    now,
+                ),
+            )
+            outbox_row = cursor.fetchone()
+            if outbox_row is None:
+                return None
+            cursor.execute(
+                """
+                SELECT action_type, origin, review_status, document
+                FROM agent_runtime.action_proposals
+                WHERE site_id = %s AND proposal_id = %s
+                """,
+                (site_id, str(outbox_row[1])),
+            )
+            proposal_row = cursor.fetchone()
+            if proposal_row is None:
+                raise ValidationError("materialization proposal bundle is unavailable")
+            document = proposal_row[3]
+            if isinstance(document, str):
+                document = json.loads(document)
+            if not isinstance(document, dict):
+                raise ValidationError("materialization proposal document is invalid")
+            return MaterializationClaim(
+                materialization_id=str(outbox_row[0]),
+                proposal_id=str(outbox_row[1]),
+                site_id=site_id,
+                attempt=int(outbox_row[2]),
+                max_attempts=int(outbox_row[3]),
+                lease_owner=str(outbox_row[4]),
+                lease_expires_at=outbox_row[5],
+                envelope=MaterializationEnvelope(
+                    origin=str(proposal_row[1]),
+                    review_status=str(proposal_row[2]),
+                    action_type=str(proposal_row[0]),
+                    proposal=document,
+                ),
+            )
+
+    def acknowledge_materialization(
+        self,
+        site_id: str,
+        materialization_id: str,
+        *,
+        worker_id: str,
+        expected_attempt: int,
+        now: datetime,
+        receipt: FrappeDraftReceipt,
+    ) -> FrappeDraftReceipt:
+        from .materialization import FrappeDraftReceipt
+
+        _require_aware(now, "now")
+        if not isinstance(receipt, FrappeDraftReceipt):
+            raise ValidationError("invalid Frappe draft receipt")
+        if receipt.request_id != materialization_id:
+            raise IdempotencyConflict("receipt request does not match materialization")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                """
+                SELECT status, receipt_doctype, receipt_name, receipt_revision,
+                       receipt_request_id, receipt_digest
+                FROM agent_runtime.proposal_materialization_outbox
+                WHERE site_id = %s AND materialization_id = %s
+                FOR UPDATE
+                """,
+                (site_id, materialization_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise ValidationError("materialization does not exist in this site")
+            if row[0] == "succeeded":
+                existing = FrappeDraftReceipt(
+                    doctype=str(row[1]),
+                    name=str(row[2]),
+                    revision=int(row[3]),
+                    request_id=str(row[4]),
+                    request_digest=str(row[5]),
+                )
+                if existing != receipt:
+                    raise IdempotencyConflict("materialization receipt replay has a body conflict")
+                return existing
+            cursor.execute(
+                """
+                UPDATE agent_runtime.proposal_materialization_outbox
+                SET status = 'succeeded',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    last_error_code = NULL,
+                    receipt_doctype = %s,
+                    receipt_name = %s,
+                    receipt_revision = %s,
+                    receipt_request_id = %s,
+                    receipt_digest = %s,
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND materialization_id = %s
+                  AND status = 'running'
+                  AND lease_owner = %s
+                  AND attempt = %s
+                  AND lease_expires_at > %s
+                RETURNING materialization_id
+                """,
+                (
+                    receipt.doctype,
+                    receipt.name,
+                    receipt.revision,
+                    receipt.request_id,
+                    receipt.request_digest,
+                    now,
+                    site_id,
+                    materialization_id,
+                    worker_id,
+                    expected_attempt,
+                    now,
+                ),
+            )
+            if cursor.fetchone() is None:
+                raise LeaseConflict("worker lost the materialization lease")
+            return receipt
+
+    def fail_materialization(
+        self,
+        site_id: str,
+        materialization_id: str,
+        *,
+        worker_id: str,
+        expected_attempt: int,
+        now: datetime,
+        retry_at: datetime,
+        error_code: str,
+    ) -> Literal["retry", "dead_letter"]:
+        _require_aware(now, "now")
+        _require_aware(retry_at, "retry_at")
+        if retry_at <= now:
+            raise ValidationError("retry_at must be in the future")
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,79}", error_code) is None:
+            raise ValidationError("materialization error_code is invalid")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                """
+                UPDATE agent_runtime.proposal_materialization_outbox
+                SET status = CASE
+                        WHEN attempt >= max_attempts THEN 'dead_letter'
+                        ELSE 'retry'
+                    END,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    next_attempt_at = %s,
+                    last_error_code = %s,
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND materialization_id = %s
+                  AND status = 'running'
+                  AND lease_owner = %s
+                  AND attempt = %s
+                  AND lease_expires_at > %s
+                RETURNING status
+                """,
+                (
+                    retry_at,
+                    error_code,
+                    now,
+                    site_id,
+                    materialization_id,
+                    worker_id,
+                    expected_attempt,
+                    now,
+                ),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LeaseConflict("worker lost the materialization lease")
+            status = str(row[0])
+            if status == "retry":
+                return "retry"
+            if status == "dead_letter":
+                return "dead_letter"
+            raise ValidationError("invalid materialization failure state")
+
+    def materialization_health(self, site_id: str) -> MaterializationHealth:
+        from .materialization import MaterializationHealth
+
+        if not site_id:
+            raise ValidationError("site_id is required")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending'),
+                    COUNT(*) FILTER (WHERE status = 'running'),
+                    COUNT(*) FILTER (WHERE status = 'retry'),
+                    COUNT(*) FILTER (WHERE status = 'dead_letter')
+                FROM agent_runtime.proposal_materialization_outbox
+                WHERE site_id = %s
+                """,
+                (site_id,),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            raise ValidationError("materialization health query failed")
+        return MaterializationHealth(
+            pending=int(row[0]),
+            running=int(row[1]),
+            retry=int(row[2]),
+            dead_letter=int(row[3]),
+        )
 
     def get(self, site_id: str, task_id: str) -> AgentTaskMetadata | None:
         with self._connection.transaction(), self._connection.cursor() as cursor:
@@ -847,15 +1141,15 @@ class PostgresAgentTaskRepository:
             )
         cursor.execute(
             """
-            SELECT status, origin, review_status
+            SELECT origin, review_status
             FROM agent_runtime.proposal_materialization_outbox
             WHERE site_id = %s AND proposal_id = %s
             """,
             (task.site_id, proposal.proposal_id),
         )
-        if cursor.fetchone() != ("pending", "AI", "AI Draft"):
+        if cursor.fetchone() != ("AI", "AI Draft"):
             raise IdempotencyConflict(
-                "completed task is missing its immutable materialization outbox record"
+                "completed task is missing its materialization outbox identity"
             )
         for record in records:
             cursor.execute(

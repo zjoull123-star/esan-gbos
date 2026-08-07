@@ -234,10 +234,43 @@ class MaterializationOutboxRecord:
     site_id: str
     task_id: str
     task_attempt: int
-    status: Literal["pending"]
+    status: Literal["pending", "running", "succeeded", "retry", "dead_letter"]
     origin: Literal["AI"]
     review_status: Literal["AI Draft"]
     created_at: datetime
+    attempt: int = 0
+    max_attempts: int = 5
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
+    next_attempt_at: datetime | None = None
+    last_error_code: str | None = None
+    receipt_doctype: str | None = None
+    receipt_name: str | None = None
+    receipt_revision: int | None = None
+    receipt_request_id: str | None = None
+    receipt_digest: str | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.attempt < 0 or self.max_attempts < 1 or self.attempt > self.max_attempts:
+            raise ValidationError("materialization attempt is invalid")
+        if self.status == "running":
+            if not self.lease_owner or self.lease_expires_at is None:
+                raise ValidationError("running materialization requires a lease")
+        elif self.lease_owner is not None or self.lease_expires_at is not None:
+            raise ValidationError("inactive materialization cannot retain a lease")
+        receipt_values = (
+            self.receipt_doctype,
+            self.receipt_name,
+            self.receipt_revision,
+            self.receipt_request_id,
+            self.receipt_digest,
+        )
+        if self.status == "succeeded":
+            if any(value is None for value in receipt_values):
+                raise ValidationError("succeeded materialization requires a receipt")
+        elif any(value is not None for value in receipt_values):
+            raise ValidationError("non-succeeded materialization cannot contain a receipt")
 
     @classmethod
     def from_proposal(
@@ -259,6 +292,8 @@ class MaterializationOutboxRecord:
             origin="AI",
             review_status="AI Draft",
             created_at=created_at,
+            next_attempt_at=created_at,
+            updated_at=created_at,
         )
 
 
@@ -273,7 +308,11 @@ class MaterializationEnvelope:
 @dataclass(frozen=True, slots=True)
 class MaterializationIntent:
     operation: Literal["create", "submit"]
-    doctype: Literal["GBOS Work Item", "GBOS Review Case"]
+    doctype: Literal[
+        "GBOS Work Item",
+        "GBOS Review Case",
+        "GBOS Informal Observation",
+    ]
     values: Mapping[str, Any]
 
 
@@ -314,7 +353,14 @@ class TrustedMaterializer:
                 },
             )
         if envelope.action_type == "internal.work_item.propose":
-            doctype: Literal["GBOS Work Item", "GBOS Review Case"] = "GBOS Work Item"
+            doctype: Literal[
+                "GBOS Work Item",
+                "GBOS Review Case",
+                "GBOS Informal Observation",
+            ] = "GBOS Work Item"
+            values = {**payload, "origin": "AI", "review_status": "AI Draft"}
+        elif envelope.action_type == "internal.ai_draft.propose":
+            doctype = "GBOS Informal Observation"
             values = {**payload, "origin": "AI", "review_status": "AI Draft"}
         else:
             doctype = "GBOS Review Case"

@@ -18,6 +18,15 @@ from .invocations import (
     PostgresModelInvocationRepository,
     TokenUsageMetadata,
 )
+from .materialization import (
+    FrappeDraftClient,
+    FrappeDraftReceipt,
+    MaterializationClaim,
+    MaterializationHealth,
+    MaterializationRepository,
+    MaterializationRunResult,
+    MaterializationWorker,
+)
 from .models import (
     AgentTaskClaim,
     AgentTaskMetadata,
@@ -40,6 +49,13 @@ from .proposals import (
     MaterializationIntent,
     MaterializationOutboxRecord,
     TrustedMaterializer,
+)
+from .read_service import (
+    AiDraft,
+    AiDraftPage,
+    ModelUsage,
+    PostgresAgentReadService,
+    UsageCost,
 )
 from .repository import AgentTaskRepository, InMemoryAgentTaskRepository
 from .worker import (
@@ -67,6 +83,8 @@ __all__ = [
     "DeterministicLocalProvider",
     "FactVersionRef",
     "FailureClassification",
+    "FrappeDraftClient",
+    "FrappeDraftReceipt",
     "IdempotencyConflict",
     "InMemoryAgentTaskRepository",
     "InMemoryModelInvocationRepository",
@@ -74,10 +92,16 @@ __all__ = [
     "LeaseConflict",
     "LocalPilotFactVersionRef",
     "LocalPilotTaskPayload",
+    "MaterializationClaim",
+    "MaterializationHealth",
+    "MaterializationRepository",
+    "MaterializationRunResult",
+    "MaterializationWorker",
     "ModelInvocationRecord",
     "ModelInvocationRepository",
     "CostMetadata",
     "PostgresAgentTaskRepository",
+    "PostgresAgentReadService",
     "PostgresModelInvocationRepository",
     "TaskStatus",
     "TaskNotFound",
@@ -89,6 +113,10 @@ __all__ = [
     "MaterializationIntent",
     "MaterializationOutboxRecord",
     "TrustedMaterializer",
+    "AiDraft",
+    "AiDraftPage",
+    "ModelUsage",
+    "UsageCost",
     "AgentWorker",
     "ContextResolutionRequest",
     "ResolvedAgentContext",

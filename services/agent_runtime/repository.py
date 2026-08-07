@@ -513,7 +513,8 @@ class InMemoryAgentTaskRepository:
                     or task.attempt != expected_attempt
                     or task.output_artifact_refs != (proposal.proposal_id,)
                     or materialization is None
-                    or materialization.status != "pending"
+                    or materialization.origin != "AI"
+                    or materialization.review_status != "AI Draft"
                 ):
                     raise IdempotencyConflict("proposal exists without its completed task fence")
                 return replace(task)

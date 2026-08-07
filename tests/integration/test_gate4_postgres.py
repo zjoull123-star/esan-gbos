@@ -18,11 +18,13 @@ from services.agent_runtime import (
     CostMetadata,
     DeterministicLocalProvider,
     FactVersionRef,
+    FrappeDraftReceipt,
     IdempotencyConflict,
     InvocationReferences,
     LeaseConflict,
     LocalPilotTaskPayload,
     ModelInvocationRecord,
+    PostgresAgentReadService,
     PostgresAgentTaskRepository,
     PostgresModelInvocationRepository,
     TaskStatus,
@@ -912,5 +914,236 @@ def test_gate4_atomic_proposal_bundle_rolls_back_replays_and_is_site_isolated() 
                     },
                 ),
             )
+    finally:
+        conn.close()
+
+
+def _complete_materializable_proposal(
+    repository: PostgresAgentTaskRepository,
+    *,
+    site_id: str,
+    suffix: str,
+    action_type: str = "internal.work_item.propose",
+) -> AgentTaskSubmission:
+    request = local_pilot_submission(site_id, suffix)
+    repository.enqueue(request, now=request.due_at)
+    claim = repository.claim_for_execution(
+        site_id,
+        worker_id="materialization-source-worker",
+        now=request.due_at,
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None
+    result = agent_result(request)
+    payload: dict[str, object] = {"summary": f"Draft {suffix}"}
+    if action_type == "internal.ai_draft.propose":
+        payload["is_official_metric"] = False
+    proposal = {
+        **result.action_proposal,
+        "action_type": action_type,
+        "payload": payload,
+        "payload_digest": canonical_payload_digest(payload),
+    }
+    repository.complete_with_proposal(
+        site_id,
+        request.task_id,
+        worker_id="materialization-source-worker",
+        expected_attempt=1,
+        now=request.due_at + timedelta(seconds=2),
+        result=replace(result, action_proposal=proposal),
+    )
+    return request
+
+
+def test_gate4_local_read_service_is_site_scoped_partial_and_cursor_stable() -> None:
+    suffix = uuid4().hex
+    site_id = f"gate4-read-{suffix}.localhost"
+    other_site = f"gate4-read-other-{suffix}.localhost"
+    conn = connection("GBOS_GATE4_AGENT_USER")
+    try:
+        invocation_repository = PostgresModelInvocationRepository(conn)
+        known = replace(
+            invocation(site_id, f"usage-known-{suffix}"),
+            token_usage=TokenUsageMetadata.known(80, 20, 100),
+            cost=CostMetadata.known(Decimal("50"), "USD"),
+        )
+        unknown = replace(
+            invocation(site_id, f"usage-unknown-{suffix}"),
+            token_usage=TokenUsageMetadata.unknown(),
+            cost=CostMetadata.unknown(),
+            price_catalog_version=None,
+        )
+        other = replace(
+            invocation(other_site, f"usage-other-{suffix}"),
+            cost=CostMetadata.known(Decimal("100"), "USD"),
+        )
+        invocation_repository.append(known)
+        invocation_repository.append(unknown)
+        invocation_repository.append(other)
+
+        period = known.started_at.strftime("%Y-%m")
+        read_service = PostgresAgentReadService(conn)
+        usage = read_service.get_usage(site_id, period)
+        other_usage = read_service.get_usage(other_site, period)
+        assert (usage.tokens, usage.token_state) == (100, "partial")
+        assert (usage.cost.amount, usage.cost.state, usage.state) == (
+            Decimal("50"),
+            "partial",
+            "soft_limit",
+        )
+        assert other_usage.state == "hard_limit"
+
+        task_repository = PostgresAgentTaskRepository(conn)
+        for index, action_type in enumerate(
+            (
+                "internal.work_item.propose",
+                "internal.review_case.propose",
+                "internal.ai_draft.propose",
+            ),
+            start=1,
+        ):
+            _complete_materializable_proposal(
+                task_repository,
+                site_id=site_id,
+                suffix=f"{suffix}-{index}",
+                action_type=action_type,
+            )
+        first = read_service.list_drafts(site_id, page_size=2)
+        assert len(first.drafts) == 2
+        assert first.next_cursor is not None
+        second = read_service.list_drafts(
+            site_id,
+            cursor=first.next_cursor,
+            page_size=2,
+        )
+        assert len(second.drafts) == 1
+        assert second.next_cursor is None
+        assert {draft.kind for draft in (*first.drafts, *second.drafts)} == {
+            "Work Item",
+            "Review Case",
+            "CEO Informal Observation",
+        }
+        assert read_service.get_draft(other_site, first.drafts[0].draft_id) is None
+    finally:
+        conn.close()
+
+
+def test_gate4_materialization_lease_fence_receipt_replay_and_rls() -> None:
+    suffix = uuid4().hex
+    site_id = f"gate4-materialization-{suffix}.localhost"
+    other_site = f"gate4-materialization-other-{suffix}.localhost"
+    conn = connection("GBOS_GATE4_AGENT_USER")
+    try:
+        repository = PostgresAgentTaskRepository(conn)
+        request = _complete_materializable_proposal(
+            repository,
+            site_id=site_id,
+            suffix=suffix,
+        )
+        first = repository.claim_materialization(
+            site_id,
+            worker_id="same-materializer",
+            now=request.due_at + timedelta(seconds=3),
+            lease_duration=timedelta(seconds=5),
+        )
+        recovered = repository.claim_materialization(
+            site_id,
+            worker_id="same-materializer",
+            now=request.due_at + timedelta(seconds=9),
+            lease_duration=timedelta(seconds=10),
+        )
+        assert first is not None
+        assert recovered is not None
+        assert (first.attempt, recovered.attempt) == (1, 2)
+        receipt = FrappeDraftReceipt(
+            doctype="GBOS Work Item",
+            name=f"WORK-{suffix}",
+            revision=0,
+            request_id=recovered.materialization_id,
+            request_digest="a" * 64,
+        )
+
+        with pytest.raises(LeaseConflict):
+            repository.acknowledge_materialization(
+                site_id,
+                recovered.materialization_id,
+                worker_id="same-materializer",
+                expected_attempt=1,
+                now=request.due_at + timedelta(seconds=10),
+                receipt=receipt,
+            )
+
+        acknowledged = repository.acknowledge_materialization(
+            site_id,
+            recovered.materialization_id,
+            worker_id="same-materializer",
+            expected_attempt=2,
+            now=request.due_at + timedelta(seconds=10),
+            receipt=receipt,
+        )
+        replay = repository.acknowledge_materialization(
+            site_id,
+            recovered.materialization_id,
+            worker_id="same-materializer",
+            expected_attempt=2,
+            now=request.due_at + timedelta(seconds=11),
+            receipt=receipt,
+        )
+        assert acknowledged == replay
+        with pytest.raises(IdempotencyConflict, match="body conflict"):
+            repository.acknowledge_materialization(
+                site_id,
+                recovered.materialization_id,
+                worker_id="same-materializer",
+                expected_attempt=2,
+                now=request.due_at + timedelta(seconds=11),
+                receipt=replace(receipt, name=f"WORK-CHANGED-{suffix}"),
+            )
+        assert (
+            repository.claim_materialization(
+                other_site,
+                worker_id="other-materializer",
+                now=request.due_at + timedelta(seconds=12),
+                lease_duration=timedelta(seconds=5),
+            )
+            is None
+        )
+        assert repository.materialization_health(site_id).to_wire() == {
+            "ready": True,
+            "pending": 0,
+            "running": 0,
+            "retry": 0,
+            "dead_letter": 0,
+        }
+    finally:
+        conn.close()
+
+
+def test_gate4_materialization_migration_is_ledgered_once_and_keeps_rls() -> None:
+    conn = connection("GBOS_GATE4_OWNER_USER")
+    try:
+        with conn.transaction(), conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT migration_name, COUNT(*)
+                FROM observer.schema_migrations
+                WHERE migration_name = %s
+                GROUP BY migration_name
+                """,
+                ("agent/004_local_pilot_materialization.sql",),
+            )
+            assert cursor.fetchone() == (
+                "agent/004_local_pilot_materialization.sql",
+                1,
+            )
+            cursor.execute(
+                """
+                SELECT relrowsecurity, relforcerowsecurity
+                FROM pg_class
+                WHERE oid =
+                    'agent_runtime.proposal_materialization_outbox'::regclass
+                """
+            )
+            assert cursor.fetchone() == (True, True)
     finally:
         conn.close()
