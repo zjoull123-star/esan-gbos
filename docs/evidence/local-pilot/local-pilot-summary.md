@@ -45,7 +45,7 @@ horizontal overflow; console errors and warnings were both 0. The cache containe
 The final local validation snapshot recorded:
 
 - Backend: pytest `2155 passed, 37 skipped, 1 warning`; no failures.
-- Python static checks: ruff all green; format check passed for 445 files; mypy
+- Python static checks: ruff all green; format check passed for 446 files; mypy
   passed for 117 service source files.
 - Frontend: lint, typecheck, Vitest `88`, and build all green.
 - Frontend harness Playwright: `7 passed`.

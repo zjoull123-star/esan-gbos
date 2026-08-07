@@ -199,7 +199,7 @@
     },
     "python_static": {
       "ruff": "pass_all",
-      "format": "pass_445_files",
+      "format": "pass_446_files",
       "mypy": "pass",
       "mypy_service_source_files": 117
     },
