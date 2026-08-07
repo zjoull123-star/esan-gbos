@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import re
 from contextlib import nullcontext
@@ -9,8 +10,10 @@ from typing import Any
 
 import pytest
 from observer.local_pilot_storage import (
+    AuthenticatedIngressMetadata,
     CheckpointConflict,
     DeliveryConflict,
+    IngressExpired,
     JobConflict,
     LeaseConflict,
     NonceReplay,
@@ -135,18 +138,20 @@ def _job_row(
     lease_generation: int = 0,
     next_retry_at: datetime | None = None,
     error_code: str | None = None,
+    delivery_id: str = "delivery-001",
+    idempotency_key: str = "delivery:wecom:sales-primary:delivery-001:g0",
 ) -> tuple[Any, ...]:
     return (
         SCOPE.site_id,
         "job-001",
         KEY.connector,
         KEY.instance_id,
-        "delivery-001",
+        delivery_id,
         "normalize",
         status,
         attempt_count,
         max_attempts,
-        "delivery:wecom:sales-primary:delivery-001:g0",
+        idempotency_key,
         generation,
         lease_owner,
         lease_expires_at,
@@ -432,6 +437,300 @@ def test_accept_and_enqueue_delivery_is_one_transaction_and_idempotent() -> None
     assert job.status == "queued"
     assert all(
         params is not None for sql, params in connection.executed if "INSERT INTO observer." in sql
+    )
+
+
+def test_authenticated_ingress_consumes_nonce_and_enqueues_in_one_transaction() -> None:
+    nonce = "nonce-secret-sentinel"
+    expires_at = NOW + timedelta(minutes=1)
+    idempotency_key = (
+        "authenticated:"
+        + hashlib.sha256(
+            f"{SCOPE.site_id}\x1f{KEY.connector}\x1f{KEY.instance_id}\x1f{nonce}".encode()
+        ).hexdigest()
+    )
+    connection = FakeConnection(
+        [
+            (60,),
+            (NOW, expires_at),
+            _delivery_row(),
+            _job_row(idempotency_key=idempotency_key),
+        ]
+    )
+
+    result = PostgresLocalPilotStorage(connection).accept_authenticated_delivery(
+        SCOPE,
+        KEY,
+        delivery_id="delivery-001",
+        exact_body_sha256="a" * 64,
+        object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+        byte_size=17,
+        media_type="application/json",
+        received_at=NOW,
+        correlation_id="corr-001",
+        nonce=nonce,
+        nonce_expires_at=expires_at,
+        now=NOW,
+        job_id="job-001",
+        max_attempts=3,
+    )
+
+    assert result == AuthenticatedIngressMetadata(
+        disposition="accepted",
+    )
+    assert connection.transactions == 1
+    assert nonce not in repr(connection.executed)
+    assert any("persistent_nonces" in sql for sql, _params in connection.executed)
+    assert all(
+        params is not None for sql, params in connection.executed if "INSERT INTO observer." in sql
+    )
+
+
+def test_authenticated_ingress_duplicate_ack_does_not_enqueue_another_job() -> None:
+    nonce = "nonce-001"
+    expires_at = NOW + timedelta(minutes=1)
+    idempotency_key = (
+        "authenticated:"
+        + hashlib.sha256(
+            f"{SCOPE.site_id}\x1f{KEY.connector}\x1f{KEY.instance_id}\x1f{nonce}".encode()
+        ).hexdigest()
+    )
+    connection = FakeConnection(
+        [
+            (60,),
+            None,
+            (NOW, expires_at),
+            _job_row(idempotency_key=idempotency_key),
+            None,
+            _delivery_row(),
+        ]
+    )
+
+    duplicate = PostgresLocalPilotStorage(connection).accept_authenticated_delivery(
+        SCOPE,
+        KEY,
+        delivery_id="delivery-001",
+        exact_body_sha256="a" * 64,
+        object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+        byte_size=17,
+        media_type="application/json",
+        received_at=NOW,
+        correlation_id="corr-001",
+        nonce=nonce,
+        nonce_expires_at=expires_at,
+        now=NOW,
+        job_id="job-001",
+        max_attempts=3,
+    )
+
+    assert duplicate.disposition == "duplicate"
+    job_inserts = [
+        sql for sql, _params in connection.executed if "INSERT INTO observer.processing_jobs" in sql
+    ]
+    assert job_inserts == []
+
+
+def test_authenticated_ingress_rejects_body_conflict_and_nonce_replay() -> None:
+    expires_at = NOW + timedelta(minutes=1)
+    nonce = "nonce-001"
+    idempotency_key = (
+        "authenticated:"
+        + hashlib.sha256(
+            f"{SCOPE.site_id}\x1f{KEY.connector}\x1f{KEY.instance_id}\x1f{nonce}".encode()
+        ).hexdigest()
+    )
+    body_conflict = FakeConnection(
+        [
+            (60,),
+            None,
+            (NOW, expires_at),
+            _job_row(idempotency_key=idempotency_key),
+            None,
+            _delivery_row(digest="c" * 64),
+        ]
+    )
+    with pytest.raises(DeliveryConflict, match="content metadata"):
+        PostgresLocalPilotStorage(body_conflict).accept_authenticated_delivery(
+            SCOPE,
+            KEY,
+            delivery_id="delivery-001",
+            exact_body_sha256="a" * 64,
+            object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+            byte_size=17,
+            media_type="application/json",
+            received_at=NOW,
+            correlation_id="corr-001",
+            nonce=nonce,
+            nonce_expires_at=expires_at,
+            now=NOW,
+            job_id="job-001",
+            max_attempts=3,
+        )
+    assert not any(
+        "INSERT INTO observer.processing_jobs" in sql for sql, _params in body_conflict.executed
+    )
+
+    replay = FakeConnection(
+        [
+            (60,),
+            None,
+            (NOW, expires_at),
+            _job_row(
+                delivery_id="delivery-original",
+                idempotency_key=idempotency_key,
+            ),
+        ]
+    )
+    with pytest.raises(NonceReplay, match="different delivery"):
+        PostgresLocalPilotStorage(replay).accept_authenticated_delivery(
+            SCOPE,
+            KEY,
+            delivery_id="delivery-002",
+            exact_body_sha256="a" * 64,
+            object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+            byte_size=17,
+            media_type="application/json",
+            received_at=NOW,
+            correlation_id="corr-002",
+            nonce=nonce,
+            nonce_expires_at=expires_at,
+            now=NOW,
+            job_id="job-002",
+            max_attempts=3,
+        )
+
+
+def test_authenticated_ingress_rejects_expired_nonce_and_old_delivery_before_writes() -> None:
+    repository = PostgresLocalPilotStorage(FakeConnection([]))
+    with pytest.raises(IngressExpired, match="nonce"):
+        repository.accept_authenticated_delivery(
+            SCOPE,
+            KEY,
+            delivery_id="delivery-001",
+            exact_body_sha256="a" * 64,
+            object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+            byte_size=17,
+            media_type="application/json",
+            received_at=NOW,
+            correlation_id="corr-001",
+            nonce="nonce-001",
+            nonce_expires_at=NOW,
+            now=NOW,
+            job_id="job-001",
+            max_attempts=3,
+        )
+    assert repository._connection.executed == []  # type: ignore[attr-defined]
+
+    old_connection = FakeConnection([(30,)])
+    with pytest.raises(IngressExpired, match="replay window"):
+        PostgresLocalPilotStorage(old_connection).accept_authenticated_delivery(
+            SCOPE,
+            KEY,
+            delivery_id="delivery-001",
+            exact_body_sha256="a" * 64,
+            object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+            byte_size=17,
+            media_type="application/json",
+            received_at=NOW - timedelta(seconds=31),
+            correlation_id="corr-001",
+            nonce="nonce-001",
+            nonce_expires_at=NOW + timedelta(minutes=1),
+            now=NOW,
+            job_id="job-001",
+            max_attempts=3,
+        )
+    assert not any("INSERT INTO" in sql for sql, _params in old_connection.executed)
+
+    expired_replay = FakeConnection(
+        [
+            (60,),
+            None,
+            (NOW - timedelta(minutes=2), NOW - timedelta(seconds=1)),
+        ]
+    )
+    with pytest.raises(IngressExpired, match="persisted nonce"):
+        PostgresLocalPilotStorage(expired_replay).accept_authenticated_delivery(
+            SCOPE,
+            KEY,
+            delivery_id="delivery-001",
+            exact_body_sha256="a" * 64,
+            object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+            byte_size=17,
+            media_type="application/json",
+            received_at=NOW,
+            correlation_id="corr-001",
+            nonce="nonce-001",
+            nonce_expires_at=NOW + timedelta(minutes=1),
+            now=NOW,
+            job_id="job-001",
+            max_attempts=3,
+        )
+    assert not any("inbound_deliveries" in sql for sql, _params in expired_replay.executed)
+
+
+def test_authenticated_ingress_job_failure_is_in_same_transaction() -> None:
+    expires_at = NOW + timedelta(minutes=1)
+    connection = FakeConnection(
+        [
+            (60,),
+            (NOW, expires_at),
+            _delivery_row(),
+            None,
+            None,
+        ]
+    )
+
+    with pytest.raises(JobConflict):
+        PostgresLocalPilotStorage(connection).accept_authenticated_delivery(
+            SCOPE,
+            KEY,
+            delivery_id="delivery-001",
+            exact_body_sha256="a" * 64,
+            object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+            byte_size=17,
+            media_type="application/json",
+            received_at=NOW,
+            correlation_id="corr-001",
+            nonce="nonce-001",
+            nonce_expires_at=expires_at,
+            now=NOW,
+            job_id="job-001",
+            max_attempts=3,
+        )
+    assert connection.transactions == 1
+
+
+def test_authenticated_ingress_rejects_nonce_without_bound_job() -> None:
+    expires_at = NOW + timedelta(minutes=1)
+    connection = FakeConnection(
+        [
+            (60,),
+            None,
+            (NOW, expires_at),
+            None,
+        ]
+    )
+
+    with pytest.raises(NonceReplay, match="matching delivery job"):
+        PostgresLocalPilotStorage(connection).accept_authenticated_delivery(
+            SCOPE,
+            KEY,
+            delivery_id="delivery-001",
+            exact_body_sha256="a" * 64,
+            object_ref="obs:v1:site-partition:sha256:" + "a" * 64,
+            byte_size=17,
+            media_type="application/json",
+            received_at=NOW,
+            correlation_id="corr-001",
+            nonce="nonce-consumed-by-legacy-path",
+            nonce_expires_at=expires_at,
+            now=NOW,
+            job_id="job-001",
+            max_attempts=3,
+        )
+    assert not any(
+        "inbound_deliveries" in sql or "INSERT INTO observer.processing_jobs" in sql
+        for sql, _params in connection.executed
     )
 
 

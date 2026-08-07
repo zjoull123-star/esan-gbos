@@ -64,6 +64,10 @@ class JobConflict(ValueError):
     """A processing job idempotency, lease, or state transition was rejected."""
 
 
+class IngressExpired(ValueError):
+    """An authenticated nonce or delivery fell outside its acceptance window."""
+
+
 @dataclass(frozen=True, slots=True)
 class ConnectorInstanceMetadata:
     site_id: str
@@ -161,6 +165,15 @@ class ProcessingJobMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class AuthenticatedIngressMetadata:
+    disposition: str
+
+    def __post_init__(self) -> None:
+        if self.disposition not in {"accepted", "duplicate"}:
+            raise ValueError("invalid authenticated ingress disposition")
+
+
+@dataclass(frozen=True, slots=True)
 class ConnectorHealthMetadata:
     site_id: str
     connector: str
@@ -228,6 +241,25 @@ class LocalPilotStorage(Protocol):
         idempotency_key: str,
         max_attempts: int,
     ) -> tuple[InboundDeliveryMetadata, ProcessingJobMetadata]: ...
+
+    def accept_authenticated_delivery(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        delivery_id: str,
+        exact_body_sha256: str,
+        object_ref: str,
+        byte_size: int,
+        media_type: str,
+        received_at: datetime,
+        correlation_id: str,
+        nonce: str,
+        nonce_expires_at: datetime,
+        now: datetime,
+        job_id: str,
+        max_attempts: int,
+    ) -> AuthenticatedIngressMetadata: ...
 
     def get_inbound_delivery(
         self,
@@ -617,6 +649,164 @@ class PostgresLocalPilotStorage:
                 max_attempts=max_attempts,
             )
             return delivery, job
+
+    def accept_authenticated_delivery(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        delivery_id: str,
+        exact_body_sha256: str,
+        object_ref: str,
+        byte_size: int,
+        media_type: str,
+        received_at: datetime,
+        correlation_id: str,
+        nonce: str,
+        nonce_expires_at: datetime,
+        now: datetime,
+        job_id: str,
+        max_attempts: int,
+    ) -> AuthenticatedIngressMetadata:
+        _validate_delivery_input(
+            scope,
+            key,
+            delivery_id=delivery_id,
+            exact_body_sha256=exact_body_sha256,
+            object_ref=object_ref,
+            byte_size=byte_size,
+            media_type=media_type,
+            received_at=received_at,
+            correlation_id=correlation_id,
+        )
+        _require_identifier(nonce, "nonce", maximum=512)
+        _require_aware(nonce_expires_at, "nonce_expires_at")
+        _require_aware(now, "now")
+        if nonce_expires_at <= now:
+            raise IngressExpired("authenticated nonce is expired")
+        _require_identifier(job_id, "job_id")
+        _require_attempts(max_attempts)
+        identity_ref = _authenticated_identity_ref(key)
+        nonce_sha256 = hashlib.sha256(nonce.encode()).hexdigest()
+        idempotency_key = _authenticated_job_idempotency_key(
+            scope,
+            key,
+            nonce=nonce,
+        )
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                """
+                SELECT replay_window_seconds
+                FROM observer.connector_checkpoints
+                WHERE site_id = %s
+                  AND connector = %s
+                  AND connector_instance_id = %s
+                FOR SHARE
+                """,
+                (scope.site_id, key.connector, key.instance_id),
+            )
+            checkpoint_row = cursor.fetchone()
+            if checkpoint_row is None:
+                raise DeliveryConflict("connector checkpoint not found in site scope")
+            replay_window_seconds = _as_int(
+                checkpoint_row[0],
+                "replay_window_seconds",
+            )
+            if received_at < now - timedelta(seconds=replay_window_seconds):
+                raise IngressExpired("delivery is outside the configured replay window")
+
+            cursor.execute(
+                """
+                INSERT INTO observer.persistent_nonces (
+                    site_id, identity_ref, nonce_sha256, consumed_at, expires_at
+                ) VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (site_id, identity_ref, nonce_sha256) DO NOTHING
+                RETURNING consumed_at, expires_at
+                """,
+                (
+                    scope.site_id,
+                    identity_ref,
+                    nonce_sha256,
+                    now,
+                    nonce_expires_at,
+                ),
+            )
+            nonce_inserted = cursor.fetchone() is not None
+            existing_job: ProcessingJobMetadata | None = None
+            if not nonce_inserted:
+                cursor.execute(
+                    """
+                    SELECT consumed_at, expires_at
+                    FROM observer.persistent_nonces
+                    WHERE site_id = %s
+                      AND identity_ref = %s
+                      AND nonce_sha256 = %s
+                    """,
+                    (scope.site_id, identity_ref, nonce_sha256),
+                )
+                persisted_nonce = cursor.fetchone()
+                if persisted_nonce is None:
+                    raise NonceReplay("authenticated nonce replay state is unavailable")
+                persisted_expiry = persisted_nonce[1]
+                if not isinstance(persisted_expiry, datetime):
+                    raise RuntimeError("invalid persisted nonce expiry")
+                _require_aware(persisted_expiry, "persisted nonce expiry")
+                if persisted_expiry <= now:
+                    raise IngressExpired("persisted nonce is expired")
+                cursor.execute(
+                    f"""
+                    SELECT {_JOB_COLUMNS}
+                    FROM observer.processing_jobs
+                    WHERE site_id = %s
+                      AND idempotency_key = %s
+                    """,
+                    (scope.site_id, idempotency_key),
+                )
+                existing_job_row = cursor.fetchone()
+                if existing_job_row is None:
+                    raise NonceReplay("authenticated nonce has no matching delivery job")
+                existing_job = _job_from_row(existing_job_row)
+                if (
+                    existing_job.connector != key.connector
+                    or existing_job.connector_instance_id != key.instance_id
+                    or existing_job.delivery_id != delivery_id
+                ):
+                    raise NonceReplay("authenticated nonce was reused for a different delivery")
+            delivery = self._accept_inbound_delivery(
+                cursor,
+                scope,
+                key,
+                delivery_id=delivery_id,
+                exact_body_sha256=exact_body_sha256,
+                object_ref=object_ref,
+                byte_size=byte_size,
+                media_type=media_type,
+                received_at=received_at,
+                correlation_id=correlation_id,
+                queued=True,
+            )
+            if nonce_inserted:
+                job = self._enqueue_processing_job(
+                    cursor,
+                    scope,
+                    key,
+                    delivery_id=delivery_id,
+                    job_id=job_id,
+                    idempotency_key=idempotency_key,
+                    generation=0,
+                    now=now,
+                    max_attempts=max_attempts,
+                )
+            else:
+                if existing_job is None:
+                    raise RuntimeError("authenticated duplicate job state is missing")
+                job = existing_job
+            if job.delivery_id != delivery.delivery_id:
+                raise NonceReplay("authenticated nonce was reused for a different delivery")
+            return AuthenticatedIngressMetadata(
+                disposition="accepted" if nonce_inserted else "duplicate",
+            )
 
     def get_inbound_delivery(
         self,
@@ -2216,3 +2406,25 @@ def _validate_provider_event_ids(
 def _require_connector_status(status: str) -> None:
     if status not in {"healthy", "paused", "degraded", "failed"}:
         raise ValueError("invalid connector status")
+
+
+def _authenticated_identity_ref(key: ConnectorKey) -> str:
+    instance_digest = hashlib.sha256(key.instance_id.encode()).hexdigest()
+    return f"connector:{key.connector}:{instance_digest}"
+
+
+def _authenticated_job_idempotency_key(
+    scope: TenantScope,
+    key: ConnectorKey,
+    *,
+    nonce: str,
+) -> str:
+    material = "\x1f".join(
+        (
+            scope.site_id,
+            key.connector,
+            key.instance_id,
+            nonce,
+        )
+    ).encode()
+    return f"authenticated:{hashlib.sha256(material).hexdigest()}"

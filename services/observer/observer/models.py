@@ -76,6 +76,11 @@ def stable_ulid(namespace: str, *parts: str) -> str:
     return "".join(encoded)
 
 
+def _summary_digest(value: str | bytes) -> str:
+    content = value.encode() if isinstance(value, str) else value
+    return hashlib.sha256(content).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class TenantScope:
     site_id: str
@@ -128,6 +133,17 @@ class RawDelivery:
         _require_identifier(self.media_type, "media_type", maximum=255)
         _require_aware(self.received_at, "received_at")
 
+    def __repr__(self) -> str:
+        return (
+            "RawDelivery("
+            f"delivery_id_sha256='{_summary_digest(self.delivery_id)}', "
+            f"media_type_sha256='{_summary_digest(self.media_type)}', "
+            f"received_at={self.received_at.isoformat()!r}, "
+            f"byte_size={len(self.exact_bytes)}, "
+            f"body_sha256='{_summary_digest(self.exact_bytes)}'"
+            ")"
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ConnectorItem:
@@ -145,6 +161,16 @@ class ConnectorItem:
         if not isinstance(self.payload, Mapping):
             raise TypeError("payload must be a mapping")
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+
+    def __repr__(self) -> str:
+        return (
+            "ConnectorItem("
+            f"provider_event_id_sha256='{_summary_digest(self.provider_event_id)}', "
+            f"occurred_at={self.occurred_at.isoformat()!r}, "
+            f"source_cursor_sha256='{_summary_digest(self.source_cursor)}', "
+            f"payload_entries={len(self.payload)}"
+            ")"
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

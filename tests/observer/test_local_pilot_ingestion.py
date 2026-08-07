@@ -9,12 +9,17 @@ from typing import Protocol
 import pytest
 from observer.evidence_store import ContentAddressedEvidenceStore, SiteIsolationError
 from observer.local_pilot_ingestion import (
+    AuthenticatedDeliveryAcceptance,
     DeliveryIntegrityError,
     DeliveryQuarantine,
     DeliveryWorker,
     DurableDeliveryInbox,
 )
-from observer.local_pilot_storage import InboundDeliveryMetadata, ProcessingJobMetadata
+from observer.local_pilot_storage import (
+    AuthenticatedIngressMetadata,
+    InboundDeliveryMetadata,
+    ProcessingJobMetadata,
+)
 from observer.models import (
     ConnectorItem,
     ConnectorKey,
@@ -93,6 +98,19 @@ class InboxStorage:
             _job(status="queued"),
         )
 
+    def accept_authenticated_delivery(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        **kwargs: object,
+    ) -> AuthenticatedIngressMetadata:
+        self.calls.append({"scope": scope, "key": key, **kwargs})
+        if self.fail:
+            raise RuntimeError("database unavailable")
+        return AuthenticatedIngressMetadata(
+            disposition="accepted",
+        )
+
 
 def test_durable_inbox_stores_exact_binary_then_atomically_registers_and_enqueues(
     tmp_path: Path,
@@ -135,6 +153,56 @@ def test_durable_inbox_does_not_report_acceptance_when_database_fails(tmp_path: 
             KEY,
             RawDelivery("delivery-001", exact, "application/octet-stream", NOW),
             correlation_id="corr-001",
+        )
+
+    call = storage.calls[0]
+    assert evidence.read(SCOPE, str(call["object_ref"])) == exact
+
+
+def test_authenticated_inbox_persists_object_then_uses_atomic_database_boundary(
+    tmp_path: Path,
+) -> None:
+    exact = b"\xff\x00authenticated"
+    evidence = ContentAddressedEvidenceStore(tmp_path)
+    storage = InboxStorage()
+    inbox = DurableDeliveryInbox(storage=storage, evidence_store=evidence)
+
+    result = inbox.accept_authenticated(
+        SCOPE,
+        KEY,
+        RawDelivery("delivery-001", exact, "application/octet-stream", NOW),
+        correlation_id="corr-001",
+        nonce="nonce-secret",
+        nonce_expires_at=NOW + timedelta(minutes=1),
+        now=NOW,
+        max_attempts=3,
+    )
+
+    assert result == AuthenticatedDeliveryAcceptance(
+        disposition="accepted",
+    )
+    call = storage.calls[0]
+    assert call["nonce"] == "nonce-secret"
+    assert evidence.read(SCOPE, str(call["object_ref"])) == exact
+
+
+def test_authenticated_inbox_db_failure_leaves_only_unaccepted_object_orphan(
+    tmp_path: Path,
+) -> None:
+    exact = b"\xfforphan"
+    evidence = ContentAddressedEvidenceStore(tmp_path)
+    storage = InboxStorage(fail=True)
+    inbox = DurableDeliveryInbox(storage=storage, evidence_store=evidence)
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        inbox.accept_authenticated(
+            SCOPE,
+            KEY,
+            RawDelivery("delivery-001", exact, "application/octet-stream", NOW),
+            correlation_id="corr-001",
+            nonce="nonce-secret",
+            nonce_expires_at=NOW + timedelta(minutes=1),
+            now=NOW,
         )
 
     call = storage.calls[0]

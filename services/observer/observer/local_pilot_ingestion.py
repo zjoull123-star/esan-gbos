@@ -4,10 +4,11 @@ import hashlib
 import hmac
 import re
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from .evidence_store import EvidenceIntegrityError, SiteIsolationError
 from .local_pilot_storage import (
+    AuthenticatedIngressMetadata,
     InboundDeliveryMetadata,
     JobConflict,
     LocalPilotStorage,
@@ -43,6 +44,15 @@ class DeliveryQuarantine(ValueError):
 class DurableDeliveryAcceptance:
     delivery: InboundDeliveryMetadata
     job: ProcessingJobMetadata
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticatedDeliveryAcceptance:
+    disposition: str
+
+    def __post_init__(self) -> None:
+        if self.disposition not in {"accepted", "duplicate"}:
+            raise ValueError("invalid authenticated ingress disposition")
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +113,53 @@ class DurableDeliveryInbox:
             max_attempts=max_attempts,
         )
         return DurableDeliveryAcceptance(delivery=accepted_delivery, job=job)
+
+    def accept_authenticated(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        delivery: RawDelivery,
+        *,
+        correlation_id: str,
+        nonce: str,
+        nonce_expires_at: datetime,
+        now: datetime,
+        max_attempts: int = 3,
+    ) -> AuthenticatedDeliveryAcceptance:
+        stored = self._evidence_store.put(
+            scope,
+            delivery.exact_bytes,
+            media_type=delivery.media_type,
+        )
+        job_identity = hashlib.sha256(
+            "\x1f".join(
+                (
+                    scope.site_id,
+                    key.connector,
+                    key.instance_id,
+                    nonce,
+                )
+            ).encode()
+        ).hexdigest()
+        accepted: AuthenticatedIngressMetadata = self._storage.accept_authenticated_delivery(
+            scope,
+            key,
+            delivery_id=delivery.delivery_id,
+            exact_body_sha256=stored.sha256,
+            object_ref=stored.object_ref,
+            byte_size=stored.size,
+            media_type=stored.media_type,
+            received_at=delivery.received_at,
+            correlation_id=correlation_id,
+            nonce=nonce,
+            nonce_expires_at=nonce_expires_at,
+            now=now,
+            job_id=stable_ulid("authenticated-delivery-job", job_identity),
+            max_attempts=max_attempts,
+        )
+        return AuthenticatedDeliveryAcceptance(
+            disposition=accepted.disposition,
+        )
 
 
 class DeliveryWorker:

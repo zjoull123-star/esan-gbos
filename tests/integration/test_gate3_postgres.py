@@ -22,14 +22,23 @@ from services.context.context_service.storage import (
 from services.observer.observer.api import create_observer_app
 from services.observer.observer.application import ManualImportPipeline, canonical_import_body
 from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
+from services.observer.observer.local_pilot_ingestion import DurableDeliveryInbox
+from services.observer.observer.local_pilot_storage import (
+    DeliveryConflict,
+    IngressExpired,
+    NonceReplay,
+    PostgresLocalPilotStorage,
+)
 from services.observer.observer.models import (
     ByteLocator,
     CanonicalObservation,
+    ConnectorKey,
     EvidenceRecord,
     ImportResult,
     ManualImportManifest,
     ManualImportMember,
     Participant,
+    RawDelivery,
 )
 from services.observer.observer.models import (
     TenantScope as ObserverTenantScope,
@@ -761,6 +770,226 @@ def test_gate3_observer_http_runtime_persists_signed_import_with_app_role(
     finally:
         context_connection.close()
         observer_connection.close()
+
+
+def test_authenticated_ingress_is_atomic_idempotent_and_instance_scoped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not all((CONTEXT_HOST, CONTEXT_PORT, CONTEXT_DATABASE, CONTEXT_PASSWORD)):
+        pytest.fail("Gate 3 Observer app-role connection components are required")
+    connection = connect_postgres_components(
+        host=str(CONTEXT_HOST),
+        port=int(str(CONTEXT_PORT)),
+        database=str(CONTEXT_DATABASE),
+        user="gbos_observer_app",
+        password=str(CONTEXT_PASSWORD),
+    )
+    try:
+        suffix = uuid.uuid4().hex[:12]
+        now = datetime.now(UTC)
+        scope = ObserverTenantScope(f"ingress-{suffix}", "observation_processing")
+        other_scope = ObserverTenantScope(
+            f"ingress-other-{suffix}",
+            "observation_processing",
+        )
+        key = ConnectorKey("wecom", f"primary-{suffix}")
+        other_key = ConnectorKey("wecom", f"secondary-{suffix}")
+        repository = PostgresLocalPilotStorage(connection)
+        repository.register_connector_instance(
+            scope,
+            key,
+            now=now,
+            replay_window_seconds=60,
+        )
+        evidence_store = ContentAddressedEvidenceStore(tmp_path / "objects")
+        inbox = DurableDeliveryInbox(
+            storage=repository,
+            evidence_store=evidence_store,
+        )
+        exact = b"\xff\x00authenticated-ingress"
+        raw = RawDelivery(
+            f"delivery-{suffix}",
+            exact,
+            "application/octet-stream",
+            now,
+        )
+        nonce = f"nonce-{suffix}"
+        nonce_expires_at = now + timedelta(seconds=30)
+
+        original_enqueue = repository._enqueue_processing_job
+
+        def fail_enqueue(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("synthetic job insert failure")
+
+        monkeypatch.setattr(repository, "_enqueue_processing_job", fail_enqueue)
+        with pytest.raises(RuntimeError, match="synthetic job insert failure"):
+            inbox.accept_authenticated(
+                scope,
+                key,
+                raw,
+                correlation_id=f"corr-{suffix}",
+                nonce=nonce,
+                nonce_expires_at=nonce_expires_at,
+                now=now,
+            )
+        assert _authenticated_ingress_counts(connection, scope.site_id) == (0, 0, 0)
+        orphan = evidence_store.put(
+            scope,
+            exact,
+            media_type="application/octet-stream",
+        )
+        assert evidence_store.exists(scope, orphan.object_ref)
+
+        monkeypatch.setattr(repository, "_enqueue_processing_job", original_enqueue)
+        accepted = inbox.accept_authenticated(
+            scope,
+            key,
+            raw,
+            correlation_id=f"corr-{suffix}",
+            nonce=nonce,
+            nonce_expires_at=nonce_expires_at,
+            now=now,
+        )
+        duplicate = inbox.accept_authenticated(
+            scope,
+            key,
+            raw,
+            correlation_id=f"corr-{suffix}",
+            nonce=nonce,
+            nonce_expires_at=nonce_expires_at,
+            now=now + timedelta(seconds=1),
+        )
+        assert accepted.disposition == "accepted"
+        assert duplicate.disposition == "duplicate"
+        assert _authenticated_ingress_counts(connection, scope.site_id) == (1, 1, 1)
+
+        with pytest.raises(DeliveryConflict, match="content metadata"):
+            inbox.accept_authenticated(
+                scope,
+                key,
+                RawDelivery(
+                    raw.delivery_id,
+                    b"different-body",
+                    raw.media_type,
+                    raw.received_at,
+                ),
+                correlation_id=f"corr-{suffix}",
+                nonce=nonce,
+                nonce_expires_at=nonce_expires_at,
+                now=now + timedelta(seconds=1),
+            )
+        with pytest.raises(NonceReplay, match="different delivery"):
+            inbox.accept_authenticated(
+                scope,
+                key,
+                RawDelivery(
+                    f"different-{raw.delivery_id}",
+                    raw.exact_bytes,
+                    raw.media_type,
+                    raw.received_at,
+                ),
+                correlation_id=f"corr-{suffix}",
+                nonce=nonce,
+                nonce_expires_at=nonce_expires_at,
+                now=now + timedelta(seconds=1),
+            )
+        with pytest.raises(IngressExpired, match="nonce"):
+            inbox.accept_authenticated(
+                scope,
+                key,
+                RawDelivery(
+                    f"expired-{raw.delivery_id}",
+                    raw.exact_bytes,
+                    raw.media_type,
+                    now,
+                ),
+                correlation_id=f"corr-{suffix}",
+                nonce=f"expired-{nonce}",
+                nonce_expires_at=now,
+                now=now,
+            )
+        with pytest.raises(IngressExpired, match="replay window"):
+            inbox.accept_authenticated(
+                scope,
+                key,
+                RawDelivery(
+                    f"old-{raw.delivery_id}",
+                    raw.exact_bytes,
+                    raw.media_type,
+                    now - timedelta(seconds=61),
+                ),
+                correlation_id=f"corr-{suffix}",
+                nonce=f"old-{nonce}",
+                nonce_expires_at=nonce_expires_at,
+                now=now,
+            )
+        assert _authenticated_ingress_counts(connection, scope.site_id) == (1, 1, 1)
+
+        repository.register_connector_instance(
+            scope,
+            other_key,
+            now=now,
+            replay_window_seconds=60,
+        )
+        instance_isolated = inbox.accept_authenticated(
+            scope,
+            other_key,
+            raw,
+            correlation_id=f"corr-instance-{suffix}",
+            nonce=nonce,
+            nonce_expires_at=nonce_expires_at,
+            now=now,
+        )
+        assert instance_isolated.disposition == "accepted"
+        assert _authenticated_ingress_counts(connection, scope.site_id) == (2, 2, 2)
+
+        repository.register_connector_instance(
+            other_scope,
+            key,
+            now=now,
+            replay_window_seconds=60,
+        )
+        site_isolated = inbox.accept_authenticated(
+            other_scope,
+            key,
+            raw,
+            correlation_id=f"corr-site-{suffix}",
+            nonce=nonce,
+            nonce_expires_at=nonce_expires_at,
+            now=now,
+        )
+        assert site_isolated.disposition == "accepted"
+        assert _authenticated_ingress_counts(connection, other_scope.site_id) == (1, 1, 1)
+        assert _authenticated_ingress_counts(connection, scope.site_id) == (2, 2, 2)
+    finally:
+        connection.close()
+
+
+def _authenticated_ingress_counts(
+    connection: object,
+    site_id: str,
+) -> tuple[int, int, int]:
+    with connection.transaction(), connection.cursor() as cursor:  # type: ignore[attr-defined]
+        cursor.execute(
+            "SELECT set_config('app.site_id', %s, true)",
+            (site_id,),
+        )
+        cursor.execute(
+            """
+            SELECT
+              (SELECT count(*) FROM observer.persistent_nonces
+               WHERE site_id = %s),
+              (SELECT count(*) FROM observer.inbound_deliveries
+               WHERE site_id = %s),
+              (SELECT count(*) FROM observer.processing_jobs
+               WHERE site_id = %s)
+            """,
+            (site_id, site_id, site_id),
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        return int(row[0]), int(row[1]), int(row[2])
 
 
 def test_gate3_backup_restore_smoke() -> None:
