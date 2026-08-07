@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Repository-level validation tooling for ESAN GBOS"
 requires-python = ">=3.14"
 dependencies = [
+  "cryptography>=46,<47",
   "fastapi>=0.116,<1",
   "httpx>=0.28,<1",
   "jsonschema[format]>=4.25,<5",

@@ -5,7 +5,7 @@ import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from hashlib import sha256
@@ -31,6 +31,7 @@ DEEPSEEK_PROVIDER = "deepseek"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 MAX_INPUT_TOKENS = 32_768
 MAX_OUTPUT_TOKENS = 4_096
+MAX_NETWORK_ATTEMPTS = 3
 LOW_CONFIDENCE_THRESHOLD = 0.75
 SOFT_MONTHLY_LIMIT_USD = Decimal("50")
 HARD_MONTHLY_LIMIT_USD = Decimal("100")
@@ -62,6 +63,7 @@ class GatewayFailure(RuntimeError):
         self.response_id = response_id
         self.observed_model = observed_model
         self.finish_code = finish_code
+        self.cost = CostSnapshot(status="unknown")
         self.audit_records: tuple[ModelInvocationRecord, ...] = ()
 
 
@@ -99,7 +101,28 @@ class PriceCalculator(Protocol):
 class UsageLedger(Protocol):
     def monthly_cost_usd(self) -> Decimal: ...
 
-    def record(self, *, usage: UsageSnapshot, cost: CostSnapshot) -> None: ...
+    def reserve(
+        self,
+        *,
+        reservation_id: str,
+        amount_usd: Decimal,
+        price_catalog_version: str,
+        token_counter_version: str,
+    ) -> BudgetReservation: ...
+
+    def ensure_can_attempt(self, reservation: BudgetReservation) -> None: ...
+
+    def settle(
+        self,
+        reservation: BudgetReservation,
+        *,
+        usage: UsageSnapshot,
+        cost: CostSnapshot,
+    ) -> None: ...
+
+    def consume(self, reservation: BudgetReservation) -> CostSnapshot: ...
+
+    def release(self, reservation: BudgetReservation) -> None: ...
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -154,6 +177,15 @@ class CostSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class BudgetReservation:
+    reservation_id: str
+    amount_usd: Decimal
+    price_catalog_version: str
+    token_counter_version: str
+    budget_month: date | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class GatewayResult:
     output: dict[str, Any]
     provider_version: str
@@ -174,11 +206,109 @@ class InMemoryUsageLedger:
             raise ValueError("monthly_cost_usd must be non-negative")
         self._monthly_cost_usd = monthly_cost_usd
         self.records: list[tuple[UsageSnapshot, CostSnapshot]] = []
+        self._reservations: dict[str, BudgetReservation] = {}
+        self._settled: dict[str, CostSnapshot] = {}
 
     def monthly_cost_usd(self) -> Decimal:
         return self._monthly_cost_usd
 
+    def reserve(
+        self,
+        *,
+        reservation_id: str,
+        amount_usd: Decimal,
+        price_catalog_version: str,
+        token_counter_version: str,
+    ) -> BudgetReservation:
+        if amount_usd < 0 or not amount_usd.is_finite():
+            raise GatewayFailure("budget reservation is invalid", error_code="pricing_error")
+        existing = self._reservations.get(reservation_id)
+        if existing is not None:
+            if (
+                existing.amount_usd != amount_usd
+                or existing.price_catalog_version != price_catalog_version
+                or existing.token_counter_version != token_counter_version
+            ):
+                raise GatewayFailure(
+                    "budget reservation metadata conflict",
+                    error_code="internal_error",
+                )
+            return existing
+        if reservation_id in self._settled:
+            raise GatewayFailure(
+                "budget reservation was already settled",
+                error_code="internal_error",
+            )
+        reserved = sum(
+            (item.amount_usd for item in self._reservations.values()),
+            Decimal("0"),
+        )
+        if (
+            self._monthly_cost_usd >= HARD_MONTHLY_LIMIT_USD
+            or self._monthly_cost_usd + reserved + amount_usd > HARD_MONTHLY_LIMIT_USD
+        ):
+            raise BudgetHardStop(
+                "monthly model budget cannot cover the worst-case call cost",
+                error_code="budget_hard_stop",
+            )
+        reservation = BudgetReservation(
+            reservation_id=reservation_id,
+            amount_usd=amount_usd,
+            price_catalog_version=price_catalog_version,
+            token_counter_version=token_counter_version,
+        )
+        self._reservations[reservation_id] = reservation
+        return reservation
+
+    def ensure_can_attempt(self, reservation: BudgetReservation) -> None:
+        if self._reservations.get(reservation.reservation_id) != reservation:
+            raise BudgetHardStop(
+                "model budget reservation is unavailable",
+                error_code="budget_hard_stop",
+            )
+
+    def settle(
+        self,
+        reservation: BudgetReservation,
+        *,
+        usage: UsageSnapshot,
+        cost: CostSnapshot,
+    ) -> None:
+        self.ensure_can_attempt(reservation)
+        if (
+            cost.status != "known"
+            or cost.amount_usd is None
+            or cost.catalog_version != reservation.price_catalog_version
+            or cost.amount_usd > reservation.amount_usd
+        ):
+            raise GatewayFailure(
+                "settled model cost is unknown or exceeds its reservation",
+                error_code="pricing_error",
+            )
+        self._reservations.pop(reservation.reservation_id)
+        self._settled[reservation.reservation_id] = cost
+        self.records.append((usage, cost))
+        self._monthly_cost_usd += cost.amount_usd
+
+    def consume(self, reservation: BudgetReservation) -> CostSnapshot:
+        self.ensure_can_attempt(reservation)
+        cost = CostSnapshot(
+            status="known",
+            amount_usd=reservation.amount_usd,
+            catalog_version=reservation.price_catalog_version,
+        )
+        self._reservations.pop(reservation.reservation_id)
+        self._settled[reservation.reservation_id] = cost
+        self.records.append((UsageSnapshot(status="unknown"), cost))
+        self._monthly_cost_usd += reservation.amount_usd
+        return cost
+
+    def release(self, reservation: BudgetReservation) -> None:
+        if self._reservations.get(reservation.reservation_id) == reservation:
+            self._reservations.pop(reservation.reservation_id)
+
     def record(self, *, usage: UsageSnapshot, cost: CostSnapshot) -> None:
+        """Compatibility helper for deterministic tests outside the adapter."""
         self.records.append((usage, cost))
         if cost.amount_usd is not None:
             self._monthly_cost_usd += cost.amount_usd
@@ -192,6 +322,7 @@ class _CallResult:
     response_id: str | None
     finish_code: str
     network_calls: int
+    cost: CostSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,8 +467,9 @@ class DeepSeekAdapter:
                 schema=schema,
                 thinking=thinking,
                 prior_output=prior_output,
+                reservation_id=_stable_invocation_id(request, attempt),
             )
-            cost = self._record_call(call)
+            cost = call.cost
         except GatewayFailure as exc:
             completed_at = self._validated_clock_now()
             latency_ms = max(0, int((self._monotonic() - started_tick) * 1000))
@@ -349,7 +481,7 @@ class DeepSeekAdapter:
                 latency_ms=latency_ms,
                 status="failed",
                 usage=UsageSnapshot(status="unknown") if call is None else call.usage,
-                cost=CostSnapshot(status="unknown"),
+                cost=exc.cost,
                 network_calls=exc.network_calls if call is None else call.network_calls,
                 observed_model=(exc.observed_model if call is None else call.observed_model),
                 response_id=exc.response_id if call is None else call.response_id,
@@ -466,6 +598,7 @@ class DeepSeekAdapter:
         schema: dict[str, Any],
         thinking: bool,
         prior_output: dict[str, Any] | None,
+        reservation_id: str,
     ) -> _CallResult:
         if not self._network_enabled:
             raise ModelNetworkDisabled(
@@ -486,58 +619,103 @@ class DeepSeekAdapter:
                 "model input token limit exceeded",
                 error_code="input_token_limit",
             )
+        worst_case_per_attempt = self._known_price(
+            input_tokens=MAX_INPUT_TOKENS,
+            output_tokens=MAX_OUTPUT_TOKENS,
+        )
+        assert worst_case_per_attempt.amount_usd is not None
+        worst_case_cost = CostSnapshot(
+            status="known",
+            amount_usd=worst_case_per_attempt.amount_usd * MAX_NETWORK_ATTEMPTS,
+            catalog_version=worst_case_per_attempt.catalog_version,
+        )
+        assert worst_case_cost.amount_usd is not None
+        assert worst_case_cost.catalog_version is not None
+        reservation = self._usage_ledger.reserve(
+            reservation_id=reservation_id,
+            amount_usd=worst_case_cost.amount_usd,
+            price_catalog_version=worst_case_cost.catalog_version,
+            token_counter_version=self._token_counter.version,
+        )
         network_calls = 0
-        response: httpx.Response | None = None
-        for attempt in range(3):
-            if self._usage_ledger.monthly_cost_usd() >= HARD_MONTHLY_LIMIT_USD:
-                raise BudgetHardStop(
-                    "monthly model budget hard stop reached",
-                    error_code="budget_hard_stop",
-                    network_calls=network_calls,
-                )
-            network_calls += 1
-            try:
-                candidate = client.post(DEEPSEEK_CHAT_PATH, json=payload)
-            except httpx.TransportError as exc:
-                if attempt == 2:
+        ambiguous_attempts = 0
+        try:
+            response: httpx.Response | None = None
+            for attempt in range(MAX_NETWORK_ATTEMPTS):
+                self._usage_ledger.ensure_can_attempt(reservation)
+                network_calls += 1
+                try:
+                    candidate = client.post(DEEPSEEK_CHAT_PATH, json=payload)
+                except httpx.TransportError as exc:
+                    if not isinstance(
+                        exc,
+                        (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout),
+                    ):
+                        ambiguous_attempts += 1
+                    if attempt == MAX_NETWORK_ATTEMPTS - 1:
+                        raise GatewayFailure(
+                            "model transport failed after retries",
+                            error_code="transport_exhausted",
+                            network_calls=network_calls,
+                        ) from exc
+                    self._retry_delay(0.1 * (2**attempt))
+                    continue
+                if candidate.status_code == 429 or candidate.status_code >= 500:
+                    if candidate.status_code >= 500:
+                        ambiguous_attempts += 1
+                    if attempt == MAX_NETWORK_ATTEMPTS - 1:
+                        raise GatewayFailure(
+                            "retryable model response exhausted retries",
+                            error_code="retry_exhausted",
+                            network_calls=network_calls,
+                        )
+                    self._retry_delay(0.1 * (2**attempt))
+                    continue
+                if not 200 <= candidate.status_code < 300:
                     raise GatewayFailure(
-                        "model transport failed after retries",
-                        error_code="transport_exhausted",
-                        network_calls=network_calls,
-                    ) from exc
-                self._retry_delay(0.1 * (2**attempt))
-                continue
-            if candidate.status_code == 429 or candidate.status_code >= 500:
-                if attempt == 2:
-                    raise GatewayFailure(
-                        "retryable model response exhausted retries",
-                        error_code="retry_exhausted",
+                        "non-retryable model response",
+                        error_code="provider_http_error",
                         network_calls=network_calls,
                     )
-                self._retry_delay(0.1 * (2**attempt))
-                continue
-            if not 200 <= candidate.status_code < 300:
+                response = candidate
+                break
+            if response is None:
                 raise GatewayFailure(
-                    "non-retryable model response",
-                    error_code="provider_http_error",
+                    "model response unavailable",
+                    error_code="internal_error",
                     network_calls=network_calls,
                 )
-            response = candidate
-            break
-        if response is None:
-            raise GatewayFailure(
-                "model response unavailable",
-                error_code="internal_error",
-                network_calls=network_calls,
-            )
-        try:
             output, usage, observed_model, response_id, finish_code = _parse_response(
                 response,
                 request=request,
                 schema=schema,
             )
+            if usage.status == "unknown":
+                raise GatewayFailure(
+                    "model cost is unknown",
+                    error_code="pricing_error",
+                    network_calls=network_calls,
+                    response_id=response_id,
+                    observed_model=observed_model,
+                    finish_code=finish_code,
+                )
+            cost = self._calculate_cost(usage)
+            if ambiguous_attempts:
+                assert cost.amount_usd is not None
+                cost = CostSnapshot(
+                    status="known",
+                    amount_usd=(
+                        cost.amount_usd + worst_case_per_attempt.amount_usd * ambiguous_attempts
+                    ),
+                    catalog_version=cost.catalog_version,
+                )
+            self._usage_ledger.settle(reservation, usage=usage, cost=cost)
         except GatewayFailure as exc:
             exc.network_calls = network_calls
+            if network_calls > 0:
+                exc.cost = self._usage_ledger.consume(reservation)
+            else:
+                self._usage_ledger.release(reservation)
             raise
         return _CallResult(
             output=output,
@@ -546,21 +724,29 @@ class DeepSeekAdapter:
             response_id=response_id,
             finish_code=finish_code,
             network_calls=network_calls,
+            cost=cost,
         )
 
-    def _calculate_cost(self, usage: UsageSnapshot) -> CostSnapshot:
-        if usage.status == "unknown":
-            return CostSnapshot(status="unknown")
-        assert usage.input_tokens is not None
-        assert usage.output_tokens is not None
-        amount = self._price_calculator.calculate(
-            model=DEEPSEEK_MODEL,
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-        )
-        if amount < 0:
+    def _known_price(self, *, input_tokens: int, output_tokens: int) -> CostSnapshot:
+        try:
+            amount = self._price_calculator.calculate(
+                model=DEEPSEEK_MODEL,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+        except (ArithmeticError, ValueError) as exc:
             raise GatewayFailure(
-                "price calculator returned a negative cost",
+                "price calculator failed",
+                error_code="pricing_error",
+            ) from exc
+        if amount < 0 or not amount.is_finite():
+            raise GatewayFailure(
+                "price calculator returned an invalid cost",
+                error_code="pricing_error",
+            )
+        if not self._price_calculator.catalog_version:
+            raise GatewayFailure(
+                "price catalog version is unavailable",
                 error_code="pricing_error",
             )
         return CostSnapshot(
@@ -569,10 +755,15 @@ class DeepSeekAdapter:
             catalog_version=self._price_calculator.catalog_version,
         )
 
-    def _record_call(self, call: _CallResult) -> CostSnapshot:
-        cost = self._calculate_cost(call.usage)
-        self._usage_ledger.record(usage=call.usage, cost=cost)
-        return cost
+    def _calculate_cost(self, usage: UsageSnapshot) -> CostSnapshot:
+        if usage.status == "unknown":
+            raise GatewayFailure("model cost is unknown", error_code="pricing_error")
+        assert usage.input_tokens is not None
+        assert usage.output_tokens is not None
+        return self._known_price(
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+        )
 
 
 def _request_payload(

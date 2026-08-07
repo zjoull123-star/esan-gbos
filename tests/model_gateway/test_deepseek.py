@@ -64,9 +64,10 @@ def request(
     *,
     complex_multi_entity: bool = False,
     site_id: str = "gbos.localhost",
+    request_id: str = "model-request-SYNTH-001",
 ) -> TokenizedModelRequest:
     return TokenizedModelRequest(
-        request_id="model-request-SYNTH-001",
+        request_id=request_id,
         site_id=site_id,
         purpose="sales_follow_up",
         agent_kind="sales",
@@ -264,7 +265,7 @@ def test_adapter_reuses_transport_across_review_and_later_invocation() -> None:
     assert transport.calls == 2
     assert transport.closed is False
     assert result.output["confidence"] == 0.9
-    second = active.invoke(request())
+    second = active.invoke(request(request_id="model-request-SYNTH-002"))
     assert transport.calls == 3
     assert second.output["confidence"] == 0.9
     active.close()
@@ -297,7 +298,7 @@ def test_soft_budget_threshold_returns_warning_state() -> None:
 
 def test_first_call_cost_reaching_hard_limit_blocks_review_before_second_http() -> None:
     calls = 0
-    ledger = InMemoryUsageLedger(monthly_cost_usd=Decimal("99.99"))
+    ledger = InMemoryUsageLedger(monthly_cost_usd=Decimal("99.97"))
 
     def handler(_: httpx.Request) -> httpx.Response:
         nonlocal calls
@@ -318,7 +319,7 @@ def test_first_call_cost_reaching_hard_limit_blocks_review_before_second_http() 
         active.invoke(request(complex_multi_entity=True))
 
     assert calls == 1
-    assert ledger.monthly_cost_usd() == Decimal("100.00")
+    assert ledger.monthly_cost_usd() == Decimal("99.98")
     assert len(ledger.records) == 1
 
 
@@ -347,8 +348,8 @@ def test_first_call_is_recorded_when_review_protocol_fails() -> None:
         active.invoke(request(complex_multi_entity=True))
 
     assert calls == 2
-    assert ledger.monthly_cost_usd() == Decimal("0.01")
-    assert len(ledger.records) == 1
+    assert ledger.monthly_cost_usd() == Decimal("0.04")
+    assert len(ledger.records) == 2
 
 
 def test_successful_review_returns_sum_of_per_call_costs() -> None:
@@ -394,6 +395,92 @@ def test_retryable_failures_retry_at_most_twice() -> None:
     assert result.network_calls == 3
 
 
+def test_retry_attempts_share_one_worst_case_budget_reservation() -> None:
+    outcomes: list[httpx.Response | Exception] = [
+        httpx.ConnectError("synthetic connection failure"),
+        httpx.Response(429, json={"error": {"message": "rate limited"}}),
+        api_response(sales_output()),
+    ]
+    ledger = InMemoryUsageLedger()
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        outcome.request = http_request
+        return outcome
+
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(handler),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedCallPriceCalculator(Decimal("0.01")),
+        usage_ledger=ledger,
+        retry_delay=lambda _: None,
+    )
+
+    result = active.invoke(request())
+
+    assert result.network_calls == 3
+    assert ledger.monthly_cost_usd() == Decimal("0.01")
+    assert len(ledger.records) == 1
+
+
+def test_ambiguous_server_failure_before_success_consumes_one_attempt_bound() -> None:
+    outcomes = [
+        httpx.Response(500, json={"error": {"message": "synthetic"}}),
+        api_response(sales_output()),
+    ]
+    ledger = InMemoryUsageLedger()
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        outcome = outcomes.pop(0)
+        outcome.request = http_request
+        return outcome
+
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(handler),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedCallPriceCalculator(Decimal("0.01")),
+        usage_ledger=ledger,
+        retry_delay=lambda _: None,
+    )
+
+    result = active.invoke(request())
+
+    assert result.network_calls == 2
+    assert result.cost.amount_usd == Decimal("0.02")
+    assert ledger.monthly_cost_usd() == Decimal("0.02")
+    assert len(ledger.records) == 1
+
+
+def test_worst_case_reservation_blocks_before_first_network_attempt() -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return api_response(sales_output())
+
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(handler),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedCallPriceCalculator(Decimal("0.02")),
+        usage_ledger=InMemoryUsageLedger(monthly_cost_usd=Decimal("99.99")),
+        retry_delay=lambda _: None,
+    )
+
+    with pytest.raises(BudgetHardStop):
+        active.invoke(request())
+
+    assert calls == 0
+
+
 @pytest.mark.parametrize(
     "response",
     [
@@ -420,13 +507,24 @@ def test_protocol_violations_fail_closed_without_retry(response: httpx.Response)
     assert calls == 1
 
 
-def test_missing_usage_and_cost_are_unknown_not_zero() -> None:
-    result = adapter(lambda _: api_response(sales_output(), include_usage=False)).invoke(request())
+def test_missing_usage_fails_closed_and_consumes_one_conservative_reservation() -> None:
+    ledger = InMemoryUsageLedger()
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=httpx.MockTransport(lambda _: api_response(sales_output(), include_usage=False)),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedCallPriceCalculator(Decimal("0.01")),
+        usage_ledger=ledger,
+        retry_delay=lambda _: None,
+    )
 
-    assert result.usage.status == "unknown"
-    assert result.usage.input_tokens is None
-    assert result.cost.status == "unknown"
-    assert result.cost.amount_usd is None
+    with pytest.raises(GatewayFailure, match="cost") as captured:
+        active.invoke(request())
+
+    assert captured.value.error_code == "pricing_error"
+    assert ledger.monthly_cost_usd() == Decimal("0.03")
+    assert len(ledger.records) == 1
 
 
 def test_external_messages_do_not_include_local_site_identifier() -> None:
