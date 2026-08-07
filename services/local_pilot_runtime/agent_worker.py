@@ -59,6 +59,8 @@ from .runtime_support import (
 
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
+_CONTEXT_INTERNAL_BASE_URL = "http://context-api:8001"
+_CONTEXT_INTERNAL_HOSTS = frozenset({"context-api"})
 WorkerRunner = Callable[[AgentWorker, Event, float], None]
 DeepSeekProviderFactory = Callable[[Mapping[str, Any], RuntimeConfig], ModelProvider]
 
@@ -169,10 +171,7 @@ def build_worker(
     context_transport: httpx.BaseTransport | None = None,
 ) -> AgentWorker:
     typed_connection = cast(Connection, connection)
-    endpoint = ContextEndpoint(
-        config.context_endpoint.base_url,
-        unix_socket=config.context_endpoint.unix_socket,
-    )
+    endpoint = _context_endpoint(config)
     resolver = HttpContextResolver(
         endpoint=endpoint,
         bearer_token=context_bearer.reveal(),
@@ -215,6 +214,7 @@ def main(
         )
         config = load_runtime_config(runtime_config_path)
         validate_manifest_binding(manifest, config)
+        _context_endpoint(config)
         provider = compose_agent_provider(
             manifest,
             config,
@@ -247,6 +247,18 @@ def main(
     finally:
         if connection is not None:
             close_connection(connection)
+
+
+def _context_endpoint(config: RuntimeConfig) -> ContextEndpoint:
+    base_url = config.context_endpoint.base_url
+    allowed_internal_hosts = (
+        _CONTEXT_INTERNAL_HOSTS if base_url == _CONTEXT_INTERNAL_BASE_URL else frozenset()
+    )
+    return ContextEndpoint(
+        base_url,
+        unix_socket=config.context_endpoint.unix_socket,
+        allowed_internal_hosts=allowed_internal_hosts,
+    )
 
 
 def _run_worker(

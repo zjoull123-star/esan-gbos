@@ -379,15 +379,18 @@ def test_entrypoint_import_is_side_effect_free(monkeypatch: pytest.MonkeyPatch) 
     assert callable(module.run_worker)
 
 
-@pytest.mark.parametrize("use_unix_socket", [False, True])
+@pytest.mark.parametrize("endpoint", ["loopback", "unix", "internal"])
 def test_main_composes_real_repository_and_injectable_loop(
     tmp_path: Path,
-    use_unix_socket: bool,
+    endpoint: str,
 ) -> None:
     manifest_path, config_path, frappe_key, frappe_secret = _files(tmp_path)
-    if use_unix_socket:
+    if endpoint != "loopback":
         config = json.loads(config_path.read_text(encoding="utf-8"))
-        config["context_endpoint"]["unix_socket"] = str(tmp_path / "frappe.sock")
+        if endpoint == "unix":
+            config["context_endpoint"]["unix_socket"] = "/run/gbos/sockets/frappe.sock"
+        else:
+            config["context_endpoint"]["base_url"] = "http://frappe-backend:8000"
         config_path.write_text(json.dumps(config), encoding="utf-8")
     connection = _Connection()
     transport = _Transport()
@@ -427,6 +430,44 @@ def test_main_composes_real_repository_and_injectable_loop(
     assert transport.calls == []
     assert connection.closed is True
     assert "frappe-secret" not in repr(worker)
+    client = worker._client_factory("observation_processing")
+    assert "frappe-secret" not in repr(client)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    (
+        "http://frappe-backend.evil:8000",
+        "http://frappe-backend:8001",
+        "http://user:secret@frappe-backend:8000",
+        "http://frappe-backend:8000?next=http://evil.invalid",
+    ),
+)
+def test_internal_endpoint_confusion_exits_78_before_database_or_http(
+    tmp_path: Path,
+    base_url: str,
+) -> None:
+    manifest_path, config_path, frappe_key, frappe_secret = _files(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["context_endpoint"]["base_url"] = base_url
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    connector_calls: list[dict[str, Any]] = []
+    transport = _Transport()
+
+    result = communication_draft_worker.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        frappe_api_key_path=frappe_key,
+        frappe_api_secret_path=frappe_secret,
+        environ=_enabled_environment(),
+        connector=lambda **kwargs: connector_calls.append(kwargs),
+        worker_runner=lambda *_: None,
+        frappe_transport=transport,
+    )
+
+    assert result == 78
+    assert connector_calls == []
+    assert transport.calls == []
 
 
 @pytest.mark.parametrize(

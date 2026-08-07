@@ -6,6 +6,7 @@ import ipaddress
 import json
 import re
 from collections.abc import Mapping
+from pathlib import PurePosixPath
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
@@ -19,6 +20,13 @@ _APPLY_PATH = "/api/method/esan_gbos.api.internal.materialization.apply_draft"
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _MAX_REQUEST_BYTES = 262_144
 _MAX_RESPONSE_BYTES = 1_048_576
+_FRAPPE_INTERNAL_PORT = 8000
+_LOCAL_SOCKET_DIRECTORY = PurePosixPath("/run/gbos/sockets")
+_SAFE_SOCKET_FILENAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,126}[A-Za-z0-9])?\.sock$")
+_SAFE_INTERNAL_HOST = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
 
 
 class FrappeClientError(RuntimeError):
@@ -119,8 +127,12 @@ class _FrappeHttpBoundary:
         site_id: str,
         timeout_seconds: float,
         transport: FrappeJsonTransport | None,
+        allowed_internal_hosts: frozenset[str] = frozenset(),
     ) -> None:
-        normalized_base, socket_path = _local_endpoint(base_url)
+        normalized_base, socket_path = _local_endpoint(
+            base_url,
+            allowed_internal_hosts=allowed_internal_hosts,
+        )
         if not 0 < timeout_seconds <= 10:
             raise FrappeClientError("Frappe timeout must be within 0 and 10 seconds")
         self._base_url = normalized_base
@@ -201,6 +213,7 @@ class HttpFrappeDraftClient:
         processing_purpose: str,
         timeout_seconds: float = 3.0,
         transport: FrappeJsonTransport | None = None,
+        allowed_internal_hosts: frozenset[str] = frozenset(),
     ) -> None:
         self._boundary = _FrappeHttpBoundary(
             base_url=base_url,
@@ -210,6 +223,7 @@ class HttpFrappeDraftClient:
             site_id=site_id,
             timeout_seconds=timeout_seconds,
             transport=transport,
+            allowed_internal_hosts=allowed_internal_hosts,
         )
         self._processing_purpose = _header(
             processing_purpose,
@@ -289,10 +303,23 @@ def _receipt(value: Mapping[str, Any]) -> FrappeDraftReceipt:
         raise FrappeClientError("Frappe returned an invalid materialization receipt") from None
 
 
-def _local_endpoint(value: str) -> tuple[str, str | None]:
+def _local_endpoint(
+    value: str,
+    *,
+    allowed_internal_hosts: frozenset[str] = frozenset(),
+) -> tuple[str, str | None]:
+    allowed_hosts = _validated_internal_hosts(allowed_internal_hosts)
     parsed = urlsplit(value)
     if parsed.scheme == "unix":
-        if not parsed.path.startswith("/") or parsed.netloc or parsed.query or parsed.fragment:
+        socket_path = PurePosixPath(parsed.path)
+        if (
+            not parsed.path.startswith("/")
+            or parsed.netloc
+            or parsed.query
+            or parsed.fragment
+            or socket_path.parent != _LOCAL_SOCKET_DIRECTORY
+            or _SAFE_SOCKET_FILENAME.fullmatch(socket_path.name) is None
+        ):
             raise FrappeClientError("Frappe Unix socket URL is invalid")
         return "http://frappe.internal", parsed.path
     if (
@@ -304,15 +331,48 @@ def _local_endpoint(value: str) -> tuple[str, str | None]:
         or parsed.path not in {"", "/"}
         or parsed.hostname is None
     ):
-        raise FrappeClientError("Frappe URL must be an uncredentialed loopback HTTP URL")
+        raise FrappeClientError(
+            "Frappe URL must be an uncredentialed local or allowed internal HTTP URL"
+        )
     try:
-        address = ipaddress.ip_address(parsed.hostname)
         port = parsed.port
     except ValueError as error:
-        raise FrappeClientError("Frappe URL must use a literal loopback address") from error
-    if not address.is_loopback or port is None:
-        raise FrappeClientError("Frappe URL must use a literal loopback address and port")
+        raise FrappeClientError("Frappe URL has an invalid host or port") from error
+    try:
+        address = ipaddress.ip_address(parsed.hostname)
+    except ValueError:
+        address = None
+    if address is not None:
+        if not address.is_loopback or port is None:
+            raise FrappeClientError("Frappe URL must use a literal loopback address and port")
+        return value.rstrip("/"), None
+    hostname = parsed.hostname
+    if (
+        hostname not in allowed_hosts
+        or port != _FRAPPE_INTERNAL_PORT
+        or parsed.netloc != f"{hostname}:{_FRAPPE_INTERNAL_PORT}"
+    ):
+        raise FrappeClientError("Frappe URL host and port are not explicitly allowed")
     return value.rstrip("/"), None
+
+
+def _validated_internal_hosts(value: frozenset[str]) -> frozenset[str]:
+    if not isinstance(value, frozenset):
+        raise FrappeClientError("Frappe internal host allowlist must be a frozenset")
+    for host in value:
+        if (
+            not isinstance(host, str)
+            or _SAFE_INTERNAL_HOST.fullmatch(host) is None
+            or host == "localhost"
+            or host.endswith(".localhost")
+        ):
+            raise FrappeClientError("Frappe internal host allowlist is invalid")
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            continue
+        raise FrappeClientError("Frappe internal host allowlist cannot contain IP addresses")
+    return value
 
 
 def _header(value: str, field: str) -> str:

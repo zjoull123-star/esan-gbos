@@ -107,6 +107,7 @@ def test_http_context_resolver_binds_request_and_returns_canonical_context() -> 
         "http://localhost:8123",
         "http://0.0.0.0:8123",
         "http://192.168.1.10:8123",
+        "http://context-api:8001",
         "https://api.deepseek.com",
         "http://127.0.0.1:8123/path",
         "http://user@127.0.0.1:8123",
@@ -115,6 +116,63 @@ def test_http_context_resolver_binds_request_and_returns_canonical_context() -> 
 def test_context_endpoint_rejects_every_non_literal_loopback_target(url: str) -> None:
     with pytest.raises(ValueError, match="loopback|origin"):
         ContextEndpoint(url)
+
+
+def test_context_endpoint_accepts_exact_explicit_internal_service_host() -> None:
+    endpoint = ContextEndpoint(
+        "http://context-api:8001",
+        allowed_internal_hosts=frozenset({"context-api"}),
+    )
+    resolver = HttpContextResolver(
+        endpoint=endpoint,
+        bearer_token="secret-token",
+        auth_ref="auth-agent-runtime",
+        binding_resolver=_binding,
+        transport=httpx.MockTransport(
+            lambda request: (
+                pytest.fail(f"unexpected URL {request.url}")
+                if request.url != httpx.URL("http://context-api:8001/internal/v1/agent-context")
+                else httpx.Response(
+                    200,
+                    json={
+                        "schema_version": "1.0",
+                        "request_id": "request-1",
+                        "context": _context(),
+                    },
+                    headers={"Cache-Control": "no-store"},
+                )
+            )
+        ),
+    )
+
+    resolved = resolver.resolve(_request())
+
+    assert resolved.site_id == "gbos.localhost"
+    assert "secret-token" not in repr(resolver)
+
+
+@pytest.mark.parametrize(
+    ("url", "allowed_internal_hosts"),
+    [
+        ("http://other-api:8001", frozenset({"context-api"})),
+        ("http://context-api.evil:8001", frozenset({"context-api"})),
+        ("http://context-api:8002", frozenset({"context-api"})),
+        ("http://context-api.:8001", frozenset({"context-api"})),
+        ("http://context_api:8001", frozenset({"context_api"})),
+        ("http://context-api:8001", frozenset({"localhost"})),
+        ("http://context-api:8001", frozenset({"127.0.0.1"})),
+        ("http://context-api:8001", frozenset({"context-api."})),
+    ],
+)
+def test_context_endpoint_rejects_non_exact_or_unsafe_internal_hosts(
+    url: str,
+    allowed_internal_hosts: frozenset[str],
+) -> None:
+    with pytest.raises(ValueError, match="host|port|allowlist|loopback"):
+        ContextEndpoint(
+            url,
+            allowed_internal_hosts=allowed_internal_hosts,
+        )
 
 
 def test_context_endpoint_accepts_absolute_unix_socket_without_dns(tmp_path: Path) -> None:

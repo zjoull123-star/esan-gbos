@@ -30,6 +30,7 @@ class HttpMaterializationContextResolver:
         site_id: str,
         timeout_seconds: float = 3.0,
         transport: FrappeJsonTransport | None = None,
+        allowed_internal_hosts: frozenset[str] = frozenset(),
     ) -> None:
         self._boundary = _FrappeHttpBoundary(
             base_url=base_url,
@@ -39,6 +40,7 @@ class HttpMaterializationContextResolver:
             site_id=site_id,
             timeout_seconds=timeout_seconds,
             transport=transport,
+            allowed_internal_hosts=allowed_internal_hosts,
         )
         self._auth_ref = auth_ref
 

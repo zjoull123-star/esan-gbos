@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,11 @@ _FACT_FIELDS = frozenset(
         "review_status",
     }
 )
+_CONTEXT_INTERNAL_PORT = 8001
+_SAFE_INTERNAL_HOST = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
 
 
 class ContextResolutionError(ValueError):
@@ -49,8 +55,10 @@ class ContextResolutionError(ValueError):
 class ContextEndpoint:
     base_url: str
     unix_socket: Path | None = None
+    allowed_internal_hosts: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
+        allowed_hosts = _validated_internal_hosts(self.allowed_internal_hosts)
         parsed = urlsplit(self.base_url)
         if (
             parsed.scheme != "http"
@@ -70,10 +78,43 @@ class ContextEndpoint:
             return
         try:
             address = ipaddress.ip_address(parsed.hostname)
-        except ValueError as exc:
-            raise ValueError("Context endpoint must use a literal loopback address") from exc
-        if not address.is_loopback or parsed.port is None:
+            port = parsed.port
+        except ValueError:
+            address = None
+            try:
+                port = parsed.port
+            except ValueError as exc:
+                raise ValueError("Context endpoint has an invalid host or port") from exc
+        if address is not None:
+            if not address.is_loopback or port is None:
+                raise ValueError("Context endpoint must use a literal loopback address and port")
+            return
+        hostname = parsed.hostname
+        if (
+            hostname not in allowed_hosts
+            or port != _CONTEXT_INTERNAL_PORT
+            or parsed.netloc != f"{hostname}:{_CONTEXT_INTERNAL_PORT}"
+        ):
             raise ValueError("Context endpoint must use a literal loopback address and port")
+
+
+def _validated_internal_hosts(value: frozenset[str]) -> frozenset[str]:
+    if not isinstance(value, frozenset):
+        raise ValueError("Context internal host allowlist must be a frozenset")
+    for host in value:
+        if (
+            not isinstance(host, str)
+            or _SAFE_INTERNAL_HOST.fullmatch(host) is None
+            or host == "localhost"
+            or host.endswith(".localhost")
+        ):
+            raise ValueError("Context internal host allowlist is invalid")
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            continue
+        raise ValueError("Context internal host allowlist cannot contain IP addresses")
+    return value
 
 
 @dataclass(frozen=True, slots=True)

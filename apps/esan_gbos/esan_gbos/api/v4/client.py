@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import socket
+from pathlib import PurePosixPath
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -10,6 +12,12 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 _DEFAULT_MAX_RESPONSE_BYTES = 1_048_576
 _DEFAULT_MAX_REQUEST_BYTES = 262_144
+_LOCAL_SOCKET_DIRECTORY = PurePosixPath("/run/gbos/sockets")
+_SAFE_SOCKET_FILENAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,126}[A-Za-z0-9])?\.sock$")
+_SAFE_INTERNAL_HOST = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
 _SAFE_ERROR_CODES = frozenset(
     {
         "idempotency_conflict",
@@ -198,33 +206,47 @@ class LocalServiceClient:
         auth_ref: str,
         transport: JsonTransport | None = None,
         timeout_seconds: float = 3.0,
+        allowed_internal_urls: frozenset[str] = frozenset(),
     ) -> None:
+        internal_urls = _validated_internal_urls(allowed_internal_urls)
         parsed = urlsplit(base_url)
         unix_socket_path: str | None = None
         if parsed.scheme == "unix":
-            if not parsed.path.startswith("/") or parsed.netloc or parsed.query or parsed.fragment:
+            socket_path = PurePosixPath(parsed.path)
+            if (
+                not parsed.path.startswith("/")
+                or parsed.netloc
+                or parsed.query
+                or parsed.fragment
+                or socket_path.parent != _LOCAL_SOCKET_DIRECTORY
+                or _SAFE_SOCKET_FILENAME.fullmatch(socket_path.name) is None
+            ):
                 raise LocalServiceError("local Unix service URL is invalid")
             unix_socket_path = parsed.path
             normalized_base = "http://localhost"
         else:
             if (
                 parsed.scheme != "http"
-                or parsed.hostname not in {"127.0.0.1", "localhost"}
                 or parsed.username is not None
                 or parsed.password is not None
                 or parsed.query
                 or parsed.fragment
                 or parsed.path not in {"", "/"}
+                or parsed.hostname is None
             ):
                 raise LocalServiceError(
-                    f"{service_name} URL must be an uncredentialed loopback HTTP URL"
+                    f"{service_name} URL must be an uncredentialed allowed HTTP URL"
                 )
             try:
                 port = parsed.port
             except ValueError as error:
                 raise LocalServiceError(f"{service_name} URL has an invalid port") from error
             if port is None:
-                raise LocalServiceError(f"{service_name} loopback URL must include a port")
+                raise LocalServiceError(f"{service_name} URL must include a port")
+            if parsed.hostname not in {"127.0.0.1", "localhost"} and base_url not in internal_urls:
+                raise LocalServiceError(
+                    f"{service_name} URL must be loopback or explicitly allowed"
+                )
             normalized_base = base_url.rstrip("/")
         if not 0 < timeout_seconds <= 10:
             raise LocalServiceError("local service timeout must be within 0 and 10 seconds")
@@ -237,6 +259,14 @@ class LocalServiceClient:
             UnixSocketJsonTransport(unix_socket_path)
             if unix_socket_path is not None
             else UrllibJsonTransport()
+        )
+
+    def __repr__(self) -> str:
+        return (
+            "LocalServiceClient("
+            f"service_name={getattr(self, '_service_name', '<invalid>')!r}, "
+            f"base_url={getattr(self, '_base_url', '<invalid>')!r}, "
+            f"auth_ref={getattr(self, '_auth_ref', '<invalid>')!r}, token=<redacted>)"
         )
 
     def request(
@@ -301,3 +331,32 @@ class LocalServiceClient:
         if response_site is not None and response_site != site_id:
             raise LocalServiceError("local service returned mismatched site scope")
         return response
+
+
+def _validated_internal_urls(value: frozenset[str]) -> frozenset[str]:
+    if not isinstance(value, frozenset):
+        raise LocalServiceError("local internal URL allowlist must be a frozenset")
+    for allowed_url in value:
+        if not isinstance(allowed_url, str):
+            raise LocalServiceError("local internal URL allowlist is invalid")
+        parsed = urlsplit(allowed_url)
+        try:
+            port = parsed.port
+        except ValueError:
+            raise LocalServiceError("local internal URL allowlist is invalid") from None
+        hostname = parsed.hostname
+        if (
+            parsed.scheme != "http"
+            or hostname is None
+            or _SAFE_INTERNAL_HOST.fullmatch(hostname) is None
+            or hostname == "localhost"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path
+            or port is None
+            or parsed.netloc != f"{hostname}:{port}"
+        ):
+            raise LocalServiceError("local internal URL allowlist is invalid")
+    return value

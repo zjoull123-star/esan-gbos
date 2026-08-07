@@ -49,6 +49,8 @@ DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
 DEFAULT_FRAPPE_API_KEY_FILE = Path("/run/secrets/frappe_materializer_api_key")
 DEFAULT_FRAPPE_API_SECRET_FILE = Path("/run/secrets/frappe_materializer_api_secret")
+_FRAPPE_INTERNAL_BASE_URL = "http://frappe-backend:8000"
+_FRAPPE_INTERNAL_HOSTS = frozenset({"frappe-backend"})
 _LEASE_INTERVAL_MULTIPLIER = 10
 
 Sleep = Callable[[float], None]
@@ -208,6 +210,7 @@ def build_worker(
     if not 0 < frappe_timeout_seconds < lease_duration.total_seconds():
         raise RuntimeSupportError("Frappe timeout must be strictly below the worker lease")
     base_url = _frappe_base_url(config)
+    allowed_internal_hosts = _frappe_allowed_internal_hosts(base_url)
 
     def client_factory(processing_purpose: str) -> FrappeDraftClient:
         return HttpFrappeDraftClient(
@@ -219,6 +222,7 @@ def build_worker(
             processing_purpose=processing_purpose,
             timeout_seconds=frappe_timeout_seconds,
             transport=frappe_transport,
+            allowed_internal_hosts=allowed_internal_hosts,
         )
 
     repository = PostgresCommunicationIntelligenceRepository(
@@ -287,6 +291,7 @@ def main(
         frappe_api_key = load_secret_file(frappe_api_key_path)
         frappe_api_secret = load_secret_file(frappe_api_secret_path)
         base_url = _frappe_base_url(config)
+        allowed_internal_hosts = _frappe_allowed_internal_hosts(base_url)
         HttpFrappeDraftClient(
             base_url=base_url,
             api_key=frappe_api_key.reveal(),
@@ -296,6 +301,7 @@ def main(
             processing_purpose="observation_processing",
             timeout_seconds=frappe_timeout_seconds,
             transport=frappe_transport,
+            allowed_internal_hosts=allowed_internal_hosts,
         )
         connection = connect_postgres(config.postgres, connector=connector)
         worker = build_worker(
@@ -354,6 +360,12 @@ def _frappe_base_url(config: RuntimeConfig) -> str:
     if socket_path is not None:
         return f"unix://{socket_path}"
     return config.context_endpoint.base_url
+
+
+def _frappe_allowed_internal_hosts(base_url: str) -> frozenset[str]:
+    if base_url == _FRAPPE_INTERNAL_BASE_URL:
+        return _FRAPPE_INTERNAL_HOSTS
+    return frozenset()
 
 
 def _run_worker(

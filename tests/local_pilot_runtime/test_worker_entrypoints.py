@@ -7,6 +7,8 @@ from pathlib import Path
 from threading import Event
 from typing import Any
 
+import pytest
+
 from services.agent_runtime.worker import AgentWorker, ThreadedHeartbeatRunner
 from services.local_pilot_runtime import agent_worker, model_worker
 
@@ -137,10 +139,16 @@ def _files(
     return manifest_path, config_path
 
 
+@pytest.mark.parametrize("endpoint", ["loopback", "internal"])
 def test_agent_worker_main_composes_deterministic_worker_stop_event_and_heartbeat(
     tmp_path: Path,
+    endpoint: str,
 ) -> None:
     manifest_path, config_path = _files(tmp_path)
+    if endpoint == "internal":
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["context_endpoint"]["base_url"] = "http://context-api:8001"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
     connection = _Connection()
     seen: list[tuple[AgentWorker, Event, float]] = []
 
@@ -164,6 +172,40 @@ def test_agent_worker_main_composes_deterministic_worker_stop_event_and_heartbea
     assert stop_event.is_set()
     assert idle_delay == 0.1
     assert connection.closed is True
+    assert worker._resolver._endpoint.base_url == (
+        "http://context-api:8001" if endpoint == "internal" else "http://127.0.0.1:8001"
+    )
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    (
+        "http://context-api.evil:8001",
+        "http://context-api:8002",
+        "http://user:secret@context-api:8001",
+        "http://context-api:8001?next=http://evil.invalid",
+    ),
+)
+def test_agent_worker_rejects_context_endpoint_confusion_before_postgres(
+    tmp_path: Path,
+    base_url: str,
+) -> None:
+    manifest_path, config_path = _files(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["context_endpoint"]["base_url"] = base_url
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    calls: list[dict[str, Any]] = []
+
+    result = agent_worker.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        environ={"GBOS_LOCAL_RUNTIME_ENABLED": "true"},
+        connector=lambda **kwargs: calls.append(kwargs),
+        worker_runner=lambda *_: None,
+    )
+
+    assert result == 78
+    assert calls == []
 
 
 def test_agent_worker_deepseek_mode_without_factory_fails_before_postgres(

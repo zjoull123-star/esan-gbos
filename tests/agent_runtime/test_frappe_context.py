@@ -87,6 +87,57 @@ def test_context_resolver_returns_only_bound_controlled_context() -> None:
     assert "materializer-secret" not in repr(resolver)
 
 
+def test_context_resolver_accepts_exact_explicit_internal_service_host() -> None:
+    snapshot = {
+        "doctype": "GBOS Work Item",
+        "name": "WRK-0001",
+        "revision": 3,
+        "team": "TEM-0001",
+    }
+    transport = _Transport(
+        {
+            "message": {
+                "site_id": "gbos.localhost",
+                "request_id": "task-0001",
+                "subject_type": "GBOS Work Item",
+                "subject_ref": "WRK-0001",
+                "subject_revision": 3,
+                "team": "TEM-0001",
+                "assigned_reviewer": None,
+                "subject_snapshot": snapshot,
+                "subject_payload_digest": _digest(snapshot),
+            }
+        }
+    )
+    resolver = HttpMaterializationContextResolver(
+        base_url="http://frappe-backend:8000",
+        api_key="materializer-key",
+        api_secret="materializer-secret",
+        auth_ref="agent-materializer-v1",
+        site_id="gbos.localhost",
+        allowed_internal_hosts=frozenset({"frappe-backend"}),
+        transport=transport,
+    )
+
+    context = resolver.resolve(_request())
+
+    assert context is not None
+    assert transport.calls[0]["url"].startswith("http://frappe-backend:8000/")
+    assert "materializer-secret" not in repr(resolver)
+
+
+def test_context_resolver_rejects_internal_service_host_by_default() -> None:
+    with pytest.raises(FrappeClientError, match="loopback|URL|host"):
+        HttpMaterializationContextResolver(
+            base_url="http://frappe-backend:8000",
+            api_key="materializer-key",
+            api_secret="materializer-secret",
+            auth_ref="agent-materializer-v1",
+            site_id="gbos.localhost",
+            transport=_Transport({}),
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "changed"),
     [
@@ -118,7 +169,7 @@ def test_context_resolver_rejects_mismatched_response_binding(
     }
     response[field] = changed
     resolver = HttpMaterializationContextResolver(
-        base_url="unix:///tmp/gbos-frappe.sock",
+        base_url="unix:///run/gbos/sockets/frappe.sock",
         api_key="materializer-key",
         api_secret="materializer-secret",
         auth_ref="agent-materializer-v1",
