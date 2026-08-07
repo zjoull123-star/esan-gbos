@@ -877,7 +877,13 @@ class PostgresLocalPilotStorage:
                     (
                         SELECT count(*)
                         FROM observer.context_publication_outbox AS outbox
+                        JOIN observer.observation_events AS event
+                          ON event.site_id = outbox.site_id
+                         AND event.event_id = outbox.observation_event_id
                         WHERE outbox.site_id = instance.site_id
+                          AND event.connector = instance.connector
+                          AND event.connector_instance_id =
+                              instance.connector_instance_id
                           AND outbox.status IN ('queued', 'leased', 'retry_wait')
                     ) AS pending_outbox
                 FROM observer.connector_instances AS instance

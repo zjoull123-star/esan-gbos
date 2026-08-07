@@ -559,6 +559,14 @@ def test_health_query_returns_sanitized_site_scoped_status_only() -> None:
         "SELECT set_config('app.site_id', %s, true)",
         (SCOPE.site_id,),
     )
+    health_sql = connection.executed[1][0]
+    assert (
+        "JOIN observer.observation_events AS event "
+        "ON event.site_id = outbox.site_id "
+        "AND event.event_id = outbox.observation_event_id"
+    ) in health_sql
+    assert "event.connector = instance.connector" in health_sql
+    assert "event.connector_instance_id = instance.connector_instance_id" in health_sql
 
 
 @pytest.mark.parametrize(
