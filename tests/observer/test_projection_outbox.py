@@ -6,9 +6,11 @@ from typing import Any
 
 import pytest
 
-from services.local_pilot_runtime.model_projection_worker import ProjectionLeaseConflict
 from services.observer.observer.models import TenantScope
-from services.observer.observer.projection_outbox import PostgresProjectionOutboxRepository
+from services.observer.observer.projection_outbox import (
+    PostgresProjectionOutboxRepository,
+    ProjectionLeaseConflict,
+)
 
 NOW = datetime(2026, 8, 8, 10, tzinfo=UTC)
 SCOPE = TenantScope("gbos.localhost", "observation_processing")

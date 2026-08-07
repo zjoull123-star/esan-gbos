@@ -44,6 +44,7 @@ from services.observer.observer.model_projection import (
 from services.observer.observer.models import TenantScope, _require_aware
 from services.observer.observer.projection_outbox import (
     PostgresProjectionOutboxRepository,
+    ProjectionLeaseConflict,
 )
 from services.observer.observer.read_service import PostgresCommunicationRepository
 
@@ -77,10 +78,6 @@ TrustedPhraseResolver = Callable[
     [TenantScope, str, str],
     "TrustedPhraseResolution",
 ]
-
-
-class ProjectionLeaseConflict(RuntimeError):
-    """A stale projection attempt no longer owns its fenced lease."""
 
 
 class ProjectionRunStatus(StrEnum):

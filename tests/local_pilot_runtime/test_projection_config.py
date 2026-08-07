@@ -68,6 +68,87 @@ def test_closed_projection_config_requires_three_exact_roles_and_private_files(
     assert "secret" not in repr(config)
 
 
+def test_projection_config_accepts_exact_docker_internal_postgres_endpoint(
+    tmp_path: Path,
+) -> None:
+    path, value = _config(tmp_path)
+    connections = value["connections"]
+    assert isinstance(connections, dict)
+    for raw in connections.values():
+        assert isinstance(raw, dict)
+        raw["host"] = "postgres"
+        raw["port"] = 5432
+    path.write_text(json.dumps(value), encoding="utf-8")
+    os.chmod(path, 0o600)
+
+    config = load_projection_config(path, expected_site_id="gbos.localhost")
+
+    assert {connection.host for connection in config.connections.values()} == {"postgres"}
+    assert {connection.port for connection in config.connections.values()} == {5432}
+    assert {connection.user for connection in config.connections.values()} == {
+        "gbos_observer_app",
+        "gbos_context_app",
+        "gbos_agent_app",
+    }
+    assert len({connection.password_file for connection in config.connections.values()}) == 3
+
+
+@pytest.mark.parametrize(
+    ("host", "port"),
+    [
+        ("postgres", 55432),
+        ("postgres.example", 5432),
+        ("10.0.0.2", 5432),
+        ("postgres:5432", 5432),
+        ("postgres/path", 5432),
+        ("postgres?sslmode=require", 5432),
+        ("postgres#fragment", 5432),
+        ("user@postgres", 5432),
+        ("postgres@", 5432),
+        ("http://postgres", 5432),
+    ],
+)
+def test_projection_config_rejects_nonexact_docker_host_without_rendering_it(
+    tmp_path: Path,
+    host: str,
+    port: int,
+) -> None:
+    path, value = _config(tmp_path)
+    connections = value["connections"]
+    assert isinstance(connections, dict)
+    observer = connections["observer"]
+    assert isinstance(observer, dict)
+    observer["host"] = host
+    observer["port"] = port
+    path.write_text(json.dumps(value), encoding="utf-8")
+    os.chmod(path, 0o600)
+
+    with pytest.raises(ProjectionConfigError) as captured:
+        load_projection_config(path, expected_site_id="gbos.localhost")
+
+    assert host not in str(captured.value)
+    assert host not in repr(captured.value)
+
+
+@pytest.mark.parametrize("host", ("127.0.0.1", "::1", "localhost"))
+def test_projection_config_preserves_loopback_hosts(
+    tmp_path: Path,
+    host: str,
+) -> None:
+    path, value = _config(tmp_path)
+    connections = value["connections"]
+    assert isinstance(connections, dict)
+    for raw in connections.values():
+        assert isinstance(raw, dict)
+        raw["host"] = host
+    path.write_text(json.dumps(value), encoding="utf-8")
+    os.chmod(path, 0o600)
+
+    config = load_projection_config(path, expected_site_id="gbos.localhost")
+
+    assert {connection.host for connection in config.connections.values()} == {host}
+
+
 @pytest.mark.parametrize("mutation", ("reused_role", "broad_config", "symlink_root"))
 def test_projection_config_rejects_reused_role_broad_permissions_and_symlink_root(
     tmp_path: Path,

@@ -19,6 +19,10 @@ _SAFE_CODE = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
 _PURPOSE = "observation_processing"
 
 
+class ProjectionLeaseConflict(RuntimeError):
+    """A stale projection attempt no longer owns the live fenced lease."""
+
+
 class Cursor(Protocol):
     def __enter__(self) -> Cursor: ...
 
@@ -438,9 +442,7 @@ def _fence_token(
     return f"v1:{generation}:{digest}"
 
 
-def _lease_conflict() -> RuntimeError:
-    from services.local_pilot_runtime.model_projection_worker import ProjectionLeaseConflict
-
+def _lease_conflict() -> ProjectionLeaseConflict:
     return ProjectionLeaseConflict("projection outbox lease transition rejected")
 
 
@@ -454,4 +456,7 @@ def _duration(value: timedelta) -> None:
         raise ValueError("projection lease duration is invalid")
 
 
-__all__ = ["PostgresProjectionOutboxRepository"]
+__all__ = [
+    "PostgresProjectionOutboxRepository",
+    "ProjectionLeaseConflict",
+]

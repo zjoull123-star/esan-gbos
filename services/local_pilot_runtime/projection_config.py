@@ -123,9 +123,11 @@ def _read_private_json(path: Path) -> dict[str, object]:
 
 def _connection(value: dict[str, object], *, expected_user: str) -> PostgresSettings:
     host = _text(value.get("host"), "PostgreSQL host", maximum=253)
-    if host not in {"127.0.0.1", "::1", "localhost"}:
-        raise ProjectionConfigError("projection PostgreSQL must use a local host")
     port = _integer(value.get("port"), "PostgreSQL port", minimum=1, maximum=65_535)
+    if host not in {"127.0.0.1", "::1", "localhost", "postgres"} or (
+        host == "postgres" and port != 5432
+    ):
+        raise ProjectionConfigError("projection PostgreSQL endpoint is not allowed")
     database = _text(value.get("database"), "PostgreSQL database", maximum=63)
     user = _text(value.get("user"), "PostgreSQL user", maximum=63)
     if user != expected_user:
