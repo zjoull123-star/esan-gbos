@@ -5,6 +5,7 @@ import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -12,6 +13,7 @@ from psycopg.errors import InsufficientPrivilege, ObjectNotInPrerequisiteState
 
 from services.action_guard.policy import ActionGuard
 from services.agent_runtime import (
+    AgentExecutionResult,
     AgentKind,
     AgentOrchestrator,
     AgentTaskSubmission,
@@ -48,7 +50,7 @@ def enabled() -> bool:
     return os.getenv("GBOS_RUN_GATE4_POSTGRES_INTEGRATION") == "1"
 
 
-def connection(user_env: str):
+def connection(user_env: str) -> Any:
     if not enabled():
         pytest.skip("set GBOS_RUN_GATE4_POSTGRES_INTEGRATION=1 for Gate 4 PostgreSQL tests")
     return connect_postgres_components(
@@ -162,7 +164,7 @@ def local_pilot_submission(
     )
 
 
-def agent_result(request: AgentTaskSubmission):
+def agent_result(request: AgentTaskSubmission) -> AgentExecutionResult:
     evidence_ref = f"worker-evidence-{request.task_id.removeprefix('worker-task-')}"
     fact_ref = f"worker-fact-{request.task_id.removeprefix('worker-task-')}"
     runtime = AgentOrchestrator(
@@ -1046,13 +1048,39 @@ def test_gate4_materialization_lease_fence_receipt_replay_and_rls() -> None:
             now=request.due_at + timedelta(seconds=3),
             lease_duration=timedelta(seconds=5),
         )
+        assert first is not None
+        repository.heartbeat_materialization(
+            site_id,
+            first.materialization_id,
+            worker_id="same-materializer",
+            expected_attempt=first.attempt,
+            now=request.due_at + timedelta(seconds=4),
+            lease_duration=timedelta(seconds=5),
+        )
+        assert (
+            repository.claim_materialization(
+                site_id,
+                worker_id="other-materializer",
+                now=request.due_at + timedelta(seconds=8),
+                lease_duration=timedelta(seconds=10),
+            )
+            is None
+        )
+        with pytest.raises(LeaseConflict):
+            repository.heartbeat_materialization(
+                site_id,
+                first.materialization_id,
+                worker_id="other-materializer",
+                expected_attempt=first.attempt,
+                now=request.due_at + timedelta(seconds=9),
+                lease_duration=timedelta(seconds=5),
+            )
         recovered = repository.claim_materialization(
             site_id,
             worker_id="same-materializer",
-            now=request.due_at + timedelta(seconds=9),
+            now=request.due_at + timedelta(seconds=14),
             lease_duration=timedelta(seconds=10),
         )
-        assert first is not None
         assert recovered is not None
         assert (first.attempt, recovered.attempt) == (1, 2)
         receipt = FrappeDraftReceipt(
@@ -1069,7 +1097,7 @@ def test_gate4_materialization_lease_fence_receipt_replay_and_rls() -> None:
                 recovered.materialization_id,
                 worker_id="same-materializer",
                 expected_attempt=1,
-                now=request.due_at + timedelta(seconds=10),
+                now=request.due_at + timedelta(seconds=15),
                 receipt=receipt,
             )
 
@@ -1078,7 +1106,7 @@ def test_gate4_materialization_lease_fence_receipt_replay_and_rls() -> None:
             recovered.materialization_id,
             worker_id="same-materializer",
             expected_attempt=2,
-            now=request.due_at + timedelta(seconds=10),
+            now=request.due_at + timedelta(seconds=15),
             receipt=receipt,
         )
         replay = repository.acknowledge_materialization(
@@ -1086,7 +1114,7 @@ def test_gate4_materialization_lease_fence_receipt_replay_and_rls() -> None:
             recovered.materialization_id,
             worker_id="same-materializer",
             expected_attempt=2,
-            now=request.due_at + timedelta(seconds=11),
+            now=request.due_at + timedelta(seconds=16),
             receipt=receipt,
         )
         assert acknowledged == replay
@@ -1096,14 +1124,14 @@ def test_gate4_materialization_lease_fence_receipt_replay_and_rls() -> None:
                 recovered.materialization_id,
                 worker_id="same-materializer",
                 expected_attempt=2,
-                now=request.due_at + timedelta(seconds=11),
+                now=request.due_at + timedelta(seconds=16),
                 receipt=replace(receipt, name=f"WORK-CHANGED-{suffix}"),
             )
         assert (
             repository.claim_materialization(
                 other_site,
                 worker_id="other-materializer",
-                now=request.due_at + timedelta(seconds=12),
+                now=request.due_at + timedelta(seconds=17),
                 lease_duration=timedelta(seconds=5),
             )
             is None
@@ -1189,6 +1217,19 @@ def test_gate4_materialization_migration_is_ledgered_once_and_keeps_rls() -> Non
             )
             assert cursor.fetchone() == (
                 "agent/004_local_pilot_materialization.sql",
+                1,
+            )
+            cursor.execute(
+                """
+                SELECT migration_name, COUNT(*)
+                FROM observer.schema_migrations
+                WHERE migration_name = %s
+                GROUP BY migration_name
+                """,
+                ("agent/006_local_pilot_materialization_heartbeat.sql",),
+            )
+            assert cursor.fetchone() == (
+                "agent/006_local_pilot_materialization_heartbeat.sql",
                 1,
             )
             cursor.execute(

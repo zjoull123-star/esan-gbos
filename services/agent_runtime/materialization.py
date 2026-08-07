@@ -165,6 +165,17 @@ class MaterializationRepository(Protocol):
         receipt: FrappeDraftReceipt,
     ) -> FrappeDraftReceipt: ...
 
+    def heartbeat_materialization(
+        self,
+        site_id: str,
+        materialization_id: str,
+        *,
+        worker_id: str,
+        expected_attempt: int,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None: ...
+
     def fail_materialization(
         self,
         site_id: str,
@@ -268,6 +279,14 @@ class MaterializationWorker:
                 attempt=None,
             )
         try:
+            self._repository.heartbeat_materialization(
+                claim.site_id,
+                claim.materialization_id,
+                worker_id=self._worker_id,
+                expected_attempt=claim.attempt,
+                now=self._clock(),
+                lease_duration=self._lease_duration,
+            )
             context = None
             if claim.envelope.action_type != "internal.work_item.transition.propose":
                 context = self._context_resolver.resolve(
@@ -288,6 +307,14 @@ class MaterializationWorker:
                 context=context,
             )
             request_digest = _intent_digest(intent)
+            self._repository.heartbeat_materialization(
+                claim.site_id,
+                claim.materialization_id,
+                worker_id=self._worker_id,
+                expected_attempt=claim.attempt,
+                now=self._clock(),
+                lease_duration=self._lease_duration,
+            )
             receipt = self._client.apply(
                 intent,
                 request_id=claim.materialization_id,

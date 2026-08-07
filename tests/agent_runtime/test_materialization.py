@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -43,6 +43,8 @@ class _Repository:
         self.status = "pending"
         self.receipt: FrappeDraftReceipt | None = None
         self.failures: list[str] = []
+        self.heartbeats: list[tuple[str, int]] = []
+        self.lose_heartbeat_at: int | None = None
 
     def claim_materialization(
         self,
@@ -70,6 +72,31 @@ class _Repository:
             envelope=self.claim.envelope,
         )
         return self.claim
+
+    def heartbeat_materialization(
+        self,
+        site_id: str,
+        materialization_id: str,
+        *,
+        worker_id: str,
+        expected_attempt: int,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None:
+        self.heartbeats.append((materialization_id, expected_attempt))
+        if self.lose_heartbeat_at == len(self.heartbeats):
+            raise LeaseConflict("materialization lease lost")
+        if (
+            site_id != self.claim.site_id
+            or materialization_id != self.claim.materialization_id
+            or worker_id != self.claim.lease_owner
+            or expected_attempt != self.claim.attempt
+            or self.claim.lease_expires_at <= now
+        ):
+            raise LeaseConflict("materialization lease lost")
+        proposed_expiry = now + lease_duration
+        if proposed_expiry > self.claim.lease_expires_at:
+            self.claim = replace(self.claim, lease_expires_at=proposed_expiry)
 
     def acknowledge_materialization(
         self,
@@ -107,9 +134,10 @@ class _Repository:
         now: datetime,
         retry_at: datetime,
         error_code: str,
-    ) -> None:
+    ) -> Literal["retry", "dead_letter"] | None:
         self.status = "retry"
         self.failures.append(error_code)
+        return None
 
 
 class _Frappe:
@@ -273,6 +301,86 @@ def test_worker_recovers_after_crash_without_creating_a_second_frappe_draft() ->
     assert "summary" not in repr(repository.receipt)
 
 
+def test_worker_heartbeats_before_context_resolution_and_frappe_apply() -> None:
+    now = datetime(2026, 8, 7, 12, tzinfo=UTC)
+    events: list[str] = []
+
+    class TracingRepository(_Repository):
+        def heartbeat_materialization(self, *args: Any, **kwargs: Any) -> None:
+            events.append("heartbeat")
+            super().heartbeat_materialization(*args, **kwargs)
+
+    class TracingContextResolver(_ContextResolver):
+        def resolve(
+            self,
+            request: MaterializationContextRequest,
+        ) -> MaterializationContext | None:
+            events.append("context")
+            return super().resolve(request)
+
+    class TracingFrappe(_Frappe):
+        def apply(self, *args: Any, **kwargs: Any) -> FrappeDraftReceipt:
+            events.append("frappe")
+            return super().apply(*args, **kwargs)
+
+    repository = TracingRepository(_claim(now))
+    worker = MaterializationWorker(
+        repository=repository,
+        client=TracingFrappe(),
+        materializer=TrustedMaterializer(),
+        context_resolver=TracingContextResolver(MaterializationContext(team="team-a")),
+        worker_id="worker-a",
+        clock=_Clock(now),
+        lease_duration=timedelta(seconds=10),
+        retry_delay=timedelta(seconds=1),
+    )
+
+    result = worker.run_once("site-a")
+
+    assert result.status == "succeeded"
+    assert events == ["heartbeat", "context", "heartbeat", "frappe"]
+    assert repository.heartbeats == [
+        ("materialization-1", 1),
+        ("materialization-1", 1),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("lost_heartbeat", "context_calls", "frappe_calls"),
+    [
+        (1, 0, 0),
+        (2, 1, 0),
+    ],
+)
+def test_worker_stops_side_effects_when_heartbeat_loses_lease(
+    lost_heartbeat: int,
+    context_calls: int,
+    frappe_calls: int,
+) -> None:
+    now = datetime(2026, 8, 7, 12, tzinfo=UTC)
+    repository = _Repository(_claim(now))
+    repository.lose_heartbeat_at = lost_heartbeat
+    context_resolver = _ContextResolver(MaterializationContext(team="team-a"))
+    client = _Frappe()
+    worker = MaterializationWorker(
+        repository=repository,
+        client=client,
+        materializer=TrustedMaterializer(),
+        context_resolver=context_resolver,
+        worker_id="worker-a",
+        clock=_Clock(now),
+        lease_duration=timedelta(seconds=10),
+        retry_delay=timedelta(seconds=1),
+    )
+
+    result = worker.run_once("site-a")
+
+    assert result.status == "lease_lost"
+    assert len(context_resolver.requests) == context_calls
+    assert client.calls == frappe_calls
+    assert repository.failures == []
+
+
 def test_worker_reports_lease_loss_without_retrying_a_stale_ack() -> None:
     now = datetime(2026, 8, 7, 12, tzinfo=UTC)
     clock = _Clock(now)
@@ -307,7 +415,17 @@ def test_worker_reports_dead_letter_when_final_attempt_fails() -> None:
     repository = _Repository(_claim(now))
 
     class FinalAttemptRepository(_Repository):
-        def fail_materialization(self, *args: Any, **kwargs: Any) -> str:
+        def fail_materialization(
+            self,
+            site_id: str,
+            materialization_id: str,
+            *,
+            worker_id: str,
+            expected_attempt: int,
+            now: datetime,
+            retry_at: datetime,
+            error_code: str,
+        ) -> Literal["retry", "dead_letter"] | None:
             self.status = "dead_letter"
             return "dead_letter"
 
@@ -440,9 +558,40 @@ def test_materialization_migration_opens_only_the_outbox_state_machine() -> None
     assert "grant delete" not in migration
 
 
+def test_materialization_heartbeat_migration_allows_only_fenced_lease_extension() -> None:
+    migration = (
+        (
+            ROOT
+            / "services"
+            / "agent_runtime"
+            / "migrations"
+            / "006_local_pilot_materialization_heartbeat.sql"
+        )
+        .read_text(encoding="utf-8")
+        .casefold()
+    )
+
+    assert "old.status = 'running'" in migration
+    assert "new.status = 'running'" in migration
+    assert "new.attempt = old.attempt" in migration
+    assert "new.lease_owner is not distinct from old.lease_owner" in migration
+    assert "new.lease_expires_at > old.lease_expires_at" in migration
+    for protected in (
+        "next_attempt_at",
+        "last_error_code",
+        "receipt_doctype",
+        "receipt_name",
+        "receipt_revision",
+        "receipt_request_id",
+        "receipt_digest",
+    ):
+        assert f"new.{protected} is not distinct from old.{protected}" in migration
+
+
 def test_postgres_repository_exposes_fenced_materialization_transitions() -> None:
     for method in (
         "claim_materialization",
+        "heartbeat_materialization",
         "acknowledge_materialization",
         "fail_materialization",
         "materialization_health",

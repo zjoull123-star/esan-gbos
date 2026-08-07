@@ -950,6 +950,69 @@ class PostgresAgentTaskRepository:
                 raise LeaseConflict("worker lost the materialization lease")
             return receipt
 
+    def heartbeat_materialization(
+        self,
+        site_id: str,
+        materialization_id: str,
+        *,
+        worker_id: str,
+        expected_attempt: int,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None:
+        _require_aware(now, "now")
+        if lease_duration <= timedelta(0):
+            raise ValidationError("lease_duration must be positive")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                """
+                WITH renewed AS (
+                    UPDATE agent_runtime.proposal_materialization_outbox
+                    SET lease_expires_at = %s + %s,
+                        updated_at = %s
+                    WHERE site_id = %s
+                      AND materialization_id = %s
+                      AND status = 'running'
+                      AND lease_owner = %s
+                      AND attempt = %s
+                      AND lease_expires_at > %s
+                      AND lease_expires_at < %s + %s
+                    RETURNING materialization_id
+                )
+                SELECT materialization_id FROM renewed
+                UNION ALL
+                SELECT materialization_id
+                FROM agent_runtime.proposal_materialization_outbox
+                WHERE site_id = %s
+                  AND materialization_id = %s
+                  AND status = 'running'
+                  AND lease_owner = %s
+                  AND attempt = %s
+                  AND lease_expires_at > %s
+                LIMIT 1
+                """,
+                (
+                    now,
+                    lease_duration,
+                    now,
+                    site_id,
+                    materialization_id,
+                    worker_id,
+                    expected_attempt,
+                    now,
+                    now,
+                    lease_duration,
+                    site_id,
+                    materialization_id,
+                    worker_id,
+                    expected_attempt,
+                    now,
+                ),
+            )
+            if cursor.fetchone() is None:
+                raise LeaseConflict("worker lost the materialization lease")
+
     def fail_materialization(
         self,
         site_id: str,
