@@ -85,8 +85,14 @@ class FrappeDraftReceipt:
 class FrappeDraftClient(Protocol):
     """Idempotent Frappe boundary; implementations key writes by request_id."""
 
-    @property
-    def apply(self) -> Callable[..., FrappeDraftReceipt]: ...
+    def apply(
+        self,
+        intent: MaterializationIntent,
+        *,
+        request_id: str,
+        request_digest: str,
+        processing_purpose: str | None = None,
+    ) -> FrappeDraftReceipt: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
