@@ -15,21 +15,19 @@ report = []
 for item in lock["images"]:
     reference = item["reference"]
     result = subprocess.run(
-        ["docker", "image", "inspect", reference, "--format", "{{json .RepoDigests}}"],
+        ["docker", "image", "inspect", reference],
         check=False,
         capture_output=True,
         text=True,
     )
+    inspected = json.loads(result.stdout)[0] if result.returncode == 0 else {}
     report.append(
         {
             "service": item["service"],
             "reference": reference,
             "present": result.returncode == 0,
-            "repo_digests": (
-                json.loads(result.stdout)
-                if result.returncode == 0 and result.stdout.strip()
-                else []
-            ),
+            "image_id": inspected.get("Id"),
+            "repo_digests": inspected.get("RepoDigests") or [],
         }
     )
 print(json.dumps({"images": report}, indent=2, sort_keys=True))

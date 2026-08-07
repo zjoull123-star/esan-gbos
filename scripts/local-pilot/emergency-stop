@@ -21,7 +21,6 @@ docker compose \
   cloudflared \
   email-poller \
   wecom-poller \
-  whatsapp-poller \
   deepseek-worker \
   media-worker \
   agent-worker \

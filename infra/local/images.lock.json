@@ -1,31 +1,41 @@
 {
-  "recorded_at": "2026-08-08T01:13:46+08:00",
-  "recording_scope": "author workstation local docker inspect; null means image was not present and was not pulled",
+  "recorded_at": "2026-08-08T01:42:56+08:00",
+  "recording_scope": "remote manifest digests resolved without pulling; local fields come only from docker image inspect, and null is intentional fail-closed evidence that the image is not installed",
   "images": [
     {
       "service": "postgres",
+      "source": "remote",
       "reference": "pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966",
-      "local_inspect_digest": "sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966"
+      "local_inspect_digest": "sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966",
+      "local_repo_digest": "pgvector/pgvector@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966"
     },
     {
       "service": "object-store",
-      "reference": "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
-      "local_inspect_digest": null
+      "source": "remote",
+      "reference": "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+      "local_inspect_digest": null,
+      "local_repo_digest": null
     },
     {
       "service": "prometheus",
-      "reference": "prom/prometheus:v3.7.3",
-      "local_inspect_digest": null
+      "source": "remote",
+      "reference": "prom/prometheus:v3.7.3@sha256:49214755b6153f90a597adcbff0252cc61069f8ab69ce8411285cd4a560e8038",
+      "local_inspect_digest": null,
+      "local_repo_digest": null
     },
     {
       "service": "cloudflared",
-      "reference": "cloudflare/cloudflared:2025.11.1",
-      "local_inspect_digest": null
+      "source": "remote",
+      "reference": "cloudflare/cloudflared:2025.11.1@sha256:89ee50efb1e9cb2ae30281a8a404fed95eb8f02f0a972617526f8c5b417acae2",
+      "local_inspect_digest": null,
+      "local_repo_digest": null
     },
     {
       "service": "local-runtime",
+      "source": "local-build",
       "reference": "esan-gbos-local-pilot-runtime:2026-08-08",
-      "local_inspect_digest": null
+      "local_inspect_digest": null,
+      "local_repo_digest": null
     }
   ]
 }

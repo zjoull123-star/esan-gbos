@@ -24,8 +24,8 @@ Commit scope is restricted to `infra/local/**`, `scripts/local-pilot/**`,
 `docs/local-pilot/**`, and `tests/infra/test_local_pilot_*.py`.
 
 The runtime entrypoints are deliberately declared but not fabricated here.
-Until their owning workstream supplies them, builds the fixed local runtime
-image, and the operator explicitly preloads every locked infrastructure image,
-preflight must return nonzero and `start` must not read credentials or run
-containers. Compose uses `pull_policy: never`; startup cannot turn a missing
-local image into an implicit registry download.
+The actual UI is a Frappe PWA and its local composition is not present. Until
+the owning workstreams provide that composition, a runtime Containerfile, the
+declared entrypoints, and locally inspected digest-locked images, preflight
+must return nonzero and `start` must not read credentials or run containers.
+Compose config success is syntax validation only. It is not runtime evidence.

@@ -11,6 +11,8 @@
 - PostgreSQL、对象存储与 Prometheus 都是本机独立命名卷。
 - 默认网络 `local-internal` 为 `internal: true`。
 - `controlled-egress` 仅能被显式 profile 服务使用。
+- 远程镜像必须使用 `@sha256`，必需/已启用镜像的本机 inspect ID 与
+  RepoDigest 必须与 lock 同时匹配。
 
 ## NO-KINGDEE
 
@@ -26,6 +28,14 @@
   switch 明确解除且 preflight 完整通过时，才能加入 `controlled-egress`。
 - 媒体 worker 只连接 `local-internal`；模型只读挂载且禁止网络下载。
 - Cloudflared 只连接受控 webhook ingress；未匹配路径返回 404。
+- WhatsApp Cloud API 仅使用 webhook，不声明虚构 poller。
+
+## NOT-COMPOSED
+
+- 当前状态固定报告“未组合，不可启动”。
+- Frappe PWA 尚未组合进本地 Compose；不存在独立 Python `pilot-ui`。
+- local runtime 没有 Containerfile 或已检查镜像。
+- Compose config 通过只代表语法可解析，不是运行或健康证据。
 
 ## Kill switch 与状态保全
 

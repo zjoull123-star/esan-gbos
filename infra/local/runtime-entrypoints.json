@@ -1,7 +1,11 @@
 {
   "runtime_image": "esan-gbos-local-pilot-runtime:2026-08-08",
+  "composition": {
+    "status": "not_composed",
+    "frappe_pwa": "not_composed",
+    "runtime_containerfile": null
+  },
   "required_always": {
-    "pilot-ui": "services/local_pilot_runtime/ui.py",
     "agent-runtime": "services/local_pilot_runtime/agent_api.py"
   },
   "required_when_enabled": {
@@ -12,8 +16,7 @@
       "wecom-poller": "services/local_pilot_runtime/pollers.py"
     },
     "whatsapp": {
-      "webhook-ingress": "services/local_pilot_runtime/webhook.py",
-      "whatsapp-poller": "services/local_pilot_runtime/pollers.py"
+      "webhook-ingress": "services/local_pilot_runtime/webhook.py"
     },
     "deepseek": {
       "agent-worker": "services/local_pilot_runtime/agent_worker.py",

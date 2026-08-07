@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 SCRIPTS = ROOT / "scripts" / "local-pilot"
 MANIFEST = ROOT / "infra" / "local" / "local-pilot-manifest.json"
+IMAGE_LOCK = ROOT / "infra" / "local" / "images.lock.json"
 
 
 def _read(path: Path) -> str:
@@ -17,9 +18,15 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _run_preflight(*args: str) -> subprocess.CompletedProcess[str]:
+def _run_preflight(
+    *args: str,
+    skip_image_check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    command = [str(SCRIPTS / "preflight"), "--repo-root", str(ROOT), *args]
+    if skip_image_check:
+        command.append("--skip-runtime-image-check")
     return subprocess.run(
-        [str(SCRIPTS / "preflight"), "--repo-root", str(ROOT), *args],
+        command,
         cwd=ROOT,
         check=False,
         capture_output=True,
@@ -44,6 +51,7 @@ def test_operational_scripts_are_executable_and_shell_safe() -> None:
         assert "set -x" not in content
         if content.startswith("#!/usr/bin/env bash"):
             assert "set -euo pipefail" in content
+    assert "未组合，不可启动" in _read(SCRIPTS / "status")
 
 
 def test_start_runs_fail_closed_preflight_before_secret_or_compose_actions() -> None:
@@ -60,10 +68,8 @@ def test_start_runs_fail_closed_preflight_before_secret_or_compose_actions() -> 
     assert 'GBOS_EXTERNAL_SEND_ENABLED="false"' in start
     assert "EMERGENCY_STOP" in start
     assert "export GBOS_LOCAL_PILOT_MANIFEST" in start
-    assert (
-        "${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}"
-        in compose_file
-    )
+    assert "${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}" in compose_file
+    assert "--skip-runtime-image-check" not in start
 
 
 def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() -> None:
@@ -86,7 +92,6 @@ def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() ->
         "cloudflared",
         "email-poller",
         "wecom-poller",
-        "whatsapp-poller",
         "deepseek-worker",
         "media-worker",
         "agent-worker",
@@ -96,6 +101,7 @@ def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() ->
     assert " postgres" not in stop_command
     assert " object-store" not in stop_command
     assert "EMERGENCY_STOP" in emergency
+    assert "whatsapp-poller" not in emergency
 
 
 def test_keychain_secret_materialization_is_non_logging_and_mode_0600() -> None:
@@ -114,6 +120,15 @@ def test_keychain_secret_materialization_is_non_logging_and_mode_0600() -> None:
     assert "keychain://" in script
     assert 'secret_tmp_root="${secret_tmp_root%/}"' in script
     assert 'find "${secret_dir}"' not in library
+
+
+def test_image_inspection_reports_id_and_repo_digests_without_pulling() -> None:
+    script = _read(SCRIPTS / "inspect-images")
+
+    assert '"docker", "image", "inspect"' in script
+    assert '"image_id"' in script
+    assert '"repo_digests"' in script
+    assert "docker pull" not in script
 
 
 def test_preflight_references_governed_manifest_schema_and_disabled_manifest_fails_go() -> None:
@@ -166,7 +181,86 @@ def test_preflight_fails_closed_when_runtime_entrypoints_are_unavailable(tmp_pat
     result = _run_preflight("--manifest", str(candidate))
 
     assert result.returncode != 0
+    assert "未组合，不可启动" in result.stderr
     assert "runtime entrypoint unavailable" in result.stderr
+
+
+def test_preflight_rejects_null_digest_for_required_image() -> None:
+    result = _run_preflight("--image-lock", str(IMAGE_LOCK))
+
+    assert result.returncode != 0
+    assert "image object-store local_inspect_digest is required" in result.stderr
+    assert "image object-store local_repo_digest is required" in result.stderr
+    assert "image local-runtime local_inspect_digest is required" in result.stderr
+
+
+def test_preflight_requires_digest_for_enabled_tunnel_image(tmp_path: Path) -> None:
+    manifest = json.loads(_read(MANIFEST))
+    manifest["local_pilot_go"] = True
+    manifest["local_pilot_status"] = "ready"
+    manifest["channels"]["whatsapp"].update(
+        {
+            "enabled": True,
+            "activation_time": "2026-08-08T00:00:00Z",
+            "credential_ref": "keychain://com.esan.gbos.local-pilot/whatsapp",
+            "named_tunnel_ref": "cloudflare://tunnel/esan-gbos-local-pilot",
+        }
+    )
+    candidate = tmp_path / "manifest.json"
+    candidate.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = _run_preflight("--manifest", str(candidate))
+
+    assert result.returncode != 0
+    assert "image cloudflared local_inspect_digest is required" in result.stderr
+    assert "image cloudflared local_repo_digest is required" in result.stderr
+
+
+def test_preflight_rejects_stale_local_inspect_id(tmp_path: Path) -> None:
+    lock = json.loads(_read(IMAGE_LOCK))
+    postgres = next(item for item in lock["images"] if item["service"] == "postgres")
+    postgres["local_inspect_digest"] = "sha256:" + "2" * 64
+    candidate = tmp_path / "images.lock.json"
+    candidate.write_text(json.dumps(lock), encoding="utf-8")
+
+    result = _run_preflight(
+        "--image-lock",
+        str(candidate),
+        skip_image_check=False,
+    )
+
+    assert result.returncode != 0
+    assert "local inspect ID mismatch for postgres" in result.stderr
+
+
+def test_preflight_rejects_local_repo_digest_mismatch(tmp_path: Path) -> None:
+    lock = json.loads(_read(IMAGE_LOCK))
+    postgres = next(item for item in lock["images"] if item["service"] == "postgres")
+    postgres["local_repo_digest"] = "pgvector/pgvector@sha256:" + "3" * 64
+    candidate = tmp_path / "images.lock.json"
+    candidate.write_text(json.dumps(lock), encoding="utf-8")
+
+    result = _run_preflight(
+        "--image-lock",
+        str(candidate),
+        skip_image_check=False,
+    )
+
+    assert result.returncode != 0
+    assert "local RepoDigest mismatch for postgres" in result.stderr
+
+
+def test_preflight_requires_remote_reference_digest(tmp_path: Path) -> None:
+    lock = json.loads(_read(IMAGE_LOCK))
+    object_store = next(item for item in lock["images"] if item["service"] == "object-store")
+    object_store["reference"] = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
+    candidate = tmp_path / "images.lock.json"
+    candidate.write_text(json.dumps(lock), encoding="utf-8")
+
+    result = _run_preflight("--image-lock", str(candidate))
+
+    assert result.returncode != 0
+    assert "remote image object-store reference must include @sha256" in result.stderr
 
 
 def test_scripts_contain_no_embedded_secret_shaped_values() -> None:

@@ -26,11 +26,15 @@ def test_runbook_documents_boundaries_and_honest_runtime_blocker() -> None:
         "不会安装 LaunchAgent",
         "runtime entrypoint",
         "fail closed",
+        "未组合，不可启动",
+        "Frappe PWA",
+        "Compose config 仅证明语法",
         "contracts/local_pilot",
         "Keychain",
         "0600",
         "禁止下载",
         "Kingdee",
+        "WhatsApp Cloud API 不存在 poller",
     ):
         assert statement in runbook
 

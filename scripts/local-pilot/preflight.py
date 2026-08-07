@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,18 +17,14 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 
-SCHEMA_RELATIVE_PATH = Path(
-    "contracts/local_pilot/local-pilot-manifest-v1.0.schema.json"
-)
+SCHEMA_RELATIVE_PATH = Path("contracts/local_pilot/local-pilot-manifest-v1.0.schema.json")
 ENTRYPOINTS_RELATIVE_PATH = Path("infra/local/runtime-entrypoints.json")
 DEFAULT_MANIFEST_RELATIVE_PATH = Path("infra/local/local-pilot-manifest.json")
 IMAGE_LOCK_RELATIVE_PATH = Path("infra/local/images.lock.json")
-PLACEHOLDER_HASHES = frozenset(
-    {
-        character * 64
-        for character in ("0", "1", "a", "f")
-    }
-)
+PLACEHOLDER_HASHES = frozenset({character * 64 for character in ("0", "1", "a", "f")})
+SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+REMOTE_REFERENCE_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+REPO_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 
 
 def _load_object(path: Path, label: str, issues: list[str]) -> dict[str, Any]:
@@ -106,10 +103,7 @@ def _required_entrypoints(
     required: dict[str, str] = {}
     always = configuration.get("required_always")
     if isinstance(always, Mapping):
-        required.update(
-            (str(service), str(path))
-            for service, path in always.items()
-        )
+        required.update((str(service), str(path)) for service, path in always.items())
     conditional = configuration.get("required_when_enabled")
     if not isinstance(conditional, Mapping):
         return required
@@ -120,19 +114,29 @@ def _required_entrypoints(
             if isinstance(value, Mapping) and value.get("enabled") is True:
                 entries = conditional.get(channel)
                 if isinstance(entries, Mapping):
-                    required.update(
-                        (str(service), str(path))
-                        for service, path in entries.items()
-                    )
+                    required.update((str(service), str(path)) for service, path in entries.items())
     deepseek = manifest.get("deepseek")
     if isinstance(deepseek, Mapping) and deepseek.get("enabled") is True:
         entries = conditional.get("deepseek")
         if isinstance(entries, Mapping):
-            required.update(
-                (str(service), str(path))
-                for service, path in entries.items()
-            )
+            required.update((str(service), str(path)) for service, path in entries.items())
     return required
+
+
+def _composition_issues(configuration: Mapping[str, Any]) -> list[str]:
+    composition = configuration.get("composition")
+    if not isinstance(composition, Mapping):
+        return ["local pilot 未组合，不可启动: composition declaration is missing"]
+    if (
+        composition.get("status") != "composed"
+        or composition.get("frappe_pwa") != "composed"
+        or not isinstance(composition.get("runtime_containerfile"), str)
+    ):
+        return [
+            "local pilot 未组合，不可启动: "
+            "Frappe PWA and runtime Containerfile composition are incomplete"
+        ]
+    return []
 
 
 def _runtime_issues(
@@ -141,6 +145,7 @@ def _runtime_issues(
     configuration: Mapping[str, Any],
 ) -> list[str]:
     issues: list[str] = []
+    issues.extend(_composition_issues(configuration))
     for service, relative_path in _required_entrypoints(manifest, configuration).items():
         path = repo_root / relative_path
         if not path.is_file():
@@ -151,8 +156,40 @@ def _runtime_issues(
     return issues
 
 
+def _required_image_services(manifest: Mapping[str, Any]) -> set[str]:
+    required = {"postgres", "object-store", "prometheus", "local-runtime"}
+    channels = manifest.get("channels")
+    if isinstance(channels, Mapping):
+        whatsapp = channels.get("whatsapp")
+        if isinstance(whatsapp, Mapping) and whatsapp.get("enabled") is True:
+            required.add("cloudflared")
+    return required
+
+
+def _inspect_image(reference: str) -> tuple[str, tuple[str, ...]] | None:
+    result = subprocess.run(
+        ["docker", "image", "inspect", reference],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout)
+        item = payload[0]
+        image_id = item["Id"]
+        repo_digests = item.get("RepoDigests") or []
+    except IndexError, KeyError, TypeError, json.JSONDecodeError:
+        return None
+    if not isinstance(image_id, str) or not isinstance(repo_digests, list):
+        return None
+    return image_id, tuple(value for value in repo_digests if isinstance(value, str))
+
+
 def _image_issues(
     configuration: Mapping[str, Any],
+    manifest: Mapping[str, Any],
     image_lock: Mapping[str, Any],
     *,
     skip_image_check: bool,
@@ -162,38 +199,78 @@ def _image_issues(
         return ["image lock must contain at least one image"]
     issues: list[str] = []
     references: set[str] = set()
-    normalized: list[tuple[str, str]] = []
+    normalized: dict[str, tuple[str, str | None, str | None]] = {}
     for item in images:
         if not isinstance(item, Mapping):
             issues.append("image lock entries must be objects")
             continue
         service = item.get("service")
+        source = item.get("source")
         reference = item.get("reference")
-        if not isinstance(service, str) or not isinstance(reference, str):
-            issues.append("image lock entries require service and reference")
+        if (
+            not isinstance(service, str)
+            or source not in {"remote", "local-build"}
+            or not isinstance(reference, str)
+        ):
+            issues.append("image lock entries require service, source, and reference")
+            continue
+        if service in normalized:
+            issues.append(f"duplicate image lock service: {service}")
             continue
         if reference.endswith(":latest"):
             issues.append(f"image {service} uses forbidden latest tag")
+        if source == "remote" and not REMOTE_REFERENCE_PATTERN.fullmatch(reference):
+            issues.append(f"remote image {service} reference must include @sha256")
         references.add(reference)
-        normalized.append((service, reference))
+        local_inspect_digest = item.get("local_inspect_digest")
+        local_repo_digest = item.get("local_repo_digest")
+        normalized[service] = (
+            reference,
+            local_inspect_digest if isinstance(local_inspect_digest, str) else None,
+            local_repo_digest if isinstance(local_repo_digest, str) else None,
+        )
     runtime_image = configuration.get("runtime_image")
     if isinstance(runtime_image, str) and runtime_image not in references:
         issues.append("runtime image is absent from the image lock")
+    required_services = _required_image_services(manifest)
+    for service in sorted(required_services):
+        locked = normalized.get(service)
+        if locked is None:
+            issues.append(f"required image is absent from lock: {service}")
+            continue
+        _, expected_id, expected_repo_digest = locked
+        if expected_id is None:
+            issues.append(f"image {service} local_inspect_digest is required")
+        elif not SHA256_PATTERN.fullmatch(expected_id):
+            issues.append(f"image {service} local_inspect_digest is invalid")
+        if expected_repo_digest is None:
+            issues.append(f"image {service} local_repo_digest is required")
+        elif not REPO_DIGEST_PATTERN.fullmatch(expected_repo_digest):
+            issues.append(f"image {service} local_repo_digest is invalid")
     if skip_image_check:
         return issues
     if not shutil.which("docker"):
         issues.append("docker is unavailable for image inspection")
         return issues
-    for service, reference in normalized:
-        result = subprocess.run(
-            ["docker", "image", "inspect", reference],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            label = "runtime image" if service == "local-runtime" else f"required image {service}"
-            issues.append(f"{label} unavailable locally: {reference}")
+    for service in sorted(required_services):
+        locked = normalized.get(service)
+        if locked is None:
+            continue
+        reference, expected_id, expected_repo_digest = locked
+        inspected = _inspect_image(reference)
+        if inspected is None:
+            issues.append(f"required image {service} is unavailable locally: {reference}")
+            continue
+        actual_id, actual_repo_digests = inspected
+        if expected_id is not None and actual_id != expected_id:
+            issues.append(
+                f"local inspect ID mismatch for {service}: locked {expected_id}, actual {actual_id}"
+            )
+        if expected_repo_digest is not None and expected_repo_digest not in actual_repo_digests:
+            issues.append(
+                f"local RepoDigest mismatch for {service}: "
+                f"locked {expected_repo_digest}, actual {list(actual_repo_digests)}"
+            )
     return issues
 
 
@@ -233,6 +310,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path)
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--image-lock", type=Path)
     parser.add_argument("--require-go", action="store_true")
     parser.add_argument(
         "--skip-runtime-image-check",
@@ -244,15 +322,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv or sys.argv[1:])
-    repo_root = (
-        args.repo_root.resolve()
-        if args.repo_root
-        else Path(__file__).resolve().parents[2]
-    )
+    repo_root = args.repo_root.resolve() if args.repo_root else Path(__file__).resolve().parents[2]
     manifest_path = (
-        args.manifest.resolve()
-        if args.manifest
-        else repo_root / DEFAULT_MANIFEST_RELATIVE_PATH
+        args.manifest.resolve() if args.manifest else repo_root / DEFAULT_MANIFEST_RELATIVE_PATH
+    )
+    image_lock_path = (
+        args.image_lock.resolve() if args.image_lock else repo_root / IMAGE_LOCK_RELATIVE_PATH
     )
     issues: list[str] = []
     manifest = _load_object(manifest_path, "local-pilot manifest", issues)
@@ -263,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
         issues,
     )
     image_lock = _load_object(
-        repo_root / IMAGE_LOCK_RELATIVE_PATH,
+        image_lock_path,
         "local image lock",
         issues,
     )
@@ -281,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
     issues.extend(
         _image_issues(
             configuration,
+            manifest,
             image_lock,
             skip_image_check=args.skip_runtime_image_check,
         )

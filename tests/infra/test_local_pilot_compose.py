@@ -21,7 +21,7 @@ def _service_block(compose: str, service: str) -> str:
     return compose[start:end]
 
 
-def test_local_compose_isolated_from_dev_and_uses_frozen_images() -> None:
+def test_local_compose_isolated_and_remote_images_are_digest_pinned() -> None:
     compose = _read(COMPOSE)
     lock = json.loads(_read(LOCAL_INFRA / "images.lock.json"))
 
@@ -34,7 +34,6 @@ def test_local_compose_isolated_from_dev_and_uses_frozen_images() -> None:
     for volume in (
         "local-pilot-postgres-data",
         "local-pilot-object-data",
-        "local-pilot-sites",
     ):
         assert re.search(rf"(?m)^  {re.escape(volume)}:\s*$", compose)
         assert f"name: esan-gbos-{volume}" in compose
@@ -45,18 +44,20 @@ def test_local_compose_isolated_from_dev_and_uses_frozen_images() -> None:
     ) in compose
     assert lock["images"]
     assert all(":latest" not in item["reference"] for item in lock["images"])
+    assert all(
+        "@sha256:" in item["reference"] for item in lock["images"] if item["source"] == "remote"
+    )
     postgres = next(item for item in lock["images"] if item["service"] == "postgres")
     assert postgres["local_inspect_digest"].startswith("sha256:")
+    assert postgres["local_repo_digest"].endswith(postgres["local_inspect_digest"])
     for service in (
         "postgres",
         "object-store",
         "prometheus",
-        "pilot-ui",
         "webhook-ingress",
         "agent-runtime",
         "email-poller",
         "wecom-poller",
-        "whatsapp-poller",
         "agent-worker",
         "deepseek-worker",
         "media-worker",
@@ -78,8 +79,10 @@ def test_every_published_database_ui_and_monitoring_port_is_loopback_only() -> N
     assert published_ports
     assert all(port.startswith("127.0.0.1:") for port in published_ports)
 
-    for service in ("postgres", "object-store", "pilot-ui", "prometheus"):
+    for service in ("postgres", "object-store", "prometheus"):
         assert "127.0.0.1:" in _service_block(compose, service)
+    assert "pilot-ui:" not in compose
+    assert "services.local_pilot_runtime.ui" not in compose
 
 
 def test_external_capabilities_are_profile_gated_and_default_killed() -> None:
@@ -88,7 +91,6 @@ def test_external_capabilities_are_profile_gated_and_default_killed() -> None:
     for service, profile in (
         ("email-poller", "email"),
         ("wecom-poller", "wecom"),
-        ("whatsapp-poller", "whatsapp"),
     ):
         block = _service_block(compose, service)
         assert f'profiles: ["{profile}"]' in block
@@ -110,6 +112,8 @@ def test_external_capabilities_are_profile_gated_and_default_killed() -> None:
     assert re.search(r"(?m)^  kingdee(?:-|_).*:\s*$", compose.lower()) is None
     assert "GBOS_EXTERNAL_SEND_ENABLED: ${GBOS_EXTERNAL_SEND_ENABLED:-false}" in compose
     assert re.search(r"(?ms)^  local-internal:.*?internal: true", compose)
+    assert "whatsapp-poller:" not in compose
+    assert '"whatsapp"]' not in compose.replace('profiles: ["whatsapp"]', "")
 
 
 def test_cloudflared_can_reach_only_the_whatsapp_webhook_ingress() -> None:
@@ -129,13 +133,10 @@ def test_media_runtime_is_offline_and_models_are_read_only() -> None:
     media = _service_block(compose, "media-worker")
 
     assert 'profiles: ["media"]' in media
-    assert (
-        "${GBOS_MEDIA_MODEL_DIR:-/tmp/gbos-local-pilot-models-unavailable}:/models:ro"
-        in media
-    )
-    assert "HF_HUB_OFFLINE: \"1\"" in media
-    assert "TRANSFORMERS_OFFLINE: \"1\"" in media
-    assert "PIP_NO_INDEX: \"1\"" in media
+    assert "${GBOS_MEDIA_MODEL_DIR:-/tmp/gbos-local-pilot-models-unavailable}:/models:ro" in media
+    assert 'HF_HUB_OFFLINE: "1"' in media
+    assert 'TRANSFORMERS_OFFLINE: "1"' in media
+    assert 'PIP_NO_INDEX: "1"' in media
     assert "controlled-egress" not in media
     assert "download" not in media.lower()
 
@@ -143,8 +144,8 @@ def test_media_runtime_is_offline_and_models_are_read_only() -> None:
 def test_health_dependencies_kill_switches_and_file_secrets_are_explicit() -> None:
     compose = _read(COMPOSE)
 
-    assert compose.count("healthcheck:") >= 6
-    assert compose.count("condition: service_healthy") >= 6
+    assert compose.count("healthcheck:") >= 5
+    assert compose.count("condition: service_healthy") >= 5
     assert "GBOS_EMERGENCY_STOP_FILE: /run/gbos/EMERGENCY_STOP" in compose
     assert "./../../.runtime/local-pilot:/run/gbos:ro" in compose
     assert "${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}" in compose
@@ -160,8 +161,9 @@ def test_prometheus_and_alert_baseline_cover_safety_and_dependencies() -> None:
 
     assert "prometheus" in _service_block(compose, "prometheus")
     assert "local-pilot-alerts" in prometheus
-    for job in ("pilot-ui", "webhook-ingress", "agent-runtime"):
+    for job in ("webhook-ingress", "agent-runtime"):
         assert f"job_name: {job}" in prometheus
+    assert "job_name: pilot-ui" not in prometheus
     for alert in (
         "LocalPilotTargetDown",
         "LocalPilotEmergencyStopActive",
@@ -171,4 +173,4 @@ def test_prometheus_and_alert_baseline_cover_safety_and_dependencies() -> None:
         "LocalPilotObjectStoreUnavailable",
     ):
         assert f"alert: {alert}" in alerts
-    assert 'up{job=~"pilot-ui|agent-runtime"} == 0' in alerts
+    assert 'up{job="agent-runtime"} == 0' in alerts
