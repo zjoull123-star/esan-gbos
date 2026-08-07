@@ -100,7 +100,7 @@ def _container_sql(
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 3
+    assert _migration_ledger_count() == 4
     result = _container_sql(
         """
         SELECT count(*)
@@ -116,13 +116,18 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
               'derivation_edges', 'consent', 'legal_holds',
               'deletion_receipts', 'evidence_records', 'fact_proposals',
               'fact_evidence', 'entity_resolution_proposals', 'candidates',
-              'restrictions', 'inbox_messages'
+              'restrictions', 'inbox_messages', 'connector_instances',
+              'inbound_deliveries',
+              'inbound_delivery_events', 'connector_checkpoints',
+              'persistent_nonces', 'processing_jobs',
+              'context_publication_outbox', 'local_pilot_quarantine',
+              'local_pilot_dead_letter'
           )
           AND c.relrowsecurity
           AND c.relforcerowsecurity
         """
     )
-    assert int(result.stdout.strip()) == 21
+    assert int(result.stdout.strip()) == 30
 
 
 def _migration_ledger_count() -> int:
@@ -133,6 +138,7 @@ def _migration_ledger_count() -> int:
         WHERE migration_name IN (
             'observer/001_gate3_observer.sql',
             'observer/002_gate3_observer_runtime.sql',
+            'observer/003_local_pilot_runtime.sql',
             'context/001_gate3_context.sql'
         )
         """
