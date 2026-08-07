@@ -18,6 +18,16 @@ export const WORKSPACE_NAVIGATION: readonly NavigationItem[] = [
   },
   { label: "产品与样品", to: "/gbos/product", roles: ["Product/R&D"] },
   { label: "审核队列", to: "/gbos/review", roles: ["Reviewer"] },
+  {
+    label: "集成状态",
+    to: "/gbos/integrations",
+    roles: ["Integration Admin"],
+  },
+  {
+    label: "沟通观察",
+    to: "/gbos/communications",
+    roles: ["CEO", "Sales Manager", "Sales User"],
+  },
 ] as const;
 
 export const navigationForRoles = (roles: readonly string[]) => {

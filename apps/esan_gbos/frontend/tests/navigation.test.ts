@@ -5,13 +5,16 @@ import { APP_ROUTES, isRouteAllowed } from "@/router";
 import { clearSession, readFrappeSession } from "@/session";
 
 describe("角色裁剪导航", () => {
-  it("精确声明 Gate 4 的八条业务路由", () => {
+  it("精确声明 Local Pilot 的十一条业务路由", () => {
     expect(APP_ROUTES.map((route) => route.path)).toEqual([
       "/gbos/ceo",
       "/gbos/sales",
       "/gbos/purchase",
       "/gbos/product",
       "/gbos/review",
+      "/gbos/integrations",
+      "/gbos/communications",
+      "/gbos/communications/:id",
       "/gbos/review/:id",
       "/gbos/party/:id",
       "/gbos/sample/:id",
@@ -19,11 +22,12 @@ describe("角色裁剪导航", () => {
   });
 
   it.each([
-    [["CEO"], ["经营总览"]],
-    [["Sales User"], ["销售协同"]],
+    [["CEO"], ["经营总览", "沟通观察"]],
+    [["Sales User"], ["销售协同", "沟通观察"]],
     [["Purchase Manager"], ["采购协同"]],
     [["Product/R&D"], ["产品与样品"]],
     [["Reviewer"], ["审核队列"]],
+    [["Integration Admin"], ["集成状态"]],
   ])("%j 只显示授权工作台", (roles, expected) => {
     expect(navigationForRoles(roles).map((item) => item.label)).toEqual(expected);
   });
@@ -35,6 +39,8 @@ describe("角色裁剪导航", () => {
       "采购协同",
       "产品与样品",
       "审核队列",
+      "集成状态",
+      "沟通观察",
     ]);
   });
 
@@ -45,6 +51,9 @@ describe("角色裁剪导航", () => {
     expect(isRouteAllowed("/gbos/review", ["CEO"])).toBe(false);
     expect(isRouteAllowed("/gbos/review/REVIEW-1", ["Reviewer"])).toBe(true);
     expect(isRouteAllowed("/gbos/review/REVIEW-1", ["Sales User"])).toBe(false);
+    expect(isRouteAllowed("/gbos/integrations", ["Integration Admin"])).toBe(true);
+    expect(isRouteAllowed("/gbos/integrations", ["Sales User"])).toBe(false);
+    expect(isRouteAllowed("/gbos/communications/OBS-1", ["CEO"])).toBe(true);
   });
 });
 

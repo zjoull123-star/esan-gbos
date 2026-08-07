@@ -13,6 +13,12 @@ const workspaces = [
   ["/gbos/review", "审核队列"],
 ] as const;
 
+const navigationHeadings = [
+  ...workspaces.map(([, heading]) => heading),
+  "集成状态",
+  "沟通观察",
+] as const;
+
 const syntheticWorkEnvelope = {
   message: {
     data: [
@@ -207,6 +213,82 @@ const syntheticMetricEnvelope = {
   },
 };
 
+const v4Envelope = (data: unknown) => ({
+  message: {
+    data,
+    meta: { request_id: "req-e2e-v4", schema_version: "4.0" },
+  },
+});
+
+const syntheticIntegrationEnvelope = v4Envelope({
+  connectors: [
+    {
+      instance_id: "whatsapp-e2e",
+      channel: "WhatsApp",
+      status: "enabled",
+      checkpoint_version: 4,
+      backlog: 2,
+      last_success_at: "2026-08-07T02:00:00Z",
+      safe_error_code: null,
+      freshness: "fresh",
+      revision: 3,
+    },
+  ],
+});
+
+const syntheticUsageEnvelope = v4Envelope({
+  model: "deepseek-v4-flash",
+  period: "2026-08",
+  tokens: 1200,
+  cost: { currency: "USD", amount: null, state: "unknown" },
+  soft_limit: 10000,
+  hard_limit: 20000,
+  state: "normal",
+});
+
+const communication = {
+  observation_id: "OBS-E2E-1",
+  channel: "WhatsApp",
+  occurred_at: "2026-08-07T02:00:00Z",
+  summary_zh: "客户询问下一轮样品交期。",
+  original_language: "ar",
+  classification: "CEO Informal Observation",
+  review_status: "Unreviewed",
+  team_ref: "TEAM-E2E",
+  party_ref: "PARTY-E2E",
+  evidence_count: 1,
+};
+
+const syntheticCommunicationListEnvelope = v4Envelope({
+  communications: [communication],
+  next_cursor: null,
+});
+
+const syntheticCommunicationDetailEnvelope = v4Envelope({
+  communication: {
+    ...communication,
+    evidence: [{ ref: "EVID-E2E-1", locator: "message:42" }],
+    fact_proposals: [
+      {
+        status: "Proposed",
+        confidence: 0.82,
+        type: "Requested Delivery Date",
+        value_display: "2026-08-20",
+      },
+    ],
+    association_suggestions: [
+      { type: "Party", target_ref: "PARTY-E2E", confidence: 0.9 },
+    ],
+    model: { name: "deepseek-v4-flash", version: "2026-08-01" },
+    raw_access_allowed: false,
+  },
+});
+
+const syntheticAiDraftEnvelope = v4Envelope({
+  drafts: [],
+  next_cursor: null,
+});
+
 const isHarness = (testInfo: TestInfo) =>
   testInfo.project.name === "frontend-harness";
 
@@ -229,6 +311,16 @@ const prepareHarness = async (page: Page) => {
     const url = route.request().url();
     const envelope = url.includes("api.v3.metrics.dashboard")
       ? syntheticMetricEnvelope
+      : url.includes("api.v4.integration.list_status")
+        ? syntheticIntegrationEnvelope
+        : url.includes("api.v4.model.get_usage")
+          ? syntheticUsageEnvelope
+          : url.includes("api.v4.communication.list")
+            ? syntheticCommunicationListEnvelope
+            : url.includes("api.v4.communication.get")
+              ? syntheticCommunicationDetailEnvelope
+              : url.includes("api.v4.ai_draft.list")
+                ? syntheticAiDraftEnvelope
       : url.includes("review_case.list")
       ? syntheticReviewEnvelope
       : url.includes("sourcing.get_board")
@@ -356,12 +448,42 @@ test("键盘顺序从 skip link 到导航与操作", async ({ page }, testInfo) 
   await expect(page.getByRole("link", { name: "跳到主要内容" })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(page.getByRole("link", { name: "ESAN GBOS 首页" })).toBeFocused();
-  for (const [, heading] of workspaces) {
+  for (const heading of navigationHeadings) {
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: heading, exact: true })).toBeFocused();
   }
   await page.keyboard.press("Tab");
   await expect(page.getByRole("button", { name: "刷新" })).toBeFocused();
+});
+
+test("集成与沟通切片通过 axe、Restricted 和三视口检查", async ({
+  page,
+}, testInfo) => {
+  await openWorkspace(page, testInfo, "/gbos/integrations", "集成状态");
+  await expect(page.getByText("deepseek-v4-flash")).toBeVisible();
+  await expect(page.getByText("WhatsApp", { exact: true })).toBeVisible();
+  expect(await axeViolations(page)).toEqual([]);
+
+  await page.getByRole("link", { name: "沟通观察", exact: true }).click();
+  await expect(page.getByText("客户询问下一轮样品交期。")).toBeVisible();
+  await page.getByRole("link", { name: "查看安全详情" }).click();
+  await expect(page.getByText("Restricted 原文默认不可打开")).toBeVisible();
+  await expect(
+    page.getByText("基于沟通的非正式观察/非正式指标"),
+  ).toBeVisible();
+  await expect(page.locator("blockquote")).toHaveCount(0);
+  expect(await axeViolations(page)).toEqual([]);
+
+  for (const width of [375, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    const dimensions = await page.evaluate(() => ({
+      viewport: window.innerWidth,
+      html: document.documentElement.scrollWidth,
+      body: document.body.scrollWidth,
+    }));
+    expect(dimensions.html).toBeLessThanOrEqual(dimensions.viewport);
+    expect(dimensions.body).toBeLessThanOrEqual(dimensions.viewport);
+  }
 });
 
 test("离线关闭且 fixture API 响应不进入持久存储", async (

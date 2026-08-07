@@ -1,0 +1,533 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ESAN GBOS Local Channel and Model Pilot BFF",
+    "version": "4.0.0",
+    "description": "Frozen, role-scoped channel observation, connector control, model usage and AI draft review surface. Restricted source content is omitted unless explicitly authorized."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "paths": {
+    "/api/method/esan_gbos.api.v4.integration.list_status": {
+      "get": {
+        "operationId": "integration.list_status",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
+        "security": [{"FrappeSession": []}],
+        "parameters": [
+          {"name": "channel", "in": "query", "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/ConnectorListSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.integration.pause": {
+      "post": {
+        "operationId": "integration.pause",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
+        "security": [{"FrappeSession": [], "FrappeCsrf": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {"$ref": "#/components/schemas/ConnectorCommand"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/ConnectorCommandSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.integration.resume": {
+      "post": {
+        "operationId": "integration.resume",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
+        "security": [{"FrappeSession": [], "FrappeCsrf": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {"$ref": "#/components/schemas/ConnectorCommand"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/ConnectorCommandSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.integration.replay": {
+      "post": {
+        "operationId": "integration.replay",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
+        "security": [{"FrappeSession": [], "FrappeCsrf": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {"$ref": "#/components/schemas/ConnectorCommand"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/ConnectorCommandSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.communication.list": {
+      "get": {
+        "operationId": "communication.list",
+        "x-gbos-cache": "no-store",
+        "x-gbos-scope": "Server enforces current user and team scope",
+        "x-gbos-roles": ["Sales Manager", "Sales User", "CEO", "GBOS Admin"],
+        "security": [{"FrappeSession": []}],
+        "parameters": [
+          {"name": "channel", "in": "query", "schema": {"type": "string"}},
+          {"name": "classification", "in": "query", "schema": {"type": "string"}},
+          {"name": "review_status", "in": "query", "schema": {"type": "string"}},
+          {"name": "cursor", "in": "query", "schema": {"type": "string"}},
+          {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50}}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/CommunicationListSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.communication.get": {
+      "get": {
+        "operationId": "communication.get",
+        "x-gbos-cache": "no-store",
+        "x-gbos-scope": "Server enforces current user and team scope; Restricted source content is omitted by default",
+        "x-gbos-roles": ["Sales Manager", "Sales User", "CEO", "GBOS Admin"],
+        "security": [{"FrappeSession": []}],
+        "parameters": [
+          {"name": "observation_id", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1}}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/CommunicationDetailSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.model.get_usage": {
+      "get": {
+        "operationId": "model.get_usage",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
+        "security": [{"FrappeSession": []}],
+        "parameters": [
+          {"name": "period", "in": "query", "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/ModelUsageSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.ai_draft.list": {
+      "get": {
+        "operationId": "ai_draft.list",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": ["Reviewer", "GBOS Admin"],
+        "security": [{"FrappeSession": []}],
+        "parameters": [
+          {"name": "status", "in": "query", "schema": {"type": "string", "enum": ["AI Draft", "Pending"]}},
+          {"name": "cursor", "in": "query", "schema": {"type": "string"}},
+          {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50}}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/AiDraftListSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.ai_draft.get": {
+      "get": {
+        "operationId": "ai_draft.get",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": ["Reviewer", "GBOS Admin"],
+        "security": [{"FrappeSession": []}],
+        "parameters": [
+          {"name": "draft_id", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1}}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/AiDraftDetailSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.ai_draft.submit_for_review": {
+      "post": {
+        "operationId": "ai_draft.submit_for_review",
+        "x-gbos-cache": "no-store",
+        "x-gbos-transition": "AI Draft -> Pending only",
+        "x-gbos-roles": ["Reviewer", "GBOS Admin"],
+        "security": [{"FrappeSession": [], "FrappeCsrf": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {"$ref": "#/components/schemas/AiDraftSubmitCommand"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/AiDraftDetailSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "FrappeSession": {"type": "apiKey", "in": "cookie", "name": "sid"},
+      "FrappeCsrf": {"type": "apiKey", "in": "header", "name": "X-Frappe-CSRF-Token"}
+    },
+    "schemas": {
+      "SuccessMeta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["request_id", "schema_version"],
+        "properties": {
+          "request_id": {"type": "string", "minLength": 1},
+          "schema_version": {"const": "4.0"},
+          "next_cursor": {"type": ["string", "null"]},
+          "page_size": {"type": "integer", "minimum": 1, "maximum": 50},
+          "replayed": {"type": "boolean"},
+          "original_request_id": {"type": "string"}
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message", "request_id", "details"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "authentication_required",
+                  "permission_denied",
+                  "csrf_failed",
+                  "method_not_allowed",
+                  "invalid_dto",
+                  "invalid_query",
+                  "invalid_cursor",
+                  "not_found",
+                  "scope_mismatch",
+                  "revision_conflict",
+                  "invalid_transition",
+                  "idempotency_conflict",
+                  "request_in_progress",
+                  "validation_error",
+                  "internal_error"
+                ]
+              },
+              "message": {"type": "string"},
+              "request_id": {"type": "string"},
+              "details": {"type": "object"}
+            }
+          }
+        }
+      },
+      "FrappeErrorWire": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message"],
+        "properties": {"message": {"$ref": "#/components/schemas/ErrorEnvelope"}}
+      },
+      "ConnectorStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instance_id",
+          "channel",
+          "status",
+          "checkpoint_version",
+          "backlog",
+          "last_success_at",
+          "safe_error_code",
+          "freshness",
+          "revision"
+        ],
+        "properties": {
+          "instance_id": {"type": "string"},
+          "channel": {"type": "string"},
+          "status": {"type": "string", "enum": ["enabled", "paused", "error", "disabled"]},
+          "checkpoint_version": {"type": "integer", "minimum": 0},
+          "backlog": {"type": "integer", "minimum": 0},
+          "last_success_at": {"type": ["string", "null"], "format": "date-time"},
+          "safe_error_code": {"type": ["string", "null"]},
+          "freshness": {"type": "string", "enum": ["fresh", "stale", "unknown"]},
+          "revision": {"type": "integer", "minimum": 0}
+        }
+      },
+      "ConnectorCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instance_id", "expected_revision", "idempotency_key"],
+        "properties": {
+          "instance_id": {"type": "string", "minLength": 1},
+          "expected_revision": {"type": "integer", "minimum": 0},
+          "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 256}
+        }
+      },
+      "CommunicationSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "observation_id",
+          "channel",
+          "occurred_at",
+          "summary_zh",
+          "original_language",
+          "classification",
+          "review_status",
+          "team_ref",
+          "party_ref",
+          "evidence_count"
+        ],
+        "properties": {
+          "observation_id": {"type": "string"},
+          "channel": {"type": "string"},
+          "occurred_at": {"type": "string", "format": "date-time"},
+          "summary_zh": {"type": "string"},
+          "original_language": {"type": "string"},
+          "classification": {"type": "string"},
+          "review_status": {"type": "string"},
+          "team_ref": {"type": ["string", "null"]},
+          "party_ref": {"type": ["string", "null"]},
+          "evidence_count": {"type": "integer", "minimum": 0}
+        }
+      },
+      "EvidenceLocator": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ref", "locator"],
+        "properties": {
+          "ref": {"type": "string"},
+          "locator": {"type": "string"}
+        }
+      },
+      "FactProposal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "confidence", "type", "value_display"],
+        "properties": {
+          "status": {"type": "string"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "type": {"type": "string"},
+          "value_display": {"type": "string"}
+        }
+      },
+      "AssociationSuggestion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "target_ref", "confidence"],
+        "properties": {
+          "type": {"type": "string"},
+          "target_ref": {"type": "string"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        }
+      },
+      "ModelMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "version"],
+        "properties": {
+          "name": {"const": "deepseek-v4-flash"},
+          "version": {"type": "string"}
+        }
+      },
+      "CommunicationDetail": {
+        "unevaluatedProperties": false,
+        "allOf": [
+          {"$ref": "#/components/schemas/CommunicationSummary"},
+          {
+            "type": "object",
+            "required": [
+              "evidence",
+              "fact_proposals",
+              "association_suggestions",
+              "model",
+              "raw_access_allowed"
+            ],
+            "properties": {
+              "evidence": {"type": "array", "items": {"$ref": "#/components/schemas/EvidenceLocator"}},
+              "fact_proposals": {"type": "array", "items": {"$ref": "#/components/schemas/FactProposal"}},
+              "association_suggestions": {"type": "array", "items": {"$ref": "#/components/schemas/AssociationSuggestion"}},
+              "model": {"$ref": "#/components/schemas/ModelMetadata"},
+              "raw_access_allowed": {"type": "boolean"},
+              "original_text": {
+                "type": "string",
+                "description": "Conditionally returned only when raw_access_allowed is true and the role policy authorizes the source classification."
+              }
+            }
+          }
+        ]
+      },
+      "UsageCost": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["currency", "amount", "state"],
+        "properties": {
+          "currency": {"const": "USD"},
+          "amount": {"type": ["number", "null"], "minimum": 0},
+          "state": {"type": "string", "enum": ["known", "unknown"]}
+        }
+      },
+      "ModelUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["model", "period", "tokens", "cost", "soft_limit", "hard_limit", "state"],
+        "properties": {
+          "model": {"const": "deepseek-v4-flash"},
+          "period": {"type": "string"},
+          "tokens": {"type": "integer", "minimum": 0},
+          "cost": {"$ref": "#/components/schemas/UsageCost"},
+          "soft_limit": {"type": "integer", "minimum": 0},
+          "hard_limit": {"type": "integer", "minimum": 0},
+          "state": {"type": "string", "enum": ["normal", "soft_limit", "hard_limit", "unknown"]}
+        }
+      },
+      "AiDraft": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["draft_id", "kind", "status", "origin", "subject", "evidence", "model", "revision"],
+        "properties": {
+          "draft_id": {"type": "string"},
+          "kind": {"type": "string", "enum": ["Work Item", "Review Case", "CEO Informal Observation"]},
+          "status": {"type": "string", "enum": ["AI Draft", "Pending"]},
+          "origin": {"const": "AI"},
+          "subject": {"type": "string"},
+          "evidence": {"type": "array", "items": {"$ref": "#/components/schemas/EvidenceLocator"}},
+          "model": {"$ref": "#/components/schemas/ModelMetadata"},
+          "revision": {"type": "integer", "minimum": 0}
+        }
+      },
+      "AiDraftSubmitCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["draft_id", "expected_revision", "idempotency_key"],
+        "properties": {
+          "draft_id": {"type": "string", "minLength": 1},
+          "expected_revision": {"type": "integer", "minimum": 0},
+          "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 256}
+        }
+      },
+      "ConnectorListPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["connectors"],
+        "properties": {"connectors": {"type": "array", "items": {"$ref": "#/components/schemas/ConnectorStatus"}}}
+      },
+      "CommunicationListPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["communications", "next_cursor"],
+        "properties": {
+          "communications": {"type": "array", "items": {"$ref": "#/components/schemas/CommunicationSummary"}},
+          "next_cursor": {"type": ["string", "null"]}
+        }
+      },
+      "CommunicationDetailPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["communication"],
+        "properties": {"communication": {"$ref": "#/components/schemas/CommunicationDetail"}}
+      },
+      "AiDraftListPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["drafts", "next_cursor"],
+        "properties": {
+          "drafts": {"type": "array", "items": {"$ref": "#/components/schemas/AiDraft"}},
+          "next_cursor": {"type": ["string", "null"]}
+        }
+      },
+      "AiDraftDetailPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["draft"],
+        "properties": {"draft": {"$ref": "#/components/schemas/AiDraft"}}
+      },
+      "ConnectorListEnvelope": {"$ref": "#/components/schemas/EnvelopeConnectorListPayload"},
+      "EnvelopeConnectorListPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/ConnectorListPayload"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "EnvelopeConnectorStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/ConnectorStatus"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "EnvelopeCommunicationList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/CommunicationListPayload"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "EnvelopeCommunicationDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/CommunicationDetailPayload"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "EnvelopeModelUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/ModelUsage"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "EnvelopeAiDraftList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/AiDraftListPayload"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "EnvelopeAiDraftDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/AiDraftDetailPayload"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "FrappeConnectorListWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeConnectorListPayload"}}},
+      "FrappeConnectorStatusWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeConnectorStatus"}}},
+      "FrappeCommunicationListWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeCommunicationList"}}},
+      "FrappeCommunicationDetailWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeCommunicationDetail"}}},
+      "FrappeModelUsageWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeModelUsage"}}},
+      "FrappeAiDraftListWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeAiDraftList"}}},
+      "FrappeAiDraftDetailWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeAiDraftDetail"}}}
+    },
+    "responses": {
+      "ConnectorListSuccess": {"description": "Connector status list", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeConnectorListWire"}}}},
+      "ConnectorCommandSuccess": {"description": "Updated connector status", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeConnectorStatusWire"}}}},
+      "CommunicationListSuccess": {"description": "Role-scoped communication summaries", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeCommunicationListWire"}}}},
+      "CommunicationDetailSuccess": {"description": "Role-scoped communication detail", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeCommunicationDetailWire"}}}},
+      "ModelUsageSuccess": {"description": "Exact model usage", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeModelUsageWire"}}}},
+      "AiDraftListSuccess": {"description": "AI drafts", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeAiDraftListWire"}}}},
+      "AiDraftDetailSuccess": {"description": "AI draft detail", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeAiDraftDetailWire"}}}},
+      "Error": {"description": "Stable GBOS error envelope", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeErrorWire"}}}}
+    }
+  }
+}

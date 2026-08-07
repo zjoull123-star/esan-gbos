@@ -5,6 +5,8 @@ const SALES_ROLES = ["Sales Manager", "Sales User"] as const;
 const PURCHASE_ROLES = ["Purchase Manager", "Buyer"] as const;
 const PRODUCT_ROLES = ["Product/R&D"] as const;
 const REVIEW_ROLES = ["Reviewer"] as const;
+const INTEGRATION_ROLES = ["Integration Admin"] as const;
+const COMMUNICATION_ROLES = [...CEO_ROLES, ...SALES_ROLES] as const;
 
 export const APP_ROUTES = [
   {
@@ -40,6 +42,25 @@ export const APP_ROUTES = [
     name: "review",
     component: () => import("./views/ReviewQueueView.vue"),
     meta: { roles: REVIEW_ROLES },
+  },
+  {
+    path: "/gbos/integrations",
+    name: "integrations",
+    component: () => import("./views/IntegrationsView.vue"),
+    meta: { roles: INTEGRATION_ROLES },
+  },
+  {
+    path: "/gbos/communications",
+    name: "communications",
+    component: () => import("./views/CommunicationsView.vue"),
+    meta: { roles: COMMUNICATION_ROLES },
+  },
+  {
+    path: "/gbos/communications/:id",
+    name: "communication-detail",
+    component: () => import("./views/CommunicationDetailView.vue"),
+    props: true,
+    meta: { roles: COMMUNICATION_ROLES },
   },
   {
     path: "/gbos/review/:id",
