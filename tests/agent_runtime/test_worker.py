@@ -7,8 +7,11 @@ from threading import Event
 
 import pytest
 
+import services.agent_runtime.worker as worker_module
 from services.action_guard.policy import ActionGuard
 from services.agent_runtime import (
+    AgentExecutionError,
+    AgentKind,
     AgentOrchestrator,
     AgentTaskSubmission,
     AgentWorker,
@@ -69,6 +72,27 @@ def enqueue(repository: InMemoryAgentTaskRepository) -> None:
     )
 
 
+def enqueue_product_sample(repository: InMemoryAgentTaskRepository) -> None:
+    repository.enqueue(
+        AgentTaskSubmission(
+            task_id="task-product-1",
+            site_id="site-a",
+            processing_purpose="product_sample_management",
+            idempotency_key="idem-product-1",
+            agent_type="product_sample",
+            subject_type="GBOS Sample Feedback",
+            subject_ref="feedback-1",
+            due_at=NOW,
+            priority=50,
+            max_attempts=3,
+            causation_id="cause-product-1",
+            correlation_id="correlation-product-1",
+            payload=payload().to_mapping(),
+        ),
+        now=NOW,
+    )
+
+
 class Resolver:
     def __init__(self, *, subject_ref: str = "deal-1") -> None:
         self.subject_ref = subject_ref
@@ -93,6 +117,16 @@ def orchestrator() -> AgentOrchestrator:
         known_evidence_refs={"evidence-1"},
         known_fact_refs={("fact-1", 1)},
         known_subject_refs={("CRM Deal", "deal-1")},
+    )
+
+
+def product_orchestrator() -> AgentOrchestrator:
+    return AgentOrchestrator(
+        provider=DeterministicLocalProvider(),
+        guard=ActionGuard(),
+        known_evidence_refs={"evidence-1"},
+        known_fact_refs={("fact-1", 1)},
+        known_subject_refs={("GBOS Sample Feedback", "feedback-1")},
     )
 
 
@@ -147,6 +181,93 @@ def test_worker_run_once_resolves_context_just_in_time_heartbeats_and_commits() 
     assert task is not None
     assert task.status is TaskStatus.SUCCEEDED
     assert repository.get_proposal("site-a", "task-1", attempt=1) is not None
+
+
+def test_worker_maps_product_sample_task_type_to_product_agent() -> None:
+    repository = InMemoryAgentTaskRepository()
+    enqueue_product_sample(repository)
+    product_worker = AgentWorker(
+        repository=repository,
+        site_id="site-a",
+        worker_id="worker-1",
+        resolver=Resolver(subject_ref="feedback-1"),
+        executor=product_orchestrator(),
+        clock=lambda: NOW,
+        lease_duration=timedelta(seconds=30),
+        heartbeat_runner=HeartbeatRunner(),
+        retry_delay=timedelta(minutes=5),
+    )
+
+    outcome = product_worker.run_once()
+
+    assert outcome.status is WorkerRunStatus.SUCCEEDED
+    proposal = repository.get_proposal("site-a", "task-product-1", attempt=1)
+    assert proposal is not None
+    assert proposal.action_type == "internal.work_item.propose"
+
+
+@pytest.mark.parametrize(
+    ("task_agent_type", "expected_kind"),
+    [
+        ("sales", AgentKind.SALES),
+        ("purchase", AgentKind.PURCHASE),
+        ("product_sample", AgentKind.PRODUCT),
+        ("ceo", AgentKind.CEO),
+    ],
+)
+def test_task_agent_type_ingress_mapping_is_explicit_and_closed(
+    task_agent_type: str,
+    expected_kind: AgentKind,
+) -> None:
+    resolve_kind = getattr(worker_module, "_agent_kind_from_task_type", None)
+
+    assert resolve_kind is not None
+    assert resolve_kind(task_agent_type) is expected_kind
+
+
+def test_unknown_task_agent_type_fails_closed_without_disclosing_input() -> None:
+    resolve_kind = getattr(worker_module, "_agent_kind_from_task_type", None)
+    unknown_type = "confidential-unknown-agent-marker"
+
+    assert resolve_kind is not None
+    with pytest.raises(AgentExecutionError) as captured:
+        resolve_kind(unknown_type)
+
+    assert str(captured.value) == "unsupported agent task type"
+    assert unknown_type not in str(captured.value)
+
+
+def test_worker_unknown_task_agent_type_fails_without_exposing_payload() -> None:
+    repository = InMemoryAgentTaskRepository()
+    payload_marker = "private-request-marker"
+    submission = AgentTaskSubmission(
+        task_id="task-unknown-1",
+        site_id="site-a",
+        processing_purpose="sales_follow_up",
+        idempotency_key="idem-unknown-1",
+        agent_type="unknown",
+        subject_type="CRM Deal",
+        subject_ref="deal-1",
+        due_at=NOW,
+        priority=50,
+        max_attempts=3,
+        causation_id="cause-unknown-1",
+        correlation_id="correlation-unknown-1",
+        payload=replace(payload(), requested_by=payload_marker).to_mapping(),
+    )
+    repository.enqueue(submission, now=NOW)
+
+    outcome = worker(repository).run_once()
+
+    assert outcome.status is WorkerRunStatus.FAILED
+    task = repository.get("site-a", "task-unknown-1")
+    assert task is not None
+    assert task.status is TaskStatus.RECHECK
+    assert task.failure_classification is FailureClassification.INVALID_OUTPUT
+    assert repository.get_proposal("site-a", "task-unknown-1", attempt=1) is None
+    assert payload_marker not in repr(submission)
+    assert payload_marker not in repr(outcome)
+    assert payload_marker not in repr(task)
 
 
 def test_worker_resolver_mismatch_fails_closed_without_proposal() -> None:

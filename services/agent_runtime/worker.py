@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from threading import Event, Thread
+from types import MappingProxyType
 from typing import Protocol, TypeVar
 
 from .agents import (
@@ -24,6 +25,22 @@ from .models import (
 from .repository import AgentTaskRepository
 
 T = TypeVar("T")
+
+_AGENT_KIND_BY_TASK_TYPE: Mapping[str, AgentKind] = MappingProxyType(
+    {
+        "sales": AgentKind.SALES,
+        "purchase": AgentKind.PURCHASE,
+        "product_sample": AgentKind.PRODUCT,
+        "ceo": AgentKind.CEO,
+    }
+)
+
+
+def _agent_kind_from_task_type(task_agent_type: str) -> AgentKind:
+    try:
+        return _AGENT_KIND_BY_TASK_TYPE[task_agent_type]
+    except KeyError as exc:
+        raise AgentExecutionError("unsupported agent task type") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +199,7 @@ class AgentWorker:
                 task_id=task.task_id,
                 site_id=task.site_id,
                 processing_purpose=task.processing_purpose,
-                agent_kind=AgentKind(task.agent_type),
+                agent_kind=_agent_kind_from_task_type(task.agent_type),
                 requested_by=claim.payload.requested_by,
                 subject_type=task.subject_type,
                 subject_ref=task.subject_ref,
