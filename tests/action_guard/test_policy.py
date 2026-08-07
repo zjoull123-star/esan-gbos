@@ -174,6 +174,40 @@ def test_post_result_blocks_execution_claims(forbidden_key: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "nested_value",
+    [
+        {"proposal": {"execution": {"attempted": True}}},
+        {"proposal": {"items": [{"approved_command": {"command": "write"}}]}},
+        {"proposal": [{"result": {"tool_calls": []}}]},
+        {"proposal": {"commercial": {"formal_price": "100.00"}}},
+        {"proposal": {"DraftMutation": {"doctype": "CRM Deal"}}},
+        {"proposal": {"ApprovedCommand": {"action": "submit"}}},
+        {"proposal": {"toolCalls": [{"name": "send"}]}},
+        {"proposal": {"commercial": {"formalPrice": "100.00"}}},
+    ],
+)
+def test_post_result_recursively_blocks_forbidden_result_shapes(
+    nested_value: dict[str, object],
+) -> None:
+    action = request("internal.work_item.propose")
+    result = ActionGuard().evaluate(
+        action,
+        phase=EvaluationPhase.POST_RESULT,
+        result_payload={
+            "site_id": action.site_id,
+            "processing_purpose": action.processing_purpose,
+            "target_revision": action.target_revision,
+            "evidence_refs": list(action.evidence_refs),
+            **nested_value,
+        },
+        now=NOW,
+    )
+
+    assert result.outcome is GuardOutcome.DENY
+    assert "execution_shape_forbidden" in result.reason_codes
+
+
+@pytest.mark.parametrize(
     ("field", "value", "reason"),
     [
         ("site_id", "other.localhost", "site_mismatch"),

@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from services.action_guard.models import ActionRequest, EvaluationPhase, GuardDecision, GuardOutcome
 from services.action_guard.policy import ActionGuard
@@ -84,6 +84,21 @@ class ProviderOutput:
     confidence: float
     injection_detected: bool
     prompt_version: str
+    network_calls: int = 0
+    model_api_calls: int = 0
+    tool_calls: int = 0
+
+    def __post_init__(self) -> None:
+        if min(self.network_calls, self.model_api_calls, self.tool_calls) < 0:
+            raise ValueError("provider counters must be non-negative")
+
+
+@runtime_checkable
+class ModelProvider(Protocol):
+    provider_version: str
+    tool_version: str
+
+    def generate(self, request: AgentInput) -> ProviderOutput: ...
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -92,6 +107,7 @@ class AgentExecutionResult:
     pre_guard: GuardDecision
     post_guard: GuardDecision
     provider_version: str
+    tool_version: str
     prompt_version: str
     policy_version: str
     confidence: float
@@ -216,7 +232,7 @@ class AgentOrchestrator:
     def __init__(
         self,
         *,
-        provider: DeterministicLocalProvider,
+        provider: ModelProvider,
         guard: ActionGuard,
         known_evidence_refs: set[str],
         known_fact_refs: set[tuple[str, int]],
@@ -255,6 +271,8 @@ class AgentOrchestrator:
             raise AgentExecutionError("pre-tool policy denied the agent proposal")
 
         provider_output = self._provider.generate(request)
+        if provider_output.tool_calls:
+            raise AgentExecutionError("provider tools are forbidden")
         if provider_output.action_type != request.expected_action_type:
             raise AgentExecutionError("provider attempted an unexpected action type")
         proposal = self._build_proposal(request, provider_output, now)
@@ -280,13 +298,14 @@ class AgentOrchestrator:
             pre_guard=pre_guard,
             post_guard=post_guard,
             provider_version=self._provider.provider_version,
+            tool_version=self._provider.tool_version,
             prompt_version=provider_output.prompt_version,
             policy_version=self._guard.policy_version,
             confidence=provider_output.confidence,
             injection_detected=provider_output.injection_detected,
-            network_calls=0,
-            model_api_calls=0,
-            tool_calls=0,
+            network_calls=provider_output.network_calls,
+            model_api_calls=provider_output.model_api_calls,
+            tool_calls=provider_output.tool_calls,
             budget=active_budget,
         )
 

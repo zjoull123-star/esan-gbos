@@ -20,6 +20,8 @@ from services.agent_runtime.agents import (
     BudgetExceeded,
     DeterministicLocalProvider,
     FactVersionRef,
+    ModelProvider,
+    ProviderOutput,
 )
 
 ROOT = Path(__file__).parents[2]
@@ -128,6 +130,7 @@ def test_agents_emit_only_contract_valid_internal_proposals(
     assert result.model_api_calls == 0
     assert result.tool_calls == 0
     assert result.provider_version == "deterministic-local-v1"
+    assert result.tool_version == "no-tools-v1"
     assert result.prompt_version
     assert result.policy_version == "action-guard-v1"
 
@@ -359,3 +362,68 @@ def test_same_input_versions_and_time_produce_byte_stable_proposal() -> None:
     assert first.action_proposal == second.action_proposal
     assert first.pre_guard == second.pre_guard
     assert first.post_guard == second.post_guard
+
+
+def test_orchestrator_accepts_structural_provider_and_uses_provider_counters() -> None:
+    class CountingProvider:
+        provider_version = "counting-provider-v1"
+        tool_version = "no-tools-v1"
+
+        def generate(self, request: AgentInput) -> ProviderOutput:
+            return ProviderOutput(
+                action_type=request.expected_action_type,
+                payload={"summary": "Provider-neutral internal proposal."},
+                confidence=0.7,
+                injection_detected=False,
+                prompt_version="counting-prompt-v1",
+                network_calls=2,
+                model_api_calls=2,
+                tool_calls=0,
+            )
+
+    provider = CountingProvider()
+    assert isinstance(provider, ModelProvider)
+    runtime = AgentOrchestrator(
+        provider=provider,
+        guard=ActionGuard(),
+        known_evidence_refs={"evidence-record-SYNTH-001"},
+        known_fact_refs={("verified-fact-SYNTH-001", 1)},
+        known_subject_refs={("CRM Deal", "DEAL-SYNTH-001")},
+    )
+
+    result = runtime.execute(input_for(AgentKind.SALES), now=NOW)
+
+    assert result.provider_version == "counting-provider-v1"
+    assert result.tool_version == "no-tools-v1"
+    assert result.network_calls == 2
+    assert result.model_api_calls == 2
+    assert result.tool_calls == 0
+
+
+def test_orchestrator_rejects_provider_reported_tool_calls() -> None:
+    class ToolCallingProvider:
+        provider_version = "unsafe-provider-v1"
+        tool_version = "unsafe-tools-v1"
+
+        def generate(self, request: AgentInput) -> ProviderOutput:
+            return ProviderOutput(
+                action_type=request.expected_action_type,
+                payload={"summary": "Unsafe."},
+                confidence=0.7,
+                injection_detected=False,
+                prompt_version="unsafe-prompt-v1",
+                network_calls=1,
+                model_api_calls=1,
+                tool_calls=1,
+            )
+
+    runtime = AgentOrchestrator(
+        provider=ToolCallingProvider(),
+        guard=ActionGuard(),
+        known_evidence_refs={"evidence-record-SYNTH-001"},
+        known_fact_refs={("verified-fact-SYNTH-001", 1)},
+        known_subject_refs={("CRM Deal", "DEAL-SYNTH-001")},
+    )
+
+    with pytest.raises(AgentExecutionError, match="tools"):
+        runtime.execute(input_for(AgentKind.SALES), now=NOW)

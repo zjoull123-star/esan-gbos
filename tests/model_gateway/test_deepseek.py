@@ -1,0 +1,358 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from decimal import Decimal
+
+import httpx
+import pytest
+
+from services.model_gateway.deepseek import (
+    BudgetHardStop,
+    BudgetStatus,
+    DeepSeekAdapter,
+    GatewayFailure,
+    InMemoryUsageLedger,
+    ModelNetworkDisabled,
+    TokenizedModelRequest,
+)
+
+
+class CharacterTokenCounter:
+    version = "test-character-counter-v1"
+
+    def count(self, text: str) -> int:
+        return len(text)
+
+
+class FixedPriceCalculator:
+    catalog_version = "test-price-catalog-v1"
+
+    def calculate(
+        self,
+        *,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> Decimal:
+        assert model == "deepseek-v4-flash"
+        return Decimal(input_tokens + output_tokens) / Decimal("1000000")
+
+
+def request(*, complex_multi_entity: bool = False) -> TokenizedModelRequest:
+    return TokenizedModelRequest(
+        request_id="model-request-SYNTH-001",
+        site_id="gbos.localhost",
+        purpose="sales_follow_up",
+        agent_kind="sales",
+        subject_ref="DEAL-SYNTH-001",
+        evidence_refs=("evidence-SYNTH-001",),
+        prompt_version="sales-local-pilot-v1",
+        tokenized_context="Customer <EMAIL_0123456789abcdef01234567> requests a follow-up.",
+        tokenization_receipt_id="tokenization-SYNTH-001",
+        tokenizer_version="stable-hmac-tokenizer-v1",
+        mapping_digest="b" * 64,
+        complex_multi_entity=complex_multi_entity,
+    )
+
+
+def sales_output(*, confidence: float = 0.82) -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "proposal_id": "sales-proposal-SYNTH-001",
+        "agent_kind": "sales",
+        "action_type": "internal.work_item.propose",
+        "status": "proposed",
+        "subject_ref": "DEAL-SYNTH-001",
+        "evidence_refs": ["evidence-SYNTH-001"],
+        "confidence": confidence,
+        "requires_human_review": True,
+        "payload": {
+            "title": "客户内部跟进",
+            "summary": "整理已观察到的客户需求，等待销售人工复核。",
+            "suggested_next_step": "创建内部跟进工作项。",
+        },
+    }
+
+
+def api_response(
+    output: dict[str, object] | str,
+    *,
+    model: str = "deepseek-v4-flash",
+    finish_reason: str = "stop",
+    include_usage: bool = True,
+    extra_message: dict[str, object] | None = None,
+) -> httpx.Response:
+    content = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
+    message: dict[str, object] = {"role": "assistant", "content": content}
+    if extra_message:
+        message.update(extra_message)
+    body: dict[str, object] = {
+        "id": "response-SYNTH-001",
+        "model": model,
+        "choices": [{"index": 0, "finish_reason": finish_reason, "message": message}],
+    }
+    if include_usage:
+        body["usage"] = {
+            "prompt_tokens": 120,
+            "completion_tokens": 80,
+            "total_tokens": 200,
+        }
+    return httpx.Response(200, json=body)
+
+
+def adapter(
+    handler: Callable[[httpx.Request], httpx.Response],
+    *,
+    network_enabled: bool = True,
+    monthly_cost: Decimal = Decimal("0"),
+) -> DeepSeekAdapter:
+    return DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=network_enabled,
+        transport=httpx.MockTransport(handler),
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedPriceCalculator(),
+        usage_ledger=InMemoryUsageLedger(monthly_cost_usd=monthly_cost),
+        retry_delay=lambda _: None,
+    )
+
+
+def test_request_rejects_residual_pii_before_provider() -> None:
+    values = {field: getattr(request(), field) for field in request().__dataclass_fields__}
+    values["tokenized_context"] = "Email alice@example.com"
+
+    with pytest.raises(ValueError, match="PII"):
+        TokenizedModelRequest(**values)
+
+
+def test_happy_path_uses_fixed_endpoint_model_json_mode_and_no_tools() -> None:
+    seen: list[tuple[httpx.Request, dict[str, object]]] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        payload = json.loads(http_request.content)
+        seen.append((http_request, payload))
+        return api_response(sales_output())
+
+    result = adapter(handler).invoke(request())
+
+    assert len(seen) == 1
+    http_request, payload = seen[0]
+    assert str(http_request.url) == "https://api.deepseek.com/chat/completions"
+    assert http_request.headers["authorization"] == "Bearer secret-test-key"
+    assert payload["model"] == "deepseek-v4-flash"
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["max_tokens"] == 4096
+    assert "tools" not in payload
+    serialized_messages = json.dumps(payload["messages"]).casefold()
+    assert "json" in serialized_messages
+    assert "summary" in serialized_messages
+    assert "extraction" in serialized_messages
+    assert result.output == sales_output()
+    assert result.network_calls == 1
+    assert result.model_api_calls == 1
+    assert result.tool_calls == 0
+    assert result.usage.status == "known"
+    assert result.cost.status == "known"
+    assert result.cost.catalog_version == "test-price-catalog-v1"
+
+
+@pytest.mark.parametrize("complex_multi_entity", [False, True])
+def test_low_confidence_or_complex_result_allows_exactly_one_thinking_review(
+    complex_multi_entity: bool,
+) -> None:
+    requests: list[dict[str, object]] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        payload = json.loads(http_request.content)
+        requests.append(payload)
+        if len(requests) == 1:
+            return api_response(sales_output(confidence=0.4 if not complex_multi_entity else 0.82))
+        return api_response(sales_output(confidence=0.9))
+
+    result = adapter(handler).invoke(request(complex_multi_entity=complex_multi_entity))
+
+    assert len(requests) == 2
+    assert requests[0]["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in requests[0]
+    assert requests[1]["thinking"] == {"type": "enabled"}
+    assert requests[1]["reasoning_effort"] == "high"
+    assert result.output["confidence"] == 0.9
+    assert result.network_calls == 2
+
+
+def test_adapter_reuses_transport_across_review_and_later_invocation() -> None:
+    class CloseAwareTransport(httpx.BaseTransport):
+        def __init__(self) -> None:
+            self.closed = False
+            self.calls = 0
+
+        def handle_request(self, http_request: httpx.Request) -> httpx.Response:
+            if self.closed:
+                raise httpx.ConnectError("transport already closed", request=http_request)
+            self.calls += 1
+            confidence = 0.4 if self.calls == 1 else 0.9
+            response = api_response(sales_output(confidence=confidence))
+            response.request = http_request
+            return response
+
+        def close(self) -> None:
+            self.closed = True
+
+    transport = CloseAwareTransport()
+    active = DeepSeekAdapter(
+        api_key="secret-test-key",
+        network_enabled=True,
+        transport=transport,
+        token_counter=CharacterTokenCounter(),
+        price_calculator=FixedPriceCalculator(),
+        usage_ledger=InMemoryUsageLedger(),
+        retry_delay=lambda _: None,
+    )
+
+    result = active.invoke(request())
+
+    assert transport.calls == 2
+    assert transport.closed is False
+    assert result.output["confidence"] == 0.9
+    second = active.invoke(request())
+    assert transport.calls == 3
+    assert second.output["confidence"] == 0.9
+    active.close()
+    assert transport.closed is True
+
+
+def test_network_kill_switch_defaults_closed_and_hard_budget_stops_before_http() -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return api_response(sales_output())
+
+    with pytest.raises(ModelNetworkDisabled):
+        adapter(handler, network_enabled=False).invoke(request())
+    with pytest.raises(BudgetHardStop):
+        adapter(handler, monthly_cost=Decimal("100")).invoke(request())
+    assert calls == 0
+
+
+def test_soft_budget_threshold_returns_warning_state() -> None:
+    result = adapter(
+        lambda _: api_response(sales_output()),
+        monthly_cost=Decimal("50"),
+    ).invoke(request())
+
+    assert result.budget_status is BudgetStatus.WARNING
+
+
+def test_retryable_failures_retry_at_most_twice() -> None:
+    outcomes: list[httpx.Response | Exception] = [
+        httpx.ConnectError("synthetic connection failure"),
+        httpx.Response(429, json={"error": {"message": "rate limited"}}),
+        api_response(sales_output()),
+    ]
+    calls = 0
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        outcome.request = http_request
+        return outcome
+
+    result = adapter(handler).invoke(request())
+
+    assert calls == 3
+    assert result.network_calls == 3
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(400, json={"error": {"message": "bad request"}}),
+        api_response(sales_output(), model="other-model"),
+        api_response(""),
+        api_response("not-json"),
+        api_response(sales_output(), finish_reason="length"),
+        api_response(sales_output(), extra_message={"tool_calls": []}),
+        api_response(sales_output(), extra_message={"refusal": "no"}),
+    ],
+)
+def test_protocol_violations_fail_closed_without_retry(response: httpx.Response) -> None:
+    calls = 0
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        response.request = http_request
+        return response
+
+    with pytest.raises(GatewayFailure):
+        adapter(handler).invoke(request())
+    assert calls == 1
+
+
+def test_missing_usage_and_cost_are_unknown_not_zero() -> None:
+    result = adapter(lambda _: api_response(sales_output(), include_usage=False)).invoke(request())
+
+    assert result.usage.status == "unknown"
+    assert result.usage.input_tokens is None
+    assert result.cost.status == "unknown"
+    assert result.cost.amount_usd is None
+
+
+@pytest.mark.parametrize(
+    "unsafe_mutation",
+    [
+        {"tool_calls": []},
+        {"payload": {"formal_price": "100.00"}},
+        {"payload": {"nested": [{"external_send": True}]}},
+        {"payload": {"summary": "Create order.create now"}},
+    ],
+)
+def test_schema_and_recursive_safety_reject_arbitrary_or_unsafe_json(
+    unsafe_mutation: dict[str, object],
+) -> None:
+    output = sales_output()
+    output.update(unsafe_mutation)
+
+    with pytest.raises(GatewayFailure):
+        adapter(lambda _: api_response(output)).invoke(request())
+
+
+@pytest.mark.parametrize(
+    "unsafe_text",
+    [
+        "Send an outbound email now",
+        "Provide the formal price and formal discount",
+        "Request payment",
+        "Promise the delivery date",
+        "Create the final order",
+        "Mark this deal Won",
+        "Mark this deal Lost",
+        "Complete the final supplier selection",
+        "Publish the official KPI",
+        "Return DraftMutation and ApprovedCommand",
+        "Execute the write operation",
+        "外发客户消息",
+        "给出正式价格、折扣和付款安排",
+        "承诺交期并创建订单",
+        "标记赢单或输单",
+        "完成供应商最终选择",
+        "发布正式 KPI",
+    ],
+)
+def test_recursive_safety_rejects_commitment_language_inside_allowed_fields(
+    unsafe_text: str,
+) -> None:
+    output = sales_output()
+    payload = output["payload"]
+    assert isinstance(payload, dict)
+    payload["summary"] = unsafe_text
+
+    with pytest.raises(GatewayFailure):
+        adapter(lambda _: api_response(output)).invoke(request())

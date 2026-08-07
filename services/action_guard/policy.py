@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
@@ -46,12 +47,22 @@ FORBIDDEN_EXACT_ACTIONS = {
 }
 
 FORBIDDEN_RESULT_KEYS = {
+    "tool_calls",
     "draft_mutation",
     "approved_command",
     "execution",
     "frappe_write",
     "kingdee_mutation",
     "external_send",
+    "formal_price",
+    "formal_discount",
+    "payment",
+    "delivery_commitment",
+    "order",
+    "deal_won",
+    "deal_lost",
+    "selected_supplier",
+    "official_kpi",
 }
 
 
@@ -120,7 +131,7 @@ class ActionGuard:
     ) -> tuple[GuardOutcome, tuple[str, ...]]:
         if result_payload is None:
             return GuardOutcome.DENY, ("result_required",)
-        if FORBIDDEN_RESULT_KEYS.intersection(result_payload):
+        if _contains_forbidden_result_key(result_payload):
             return GuardOutcome.DENY, ("execution_shape_forbidden",)
         if result_payload.get("site_id") != request.site_id:
             return GuardOutcome.DENY, ("site_mismatch",)
@@ -160,3 +171,18 @@ class ActionGuard:
             sort_keys=True,
         ).encode("utf-8")
         return f"guard-{hashlib.sha256(encoded).hexdigest()[:32]}"
+
+
+def _contains_forbidden_result_key(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            normalized = re.sub(r"(?<!^)(?=[A-Z])", "_", str(key)).casefold()
+            normalized = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
+            if normalized in FORBIDDEN_RESULT_KEYS:
+                return True
+            if _contains_forbidden_result_key(nested):
+                return True
+        return False
+    if isinstance(value, list | tuple):
+        return any(_contains_forbidden_result_key(item) for item in value)
+    return False
