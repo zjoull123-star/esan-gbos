@@ -32,6 +32,7 @@ from .deepseek import (
     UsageLedger,
     UsageSnapshot,
 )
+from .observation_provider import DeepSeekObservationProvider
 from .provider import DeepSeekAgentProvider
 from .tokenization import EncryptedFileMappingVault, StableTokenizer
 
@@ -510,6 +511,47 @@ def create_deepseek_agent_provider_factory(
     return factory
 
 
+def create_deepseek_observation_provider(
+    *,
+    assembly: DeepSeekAssembly,
+    audit_repository: ModelInvocationRepository,
+    transport_factory: Callable[[], httpx.BaseTransport] | None = None,
+    network_enabled: bool,
+    clock: Callable[[], datetime] = _utc_now,
+) -> DeepSeekObservationProvider:
+    """Build the exact observation provider without re-tokenizing its bound request."""
+
+    if (
+        assembly.base_url != DEEPSEEK_BASE_URL
+        or assembly.model != DEEPSEEK_MODEL
+        or assembly.controlled_egress is not True
+    ):
+        raise ValueError("DeepSeek assembly must use the exact endpoint and model")
+    if (
+        not isinstance(assembly.tokenizer_vault, EncryptedFileMappingVault)
+        or assembly.tokenizer_vault.algorithm != "AES-256-GCM"
+    ):
+        raise ValueError("DeepSeek assembly requires an AES-256-GCM encrypted vault")
+    if not isinstance(assembly.budget_ledger, PostgresMonthlyUsageLedger):
+        raise ValueError("DeepSeek assembly requires a durable PostgreSQL budget ledger")
+    if not isinstance(audit_repository, PostgresModelInvocationRepository):
+        raise ValueError("DeepSeek observation provider requires durable PostgreSQL audit")
+    if not isinstance(network_enabled, bool):
+        raise TypeError("network_enabled must be explicit")
+    make_transport = transport_factory or (lambda: httpx.HTTPTransport(retries=0))
+    gateway = DeepSeekAdapter(
+        api_key=assembly.api_key,
+        transport=make_transport(),
+        token_counter=ConservativeTokenCounter(),
+        price_calculator=DeepSeekV4FlashPriceCalculator(),
+        usage_ledger=cast(UsageLedger, assembly.budget_ledger),
+        network_enabled=network_enabled,
+        clock=clock,
+        audit_recorder=audit_repository.append,
+    )
+    return DeepSeekObservationProvider(gateway=gateway)
+
+
 def _validate_reservation_values(
     *,
     reservation_id: str,
@@ -560,4 +602,5 @@ __all__ = [
     "PostgresMonthlyUsageLedger",
     "TOKEN_PROTOCOL_OVERHEAD",
     "create_deepseek_agent_provider_factory",
+    "create_deepseek_observation_provider",
 ]

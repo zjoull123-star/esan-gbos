@@ -13,27 +13,46 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Any, Literal, Protocol, TypeVar
 
+import httpx
+
+from services.agent_runtime.invocations import PostgresModelInvocationRepository
 from services.agent_runtime.local_entrypoint import (
     LocalEntrypointDisabled,
     load_local_manifest,
     require_component_enabled,
 )
-from services.agent_runtime.local_runtime import validate_deepseek_manifest
+from services.agent_runtime.local_runtime import DeepSeekAssembly, validate_deepseek_manifest
+from services.context.context_service.communication_intelligence import (
+    PostgresCommunicationIntelligenceRepository,
+)
 from services.model_gateway.observation_provider import DeepSeekObservationProvider
-from services.model_gateway.tokenization import StableTokenizer
+from services.model_gateway.runtime import (
+    PostgresMonthlyUsageLedger,
+    create_deepseek_observation_provider,
+)
+from services.model_gateway.tokenization import EncryptedFileMappingVault, StableTokenizer
+from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
 from services.observer.observer.model_projection import (
+    ContentAddressedEvidenceTextLoader,
     ContextIntelligencePublisher,
     LocalTokenizationResult,
     ObservationProjectionPublisher,
     ObservationProjectionRepository,
+    PostgresObservationProjectionRepository,
     RawObservationLoader,
 )
 from services.observer.observer.models import TenantScope, _require_aware
+from services.observer.observer.projection_outbox import (
+    PostgresProjectionOutboxRepository,
+)
+from services.observer.observer.read_service import PostgresCommunicationRepository
 
+from .projection_config import load_projection_config
 from .runtime_support import (
     RuntimeConfig,
     RuntimeSupportError,
     component_settings,
+    connect_postgres,
     load_runtime_config,
     load_secret_file,
     reject_plaintext_secret_environment,
@@ -42,6 +61,7 @@ from .runtime_support import (
 
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
+DEFAULT_PROJECTION_CONFIG = Path("/config/projection-connections.json")
 DEFAULT_DEEPSEEK_API_KEY_FILE = Path("/run/secrets/deepseek_api_key")
 DEFAULT_TOKENIZER_HMAC_KEY_FILE = Path("/run/secrets/tokenizer_hmac_key")
 DEFAULT_MAPPING_VAULT_KEY_FILE = Path("/run/secrets/mapping_vault_key")
@@ -496,6 +516,160 @@ ComponentsFactory = Callable[
 WorkerRunner = Callable[[ModelProjectionWorker, TenantScope, Event, float], None]
 
 
+class _ObserverRouteTeamResolver:
+    """Resolve Context team authority from the Observer event and connector route."""
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    def __repr__(self) -> str:
+        return "_ObserverRouteTeamResolver(connection=<redacted>)"
+
+    def __call__(self, scope: TenantScope, observation_id: str) -> str | None:
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('app.site_id', %s, true)",
+                (scope.site_id,),
+            )
+            cursor.execute(
+                "SELECT set_config('app.processing_purpose', %s, true)",
+                (scope.processing_purpose,),
+            )
+            cursor.execute(
+                """
+                SELECT event.team_ref, route.team_ref
+                FROM observer.observation_events AS event
+                JOIN observer.connector_instances AS route
+                  ON route.site_id = event.site_id
+                 AND route.connector = event.connector
+                 AND route.connector_instance_id = event.connector_instance_id
+                WHERE event.site_id = %s
+                  AND event.event_id = %s
+                  AND event.processing_purpose = %s
+                """,
+                (
+                    scope.site_id,
+                    observation_id,
+                    scope.processing_purpose,
+                ),
+            )
+            row = cursor.fetchone()
+        if row is None or row[0] != row[1]:
+            raise ValueError("Observer publication route binding is invalid")
+        return None if row[0] is None else str(row[0])
+
+
+def create_production_components(
+    *,
+    manifest: Mapping[str, Any],
+    runtime_config: RuntimeConfig,
+    secret_paths: ProjectionSecretPaths,
+    projection_config_path: Path = DEFAULT_PROJECTION_CONFIG,
+    phrase_resolver: TrustedPhraseResolver,
+    connector: Callable[..., object] | None = None,
+    transport_factory: Callable[[], httpx.BaseTransport] | None = None,
+    clock: Clock | None = None,
+) -> ModelProjectionComponents:
+    """Preflight then compose three-role production projection components."""
+
+    if not callable(phrase_resolver):
+        raise RuntimeSupportError("trusted phrase resolver is not injected")
+    validate_manifest_binding(manifest, runtime_config)
+    validate_deepseek_manifest(manifest)
+    configured = component_settings(runtime_config, "model_worker")
+    if configured.provider_mode != "deepseek":
+        raise RuntimeSupportError("model projection requires DeepSeek provider mode")
+    projection = load_projection_config(
+        projection_config_path,
+        expected_site_id=runtime_config.site_id,
+    )
+    if not projection.controlled_egress:
+        raise RuntimeSupportError("projection controlled egress is disabled")
+
+    # Every config, secret and local storage boundary is validated before connect.
+    for settings in projection.connections.values():
+        load_secret_file(settings.password_file)
+    api_key = load_secret_file(secret_paths.deepseek_api_key)
+    hmac_key = _read_exact_private_key_file(secret_paths.tokenizer_hmac_key)
+    _read_exact_private_key_file(secret_paths.mapping_vault_key)
+    evidence_store = ContentAddressedEvidenceStore(projection.evidence_cas_root)
+    active_clock = clock or (lambda: datetime.now(UTC))
+    vault = EncryptedFileMappingVault.from_key_file(
+        root=projection.tokenizer_vault_root,
+        key_file=secret_paths.mapping_vault_key,
+        clock=active_clock,
+    )
+
+    connections: list[Any] = []
+    try:
+        for role in ("observer", "context", "agent"):
+            connections.append(
+                connect_postgres(
+                    projection.connections[role],
+                    connector=connector,
+                )
+            )
+        observer_connection, context_connection, agent_connection = connections
+        raw_loader = ContentAddressedEvidenceTextLoader(evidence_store)
+        projection_store = PostgresCommunicationRepository(
+            connection=observer_connection,
+        )
+        projection_repository = PostgresObservationProjectionRepository(
+            connection=observer_connection,
+            projection_store=projection_store,
+            raw_loader=raw_loader,
+        )
+        outbox = PostgresProjectionOutboxRepository(observer_connection)
+        context_publisher = PostgresCommunicationIntelligenceRepository(
+            context_connection,
+            team_ref_resolver=_ObserverRouteTeamResolver(observer_connection),
+        )
+        ledger = PostgresMonthlyUsageLedger(
+            connection=agent_connection,
+            site_id=projection.site_id,
+            clock=active_clock,
+        )
+        audit = PostgresModelInvocationRepository(agent_connection)
+        assembly = DeepSeekAssembly(
+            base_url=str(manifest["deepseek"]["base_url"]),
+            model=str(manifest["deepseek"]["model"]),
+            api_key=api_key.reveal(),
+            budget_ledger=ledger,
+            tokenizer_vault=vault,
+            controlled_egress=True,
+        )
+        provider = create_deepseek_observation_provider(
+            assembly=assembly,
+            audit_repository=audit,
+            transport_factory=transport_factory,
+            network_enabled=True,
+            clock=active_clock,
+        )
+        tokenizer = StableTokenizer(hmac_key=hmac_key, vault=vault)
+    except Exception:
+        for connection in reversed(connections):
+            with suppress(Exception):
+                connection.close()
+        raise
+
+    def close() -> None:
+        for connection in reversed(connections):
+            with suppress(Exception):
+                connection.close()
+
+    return ModelProjectionComponents(
+        outbox=outbox,
+        projection_repository=projection_repository,
+        raw_loader=raw_loader,
+        context_publisher=context_publisher,
+        tokenizer=tokenizer,
+        provider=provider,
+        close=close,
+    )
+
+
 def build_worker(
     *,
     components: ModelProjectionComponents,
@@ -584,6 +758,7 @@ def main(
     *,
     manifest_path: Path = DEFAULT_MANIFEST,
     runtime_config_path: Path = DEFAULT_RUNTIME_CONFIG,
+    projection_config_path: Path = DEFAULT_PROJECTION_CONFIG,
     secret_paths: ProjectionSecretPaths | None = None,
     environ: Mapping[str, str] | None = None,
     components_factory: ComponentsFactory | None = None,
@@ -612,8 +787,6 @@ def main(
         if configured.provider_mode != "deepseek":
             raise RuntimeSupportError("model projection requires DeepSeek provider mode")
         validate_deepseek_manifest(manifest)
-        if components_factory is None:
-            raise RuntimeSupportError("fenced model projection factory is not injected")
         if phrase_resolver is None:
             raise RuntimeSupportError("trusted phrase resolver is not injected")
         active_paths = secret_paths or ProjectionSecretPaths(
@@ -621,12 +794,22 @@ def main(
             tokenizer_hmac_key=DEFAULT_TOKENIZER_HMAC_KEY_FILE,
             mapping_vault_key=DEFAULT_MAPPING_VAULT_KEY_FILE,
         )
-        load_secret_file(config.postgres.password_file)
+        if components_factory is not None:
+            load_secret_file(config.postgres.password_file)
         load_secret_file(active_paths.deepseek_api_key)
         _read_exact_private_key_file(active_paths.tokenizer_hmac_key)
         _read_exact_private_key_file(active_paths.mapping_vault_key)
 
-        components = components_factory(manifest, config, active_paths)
+        if components_factory is None:
+            components = create_production_components(
+                manifest=manifest,
+                runtime_config=config,
+                secret_paths=active_paths,
+                projection_config_path=projection_config_path,
+                phrase_resolver=phrase_resolver,
+            )
+        else:
+            components = components_factory(manifest, config, active_paths)
         active_clock = clock or (lambda: datetime.now(UTC))
         worker = build_worker(
             components=components,
@@ -710,6 +893,7 @@ if __name__ == "__main__":
 __all__ = [
     "DEFAULT_DEEPSEEK_API_KEY_FILE",
     "DEFAULT_MAPPING_VAULT_KEY_FILE",
+    "DEFAULT_PROJECTION_CONFIG",
     "DEFAULT_TOKENIZER_HMAC_KEY_FILE",
     "ModelProjectionComponents",
     "ModelProjectionWorker",
@@ -722,6 +906,7 @@ __all__ = [
     "TrustedPhraseResolution",
     "TrustedProjectionTokenizer",
     "build_worker",
+    "create_production_components",
     "main",
     "run_worker",
 ]

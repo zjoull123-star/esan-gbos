@@ -19,6 +19,7 @@ from services.context.context_service.storage import (
     PostgresContextRepository,
     connect_postgres_components,
 )
+from services.local_pilot_runtime.model_projection_worker import ProjectionLeaseConflict
 from services.observer.observer.api import create_observer_app
 from services.observer.observer.application import ManualImportPipeline, canonical_import_body
 from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
@@ -52,6 +53,9 @@ from services.observer.observer.models import (
 from services.observer.observer.processing import (
     DeterministicProcessor,
     DisabledReviewCaseBridge,
+)
+from services.observer.observer.projection_outbox import (
+    PostgresProjectionOutboxRepository,
 )
 from services.observer.observer.security import (
     HMACServiceIdentity,
@@ -115,7 +119,7 @@ def _container_sql(
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 8
+    assert _migration_ledger_count() == 9
     result = _container_sql(
         """
         SELECT count(*)
@@ -156,13 +160,116 @@ def _migration_ledger_count() -> int:
             'observer/003_local_pilot_runtime.sql',
             'observer/004_local_pilot_ingestion.sql',
             'observer/005_local_pilot_normalized_sink.sql',
-            'observer/006_local_pilot_control.sql',
-            'observer/007_local_pilot_connector_routing.sql',
-            'context/001_gate3_context.sql'
+              'observer/006_local_pilot_control.sql',
+              'observer/007_local_pilot_connector_routing.sql',
+              'observer/008_local_pilot_projection_fencing.sql',
+              'context/001_gate3_context.sql'
         )
         """
     )
     return int(result.stdout.strip())
+
+
+def test_gate3_projection_outbox_reclaim_fences_same_worker_and_cross_site() -> None:
+    if not all((CONTEXT_HOST, CONTEXT_PORT, CONTEXT_DATABASE, CONTEXT_PASSWORD)):
+        pytest.fail("Gate 3 Observer app-role connection components are required")
+    suffix = uuid.uuid4().hex[:12]
+    site = f"projection-{suffix}"
+    other_site = f"projection-other-{suffix}"
+    event_id = f"event-{suffix}"
+    outbox_id = f"outbox-{suffix}"
+    _container_sql(
+        f"""
+        INSERT INTO observer.observation_events (
+          site_id, event_id, connector, channel, processing_purpose,
+          consent_basis, data_classification, retention_class,
+          correlation_id, occurred_at, ingested_at, document
+        ) VALUES (
+          '{site}', '{event_id}', 'manual_import', 'email',
+          'observation_processing', 'pilot_deferred_review', 'Restricted',
+          'R1-operational', 'corr-{suffix}', current_timestamp,
+          current_timestamp, '{{}}'::jsonb
+        );
+        INSERT INTO observer.context_publication_outbox (
+          site_id, outbox_id, observation_event_id, idempotency_key,
+          payload_digest, status, attempt_count, max_attempts,
+          next_retry_at, created_at, updated_at
+        ) VALUES (
+          '{site}', '{outbox_id}', '{event_id}', 'projection:{suffix}',
+          '{"a" * 64}', 'queued', 0, 2, current_timestamp,
+          current_timestamp, current_timestamp
+        );
+        """
+    )
+    now = datetime.now(UTC)
+    connection = connect_postgres_components(
+        host=str(CONTEXT_HOST),
+        port=int(str(CONTEXT_PORT)),
+        database=str(CONTEXT_DATABASE),
+        user="gbos_observer_app",
+        password=str(CONTEXT_PASSWORD),
+    )
+    try:
+        repository = PostgresProjectionOutboxRepository(connection)
+        scope = ObserverTenantScope(site, "observation_processing")
+        first = repository.claim(
+            scope,
+            worker_id="same-worker",
+            now=now,
+            lease_duration=timedelta(seconds=1),
+        )
+        assert first is not None
+        assert (
+            repository.claim(
+                ObserverTenantScope(other_site, "observation_processing"),
+                worker_id="same-worker",
+                now=now,
+                lease_duration=timedelta(seconds=1),
+            )
+            is None
+        )
+        repository.heartbeat(
+            scope,
+            first.outbox_id,
+            worker_id="same-worker",
+            expected_attempt=first.attempt,
+            fence_token=first.fence_token,
+            now=now,
+            lease_duration=timedelta(seconds=1),
+        )
+        reclaimed = repository.claim(
+            scope,
+            worker_id="same-worker",
+            now=now + timedelta(seconds=2),
+            lease_duration=timedelta(seconds=1),
+        )
+        assert reclaimed is not None
+        assert reclaimed.attempt == first.attempt + 1
+        assert reclaimed.fence_token != first.fence_token
+        with pytest.raises(ProjectionLeaseConflict):
+            repository.mark_published(
+                scope,
+                first.outbox_id,
+                worker_id="same-worker",
+                expected_attempt=first.attempt,
+                fence_token=first.fence_token,
+                now=now + timedelta(seconds=2),
+            )
+        assert (
+            repository.mark_failed(
+                scope,
+                reclaimed.outbox_id,
+                worker_id="same-worker",
+                expected_attempt=reclaimed.attempt,
+                fence_token=reclaimed.fence_token,
+                now=now + timedelta(seconds=2),
+                retry_at=now + timedelta(seconds=3),
+                error_code="projection_failed",
+            )
+            == "dead_letter"
+        )
+    finally:
+        connection.close()
 
 
 def test_gate3_runtime_roles_are_non_privileged_and_schema_isolated() -> None:

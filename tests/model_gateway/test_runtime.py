@@ -16,6 +16,7 @@ from services.agent_runtime.invocations import (
 )
 from services.agent_runtime.local_runtime import DeepSeekAssembly
 from services.model_gateway.deepseek import BudgetHardStop, InMemoryUsageLedger
+from services.model_gateway.observation_provider import DeepSeekObservationProvider
 from services.model_gateway.provider import DeepSeekAgentProvider
 from services.model_gateway.runtime import (
     CONSERVATIVE_TOKEN_COUNTER_VERSION,
@@ -25,6 +26,7 @@ from services.model_gateway.runtime import (
     DeepSeekV4FlashPriceCalculator,
     PostgresMonthlyUsageLedger,
     create_deepseek_agent_provider_factory,
+    create_deepseek_observation_provider,
 )
 from services.model_gateway.tokenization import (
     EncryptedFileMappingVault,
@@ -327,6 +329,40 @@ def test_factory_builds_exact_default_off_no_tools_provider(tmp_path: Path) -> N
     assert isinstance(provider, DeepSeekAgentProvider)
     assert provider.tool_version == "no-tools-v1"
     assert "test-api-key" not in repr(provider)
+
+
+def test_observation_factory_uses_exact_model_without_retokenization_or_tools(
+    tmp_path: Path,
+) -> None:
+    master_key_file = _secret_file(tmp_path / "master.key", b"m" * 32)
+    ledger = PostgresMonthlyUsageLedger(
+        connection=_Connection([]),
+        site_id="gbos.localhost",
+        clock=lambda: NOW,
+    )
+    assembly = DeepSeekAssembly(
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-flash",
+        api_key="observation-api-key",
+        budget_ledger=ledger,
+        tokenizer_vault=EncryptedFileMappingVault.from_key_file(
+            root=tmp_path / "vault",
+            key_file=master_key_file,
+        ),
+    )
+
+    provider = create_deepseek_observation_provider(
+        assembly=assembly,
+        audit_repository=PostgresModelInvocationRepository(_Connection([])),
+        transport_factory=_NoNetworkTransport,
+        network_enabled=False,
+        clock=lambda: NOW,
+    )
+
+    assert isinstance(provider, DeepSeekObservationProvider)
+    assert "observation-api-key" not in repr(provider)
+    assert not hasattr(provider, "_tokenizer")
+    assert not hasattr(provider, "_phrase_resolver")
 
 
 def test_factory_rejects_wrong_endpoint_model_or_unsafe_hmac_key(tmp_path: Path) -> None:

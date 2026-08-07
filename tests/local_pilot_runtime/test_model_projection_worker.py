@@ -9,8 +9,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event
 
+import httpx
 import pytest
 
+from services.agent_runtime.local_entrypoint import load_local_manifest
+from services.context.context_service.communication_intelligence import (
+    PostgresCommunicationIntelligenceRepository,
+)
 from services.local_pilot_runtime import model_projection_worker
 from services.local_pilot_runtime.model_projection_worker import (
     ModelProjectionComponents,
@@ -22,14 +27,18 @@ from services.local_pilot_runtime.model_projection_worker import (
     TrustedPhraseResolution,
     TrustedProjectionTokenizer,
     build_worker,
+    create_production_components,
     main,
     run_worker,
 )
+from services.local_pilot_runtime.projection_config import ProjectionConfigError
+from services.local_pilot_runtime.runtime_support import load_runtime_config
 from services.model_gateway.deepseek import DEEPSEEK_MODEL
 from services.model_gateway.observation_provider import DeepSeekObservationProvider
 from services.model_gateway.tokenization import InMemoryMappingVault, StableTokenizer
 from services.observer.observer.model_projection import LocalTokenizationResult
 from services.observer.observer.models import TenantScope
+from services.observer.observer.projection_outbox import PostgresProjectionOutboxRepository
 
 NOW = datetime(2026, 8, 8, 10, tzinfo=UTC)
 SCOPE = TenantScope("gbos.localhost", "observation_processing")
@@ -477,6 +486,127 @@ def _environment() -> dict[str, str]:
     }
 
 
+def _projection_config(tmp_path: Path) -> Path:
+    cas = tmp_path / "projection-cas"
+    vault = tmp_path / "projection-vault"
+    cas.mkdir()
+    vault.mkdir()
+    secrets = tmp_path / "projection-secrets"
+    secrets.mkdir()
+    connections: dict[str, object] = {}
+    for role, user in (
+        ("observer", "gbos_observer_app"),
+        ("context", "gbos_context_app"),
+        ("agent", "gbos_agent_app"),
+    ):
+        connections[role] = {
+            "host": "127.0.0.1",
+            "port": 55432,
+            "database": "gbos_local_pilot",
+            "user": user,
+            "password_file": str(_secret(secrets / role, f"{role}-password")),
+            "connect_timeout_seconds": 3,
+        }
+    value = {
+        "schema_version": "1.0",
+        "site_id": SCOPE.site_id,
+        "controlled_egress": True,
+        "evidence_cas_root": str(cas),
+        "tokenizer_vault_root": str(vault),
+        "connections": connections,
+    }
+    path = tmp_path / "projection-connections.json"
+    path.write_text(json.dumps(value), encoding="utf-8")
+    os.chmod(path, 0o600)
+    return path
+
+
+class _NoNetworkTransport(httpx.BaseTransport):
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        raise AssertionError("component construction cannot perform HTTP")
+
+
+class _ClosableConnection:
+    def __init__(self, user: str, closed: list[str]) -> None:
+        self.user = user
+        self.closed = closed
+
+    def close(self) -> None:
+        self.closed.append(self.user)
+
+
+def test_production_factory_preflights_all_roles_then_connects_exactly_three_and_closes(
+    tmp_path: Path,
+) -> None:
+    manifest_path, runtime_path, secret_paths = _runtime_files(tmp_path)
+    projection_path = _projection_config(tmp_path)
+    users: list[str] = []
+    closed: list[str] = []
+
+    def connector(**kwargs: object) -> _ClosableConnection:
+        user = str(kwargs["user"])
+        users.append(user)
+        return _ClosableConnection(user, closed)
+
+    components = create_production_components(
+        manifest=load_local_manifest(manifest_path),
+        runtime_config=load_runtime_config(runtime_path),
+        secret_paths=secret_paths,
+        projection_config_path=projection_path,
+        phrase_resolver=lambda *_: TrustedPhraseResolution(
+            names=(),
+            organizations=(),
+            names_complete=True,
+            organizations_complete=True,
+            resolver_version="trusted-directory-v1",
+        ),
+        connector=connector,
+        transport_factory=_NoNetworkTransport,
+        clock=lambda: NOW,
+    )
+
+    assert users == ["gbos_observer_app", "gbos_context_app", "gbos_agent_app"]
+    assert isinstance(components.outbox, PostgresProjectionOutboxRepository)
+    assert isinstance(
+        components.context_publisher,
+        PostgresCommunicationIntelligenceRepository,
+    )
+    assert isinstance(components.provider, DeepSeekObservationProvider)
+    assert not hasattr(components.provider, "_tokenizer")
+    components.close()
+    assert closed == ["gbos_agent_app", "gbos_context_app", "gbos_observer_app"]
+
+
+def test_production_factory_invalid_third_role_secret_connects_nothing(
+    tmp_path: Path,
+) -> None:
+    manifest_path, runtime_path, secret_paths = _runtime_files(tmp_path)
+    projection_path = _projection_config(tmp_path)
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    os.chmod(Path(projection["connections"]["agent"]["password_file"]), 0o644)
+
+    def forbidden(**_: object) -> object:
+        raise AssertionError("preflight attempted a database connection")
+
+    with pytest.raises(ProjectionConfigError):
+        create_production_components(
+            manifest=load_local_manifest(manifest_path),
+            runtime_config=load_runtime_config(runtime_path),
+            secret_paths=secret_paths,
+            projection_config_path=projection_path,
+            phrase_resolver=lambda *_: TrustedPhraseResolution(
+                names=(),
+                organizations=(),
+                names_complete=True,
+                organizations_complete=True,
+                resolver_version="trusted-directory-v1",
+            ),
+            connector=forbidden,
+            transport_factory=_NoNetworkTransport,
+            clock=lambda: NOW,
+        )
+
+
 @pytest.mark.parametrize(
     "case",
     [
@@ -622,6 +752,45 @@ def test_valid_main_builds_only_after_preflight_and_closes_components(
     assert result == 0
     assert events == ["factory", "runner", "close"]
     assert stop.is_set()
+
+
+def test_default_main_uses_closed_projection_factory_not_runtime_broad_connection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, config_path, secret_paths = _runtime_files(tmp_path)
+    broad = json.loads(config_path.read_text(encoding="utf-8"))["postgres"]
+    os.chmod(Path(broad["password_file"]), 0o644)
+    components = _components()
+    events: list[str] = []
+    stop = Event()
+
+    def production(**kwargs: object) -> ModelProjectionComponents:
+        assert kwargs["projection_config_path"] == Path("/config/projection-connections.json")
+        events.append("production")
+        return components
+
+    monkeypatch.setattr(model_projection_worker, "create_production_components", production)
+
+    result = main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        secret_paths=secret_paths,
+        environ=_environment(),
+        phrase_resolver=lambda *_: TrustedPhraseResolution(
+            names=(),
+            organizations=(),
+            names_complete=True,
+            organizations_complete=True,
+            resolver_version="trusted-directory-v1",
+        ),
+        worker_runner=lambda *_: (events.append("runner"), stop.set()),
+        stop_event=stop,
+        clock=lambda: NOW,
+    )
+
+    assert result == 0
+    assert events == ["production", "runner"]
 
 
 def test_build_worker_rejects_missing_resolver_and_redacts_components() -> None:

@@ -2,16 +2,20 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 from observer.context_outbox import ContextOutboxPublisherWorker
+from observer.evidence_store import ContentAddressedEvidenceStore
 from observer.local_pilot_api import LocalPilotAPIConfig
 from observer.local_pilot_storage import ContextOutboxMetadata
 from observer.model_projection import (
     CommunicationIntelligenceResponse,
+    ContentAddressedEvidenceTextLoader,
     ContextIntelligencePublication,
     EvidenceLineage,
+    LoadedEvidenceText,
     LocalTokenizationResult,
     ObservationModelRequest,
     ObservationProjectionPublisher,
@@ -188,7 +192,10 @@ def _publisher(
     return (
         ObservationProjectionPublisher(
             repository=active_repository,
-            raw_loader=lambda scope, ref: "客户 alice@example.com 希望确认样品交期",
+            raw_loader=lambda scope, evidence: LoadedEvidenceText(
+                evidence_ref=evidence.evidence_ref,
+                text="客户 alice@example.com 希望确认样品交期",
+            ),
             tokenizer=tokenizer,
             provider=active_provider,
             context_publisher=active_context,
@@ -291,12 +298,24 @@ def test_context_publication_requires_explicit_site_and_proposed_draft_binding()
         )
 
 
+def test_evidence_lineage_repr_redacts_identity_and_digest() -> None:
+    rendered = repr(SOURCE.evidence[0])
+
+    assert SOURCE.evidence[0].evidence_ref not in rendered
+    assert SOURCE.evidence[0].content_object_ref not in rendered
+    assert SOURCE.evidence[0].raw_sha256 not in rendered
+    assert "<redacted>" in rendered
+
+
 def test_unconfigured_provider_and_tokenization_failure_write_nothing() -> None:
     repository = FakeRepository()
     context = FakeContextPublisher(repository)
     unavailable = ObservationProjectionPublisher(
         repository=repository,
-        raw_loader=lambda _scope, _ref: "secret",
+        raw_loader=lambda _scope, evidence: LoadedEvidenceText(
+            evidence_ref=evidence.evidence_ref,
+            text="secret",
+        ),
         tokenizer=_tokenize,
         provider=None,
         context_publisher=context,
@@ -347,6 +366,132 @@ def test_tokenization_mapping_digest_must_be_sha256() -> None:
             receipt_ref="tokenization-001",
             tokenizer_version="stable-tokenizer-v1",
             mapping_digest="not-a-digest",
+        )
+
+
+def test_binary_evidence_is_skipped_and_model_binding_uses_only_loaded_text() -> None:
+    binary = EvidenceLineage(
+        evidence_ref="evidence-binary",
+        content_object_ref="obs:v1:alpha:sha256:" + ("c" * 64),
+        media_type="application/pdf",
+        raw_sha256="c" * 64,
+    )
+    source = replace(SOURCE, evidence=(*SOURCE.evidence, binary))
+    output = _output()
+    repository = FakeRepository(source=source)
+    provider = FakeProvider(output=output)
+    publisher = ObservationProjectionPublisher(
+        repository=repository,
+        raw_loader=lambda _scope, evidence: (
+            None
+            if evidence.media_type == "application/pdf"
+            else LoadedEvidenceText(
+                evidence_ref=evidence.evidence_ref,
+                text="客户 alice@example.com 希望确认样品交期",
+            )
+        ),
+        tokenizer=_tokenize,
+        provider=provider,
+        context_publisher=FakeContextPublisher(repository),
+        clock=lambda: NOW,
+        restricted_policy="local_tokenized",
+    )
+
+    publisher(SCOPE, SOURCE.observation_id, "context-normalized:event-001")
+
+    assert provider.requests[0].evidence_refs == ("evidence-001",)
+    detail = repository.stored[0]
+    assert detail.summary.evidence_count == 2
+    assert tuple(item["ref"] for item in detail.evidence) == (
+        "evidence-001",
+        "evidence-binary",
+    )
+
+
+def test_projection_requires_at_least_one_text_evidence() -> None:
+    repository = FakeRepository()
+    provider = FakeProvider()
+    context = FakeContextPublisher(repository)
+    publisher = ObservationProjectionPublisher(
+        repository=repository,
+        raw_loader=lambda _scope, _evidence: None,
+        tokenizer=_tokenize,
+        provider=provider,
+        context_publisher=context,
+        clock=lambda: NOW,
+        restricted_policy="local_tokenized",
+    )
+
+    with pytest.raises(ProjectionFailure, match="raw_input_unavailable"):
+        publisher(SCOPE, SOURCE.observation_id, "context-normalized:event-001")
+
+    assert provider.requests == []
+    assert context.calls == []
+    assert repository.stored == []
+
+
+def test_filesystem_loader_verifies_hash_and_skips_binary(tmp_path: Path) -> None:
+    store = ContentAddressedEvidenceStore(tmp_path / "cas")
+    text = b"hello <b>Alice</b>"
+    stored = store.put(SCOPE, text, media_type="text/html")
+    loader = ContentAddressedEvidenceTextLoader(store)
+    lineage = EvidenceLineage(
+        evidence_ref="evidence-html",
+        content_object_ref=stored.object_ref,
+        media_type="text/html",
+        raw_sha256=stored.sha256,
+    )
+
+    loaded = loader(SCOPE, lineage)
+
+    assert loaded is not None
+    assert loaded.evidence_ref == "evidence-html"
+    assert loaded.text == "hello Alice"
+    with pytest.raises(ValueError, match="digest"):
+        loader(SCOPE, replace(lineage, raw_sha256="0" * 64))
+    assert (
+        loader(
+            SCOPE,
+            replace(lineage, media_type="application/octet-stream"),
+        )
+        is None
+    )
+    assert "Alice" not in repr(loaded)
+
+
+def test_filesystem_loader_rejects_mime_bomb_and_complex_email(tmp_path: Path) -> None:
+    store = ContentAddressedEvidenceStore(tmp_path / "cas")
+    oversized = b"Content-Type: text/plain; charset=utf-8\r\n\r\n" + b"A" * 300
+    stored = store.put(SCOPE, oversized, media_type="message/rfc822")
+    loader = ContentAddressedEvidenceTextLoader(
+        store,
+        max_object_bytes=256,
+        max_text_characters=128,
+    )
+    lineage = EvidenceLineage(
+        evidence_ref="evidence-email",
+        content_object_ref=stored.object_ref,
+        media_type="message/rfc822",
+        raw_sha256=stored.sha256,
+    )
+
+    with pytest.raises(ValueError, match="bounded"):
+        loader(SCOPE, lineage)
+
+    complex_message = (
+        b"Content-Type: multipart/mixed; boundary=x\r\n\r\n"
+        b"--x\r\nContent-Type: message/rfc822\r\n\r\n"
+        b"Content-Type: text/plain\r\n\r\nsecret\r\n--x--\r\n"
+    )
+    stored_complex = store.put(SCOPE, complex_message, media_type="message/rfc822")
+    with pytest.raises(ValueError, match="complex"):
+        ContentAddressedEvidenceTextLoader(store)(
+            SCOPE,
+            replace(
+                lineage,
+                content_object_ref=stored_complex.object_ref,
+                raw_sha256=stored_complex.sha256,
+            ),
         )
 
 
