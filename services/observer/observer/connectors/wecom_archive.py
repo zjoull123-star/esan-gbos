@@ -9,16 +9,54 @@ advancing to ``next_checkpoint``.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import NoReturn, Protocol, cast
 
 from ..models import ConnectorItem, RawDelivery
 
 _MAX_PROVIDER_BATCH_SIZE = 1000
+_DEFAULT_MAX_DECRYPTED_BYTES = 4 * 1024 * 1024
+_DEFAULT_MAX_JSON_DEPTH = 32
+_DEFAULT_MAX_JSON_NODES = 20_000
+_DEFAULT_MAX_MEDIA_REQUESTS = 32
 _MEDIA_MESSAGE_TYPES = frozenset({"image", "voice", "video", "emotion", "file"})
+_CONTROL_MESSAGE_TYPES = frozenset({"revoke", "agree", "disagree"})
+_BUSINESS_MESSAGE_TYPES = frozenset(
+    {
+        "calendar",
+        "card",
+        "channels_shop_order",
+        "channels_shop_product",
+        "chatrecord",
+        "collect",
+        "docmsg",
+        "emotion",
+        "external_redpacket",
+        "file",
+        "image",
+        "link",
+        "location",
+        "markdown",
+        "meeting",
+        "meeting_voice_call",
+        "mixed",
+        "news",
+        "redpacket",
+        "sphfeed",
+        "text",
+        "todo",
+        "video",
+        "voice",
+        "voip_doc_share",
+        "vote",
+        "weapp",
+    }
+)
+_KNOWN_ACTIONS = frozenset({"send", "recall", "switch"})
 
 
 class ArchiveDisposition(StrEnum):
@@ -214,6 +252,10 @@ class WeComArchiveConfig:
 
     instance_id: str
     max_batch_size: int = _MAX_PROVIDER_BATCH_SIZE
+    max_decrypted_bytes: int = _DEFAULT_MAX_DECRYPTED_BYTES
+    max_json_depth: int = _DEFAULT_MAX_JSON_DEPTH
+    max_json_nodes: int = _DEFAULT_MAX_JSON_NODES
+    max_media_requests: int = _DEFAULT_MAX_MEDIA_REQUESTS
 
     def __post_init__(self) -> None:
         if (
@@ -228,6 +270,18 @@ class WeComArchiveConfig:
             or not 1 <= self.max_batch_size <= _MAX_PROVIDER_BATCH_SIZE
         ):
             raise ValueError("max_batch_size must be a positive bounded integer")
+        _require_positive_bound(
+            self.max_decrypted_bytes,
+            "max_decrypted_bytes",
+            maximum=16 * 1024 * 1024,
+        )
+        _require_positive_bound(self.max_json_depth, "max_json_depth", maximum=128)
+        _require_positive_bound(self.max_json_nodes, "max_json_nodes", maximum=100_000)
+        _require_positive_bound(
+            self.max_media_requests,
+            "max_media_requests",
+            maximum=_MAX_PROVIDER_BATCH_SIZE,
+        )
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -286,34 +340,44 @@ class Amd64IsolationPlan:
 @dataclass(frozen=True, slots=True)
 class SdkPreflight:
     status: str
+    target_platform: str
     selected_runtime: str | None
     error_code: str | None
     container_plan: Amd64IsolationPlan | None
+    execution: str = "plan_only"
 
 
 def preflight_official_sdk(
     *,
     system: str,
     machine: str,
+    target_platform: str,
     official_linux_arm64_available: bool,
 ) -> SdkPreflight:
-    """Select an available official Linux ARM64 library or emit a blocked plan."""
+    """Plan for the target runtime without launching or downloading a container."""
 
     normalized_system = system.casefold()
     normalized_machine = machine.casefold()
-    is_linux_arm64 = normalized_system == "linux" and normalized_machine in {
+    normalized_target = target_platform.casefold()
+    if normalized_target != "linux/arm64":
+        raise ValueError("target_platform must request the preferred linux/arm64 runtime")
+    host_is_linux_arm64 = normalized_system == "linux" and normalized_machine in {
         "arm64",
         "aarch64",
     }
-    if is_linux_arm64 and official_linux_arm64_available:
+    if official_linux_arm64_available:
         return SdkPreflight(
             status="ready",
-            selected_runtime="official-linux-arm64",
+            target_platform="linux/arm64",
+            selected_runtime=(
+                "official-linux-arm64" if host_is_linux_arm64 else "official-linux-arm64-container"
+            ),
             error_code=None,
             container_plan=None,
         )
     return SdkPreflight(
         status="blocked",
+        target_platform="linux/amd64",
         selected_runtime=None,
         error_code="wecom_archive.sdk_architecture_unavailable",
         container_plan=Amd64IsolationPlan(),
@@ -450,7 +514,7 @@ class WeComArchiveAdapter:
         duplicates: list[str] = []
         for message, content_ref in pairs:
             _require_content_ref(content_ref)
-            payload = _parse_decrypted_json(message.exact_bytes)
+            payload = self._parse_decrypted(message)
             msgid = _required_string(payload, "msgid")
             msgtype = _required_string(payload, "msgtype")
             occurred_at = _message_time(payload)
@@ -463,6 +527,7 @@ class WeComArchiveAdapter:
                 msgid=msgid,
                 msgtype=msgtype,
                 action=payload.get("action"),
+                action_present="action" in payload,
                 content_ref=content_ref,
             )
             if control is not None:
@@ -489,11 +554,22 @@ class WeComArchiveAdapter:
     def describe_media(self, message: DecryptedMessage) -> tuple[MediaDownloadRequest, ...]:
         """Describe read-only media requests without downloading or decoding bytes."""
 
-        payload = _parse_decrypted_json(message.exact_bytes)
+        payload = self._parse_decrypted(message)
         requests: list[MediaDownloadRequest] = []
-        for candidate in _walk_mappings(payload):
+        seen_file_ids: set[str] = set()
+        for candidate in _walk_mappings(
+            payload,
+            max_depth=self._config.max_json_depth,
+            max_nodes=self._config.max_json_nodes,
+        ):
             sdk_file_id = candidate.get("sdkfileid")
-            if isinstance(sdk_file_id, str) and sdk_file_id:
+            if isinstance(sdk_file_id, str) and sdk_file_id and sdk_file_id not in seen_file_ids:
+                if len(requests) >= self._config.max_media_requests:
+                    raise WeComArchiveError(
+                        "wecom_archive.media_request_limit_exceeded",
+                        ArchiveDisposition.QUARANTINE,
+                    )
+                seen_file_ids.add(sdk_file_id)
                 requests.append(MediaDownloadRequest(sdk_file_id=sdk_file_id))
         return tuple(requests)
 
@@ -518,6 +594,14 @@ class WeComArchiveAdapter:
                 ArchiveDisposition.RETRY,
             )
         return chunk
+
+    def _parse_decrypted(self, message: DecryptedMessage) -> Mapping[str, object]:
+        return _parse_decrypted_json(
+            message.exact_bytes,
+            max_bytes=self._config.max_decrypted_bytes,
+            max_depth=self._config.max_json_depth,
+            max_nodes=self._config.max_json_nodes,
+        )
 
 
 def _parse_checkpoint(checkpoint: str | None) -> int:
@@ -576,10 +660,35 @@ def _require_content_ref(content_ref: str) -> None:
         raise ValueError("invalid decrypted content reference")
 
 
-def _parse_decrypted_json(exact_bytes: bytes) -> Mapping[str, object]:
+def _parse_decrypted_json(
+    exact_bytes: bytes,
+    *,
+    max_bytes: int,
+    max_depth: int,
+    max_nodes: int,
+) -> Mapping[str, object]:
+    if len(exact_bytes) > max_bytes:
+        raise WeComArchiveError(
+            "wecom_archive.decrypted_message_too_large",
+            ArchiveDisposition.QUARANTINE,
+        )
     try:
-        value = json.loads(exact_bytes)
-    except UnicodeDecodeError, json.JSONDecodeError:
+        value = cast(
+            object,
+            json.loads(
+                exact_bytes,
+                object_pairs_hook=_object_without_duplicate_keys,
+                parse_constant=_reject_non_finite_constant,
+            ),
+        )
+    except _StrictJsonViolation as exc:
+        raise WeComArchiveError(exc.code, ArchiveDisposition.QUARANTINE) from None
+    except RecursionError:
+        raise WeComArchiveError(
+            "wecom_archive.json_depth_exceeded",
+            ArchiveDisposition.QUARANTINE,
+        ) from None
+    except UnicodeDecodeError, json.JSONDecodeError, ValueError:
         raise WeComArchiveError(
             "wecom_archive.invalid_decrypted_message",
             ArchiveDisposition.QUARANTINE,
@@ -589,6 +698,7 @@ def _parse_decrypted_json(exact_bytes: bytes) -> Mapping[str, object]:
             "wecom_archive.invalid_decrypted_message",
             ArchiveDisposition.QUARANTINE,
         )
+    _walk_mappings(value, max_depth=max_depth, max_nodes=max_nodes)
     return value
 
 
@@ -624,14 +734,33 @@ def _control_state(
     msgid: str,
     msgtype: str,
     action: object,
+    action_present: bool,
     content_ref: str,
 ) -> ArchiveControlState | None:
+    if action_present and (not isinstance(action, str) or action not in _KNOWN_ACTIONS):
+        raise WeComArchiveError(
+            "wecom_archive.unsupported_message_semantics",
+            ArchiveDisposition.QUARANTINE,
+        )
+    if msgtype not in _BUSINESS_MESSAGE_TYPES | _CONTROL_MESSAGE_TYPES:
+        raise WeComArchiveError(
+            "wecom_archive.unsupported_message_semantics",
+            ArchiveDisposition.QUARANTINE,
+        )
     if action == "recall":
         return ArchiveControlState(
             seq=seq,
             provider_event_id=msgid,
             disposition=ArchiveDisposition.PRESERVE_ONLY,
             reason_code="wecom_archive.message_recalled",
+            content_ref=content_ref,
+        )
+    if action == "switch":
+        return ArchiveControlState(
+            seq=seq,
+            provider_event_id=msgid,
+            disposition=ArchiveDisposition.PRESERVE_ONLY,
+            reason_code="wecom_archive.message_switched",
             content_ref=content_ref,
         )
     if msgtype == "revoke":
@@ -661,13 +790,69 @@ def _control_state(
     return None
 
 
-def _walk_mappings(value: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
-    found: list[Mapping[str, object]] = [value]
-    for nested in value.values():
-        if isinstance(nested, dict) and all(isinstance(key, str) for key in nested):
-            found.extend(_walk_mappings(nested))
-        elif isinstance(nested, list):
-            for item in nested:
-                if isinstance(item, dict) and all(isinstance(key, str) for key in item):
-                    found.extend(_walk_mappings(item))
+class _StrictJsonViolation(ValueError):
+    __slots__ = ("code",)
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def _object_without_duplicate_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise _StrictJsonViolation("wecom_archive.duplicate_json_key")
+        value[key] = item
+    return value
+
+
+def _reject_non_finite_constant(_value: str) -> NoReturn:
+    raise _StrictJsonViolation("wecom_archive.non_finite_json_number")
+
+
+def _walk_mappings(
+    value: Mapping[str, object],
+    *,
+    max_depth: int,
+    max_nodes: int,
+) -> tuple[Mapping[str, object], ...]:
+    found: list[Mapping[str, object]] = []
+    stack: list[tuple[object, int]] = [(value, 1)]
+    visited = 0
+    while stack:
+        current, depth = stack.pop()
+        visited += 1
+        if visited > max_nodes:
+            raise WeComArchiveError(
+                "wecom_archive.json_node_limit_exceeded",
+                ArchiveDisposition.QUARANTINE,
+            )
+        if depth > max_depth:
+            raise WeComArchiveError(
+                "wecom_archive.json_depth_exceeded",
+                ArchiveDisposition.QUARANTINE,
+            )
+        if isinstance(current, dict):
+            if not all(isinstance(key, str) for key in current):
+                raise WeComArchiveError(
+                    "wecom_archive.invalid_decrypted_message",
+                    ArchiveDisposition.QUARANTINE,
+                )
+            found.append(current)
+            stack.extend((nested, depth + 1) for nested in reversed(tuple(current.values())))
+        elif isinstance(current, list):
+            stack.extend((nested, depth + 1) for nested in reversed(current))
+        elif isinstance(current, float) and not math.isfinite(current):
+            raise WeComArchiveError(
+                "wecom_archive.non_finite_json_number",
+                ArchiveDisposition.QUARANTINE,
+            )
     return tuple(found)
+
+
+def _require_positive_bound(value: int, field_name: str, *, maximum: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
+        raise ValueError(f"{field_name} must be a positive bounded integer")

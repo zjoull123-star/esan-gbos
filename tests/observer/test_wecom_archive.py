@@ -78,9 +78,13 @@ def _envelope(seq: int) -> EncryptedEnvelope:
     )
 
 
-def _adapter(sdk: FakeOfficialSdk) -> WeComArchiveAdapter:
+def _adapter(
+    sdk: FakeOfficialSdk,
+    *,
+    config: WeComArchiveConfig | None = None,
+) -> WeComArchiveAdapter:
     return WeComArchiveAdapter(
-        config=WeComArchiveConfig(instance_id="sales-primary"),
+        config=config or WeComArchiveConfig(instance_id="sales-primary"),
         sdk=sdk,
         clock=lambda: NOW,
     )
@@ -212,6 +216,34 @@ def test_media_description_is_separate_and_only_emits_read_only_requests() -> No
     assert requests[0].read_only is True
 
 
+def test_media_description_deduplicates_ids_and_quarantines_over_limit() -> None:
+    duplicate = DecryptedMessage(
+        seq=11,
+        exact_bytes=(
+            b'{"msgid":"media-001","msgtime":1786075800000,"msgtype":"file",'
+            b'"file":{"sdkfileid":"same-id"},"attachments":[{"sdkfileid":"same-id"}]}'
+        ),
+    )
+    over_limit = DecryptedMessage(
+        seq=12,
+        exact_bytes=(
+            b'{"msgid":"media-002","msgtime":1786075800000,"msgtype":"file",'
+            b'"attachments":[{"sdkfileid":"first-id"},{"sdkfileid":"second-id"}]}'
+        ),
+    )
+    adapter = _adapter(
+        FakeOfficialSdk(),
+        config=WeComArchiveConfig(instance_id="sales-primary", max_media_requests=1),
+    )
+
+    assert [request.sdk_file_id for request in adapter.describe_media(duplicate)] == ["same-id"]
+    with pytest.raises(WeComArchiveError) as captured:
+        adapter.describe_media(over_limit)
+
+    assert captured.value.code == "wecom_archive.media_request_limit_exceeded"
+    assert captured.value.disposition is ArchiveDisposition.QUARANTINE
+
+
 @pytest.mark.parametrize(
     ("message_type", "code", "disposition"),
     [
@@ -264,6 +296,48 @@ def test_recall_action_is_a_control_state_not_a_business_item() -> None:
     assert normalized.controls[0].disposition is ArchiveDisposition.PRESERVE_ONLY
 
 
+def test_switch_action_is_a_control_state_not_a_business_item() -> None:
+    message = DecryptedMessage(
+        seq=11,
+        exact_bytes=(
+            b'{"msgid":"switch-001","msgtime":1786075800000,"msgtype":"text","action":"switch"}'
+        ),
+    )
+
+    normalized = _adapter(FakeOfficialSdk()).normalize_batch(
+        (message,),
+        content_refs=("object://decrypted/switch",),
+    )
+
+    assert normalized.items == ()
+    assert normalized.controls[0].reason_code == "wecom_archive.message_switched"
+    assert normalized.controls[0].disposition is ArchiveDisposition.PRESERVE_ONLY
+
+
+@pytest.mark.parametrize(
+    "exact_bytes",
+    [
+        (b'{"msgid":"unknown-action","msgtime":1786075800000,"msgtype":"text","action":"forward"}'),
+        b'{"msgid":"unknown-type","msgtime":1786075800000,"msgtype":"future_control"}',
+        (
+            b'{"msgid":"unknown-switched","msgtime":1786075800000,'
+            b'"msgtype":"future_control","action":"switch"}'
+        ),
+    ],
+)
+def test_unknown_action_or_message_type_is_quarantined(exact_bytes: bytes) -> None:
+    message = DecryptedMessage(seq=11, exact_bytes=exact_bytes)
+
+    with pytest.raises(WeComArchiveError) as captured:
+        _adapter(FakeOfficialSdk()).normalize_batch(
+            (message,),
+            content_refs=("object://decrypted/unknown",),
+        )
+
+    assert captured.value.code == "wecom_archive.unsupported_message_semantics"
+    assert captured.value.disposition is ArchiveDisposition.QUARANTINE
+
+
 def test_duplicate_control_msgid_is_not_emitted_twice() -> None:
     message = DecryptedMessage(
         seq=11,
@@ -303,27 +377,97 @@ def test_fetch_pauses_on_official_sdk_access_states(
 
 
 def test_sdk_preflight_prefers_linux_arm64_and_only_plans_digest_pinned_fallback() -> None:
-    ready = preflight_official_sdk(
+    direct = preflight_official_sdk(
         system="Linux",
         machine="aarch64",
+        target_platform="linux/arm64",
+        official_linux_arm64_available=True,
+    )
+    orbstack = preflight_official_sdk(
+        system="Darwin",
+        machine="arm64",
+        target_platform="linux/arm64",
         official_linux_arm64_available=True,
     )
     blocked = preflight_official_sdk(
         system="Darwin",
         machine="arm64",
+        target_platform="linux/arm64",
         official_linux_arm64_available=False,
     )
 
-    assert ready.status == "ready"
-    assert ready.selected_runtime == "official-linux-arm64"
-    assert ready.container_plan is None
+    assert direct.status == "ready"
+    assert direct.selected_runtime == "official-linux-arm64"
+    assert direct.target_platform == "linux/arm64"
+    assert direct.execution == "plan_only"
+    assert direct.container_plan is None
+    assert orbstack.status == "ready"
+    assert orbstack.selected_runtime == "official-linux-arm64-container"
+    assert orbstack.target_platform == "linux/arm64"
+    assert orbstack.execution == "plan_only"
+    assert orbstack.container_plan is None
     assert blocked.status == "blocked"
     assert blocked.error_code == "wecom_archive.sdk_architecture_unavailable"
+    assert blocked.target_platform == "linux/amd64"
+    assert blocked.execution == "plan_only"
     assert blocked.container_plan is not None
     assert blocked.container_plan.platform == "linux/amd64"
     assert blocked.container_plan.fixed_digest_required is True
     assert blocked.container_plan.isolated is True
     assert blocked.container_plan.execution == "plan_only"
+
+
+@pytest.mark.parametrize(
+    ("config", "exact_bytes", "code"),
+    [
+        (
+            WeComArchiveConfig(instance_id="sales-primary", max_decrypted_bytes=64),
+            b'{"msgid":"' + (b"x" * 80) + b'"}',
+            "wecom_archive.decrypted_message_too_large",
+        ),
+        (
+            WeComArchiveConfig(instance_id="sales-primary", max_json_depth=3),
+            b'{"msgid":"deep","msgtime":1786075800000,"msgtype":"text","a":{"b":{"c":1}}}',
+            "wecom_archive.json_depth_exceeded",
+        ),
+        (
+            WeComArchiveConfig(instance_id="sales-primary", max_json_nodes=7),
+            b'{"msgid":"nodes","msgtime":1786075800000,"msgtype":"text","a":[1,2,3,4]}',
+            "wecom_archive.json_node_limit_exceeded",
+        ),
+        (
+            WeComArchiveConfig(instance_id="sales-primary"),
+            (b'{"msgid":"first","msgid":"second","msgtime":1786075800000,"msgtype":"text"}'),
+            "wecom_archive.duplicate_json_key",
+        ),
+        (
+            WeComArchiveConfig(instance_id="sales-primary"),
+            (b'{"msgid":"nan","msgtime":1786075800000,"msgtype":"text","unsafe":NaN}'),
+            "wecom_archive.non_finite_json_number",
+        ),
+        (
+            WeComArchiveConfig(instance_id="sales-primary"),
+            (b'{"msgid":"inf","msgtime":1786075800000,"msgtype":"text","unsafe":1e400}'),
+            "wecom_archive.non_finite_json_number",
+        ),
+    ],
+)
+def test_untrusted_decrypted_json_is_strictly_bounded_and_quarantined(
+    config: WeComArchiveConfig,
+    exact_bytes: bytes,
+    code: str,
+) -> None:
+    message = DecryptedMessage(seq=11, exact_bytes=exact_bytes)
+
+    with pytest.raises(WeComArchiveError) as captured:
+        _adapter(FakeOfficialSdk(), config=config).normalize_batch(
+            (message,),
+            content_refs=("object://decrypted/bounded",),
+        )
+
+    assert captured.value.code == code
+    assert captured.value.disposition is ArchiveDisposition.QUARANTINE
+    assert exact_bytes.decode(errors="ignore") not in repr(captured.value)
 
 
 def test_public_boundary_has_no_outbound_or_mutating_methods() -> None:
@@ -358,7 +502,14 @@ def test_repr_and_errors_redact_encrypted_content_sdk_and_credentials() -> None:
     assert secret not in rendered
     assert private_key not in rendered
     assert "redacted" in rendered
-    assert set(WeComArchiveConfig.__dataclass_fields__) == {"instance_id", "max_batch_size"}
+    assert set(WeComArchiveConfig.__dataclass_fields__) == {
+        "instance_id",
+        "max_batch_size",
+        "max_decrypted_bytes",
+        "max_json_depth",
+        "max_json_nodes",
+        "max_media_requests",
+    }
     assert not hasattr(cast(object, adapter), "corp_id")
     assert not hasattr(cast(object, adapter), "secret")
     assert not hasattr(cast(object, adapter), "private_key")
