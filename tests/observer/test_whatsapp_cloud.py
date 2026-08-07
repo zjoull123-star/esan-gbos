@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import inspect
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -138,22 +138,29 @@ def test_get_verification_rejects_non_text_inputs_with_a_safe_error() -> None:
         )
 
 
-class _ReplayGuard:
+class _AtomicAcceptor:
     def __init__(
         self,
-        decision: str = "accepted",
+        disposition: str = "accepted",
         *,
-        events: list[str] | None = None,
+        failure: Exception | None = None,
     ) -> None:
-        self.decision = decision
-        self.claims: list[tuple[str, datetime]] = []
-        self.events = events
+        self.disposition = disposition
+        self.failure = failure
+        self.calls: list[tuple[object, str, datetime, datetime]] = []
 
-    def claim(self, delivery_id: str, received_at: datetime) -> str:
-        if self.events is not None:
-            self.events.append("replay")
-        self.claims.append((delivery_id, received_at))
-        return self.decision
+    def __call__(
+        self,
+        delivery: object,
+        *,
+        nonce: str,
+        nonce_expires_at: datetime,
+        now: datetime,
+    ) -> str:
+        self.calls.append((delivery, nonce, nonce_expires_at, now))
+        if self.failure is not None:
+            raise self.failure
+        return self.disposition
 
 
 def test_post_authenticates_exact_raw_bytes_and_returns_a_durable_delivery() -> None:
@@ -285,28 +292,31 @@ def test_post_rejects_oversize_body_before_signature_or_replay_work() -> None:
 
 
 @pytest.mark.parametrize(
-    ("decision", "status_code", "reason_code"),
+    ("failure_name", "status_code", "reason_code"),
     [
         ("replay", 409, "replay_rejected"),
         ("expired", 408, "delivery_expired"),
     ],
 )
-def test_post_replay_seam_rejects_duplicate_or_expired_delivery(
-    decision: str,
+def test_post_atomic_accept_rejects_replayed_or_expired_delivery(
+    failure_name: str,
     status_code: int,
     reason_code: str,
 ) -> None:
     from observer.connectors.whatsapp_cloud import (
+        DurableDeliveryExpired,
+        DurableDeliveryReplay,
         WhatsAppCloudDeliveryAuthenticator,
         WhatsAppCloudDurableReceiver,
         WhatsAppCloudRequestError,
     )
 
     body = b"{}"
+    failure = DurableDeliveryReplay() if failure_name == "replay" else DurableDeliveryExpired()
     receiver = WhatsAppCloudDurableReceiver(
         authenticator=WhatsAppCloudDeliveryAuthenticator(app_secret=APP_SECRET),
-        durable_accept=lambda _delivery: "accepted",
-        replay_guard=_ReplayGuard(decision),
+        authenticated_accept=_AtomicAcceptor(failure=failure),
+        clock=lambda: NOW,
     )
 
     with pytest.raises(WhatsAppCloudRequestError) as raised:
@@ -321,28 +331,20 @@ def test_post_replay_seam_rejects_duplicate_or_expired_delivery(
     assert raised.value.reason_code == reason_code
 
 
-def test_post_maps_replay_store_failures_to_a_safe_error() -> None:
+def test_post_maps_atomic_ingress_failures_to_a_safe_error() -> None:
     from observer.connectors.whatsapp_cloud import (
         WhatsAppCloudDeliveryAuthenticator,
         WhatsAppCloudDurableReceiver,
         WhatsAppCloudRequestError,
     )
 
-    class BrokenReplayGuard:
-        def claim(self, _delivery_id: str, _received_at: datetime) -> str:
-            raise RuntimeError(APP_SECRET)
-
     body = b"{}"
-    durable_calls: list[object] = []
-
-    def durable_accept(delivery: object) -> str:
-        durable_calls.append(delivery)
-        return "accepted"
+    acceptor = _AtomicAcceptor(failure=RuntimeError(APP_SECRET))
 
     receiver = WhatsAppCloudDurableReceiver(
         authenticator=WhatsAppCloudDeliveryAuthenticator(app_secret=APP_SECRET),
-        durable_accept=durable_accept,
-        replay_guard=BrokenReplayGuard(),
+        authenticated_accept=acceptor,
+        clock=lambda: NOW,
     )
 
     with pytest.raises(WhatsAppCloudRequestError) as raised:
@@ -354,30 +356,25 @@ def test_post_maps_replay_store_failures_to_a_safe_error() -> None:
         )
 
     assert raised.value.status_code == 503
-    assert raised.value.reason_code == "replay_check_failed"
+    assert raised.value.reason_code == "durable_accept_failed"
     assert APP_SECRET not in str(raised.value)
     assert APP_SECRET not in repr(raised.value)
-    assert len(durable_calls) == 1
+    assert len(acceptor.calls) == 1
 
 
-def test_durable_receive_happens_before_replay_state_is_consumed() -> None:
+def test_receive_uses_one_atomic_nonce_delivery_and_job_boundary() -> None:
     from observer.connectors.whatsapp_cloud import (
         WhatsAppCloudDeliveryAuthenticator,
         WhatsAppCloudDurableReceiver,
     )
 
-    events: list[str] = []
-    guard = _ReplayGuard(events=events)
-
-    def durable_accept(delivery: object) -> str:
-        events.append("durable")
-        assert delivery.__class__.__name__ == "RawDelivery"
-        return "accepted"
+    acceptor = _AtomicAcceptor()
 
     receiver = WhatsAppCloudDurableReceiver(
         authenticator=WhatsAppCloudDeliveryAuthenticator(app_secret=APP_SECRET),
-        durable_accept=durable_accept,
-        replay_guard=guard,
+        authenticated_accept=acceptor,
+        clock=lambda: NOW,
+        replay_window_seconds=300,
     )
     body = b"{not-json"
 
@@ -388,13 +385,19 @@ def test_durable_receive_happens_before_replay_state_is_consumed() -> None:
         received_at=NOW,
     )
 
-    assert events == ["durable", "replay"]
+    assert len(acceptor.calls) == 1
+    delivery, nonce, nonce_expires_at, now = acceptor.calls[0]
+    assert delivery.__class__.__name__ == "RawDelivery"
+    assert nonce.startswith("whatsapp:")
+    assert "delivery-ordered" not in nonce
+    assert nonce_expires_at == NOW + timedelta(seconds=300)
+    assert now == NOW
     assert result.status_code == 200
     assert result.disposition == "accepted"
     assert result.work_created is True
 
 
-def test_durable_failure_does_not_consume_replay_and_provider_retry_can_succeed() -> None:
+def test_atomic_failure_allows_provider_retry_to_succeed() -> None:
     from observer.connectors.whatsapp_cloud import (
         WhatsAppCloudDeliveryAuthenticator,
         WhatsAppCloudDurableReceiver,
@@ -402,9 +405,15 @@ def test_durable_failure_does_not_consume_replay_and_provider_retry_can_succeed(
     )
 
     attempts = 0
-    guard = _ReplayGuard()
 
-    def durable_accept(_delivery: object) -> str:
+    def authenticated_accept(
+        _delivery: object,
+        *,
+        nonce: str,
+        nonce_expires_at: datetime,
+        now: datetime,
+    ) -> str:
+        del nonce, nonce_expires_at, now
         nonlocal attempts
         attempts += 1
         if attempts == 1:
@@ -413,8 +422,8 @@ def test_durable_failure_does_not_consume_replay_and_provider_retry_can_succeed(
 
     receiver = WhatsAppCloudDurableReceiver(
         authenticator=WhatsAppCloudDeliveryAuthenticator(app_secret=APP_SECRET),
-        durable_accept=durable_accept,
-        replay_guard=guard,
+        authenticated_accept=authenticated_accept,
+        clock=lambda: NOW,
     )
     body = b"{}"
 
@@ -427,7 +436,6 @@ def test_durable_failure_does_not_consume_replay_and_provider_retry_can_succeed(
         )
     assert raised.value.status_code == 503
     assert raised.value.reason_code == "durable_accept_failed"
-    assert guard.claims == []
     assert APP_SECRET not in repr(raised.value)
 
     result = receiver.receive(
@@ -438,7 +446,7 @@ def test_durable_failure_does_not_consume_replay_and_provider_retry_can_succeed(
     )
     assert result.disposition == "accepted"
     assert result.work_created is True
-    assert guard.claims == [("delivery-retry", NOW)]
+    assert attempts == 2
 
 
 def test_duplicate_delivery_is_idempotently_acked_without_a_second_work_item() -> None:
@@ -449,35 +457,32 @@ def test_duplicate_delivery_is_idempotently_acked_without_a_second_work_item() -
         WhatsAppCloudRequestError,
     )
 
-    stored: dict[str, str] = {}
+    stored: dict[str, tuple[str, str]] = {}
     work_items: list[str] = []
 
-    def durable_accept(delivery: object) -> str:
+    def authenticated_accept(
+        delivery: object,
+        *,
+        nonce: str,
+        nonce_expires_at: datetime,
+        now: datetime,
+    ) -> str:
+        del nonce_expires_at, now
         delivery_id = delivery.delivery_id  # type: ignore[attr-defined]
         digest = hashlib.sha256(delivery.exact_bytes).hexdigest()  # type: ignore[attr-defined]
         previous = stored.get(delivery_id)
         if previous is not None:
-            if previous != digest:
+            if previous != (digest, nonce):
                 raise DurableDeliveryConflict
             return "duplicate"
-        stored[delivery_id] = digest
+        stored[delivery_id] = (digest, nonce)
         work_items.append(delivery_id)
         return "accepted"
 
-    class StatefulReplayGuard:
-        def __init__(self) -> None:
-            self.seen: set[str] = set()
-
-        def claim(self, delivery_id: str, _received_at: datetime) -> str:
-            if delivery_id in self.seen:
-                return "replay"
-            self.seen.add(delivery_id)
-            return "accepted"
-
     receiver = WhatsAppCloudDurableReceiver(
         authenticator=WhatsAppCloudDeliveryAuthenticator(app_secret=APP_SECRET),
-        durable_accept=durable_accept,
-        replay_guard=StatefulReplayGuard(),
+        authenticated_accept=authenticated_accept,
+        clock=lambda: NOW,
     )
     body = b'{"message":"first"}'
 
@@ -683,8 +688,134 @@ def test_decoder_rejects_duplicate_json_keys_and_unsupported_message_shapes() ->
             }
         ]
     )
-    with pytest.raises(WhatsAppCloudQuarantineError, match="unsupported_message_type"):
+    with pytest.raises(WhatsAppCloudQuarantineError, match="invalid_interactive_message"):
         WhatsAppCloudWebhookDecoder().decode_delivery(unsupported)
+
+
+@pytest.mark.parametrize(
+    ("message_type", "content"),
+    [
+        ("button", {"payload": "quote-request", "text": "请报价"}),
+        (
+            "interactive",
+            {
+                "type": "button_reply",
+                "button_reply": {"id": "confirm-sample", "title": "确认样品"},
+            },
+        ),
+        (
+            "interactive",
+            {
+                "type": "list_reply",
+                "list_reply": {
+                    "id": "size-100ml",
+                    "title": "100 ml",
+                    "description": "透明玻璃瓶",
+                },
+            },
+        ),
+        (
+            "location",
+            {
+                "latitude": 25.2048,
+                "longitude": 55.2708,
+                "name": "Dubai",
+                "address": "Restricted address sentinel",
+            },
+        ),
+        (
+            "contacts",
+            [
+                {
+                    "name": {"formatted_name": "Contact Sentinel"},
+                    "phones": [{"phone": "+971500000000", "type": "WORK"}],
+                }
+            ],
+        ),
+        ("reaction", {"message_id": "wamid.original", "emoji": "👍"}),
+        (
+            "order",
+            {
+                "catalog_id": "catalog-001",
+                "text": "Order note sentinel",
+                "product_items": [
+                    {
+                        "product_retailer_id": "sku-001",
+                        "quantity": "2",
+                        "item_price": "1.00",
+                        "currency": "USD",
+                    }
+                ],
+            },
+        ),
+        (
+            "system",
+            {
+                "body": "Customer changed number",
+                "type": "customer_changed_number",
+                "wa_id": "15550004444",
+            },
+        ),
+        ("unknown", None),
+    ],
+)
+def test_decoder_accepts_current_non_media_inbound_message_families(
+    message_type: str,
+    content: object,
+) -> None:
+    from observer.connectors.whatsapp_cloud import WhatsAppCloudWebhookDecoder
+
+    message: dict[str, object] = {
+        "from": "15550002222",
+        "id": f"wamid.{message_type}",
+        "timestamp": "1786071000",
+        "type": message_type,
+        message_type: content,
+    }
+    if message_type == "unknown":
+        message.pop("unknown")
+        message["errors"] = [
+            {
+                "code": 131051,
+                "title": "Unsupported message type",
+                "details": "Preserve for human review",
+            }
+        ]
+
+    decoded = WhatsAppCloudWebhookDecoder().decode_delivery(_messages_body([message]))
+
+    assert [item.provider_event_id for item in decoded.items] == [f"wamid.{message_type}"]
+    stored_message = decoded.items[0].payload["message"]
+    assert stored_message["type"] == message_type
+    assert ("errors" if message_type == "unknown" else message_type) in stored_message
+    assert decoded.media_download_tasks == ()
+
+
+def test_decoded_delivery_repr_never_contains_message_contact_or_runtime_payloads() -> None:
+    from observer.connectors.whatsapp_cloud import WhatsAppCloudWebhookDecoder
+
+    body_sentinel = "BODY-SENTINEL-DO-NOT-LOG"
+    contact_sentinel = "CONTACT-SENTINEL-DO-NOT-LOG"
+    decoded = WhatsAppCloudWebhookDecoder().decode_delivery(
+        _messages_body(
+            [
+                {
+                    "from": "15550002222",
+                    "id": "wamid.redacted",
+                    "timestamp": "1786071000",
+                    "type": "text",
+                    "text": {"body": body_sentinel},
+                }
+            ]
+        ).replace(b"Raw Profile", contact_sentinel.encode())
+    )
+
+    rendered = repr((decoded, decoded.items[0], decoded.runtime_metadata))
+
+    assert body_sentinel not in rendered
+    assert contact_sentinel not in rendered
+    assert "15550002222" not in rendered
+    assert "payload=<redacted>" in rendered
 
 
 def test_decoder_rejects_non_finite_json_numbers() -> None:

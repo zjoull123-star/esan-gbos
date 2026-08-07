@@ -7,7 +7,7 @@ import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Literal, Never, Protocol
 
@@ -60,7 +60,21 @@ _MESSAGE_COMMON_KEYS = frozenset(
     }
 )
 _MEDIA_TYPES = frozenset({"image", "audio", "video", "document", "sticker"})
-_MESSAGE_TYPES = frozenset({"text"}) | _MEDIA_TYPES
+_NON_MEDIA_TYPES = frozenset(
+    {
+        "button",
+        "contacts",
+        "interactive",
+        "location",
+        "order",
+        "reaction",
+        "system",
+        "text",
+        "unknown",
+    }
+)
+_MESSAGE_TYPES = _NON_MEDIA_TYPES | _MEDIA_TYPES
+_INTERACTIVE_TYPES = frozenset({"button_reply", "list_reply", "nfm_reply"})
 _MEDIA_KEYS = frozenset(
     {
         "id",
@@ -90,17 +104,29 @@ class WebhookResponse:
     body: bytes
 
 
-class ReplayGuard(Protocol):
-    """Caller-owned durable nonce/age boundary."""
+class AuthenticatedDurableAccept(Protocol):
+    """Persist nonce, delivery and processing job in one caller-owned transaction."""
 
-    def claim(self, delivery_id: str, received_at: datetime) -> str: ...
-
-
-DurableAccept = Callable[[RawDelivery], str]
+    def __call__(
+        self,
+        delivery: RawDelivery,
+        *,
+        nonce: str,
+        nonce_expires_at: datetime,
+        now: datetime,
+    ) -> str: ...
 
 
 class DurableDeliveryConflict(RuntimeError):
     """A delivery identifier was already bound to different exact bytes."""
+
+
+class DurableDeliveryReplay(RuntimeError):
+    """An authenticated delivery nonce was already consumed incompatibly."""
+
+
+class DurableDeliveryExpired(RuntimeError):
+    """An authenticated delivery is outside the configured replay window."""
 
 
 class WhatsAppCloudQuarantineError(DeliveryQuarantine):
@@ -115,7 +141,7 @@ class _InvalidJSONConstant(ValueError):
     pass
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class MediaDownloadTask:
     """A credential-free description for a separate read-only media worker."""
 
@@ -125,8 +151,16 @@ class MediaDownloadTask:
     sha256: str | None
     retry_key: str
 
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(provider_event_id=<redacted>, "
+            "media_id=<redacted>, "
+            f"media_type={self.media_type!r}, "
+            f"has_sha256={self.sha256 is not None}, retry_key=<redacted>)"
+        )
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class WhatsAppRuntimeMetadata:
     """Provider runtime signals which must never be interpreted as business facts."""
 
@@ -134,13 +168,29 @@ class WhatsAppRuntimeMetadata:
     provider_errors: tuple[object, ...]
     provider_metadata: tuple[Mapping[str, object], ...]
 
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(status_count={len(self.statuses)}, "
+            f"provider_error_count={len(self.provider_errors)}, "
+            f"provider_metadata_count={len(self.provider_metadata)}, payload=<redacted>)"
+        )
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class DecodedWhatsAppCloudDelivery:
     items: tuple[ConnectorItem, ...]
     runtime_metadata: WhatsAppRuntimeMetadata
     media_download_tasks: tuple[MediaDownloadTask, ...]
     raw_contacts: tuple[Mapping[str, object], ...]
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(item_count={len(self.items)}, "
+            f"status_count={len(self.runtime_metadata.statuses)}, "
+            f"provider_error_count={len(self.runtime_metadata.provider_errors)}, "
+            f"media_download_count={len(self.media_download_tasks)}, "
+            f"raw_contact_count={len(self.raw_contacts)}, payload=<redacted>)"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,26 +304,35 @@ class WhatsAppCloudDeliveryAuthenticator:
 
 
 class WhatsAppCloudDurableReceiver:
-    """Order the authenticated handoff as durable accept, then replay accounting."""
+    """Authenticate then atomically persist nonce, delivery and processing job."""
 
-    __slots__ = ("_authenticator", "_durable_accept", "_replay_guard")
+    __slots__ = (
+        "_authenticated_accept",
+        "_authenticator",
+        "_clock",
+        "_replay_window_seconds",
+    )
 
     def __init__(
         self,
         *,
         authenticator: WhatsAppCloudDeliveryAuthenticator,
-        durable_accept: DurableAccept,
-        replay_guard: ReplayGuard,
+        authenticated_accept: AuthenticatedDurableAccept,
+        clock: Callable[[], datetime],
+        replay_window_seconds: int = 300,
     ) -> None:
         if not isinstance(authenticator, WhatsAppCloudDeliveryAuthenticator):
             raise TypeError("invalid authenticator")
-        if not callable(durable_accept):
-            raise TypeError("durable_accept must be callable")
-        if not callable(getattr(replay_guard, "claim", None)):
-            raise TypeError("replay_guard must provide claim")
+        if not callable(authenticated_accept):
+            raise TypeError("authenticated_accept must be callable")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
+        if not isinstance(replay_window_seconds, int) or not 1 <= replay_window_seconds <= 86_400:
+            raise ValueError("invalid replay window")
         self._authenticator = authenticator
-        self._durable_accept = durable_accept
-        self._replay_guard = replay_guard
+        self._authenticated_accept = authenticated_accept
+        self._clock = clock
+        self._replay_window_seconds = replay_window_seconds
 
     def receive(
         self,
@@ -290,11 +349,30 @@ class WhatsAppCloudDurableReceiver:
             received_at=received_at,
         )
         try:
-            disposition = self._durable_accept(delivery)
+            now = self._clock()
+            if now.tzinfo is None or now.utcoffset() is None:
+                raise RuntimeError("invalid clock")
+            nonce = "whatsapp:" + hashlib.sha256(delivery.delivery_id.encode()).hexdigest()
+            disposition = self._authenticated_accept(
+                delivery,
+                nonce=nonce,
+                nonce_expires_at=now + timedelta(seconds=self._replay_window_seconds),
+                now=now,
+            )
         except DurableDeliveryConflict:
             raise WhatsAppCloudRequestError(
                 status_code=409,
                 reason_code="delivery_conflict",
+            ) from None
+        except DurableDeliveryReplay:
+            raise WhatsAppCloudRequestError(
+                status_code=409,
+                reason_code="replay_rejected",
+            ) from None
+        except DurableDeliveryExpired:
+            raise WhatsAppCloudRequestError(
+                status_code=408,
+                reason_code="delivery_expired",
             ) from None
         except Exception:
             raise WhatsAppCloudRequestError(
@@ -307,32 +385,12 @@ class WhatsAppCloudDurableReceiver:
                 reason_code="durable_accept_failed",
             )
 
-        try:
-            replay_decision = self._replay_guard.claim(
-                delivery.delivery_id,
-                delivery.received_at,
-            )
-        except Exception:
-            raise WhatsAppCloudRequestError(
-                status_code=503,
-                reason_code="replay_check_failed",
-            ) from None
-        if replay_decision not in {"accepted", "replay", "expired"}:
-            raise WhatsAppCloudRequestError(
-                status_code=503,
-                reason_code="replay_check_failed",
-            )
-
         if disposition == "duplicate":
             return WebhookReceiveResult(
                 status_code=200,
                 disposition="duplicate",
                 work_created=False,
             )
-        if replay_decision == "replay":
-            raise WhatsAppCloudRequestError(status_code=409, reason_code="replay_rejected")
-        if replay_decision == "expired":
-            raise WhatsAppCloudRequestError(status_code=408, reason_code="delivery_expired")
         return WebhookReceiveResult(
             status_code=200,
             disposition="accepted",
@@ -585,13 +643,15 @@ class WhatsAppCloudWebhookDecoder:
         if sender is not None:
             self._require_identifier(sender, "invalid_message")
         self._parse_timestamp(message.get("timestamp"))
-        content = self._require_mapping(message.get(message_type), "invalid_message_content")
+        raw_content = message.get(message_type)
         if message_type == "text":
+            content = self._require_mapping(raw_content, "invalid_text_message")
             self._require_keys(content, frozenset({"body"}), "invalid_text_message")
             body = content.get("body")
             if not isinstance(body, str):
                 self._quarantine("invalid_text_message")
         elif message_type in _MEDIA_TYPES:
+            content = self._require_mapping(raw_content, "invalid_media_message")
             self._require_keys(content, _MEDIA_KEYS, "invalid_media_message")
             self._require_identifier(content.get("id"), "invalid_media_message")
             self._require_identifier(content.get("mime_type"), "invalid_media_message")
@@ -600,6 +660,105 @@ class WhatsAppCloudWebhookDecoder:
                 not isinstance(digest, str) or not _SHA256.fullmatch(digest)
             ):
                 self._quarantine("invalid_media_message")
+        elif message_type == "button":
+            content = self._require_mapping(raw_content, "invalid_button_message")
+            self._require_keys(
+                content,
+                frozenset({"payload", "text"}),
+                "invalid_button_message",
+            )
+            self._require_text(content.get("payload"), "invalid_button_message")
+            self._require_text(content.get("text"), "invalid_button_message")
+        elif message_type == "interactive":
+            content = self._require_mapping(raw_content, "invalid_interactive_message")
+            self._require_keys(
+                content,
+                frozenset({"type"}) | _INTERACTIVE_TYPES,
+                "invalid_interactive_message",
+            )
+            interactive_type = content.get("type")
+            if not isinstance(interactive_type, str) or interactive_type not in _INTERACTIVE_TYPES:
+                self._quarantine("invalid_interactive_message")
+            reply = self._require_mapping(
+                content.get(interactive_type),
+                "invalid_interactive_message",
+            )
+            if not reply:
+                self._quarantine("invalid_interactive_message")
+        elif message_type == "location":
+            content = self._require_mapping(raw_content, "invalid_location_message")
+            self._require_keys(
+                content,
+                frozenset({"latitude", "longitude", "name", "address"}),
+                "invalid_location_message",
+            )
+            latitude = self._require_number(
+                content.get("latitude"),
+                "invalid_location_message",
+            )
+            longitude = self._require_number(
+                content.get("longitude"),
+                "invalid_location_message",
+            )
+            if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+                self._quarantine("invalid_location_message")
+            for optional in ("name", "address"):
+                if content.get(optional) is not None:
+                    self._require_text(content[optional], "invalid_location_message")
+        elif message_type == "contacts":
+            contacts = self._require_list(
+                raw_content,
+                "invalid_contacts_message",
+                self._max_records,
+            )
+            if not contacts:
+                self._quarantine("invalid_contacts_message")
+            for contact in contacts:
+                if not self._require_mapping(contact, "invalid_contacts_message"):
+                    self._quarantine("invalid_contacts_message")
+        elif message_type == "reaction":
+            content = self._require_mapping(raw_content, "invalid_reaction_message")
+            self._require_keys(
+                content,
+                frozenset({"message_id", "emoji"}),
+                "invalid_reaction_message",
+            )
+            self._require_identifier(content.get("message_id"), "invalid_reaction_message")
+            emoji = content.get("emoji")
+            if not isinstance(emoji, str):
+                self._quarantine("invalid_reaction_message")
+        elif message_type == "order":
+            content = self._require_mapping(raw_content, "invalid_order_message")
+            self._require_keys(
+                content,
+                frozenset({"catalog_id", "text", "product_items"}),
+                "invalid_order_message",
+            )
+            self._require_identifier(content.get("catalog_id"), "invalid_order_message")
+            if content.get("text") is not None:
+                self._require_text(content["text"], "invalid_order_message")
+            product_items = self._require_list(
+                content.get("product_items"),
+                "invalid_order_message",
+                self._max_records,
+            )
+            if not product_items:
+                self._quarantine("invalid_order_message")
+            for product in product_items:
+                if not self._require_mapping(product, "invalid_order_message"):
+                    self._quarantine("invalid_order_message")
+        elif message_type == "system":
+            content = self._require_mapping(raw_content, "invalid_system_message")
+            system_type = content.get("type")
+            self._require_identifier(system_type, "invalid_system_message")
+        elif message_type == "unknown":
+            errors = self._require_list(
+                message.get("errors"),
+                "invalid_unknown_message",
+                self._max_records,
+            )
+            if not errors:
+                self._quarantine("invalid_unknown_message")
         return message
 
     def _media_task(
@@ -667,6 +826,16 @@ class WhatsAppCloudWebhookDecoder:
         if not isinstance(value, str) or not value or "\x00" in value:
             WhatsAppCloudWebhookDecoder._quarantine(reason)
         return value
+
+    @staticmethod
+    def _require_number(value: object, reason: str) -> float:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+        ):
+            WhatsAppCloudWebhookDecoder._quarantine(reason)
+        return float(value)
 
     @staticmethod
     def _quarantine(reason: str) -> Never:
