@@ -240,9 +240,10 @@ const syntheticUsageEnvelope = v4Envelope({
   model: "deepseek-v4-flash",
   period: "2026-08",
   tokens: 1200,
+  token_state: "known",
   cost: { currency: "USD", amount: null, state: "unknown" },
-  soft_limit: 10000,
-  hard_limit: 20000,
+  soft_limit_usd: 50,
+  hard_limit_usd: 100,
   state: "normal",
 });
 
@@ -385,7 +386,9 @@ test.beforeEach(async ({ page }, testInfo) => {
 test("五个角色工作台无 axe 违规", async ({ page }, testInfo) => {
   for (const [path, heading] of workspaces) {
     await openWorkspace(page, testInfo, path, heading);
-    await expect(page.getByText(/演示/u).first()).toBeVisible();
+    if (isHarness(testInfo) || path === "/gbos/ceo") {
+      await expect(page.getByText(/演示/u).first()).toBeVisible();
+    }
     expect(await axeViolations(page), `${path} axe violations`).toEqual([]);
   }
 });
@@ -397,18 +400,35 @@ test("CEO cockpit 显示治理质量与来源且不可用指标没有正式数�
   await expect(page.getByText("演示 / 合成数据", { exact: true })).toBeVisible();
 
   const available = page.locator("[data-metric-key='sales.order_value']");
-  await expect(available.getByText("125,000", { exact: true })).toBeVisible();
+  await expect(
+    available.getByText(isHarness(testInfo) ? "125,000" : "20,600", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(available.getByText("CNY", { exact: true })).toBeVisible();
   await expect(available.getByText(/^新鲜 ·/u)).toBeVisible();
   await expect(available.getByText(/100%/u)).toBeVisible();
   await expect(available.getByText(/已通过/u)).toBeVisible();
   await available.getByText(/查看来源链路/u).click();
-  await expect(available.getByText("synthetic_kingdee_projection")).toBeVisible();
+  await expect(
+    available.getByText(
+      isHarness(testInfo)
+        ? "synthetic_kingdee_projection"
+        : "kingdee-gate5-synthetic",
+    ),
+  ).toBeVisible();
 
-  const unavailable = page.locator("[data-metric-key='receivables.balance']");
-  await expect(unavailable.getByText("不显示正式数值", { exact: true })).toBeVisible();
-  await expect(unavailable.locator("[data-official-value]")).toHaveCount(0);
-  await expect(unavailable.getByText(/reconciliation_failed/u)).toBeVisible();
+  const receivables = page.locator("[data-metric-key='receivables.balance']");
+  if (isHarness(testInfo)) {
+    await expect(
+      receivables.getByText("不显示正式数值", { exact: true }),
+    ).toBeVisible();
+    await expect(receivables.locator("[data-official-value]")).toHaveCount(0);
+    await expect(receivables.getByText(/reconciliation_failed/u)).toBeVisible();
+  } else {
+    await expect(receivables.getByText("6,000", { exact: true })).toBeVisible();
+    await expect(receivables.getByText("CNY", { exact: true })).toBeVisible();
+  }
 });
 
 test("SPA 内销售切换采购会重新读取采购数据", async ({ page }, testInfo) => {
@@ -460,17 +480,25 @@ test("集成与沟通切片通过 axe、Restricted 和三视口检查", async ({
   page,
 }, testInfo) => {
   await openWorkspace(page, testInfo, "/gbos/integrations", "集成状态");
-  await expect(page.getByText("deepseek-v4-flash")).toBeVisible();
-  await expect(page.getByText("WhatsApp", { exact: true })).toBeVisible();
+  if (isHarness(testInfo)) {
+    await expect(page.getByText("deepseek-v4-flash")).toBeVisible();
+    await expect(page.getByText("WhatsApp", { exact: true })).toBeVisible();
+  } else {
+    await expect(page.getByText("暂无符合条件的数据")).toBeVisible();
+  }
   expect(await axeViolations(page)).toEqual([]);
 
   await page.getByRole("link", { name: "沟通观察", exact: true }).click();
-  await expect(page.getByText("客户询问下一轮样品交期。")).toBeVisible();
-  await page.getByRole("link", { name: "查看安全详情" }).click();
-  await expect(page.getByText("Restricted 原文默认不可打开")).toBeVisible();
-  await expect(
-    page.getByText("基于沟通的非正式观察/非正式指标"),
-  ).toBeVisible();
+  if (isHarness(testInfo)) {
+    await expect(page.getByText("客户询问下一轮样品交期。")).toBeVisible();
+    await page.getByRole("link", { name: "查看安全详情" }).click();
+    await expect(page.getByText("Restricted 原文默认不可打开")).toBeVisible();
+    await expect(
+      page.getByText("基于沟通的非正式观察/非正式指标"),
+    ).toBeVisible();
+  } else {
+    await expect(page.getByText("暂无符合条件的数据")).toBeVisible();
+  }
   await expect(page.locator("blockquote")).toHaveCount(0);
   expect(await axeViolations(page)).toEqual([]);
 
@@ -490,8 +518,14 @@ test("离线关闭且 fixture API 响应不进入持久存储", async (
   { context, page },
   testInfo,
 ) => {
-  await openWorkspace(page, testInfo, "/gbos/sales", "销售协同");
-  await expect(page.getByText("客户偏好清新的柑橘香调。")).toBeVisible();
+  const sensitiveText = isHarness(testInfo) ? "客户偏好清新的柑橘香调。" : "20,600";
+  await openWorkspace(
+    page,
+    testInfo,
+    isHarness(testInfo) ? "/gbos/sales" : "/gbos/ceo",
+    isHarness(testInfo) ? "销售协同" : "经营总览",
+  );
+  await expect(page.getByText(sensitiveText, { exact: true })).toBeVisible();
 
   const storage = await page.evaluate(async () => {
     const cacheNames = await caches.keys();
@@ -509,13 +543,23 @@ test("离线关闭且 fixture API 响应不进入持久存储", async (
         : [];
     return {
       localKeys: Object.keys(localStorage),
+      localValues: Object.values(localStorage),
       sessionKeys: Object.keys(sessionStorage),
+      sessionValues: Object.values(sessionStorage),
       cacheUrls,
       databaseNames,
     };
   });
-  expect(storage.localKeys).toEqual([]);
-  expect(storage.sessionKeys).toEqual([]);
+  if (isHarness(testInfo)) {
+    expect(storage.localKeys).toEqual([]);
+    expect(storage.sessionKeys).toEqual([]);
+  } else {
+    expect(storage.localKeys.some((key) => /^gbos[-_.:]/iu.test(key))).toBe(false);
+    expect(storage.sessionKeys.some((key) => /^gbos[-_.:]/iu.test(key))).toBe(false);
+    expect([...storage.localValues, ...storage.sessionValues].join("\n")).not.toContain(
+      sensitiveText,
+    );
+  }
   expect(storage.cacheUrls.some((url) => url.includes("/api/"))).toBe(false);
   expect(
     storage.databaseNames.some((name) => /gbos-(data|api|fixture)/iu.test(name)),
@@ -524,5 +568,5 @@ test("离线关闭且 fixture API 响应不进入持久存储", async (
   await context.setOffline(true);
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
   await expect(page.getByText("需要联网", { exact: true })).toBeVisible();
-  await expect(page.getByText("客户偏好清新的柑橘香调。")).toHaveCount(0);
+  await expect(page.getByText(sensitiveText, { exact: true })).toHaveCount(0);
 });
