@@ -1,0 +1,407 @@
+name: esan-gbos-local-pilot
+
+x-runtime-image: &runtime-image "esan-gbos-local-pilot-runtime:2026-08-08"
+x-runtime-environment: &runtime-environment
+  GBOS_MODE: local_pilot
+  GBOS_PRODUCTION_ENABLED: "false"
+  GBOS_KINGDEE_ENABLED: "false"
+  GBOS_CLOUD_SERVER_ENABLED: "false"
+  GBOS_CLOUD_BUSINESS_STORAGE_ENABLED: "false"
+  GBOS_EXTERNAL_SEND_ENABLED: ${GBOS_EXTERNAL_SEND_ENABLED:-false}
+  GBOS_EMERGENCY_STOP_FILE: /run/gbos/EMERGENCY_STOP
+  GBOS_MANIFEST_PATH: /config/local-pilot-manifest.json
+
+services:
+  postgres:
+    image: "pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966"
+    pull_policy: never
+    environment:
+      POSTGRES_DB: gbos_local_pilot
+      POSTGRES_USER: gbos_local_pilot
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - local-pilot-postgres-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${GBOS_LOCAL_POSTGRES_PORT:-55432}:5432"
+    networks:
+      - local-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gbos_local_pilot -d gbos_local_pilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+    restart: unless-stopped
+
+  object-store:
+    image: "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
+    pull_policy: never
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: gbos-local-pilot
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/object_store_password
+      MINIO_BROWSER_REDIRECT_URL: "http://127.0.0.1:${GBOS_LOCAL_OBJECT_CONSOLE_PORT:-59001}"
+    secrets:
+      - object_store_password
+    volumes:
+      - local-pilot-object-data:/data
+    ports:
+      - "127.0.0.1:${GBOS_LOCAL_OBJECT_PORT:-59000}:9000"
+      - "127.0.0.1:${GBOS_LOCAL_OBJECT_CONSOLE_PORT:-59001}:9001"
+    networks:
+      - local-internal
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    restart: unless-stopped
+
+  prometheus:
+    image: "prom/prometheus:v3.7.3"
+    pull_policy: never
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - local-pilot-prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${GBOS_LOCAL_PROMETHEUS_PORT:-59090}:9090"
+    networks:
+      - local-internal
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          /bin/promtool check ready
+          --url=http://127.0.0.1:9090
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  pilot-ui:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["runtime"]
+    command: ["python", "-m", "services.local_pilot_runtime.ui"]
+    environment:
+      <<: *runtime-environment
+      GBOS_LISTEN_HOST: 0.0.0.0
+      GBOS_LISTEN_PORT: "8080"
+    secrets:
+      - postgres_password
+      - object_store_password
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ./../../contracts/local_pilot:/contracts/local_pilot:ro
+      - ./../../.runtime/local-pilot:/run/gbos:ro
+      - local-pilot-sites:/var/lib/gbos/sites
+    ports:
+      - "127.0.0.1:${GBOS_LOCAL_UI_PORT:-58080}:8080"
+    networks:
+      - local-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-store:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  webhook-ingress:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["whatsapp"]
+    command: ["python", "-m", "services.local_pilot_runtime.webhook"]
+    environment:
+      <<: *runtime-environment
+      GBOS_LISTEN_HOST: 0.0.0.0
+      GBOS_LISTEN_PORT: "8000"
+      GBOS_CONNECTOR_KILL_SWITCH: ${GBOS_CONNECTOR_KILL_SWITCH:-true}
+    secrets:
+      - postgres_password
+      - whatsapp_credential
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ./../../contracts/local_pilot:/contracts/local_pilot:ro
+      - ./../../.runtime/local-pilot:/run/gbos:ro
+    networks:
+      - local-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-store:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  agent-runtime:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["runtime"]
+    command: ["python", "-m", "services.local_pilot_runtime.agent_api"]
+    environment:
+      <<: *runtime-environment
+      GBOS_LISTEN_HOST: 0.0.0.0
+      GBOS_LISTEN_PORT: "8002"
+      GBOS_MODEL_KILL_SWITCH: ${GBOS_MODEL_KILL_SWITCH:-true}
+    secrets:
+      - postgres_password
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ./../../contracts/local_pilot:/contracts/local_pilot:ro
+      - ./../../.runtime/local-pilot:/run/gbos:ro
+    networks:
+      - local-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  email-poller:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["email"]
+    command: ["python", "-m", "services.local_pilot_runtime.pollers", "email"]
+    environment:
+      <<: *runtime-environment
+      GBOS_CHANNEL: email
+      GBOS_CONNECTOR_KILL_SWITCH: ${GBOS_CONNECTOR_KILL_SWITCH:-true}
+    secrets:
+      - postgres_password
+      - email_credential
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ./../../contracts/local_pilot:/contracts/local_pilot:ro
+      - ./../../.runtime/local-pilot:/run/gbos:ro
+    networks:
+      - local-internal
+      - controlled-egress
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-store:
+        condition: service_healthy
+    restart: unless-stopped
+
+  wecom-poller:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["wecom"]
+    command: ["python", "-m", "services.local_pilot_runtime.pollers", "wecom"]
+    environment:
+      <<: *runtime-environment
+      GBOS_CHANNEL: wecom
+      GBOS_CONNECTOR_KILL_SWITCH: ${GBOS_CONNECTOR_KILL_SWITCH:-true}
+    secrets:
+      - postgres_password
+      - wecom_credential
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ./../../contracts/local_pilot:/contracts/local_pilot:ro
+      - ./../../.runtime/local-pilot:/run/gbos:ro
+    networks:
+      - local-internal
+      - controlled-egress
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-store:
+        condition: service_healthy
+    restart: unless-stopped
+
+  whatsapp-poller:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["whatsapp"]
+    command: ["python", "-m", "services.local_pilot_runtime.pollers", "whatsapp"]
+    environment:
+      <<: *runtime-environment
+      GBOS_CHANNEL: whatsapp
+      GBOS_CONNECTOR_KILL_SWITCH: ${GBOS_CONNECTOR_KILL_SWITCH:-true}
+    secrets:
+      - postgres_password
+      - whatsapp_credential
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ./../../contracts/local_pilot:/contracts/local_pilot:ro
+      - ./../../.runtime/local-pilot:/run/gbos:ro
+    networks:
+      - local-internal
+      - controlled-egress
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-store:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["model"]
+    command: ["python", "-m", "services.local_pilot_runtime.agent_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_MODEL_KILL_SWITCH: ${GBOS_MODEL_KILL_SWITCH:-true}
+    secrets:
+      - postgres_password
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ./../../contracts/local_pilot:/contracts/local_pilot:ro
+      - ./../../.runtime/local-pilot:/run/gbos:ro
+    networks:
+      - local-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  deepseek-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["model"]
+    command: ["python", "-m", "services.local_pilot_runtime.model_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_MODEL_KILL_SWITCH: ${GBOS_MODEL_KILL_SWITCH:-true}
+      DEEPSEEK_BASE_URL: https://api.deepseek.com
+      DEEPSEEK_MODEL: deepseek-v4-flash
+    secrets:
+      - postgres_password
+      - deepseek_api_key
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ./../../contracts/local_pilot:/contracts/local_pilot:ro
+      - ./../../.runtime/local-pilot:/run/gbos:ro
+    networks:
+      - local-internal
+      - controlled-egress
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agent-runtime:
+        condition: service_healthy
+    restart: unless-stopped
+
+  media-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["media"]
+    command: ["python", "-m", "services.local_pilot_runtime.media_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_MEDIA_LOCAL_ONLY: "true"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      PIP_NO_INDEX: "1"
+    secrets:
+      - postgres_password
+      - object_store_password
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ./../../contracts/local_pilot:/contracts/local_pilot:ro
+      - ./../../.runtime/local-pilot:/run/gbos:ro
+      - ${GBOS_MEDIA_MODEL_DIR:-/tmp/gbos-local-pilot-models-unavailable}:/models:ro
+    networks:
+      - local-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-store:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cloudflared:
+    image: "cloudflare/cloudflared:2025.11.1"
+    pull_policy: never
+    profiles: ["tunnel"]
+    command:
+      - tunnel
+      - --config
+      - /etc/cloudflared/config.yml
+      - --credentials-file
+      - /run/secrets/cloudflared_tunnel
+      - run
+      - ${GBOS_CLOUDFLARED_TUNNEL_ID:-unavailable}
+    secrets:
+      - cloudflared_tunnel
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+    networks:
+      - local-internal
+      - controlled-egress
+    depends_on:
+      webhook-ingress:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  local-internal:
+    name: esan-gbos-local-pilot-internal
+    internal: true
+  controlled-egress:
+    name: esan-gbos-local-pilot-controlled-egress
+
+volumes:
+  local-pilot-postgres-data:
+    name: esan-gbos-local-pilot-postgres-data
+  local-pilot-object-data:
+    name: esan-gbos-local-pilot-object-data
+  local-pilot-prometheus-data:
+    name: esan-gbos-local-pilot-prometheus-data
+  local-pilot-sites:
+    name: esan-gbos-local-pilot-sites
+
+secrets:
+  postgres_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_password
+  object_store_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/object_store_password
+  email_credential:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_credential
+  wecom_credential:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/wecom_credential
+  whatsapp_credential:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/whatsapp_credential
+  deepseek_api_key:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/deepseek_api_key
+  cloudflared_tunnel:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/cloudflared_tunnel

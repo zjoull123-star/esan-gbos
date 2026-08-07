@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.esan.gbos.local-pilot</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO_ROOT__/scripts/local-pilot/start</string>
+    <string>--manifest</string>
+    <string>__REPO_ROOT__/infra/local/local-pilot-manifest.json</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__REPO_ROOT__</string>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/local-pilot.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/local-pilot.stderr.log</string>
+</dict>
+</plist>

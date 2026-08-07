@@ -1,0 +1,6 @@
+no-autoupdate: true
+metrics: 127.0.0.1:2000
+ingress:
+  - path: ^/webhooks/whatsapp(/.*)?$
+    service: http://webhook-ingress:8000
+  - service: http_status:404

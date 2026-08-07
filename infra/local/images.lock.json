@@ -1,0 +1,31 @@
+{
+  "recorded_at": "2026-08-08T01:13:46+08:00",
+  "recording_scope": "author workstation local docker inspect; null means image was not present and was not pulled",
+  "images": [
+    {
+      "service": "postgres",
+      "reference": "pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966",
+      "local_inspect_digest": "sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966"
+    },
+    {
+      "service": "object-store",
+      "reference": "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
+      "local_inspect_digest": null
+    },
+    {
+      "service": "prometheus",
+      "reference": "prom/prometheus:v3.7.3",
+      "local_inspect_digest": null
+    },
+    {
+      "service": "cloudflared",
+      "reference": "cloudflare/cloudflared:2025.11.1",
+      "local_inspect_digest": null
+    },
+    {
+      "service": "local-runtime",
+      "reference": "esan-gbos-local-pilot-runtime:2026-08-08",
+      "local_inspect_digest": null
+    }
+  ]
+}

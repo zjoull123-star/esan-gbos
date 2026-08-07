@@ -1,0 +1,26 @@
+{
+  "runtime_image": "esan-gbos-local-pilot-runtime:2026-08-08",
+  "required_always": {
+    "pilot-ui": "services/local_pilot_runtime/ui.py",
+    "agent-runtime": "services/local_pilot_runtime/agent_api.py"
+  },
+  "required_when_enabled": {
+    "email": {
+      "email-poller": "services/local_pilot_runtime/pollers.py"
+    },
+    "wecom": {
+      "wecom-poller": "services/local_pilot_runtime/pollers.py"
+    },
+    "whatsapp": {
+      "webhook-ingress": "services/local_pilot_runtime/webhook.py",
+      "whatsapp-poller": "services/local_pilot_runtime/pollers.py"
+    },
+    "deepseek": {
+      "agent-worker": "services/local_pilot_runtime/agent_worker.py",
+      "deepseek-worker": "services/local_pilot_runtime/model_worker.py"
+    },
+    "media": {
+      "media-worker": "services/local_pilot_runtime/media_worker.py"
+    }
+  }
+}

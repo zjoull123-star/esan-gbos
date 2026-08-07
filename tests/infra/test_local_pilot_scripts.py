@@ -1,0 +1,183 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import stat
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).parents[2]
+SCRIPTS = ROOT / "scripts" / "local-pilot"
+MANIFEST = ROOT / "infra" / "local" / "local-pilot-manifest.json"
+
+
+def _read(path: Path) -> str:
+    assert path.is_file(), f"required local-pilot asset is missing: {path.relative_to(ROOT)}"
+    return path.read_text(encoding="utf-8")
+
+
+def _run_preflight(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(SCRIPTS / "preflight"), "--repo-root", str(ROOT), *args],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_operational_scripts_are_executable_and_shell_safe() -> None:
+    for name in (
+        "start",
+        "status",
+        "stop",
+        "emergency-stop",
+        "prepare-secrets",
+        "inspect-images",
+        "preflight",
+    ):
+        path = SCRIPTS / name
+        content = _read(path)
+        assert stat.S_IMODE(path.stat().st_mode) & stat.S_IXUSR
+        assert content.startswith("#!")
+        assert "set -x" not in content
+        if content.startswith("#!/usr/bin/env bash"):
+            assert "set -euo pipefail" in content
+
+
+def test_start_runs_fail_closed_preflight_before_secret_or_compose_actions() -> None:
+    start = _read(SCRIPTS / "start")
+    compose_file = _read(ROOT / "infra" / "local" / "compose.yml")
+
+    preflight = start.index('"${SCRIPT_DIR}/preflight"')
+    secrets = start.index('"${SCRIPT_DIR}/prepare-secrets"')
+    compose = start.index('compose "${profile_args[@]}" config --quiet')
+    assert preflight < secrets < compose
+    assert "--require-go" in start
+    assert 'GBOS_CONNECTOR_KILL_SWITCH="true"' in start
+    assert 'GBOS_MODEL_KILL_SWITCH="true"' in start
+    assert 'GBOS_EXTERNAL_SEND_ENABLED="false"' in start
+    assert "EMERGENCY_STOP" in start
+    assert "export GBOS_LOCAL_PILOT_MANIFEST" in start
+    assert (
+        "${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}"
+        in compose_file
+    )
+
+
+def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() -> None:
+    stop = _read(SCRIPTS / "stop")
+    emergency = _read(SCRIPTS / "emergency-stop")
+
+    assert " down " in re.sub(r"\s+", " ", stop)
+    executable_stop = "\n".join(
+        line for line in stop.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "--volumes" not in executable_stop
+    assert re.search(r"(^|\s)-v(\s|$)", executable_stop) is None
+    assert "remove-orphans" in stop
+    assert "cleanup_secret_dir" in stop
+
+    assert " down " not in re.sub(r"\s+", " ", emergency)
+    assert "docker compose" in emergency
+    assert " stop " in re.sub(r"\s+", " ", emergency)
+    for service in (
+        "cloudflared",
+        "email-poller",
+        "wecom-poller",
+        "whatsapp-poller",
+        "deepseek-worker",
+        "media-worker",
+        "agent-worker",
+    ):
+        assert service in emergency
+    stop_command = emergency[emergency.index("docker compose") :]
+    assert " postgres" not in stop_command
+    assert " object-store" not in stop_command
+    assert "EMERGENCY_STOP" in emergency
+
+
+def test_keychain_secret_materialization_is_non_logging_and_mode_0600() -> None:
+    script = _read(SCRIPTS / "prepare-secrets")
+    library = _read(SCRIPTS / "lib.sh")
+
+    assert "umask 077" in script
+    assert "/usr/bin/security" in script
+    assert "find-generic-password" in script
+    assert "-w" in script
+    assert "chmod 600" in script
+    assert "mktemp -d" in script
+    assert "printf '%s' \"${secret_value}\"" in script
+    assert 'echo "${secret_value}"' not in script
+    assert "set -x" not in script
+    assert "keychain://" in script
+    assert 'secret_tmp_root="${secret_tmp_root%/}"' in script
+    assert 'find "${secret_dir}"' not in library
+
+
+def test_preflight_references_governed_manifest_schema_and_disabled_manifest_fails_go() -> None:
+    script = _read(SCRIPTS / "preflight.py")
+    manifest = json.loads(_read(MANIFEST))
+
+    assert "contracts/local_pilot/local-pilot-manifest-v1.0.schema.json" in script
+    assert "infra/local/images.lock.json" in script
+    assert manifest["mode"] == "local_pilot"
+    assert manifest["production_go"] is False
+    assert manifest["local_pilot_go"] is False
+    assert all(value is False for value in manifest["capabilities"].values())
+    assert manifest["deepseek"]["enabled"] is False
+    assert manifest["deepseek"]["kill_switch"] is True
+    assert all(not channel["enabled"] for channel in manifest["channels"].values())
+
+    result = _run_preflight("--manifest", str(MANIFEST), "--require-go")
+    assert result.returncode != 0
+    assert "local_pilot_go must be true" in result.stderr
+
+
+def test_preflight_rejects_placeholder_media_hashes(tmp_path: Path) -> None:
+    manifest = json.loads(_read(MANIFEST))
+    manifest["local_pilot_go"] = True
+    manifest["local_pilot_status"] = "ready"
+    manifest["channels"]["media"].update(
+        {
+            "enabled": True,
+            "activation_time": "2026-08-08T00:00:00Z",
+            "ffmpeg_sha256": "0" * 64,
+            "whisper_model_sha256": "f" * 64,
+        }
+    )
+    candidate = tmp_path / "manifest.json"
+    candidate.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = _run_preflight("--manifest", str(candidate))
+
+    assert result.returncode != 0
+    assert "placeholder" in result.stderr.lower()
+
+
+def test_preflight_fails_closed_when_runtime_entrypoints_are_unavailable(tmp_path: Path) -> None:
+    manifest = json.loads(_read(MANIFEST))
+    manifest["local_pilot_go"] = True
+    manifest["local_pilot_status"] = "ready"
+    candidate = tmp_path / "manifest.json"
+    candidate.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = _run_preflight("--manifest", str(candidate))
+
+    assert result.returncode != 0
+    assert "runtime entrypoint unavailable" in result.stderr
+
+
+def test_scripts_contain_no_embedded_secret_shaped_values() -> None:
+    secret_pattern = re.compile(
+        r"(?:sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|"
+        r"xox[baprs]-[A-Za-z0-9-]{20,}|-----BEGIN [A-Z ]+PRIVATE KEY-----)"
+    )
+    for path in SCRIPTS.iterdir():
+        if path.is_file():
+            assert secret_pattern.search(path.read_text(encoding="utf-8")) is None
+
+    assert os.environ.get("DEEPSEEK_API_KEY") is None or "DEEPSEEK_API_KEY" not in _read(
+        SCRIPTS / "start"
+    )

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+read_secret_dir
+if [[ -e "${EMERGENCY_STOP_FILE}" ]]; then
+  echo "SAFETY: emergency-stop latch is ACTIVE."
+else
+  echo "SAFETY: emergency-stop latch is clear."
+fi
+compose --profile "*" ps

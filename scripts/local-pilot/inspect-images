@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH='' cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+LOCK_FILE="${REPO_ROOT}/infra/local/images.lock.json"
+
+python3 - "${LOCK_FILE}" <<'PY'
+import json
+import subprocess
+import sys
+
+lock = json.load(open(sys.argv[1], encoding="utf-8"))
+report = []
+for item in lock["images"]:
+    reference = item["reference"]
+    result = subprocess.run(
+        ["docker", "image", "inspect", reference, "--format", "{{json .RepoDigests}}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    report.append(
+        {
+            "service": item["service"],
+            "reference": reference,
+            "present": result.returncode == 0,
+            "repo_digests": (
+                json.loads(result.stdout)
+                if result.returncode == 0 and result.stdout.strip()
+                else []
+            ),
+        }
+    )
+print(json.dumps({"images": report}, indent=2, sort_keys=True))
+PY

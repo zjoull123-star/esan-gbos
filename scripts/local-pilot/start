@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+MANIFEST="${DEFAULT_MANIFEST}"
+while (( $# > 0 )); do
+  case "$1" in
+    --manifest)
+      [[ $# -ge 2 ]] || { echo "--manifest requires a path" >&2; exit 64; }
+      MANIFEST="$2"
+      shift
+      ;;
+    *)
+      echo "Usage: scripts/local-pilot/start [--manifest PATH]" >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+GBOS_LOCAL_PILOT_MANIFEST="$(
+  CDPATH='' cd -- "$(dirname -- "${MANIFEST}")" &&
+    printf '%s/%s\n' "$PWD" "$(basename -- "${MANIFEST}")"
+)"
+export GBOS_LOCAL_PILOT_MANIFEST
+
+if [[ -e "${EMERGENCY_STOP_FILE}" ]]; then
+  echo "Emergency-stop latch is active; explicit acknowledgement is required." >&2
+  exit 78
+fi
+
+"${SCRIPT_DIR}/preflight" \
+  --repo-root "${REPO_ROOT}" \
+  --manifest "${MANIFEST}" \
+  --require-go
+
+GBOS_SECRET_DIR="$("${SCRIPT_DIR}/prepare-secrets" --manifest "${MANIFEST}")"
+export GBOS_SECRET_DIR
+mkdir -p -- "${RUNTIME_DIR}"
+chmod 700 "${RUNTIME_DIR}"
+printf '%s\n' "${GBOS_SECRET_DIR}" > "${SECRET_DIR_RECORD}"
+chmod 600 "${SECRET_DIR_RECORD}"
+
+started=false
+rollback() {
+  if [[ "${started}" != "true" ]]; then
+    cleanup_secret_dir
+  fi
+}
+trap rollback EXIT HUP INT TERM
+
+GBOS_CONNECTOR_KILL_SWITCH="true"
+GBOS_MODEL_KILL_SWITCH="true"
+GBOS_EXTERNAL_SEND_ENABLED="false"
+export GBOS_CONNECTOR_KILL_SWITCH GBOS_MODEL_KILL_SWITCH GBOS_EXTERNAL_SEND_ENABLED
+
+profile_args=(--profile runtime)
+connector_profile_enabled=false
+while IFS= read -r capability; do
+  case "${capability}" in
+    email|wecom|whatsapp)
+      profile_args+=(--profile "${capability}")
+      connector_profile_enabled=true
+      ;;
+    media)
+      profile_args+=(--profile media)
+      ;;
+    model)
+      profile_args+=(--profile model)
+      ;;
+    tunnel:*)
+      GBOS_CLOUDFLARED_TUNNEL_ID="${capability#tunnel:}"
+      export GBOS_CLOUDFLARED_TUNNEL_ID
+      profile_args+=(--profile tunnel)
+      ;;
+  esac
+done < <(
+  python3 - "${MANIFEST}" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+channels = manifest["channels"]
+for channel in ("email", "wecom", "whatsapp", "media"):
+    if channels[channel]["enabled"]:
+        print(channel)
+if manifest["deepseek"]["enabled"]:
+    print("model")
+if channels["whatsapp"]["enabled"]:
+    print("tunnel:" + channels["whatsapp"]["named_tunnel_ref"].removeprefix(
+        "cloudflare://tunnel/"
+    ))
+PY
+)
+
+if [[ "${connector_profile_enabled}" == "true" ]]; then
+  GBOS_CONNECTOR_KILL_SWITCH="false"
+fi
+if printf '%s\n' "${profile_args[@]}" | grep -Fxq model; then
+  GBOS_MODEL_KILL_SWITCH="false"
+fi
+export GBOS_CONNECTOR_KILL_SWITCH GBOS_MODEL_KILL_SWITCH
+
+compose "${profile_args[@]}" config --quiet
+compose "${profile_args[@]}" up -d --wait
+
+started=true
+trap - EXIT HUP INT TERM
+echo "Local pilot is running with only manifest-enabled profiles."
