@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import imaplib
+import os
+import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Protocol
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from threading import Event
+from typing import Any, Protocol, cast
 
+from services.agent_runtime.local_entrypoint import (
+    LocalEntrypointDisabled,
+    load_local_manifest,
+    require_component_enabled,
+)
 from services.observer.observer.connectors.email_imap import (
     EmailImapConfig,
     EmailImapConnector,
+    ImapCheckpoint,
     TlsImapClientFactory,
 )
 from services.observer.observer.connectors.wecom_archive import (
@@ -17,8 +28,12 @@ from services.observer.observer.connectors.wecom_archive import (
     WeComArchiveAdapter,
     WeComArchiveConfig,
 )
+from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
 from services.observer.observer.local_pilot_ingestion import DurableDeliveryInbox
-from services.observer.observer.local_pilot_storage import LocalPilotStorage
+from services.observer.observer.local_pilot_storage import (
+    LocalPilotStorage,
+    PostgresLocalPilotStorage,
+)
 from services.observer.observer.models import (
     ConnectorKey,
     RawDelivery,
@@ -36,6 +51,29 @@ from services.observer.observer.scheduler import (
     wecom_poll_batch,
 )
 from services.observer.observer.storage import Connection
+
+from .channel_config import (
+    ChannelConfigError,
+    EmailCredentialConfig,
+    WeComCredentialConfig,
+    load_channel_config,
+    load_channel_credential,
+    require_active_channel,
+)
+from .runtime_support import (
+    RuntimeSupportError,
+    close_connection,
+    connect_postgres,
+    load_runtime_config,
+    reject_plaintext_secret_environment,
+    validate_manifest_binding,
+)
+
+DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
+DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
+DEFAULT_CONNECTORS_CONFIG = Path("/config/connectors.json")
+StorageFactory = Callable[[object], LocalPilotStorage]
+WeComSdkFactory = Callable[[WeComCredentialConfig], OfficialWeComArchiveSDK]
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -330,10 +368,225 @@ def compose_postgres_polling_state(
     )
 
 
-def main() -> int:
-    """Refuse standalone polling without injected credentials, SDK, and storage."""
+class StopEvent(Protocol):
+    def is_set(self) -> bool: ...
 
-    return 78
+    def wait(self, timeout: float) -> bool: ...
+
+
+def run_poll_daemon(
+    runner: LocalPullRunner,
+    *,
+    stop_event: StopEvent,
+    interval_seconds: float = 60,
+) -> None:
+    """Run one durable poll per interval until the injected event is signalled."""
+
+    if (
+        not callable(getattr(runner, "run_once", None))
+        or not callable(getattr(stop_event, "is_set", None))
+        or not callable(getattr(stop_event, "wait", None))
+        or isinstance(interval_seconds, bool)
+        or not isinstance(interval_seconds, int | float)
+        or not 0 < interval_seconds <= 3_600
+    ):
+        raise ValueError("invalid polling daemon composition")
+    while not stop_event.is_set():
+        runner.run_once()
+        stop_event.wait(float(interval_seconds))
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    manifest_path: Path = DEFAULT_MANIFEST,
+    runtime_config_path: Path = DEFAULT_RUNTIME_CONFIG,
+    connectors_path: Path = DEFAULT_CONNECTORS_CONFIG,
+    environ: Mapping[str, str] | None = None,
+    connector: Callable[..., object] | None = None,
+    storage_factory: StorageFactory | None = None,
+    tls_client_factory: TlsImapClientFactory | None = None,
+    wecom_sdk_factory: WeComSdkFactory | None = None,
+    daemon_runner: Callable[..., None] | None = None,
+    stop_event: StopEvent | None = None,
+    clock: Callable[[], datetime] | None = None,
+) -> int:
+    """Preflight and run exactly one durable receive-only pull channel."""
+
+    arguments = sys.argv[1:] if argv is None else argv
+    if len(arguments) != 1 or arguments[0] not in {"email", "wecom"}:
+        return 78
+    channel_name = arguments[0]
+    environment = os.environ if environ is None else environ
+    active_clock = clock or _utc_now
+    connection: object | None = None
+    try:
+        reject_plaintext_secret_environment(environment)
+        if (
+            environment.get("GBOS_CONNECTOR_KILL_SWITCH", "true") != "false"
+            or environment.get("GBOS_EXTERNAL_SEND_ENABLED", "false") != "false"
+        ):
+            raise ChannelConfigError("pull channel remains kill-switched")
+        manifest = load_local_manifest(manifest_path)
+        require_component_enabled(
+            manifest,
+            component=channel_name,
+            environ=environment,
+        )
+        runtime = load_runtime_config(runtime_config_path)
+        validate_manifest_binding(manifest, runtime)
+        channels = load_channel_config(
+            connectors_path,
+            expected_site_id=runtime.site_id,
+            manifest=manifest,
+        )
+        channel = require_active_channel(
+            channels,
+            channel_name,
+            now=active_clock(),
+        )
+        credential = load_channel_credential(channels, channel_name)
+        activation_time = channel.activation_time
+        if activation_time is None:
+            raise ChannelConfigError("active pull channel has no activation time")
+        if channel_name == "email":
+            if not isinstance(credential, EmailCredentialConfig):
+                raise ChannelConfigError("email credential type is invalid")
+            if credential.initial_checkpoint is not None:
+                ImapCheckpoint.parse(credential.initial_checkpoint)
+        else:
+            if not isinstance(credential, WeComCredentialConfig):
+                raise ChannelConfigError("WeCom credential type is invalid")
+            if (
+                credential.initial_checkpoint is None
+                or not credential.initial_checkpoint.isascii()
+                or not credential.initial_checkpoint.isdecimal()
+            ):
+                raise ChannelConfigError("WeCom initial checkpoint is required")
+            if wecom_sdk_factory is None:
+                raise ChannelConfigError("official WeCom SDK factory is unavailable")
+
+        connection = connect_postgres(runtime.postgres, connector=connector)
+        storage = (
+            PostgresLocalPilotStorage(cast(Connection, connection))
+            if storage_factory is None
+            else storage_factory(connection)
+        )
+        scope = TenantScope(runtime.site_id, "observation_processing")
+        key = ConnectorKey(channel_name, credential.instance_id)
+        storage.register_connector_instance(
+            scope,
+            key,
+            now=active_clock(),
+            team_ref=credential.team_ref,
+            agent_task_type=credential.agent_task_type,
+        )
+        inbox = DurableDeliveryInbox(
+            storage=storage,
+            evidence_store=ContentAddressedEvidenceStore(channels.evidence_cas_root),
+        )
+        state = compose_postgres_polling_state(
+            connection=cast(Connection, connection),
+            storage=storage,
+            inbox=inbox,
+        )
+        _ensure_initial_checkpoint(
+            state=state,
+            storage=storage,
+            scope=scope,
+            key=key,
+            initial_checkpoint=credential.initial_checkpoint,
+            now=active_clock(),
+        )
+        if isinstance(credential, EmailCredentialConfig):
+            factory = tls_client_factory or _stdlib_imap_factory
+            puller = compose_email_poller(
+                state=state,
+                scope=scope,
+                key=key,
+                config=EmailImapConfig(
+                    host=credential.host,
+                    port=credential.port,
+                    mailbox=credential.mailbox,
+                    folder=credential.folder,
+                    enabled_at=activation_time,
+                    poll_limit=credential.poll_limit,
+                    max_message_bytes=credential.max_message_bytes,
+                    max_attachment_bytes=credential.max_attachment_bytes,
+                    max_attachments=credential.max_attachments,
+                    rescan_max_window=timedelta(seconds=credential.rescan_max_window_seconds),
+                    rescan_max_uids=credential.rescan_max_uids,
+                ),
+                tls_client_factory=factory,
+                credentials=EmailCredentials(
+                    username=credential.username,
+                    password=credential.password,
+                ),
+                clock=active_clock,
+                worker_id=runtime.worker.worker_id,
+                limit=credential.poll_limit,
+            )
+        else:
+            assert wecom_sdk_factory is not None
+            sdk = wecom_sdk_factory(credential)
+            puller = compose_wecom_poller(
+                state=state,
+                scope=scope,
+                key=key,
+                config=WeComArchiveConfig(instance_id=credential.instance_id),
+                sdk=sdk,
+                activation_time=activation_time,
+                clock=active_clock,
+                worker_id=runtime.worker.worker_id,
+                limit=100,
+            )
+        active_stop = stop_event or Event()
+        active_runner = daemon_runner or run_poll_daemon
+        active_runner(puller, stop_event=active_stop)
+        return 0
+    except (
+        ChannelConfigError,
+        LocalEntrypointDisabled,
+        RuntimeSupportError,
+        OSError,
+        TypeError,
+        ValueError,
+    ):
+        return 78
+    finally:
+        if connection is not None:
+            close_connection(connection)
+
+
+def _ensure_initial_checkpoint(
+    *,
+    state: PostgresPollingState,
+    storage: LocalPilotStorage,
+    scope: TenantScope,
+    key: ConnectorKey,
+    initial_checkpoint: str | None,
+    now: datetime,
+) -> None:
+    cursor, version, _status = state.load_checkpoint(scope, key)
+    if cursor is None and initial_checkpoint is not None:
+        storage.compare_and_swap_checkpoint(
+            scope,
+            key,
+            expected_version=version,
+            cursor=initial_checkpoint,
+            next_version=version + 1,
+            now=now,
+        )
+    elif initial_checkpoint is not None and cursor != initial_checkpoint:
+        raise ChannelConfigError("persisted checkpoint conflicts with configured initial value")
+
+
+def _stdlib_imap_factory(host: str, port: int) -> Any:
+    return imaplib.IMAP4_SSL(host, port)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 if __name__ == "__main__":
@@ -347,4 +600,5 @@ __all__ = [
     "compose_postgres_polling_state",
     "compose_wecom_poller",
     "main",
+    "run_poll_daemon",
 ]

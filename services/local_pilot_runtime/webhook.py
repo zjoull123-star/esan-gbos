@@ -3,26 +3,68 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, cast
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+from services.agent_runtime.local_entrypoint import (
+    LocalEntrypointDisabled,
+    load_local_manifest,
+    require_component_enabled,
+)
 from services.observer.observer.connectors.whatsapp_cloud import (
+    WhatsAppCloudDeliveryAuthenticator,
     WhatsAppCloudDurableReceiver,
     WhatsAppCloudRequestError,
     verify_webhook_challenge,
 )
+from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
+from services.observer.observer.local_pilot_ingestion import DurableDeliveryInbox
+from services.observer.observer.local_pilot_storage import (
+    LocalPilotStorage,
+    PostgresLocalPilotStorage,
+)
+from services.observer.observer.models import ConnectorKey, TenantScope, stable_ulid
 from services.observer.observer.runtime import (
     KillSwitchEngaged,
     LocalPilotRuntimeGuard,
+    map_whatsapp_durable_accept,
 )
+from services.observer.observer.storage import Connection
+
+from .channel_config import (
+    ChannelConfigError,
+    WhatsAppCredentialConfig,
+    load_channel_config,
+    load_channel_credential,
+    require_active_channel,
+)
+from .runtime_support import (
+    RuntimeSupportError,
+    close_connection,
+    connect_postgres,
+    load_runtime_config,
+    reject_plaintext_secret_environment,
+    validate_manifest_binding,
+)
+from .server import ServerBindingError, run_server, validate_server_binding
 
 _WEBHOOK_PATH = re.compile(r"^/[A-Za-z0-9][A-Za-z0-9_/-]{0,254}$")
 _DEFAULT_PATH = "/webhooks/whatsapp"
+DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
+DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
+DEFAULT_CONNECTORS_CONFIG = Path("/config/connectors.json")
+DEFAULT_WEBHOOK_HOST = "0.0.0.0"
+DEFAULT_WEBHOOK_PORT = 8000
+ServerRunner = Callable[..., None]
+StorageFactory = Callable[[object], LocalPilotStorage]
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -189,10 +231,154 @@ def create_whatsapp_webhook_app(
 app = create_whatsapp_webhook_app()
 
 
-def main() -> int:
-    """Refuse standalone startup until dependencies are explicitly composed."""
+def main(
+    *,
+    manifest_path: Path = DEFAULT_MANIFEST,
+    runtime_config_path: Path = DEFAULT_RUNTIME_CONFIG,
+    connectors_path: Path = DEFAULT_CONNECTORS_CONFIG,
+    environ: Mapping[str, str] | None = None,
+    connector: Callable[..., object] | None = None,
+    storage_factory: StorageFactory | None = None,
+    server_runner: ServerRunner | None = None,
+    clock: Callable[[], datetime] | None = None,
+) -> int:
+    """Preflight and run the receive-only durable WhatsApp webhook."""
 
-    return 78
+    environment = os.environ if environ is None else environ
+    active_clock = clock or _utc_now
+    connection: object | None = None
+    try:
+        reject_plaintext_secret_environment(environment)
+        if (
+            environment.get("GBOS_CONNECTOR_KILL_SWITCH", "true") != "false"
+            or environment.get("GBOS_EXTERNAL_SEND_ENABLED", "false") != "false"
+        ):
+            raise ChannelConfigError("WhatsApp runtime remains kill-switched")
+        manifest = load_local_manifest(manifest_path)
+        require_component_enabled(
+            manifest,
+            component="whatsapp",
+            environ=environment,
+        )
+        runtime = load_runtime_config(runtime_config_path)
+        validate_manifest_binding(manifest, runtime)
+        channels = load_channel_config(
+            connectors_path,
+            expected_site_id=runtime.site_id,
+            manifest=manifest,
+        )
+        require_active_channel(channels, "whatsapp", now=active_clock())
+        credential = load_channel_credential(channels, "whatsapp")
+        if not isinstance(credential, WhatsAppCredentialConfig):
+            raise ChannelConfigError("WhatsApp credential type is invalid")
+        validate_server_binding(
+            host=DEFAULT_WEBHOOK_HOST,
+            port=DEFAULT_WEBHOOK_PORT,
+            network_mode="internal_network",
+        )
+
+        connection = connect_postgres(runtime.postgres, connector=connector)
+        storage = (
+            PostgresLocalPilotStorage(cast(Connection, connection))
+            if storage_factory is None
+            else storage_factory(connection)
+        )
+        scope = TenantScope(runtime.site_id, "observation_processing")
+        key = ConnectorKey("whatsapp", credential.instance_id)
+        storage.register_connector_instance(
+            scope,
+            key,
+            now=active_clock(),
+            replay_window_seconds=300,
+            team_ref=credential.team_ref,
+            agent_task_type=credential.agent_task_type,
+        )
+        inbox = DurableDeliveryInbox(
+            storage=storage,
+            evidence_store=ContentAddressedEvidenceStore(channels.evidence_cas_root),
+        )
+
+        def accept_authenticated(
+            delivery: Any,
+            *,
+            nonce: str,
+            nonce_expires_at: datetime,
+            now: datetime,
+        ) -> str:
+            accepted = inbox.accept_authenticated(
+                scope,
+                key,
+                delivery,
+                correlation_id=stable_ulid(
+                    "whatsapp-delivery",
+                    scope.site_id,
+                    key.instance_id,
+                    delivery.delivery_id,
+                ),
+                nonce=nonce,
+                nonce_expires_at=nonce_expires_at,
+                now=now,
+            )
+            return accepted.disposition
+
+        receiver = WhatsAppCloudDurableReceiver(
+            authenticator=WhatsAppCloudDeliveryAuthenticator(
+                app_secret=credential.app_secret,
+                max_body_bytes=credential.max_body_bytes,
+            ),
+            authenticated_accept=map_whatsapp_durable_accept(accept_authenticated),
+            clock=active_clock,
+        )
+        configured_app = create_whatsapp_webhook_app(
+            config=WhatsAppWebhookConfig(
+                path=credential.path,
+                verify_token=credential.verify_token,
+                max_body_bytes=credential.max_body_bytes,
+            ),
+            receiver=receiver,
+            guard=LocalPilotRuntimeGuard(enabled=True, kill_switch=False),
+            clock=active_clock,
+        )
+        active_runner = server_runner or _run_server
+        active_runner(
+            configured_app,
+            host=DEFAULT_WEBHOOK_HOST,
+            port=DEFAULT_WEBHOOK_PORT,
+            network_mode="internal_network",
+        )
+        return 0
+    except (
+        ChannelConfigError,
+        LocalEntrypointDisabled,
+        RuntimeSupportError,
+        ServerBindingError,
+        OSError,
+        TypeError,
+        ValueError,
+    ):
+        return 78
+    finally:
+        if connection is not None:
+            close_connection(connection)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _run_server(
+    application: FastAPI,
+    *,
+    host: str,
+    port: int,
+    network_mode: str,
+) -> None:
+    run_server(
+        application,
+        host=host,
+        port=port,
+        network_mode=network_mode,
+    )
 
 
 if __name__ == "__main__":

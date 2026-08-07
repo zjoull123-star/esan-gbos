@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import re
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -478,6 +479,148 @@ def test_persist_normalized_batch_uses_one_transaction_and_one_outbox_per_event(
     assert sum("INSERT INTO observer.observation_events" in sql for sql in inserts) == 2
     assert sum("INSERT INTO observer.context_publication_outbox" in sql for sql in inserts) == 2
     assert all(value.replayed is False for value in result.observations)
+
+
+def test_persist_normalized_batch_uses_each_materialized_evidence_own_digest() -> None:
+    item, original = _normalized_item("email-event-001")
+    email_key = ConnectorKey("email", KEY.instance_id)
+    email_job = replace(_processing_job(), connector="email")
+    partition = hashlib.sha256(f"site:{SCOPE.site_id}".encode()).hexdigest()[:32]
+    body_digest = "b" * 64
+    attachment_digest = "c" * 64
+    normalized = NormalizedObservationInput(
+        channel="email",
+        participants=original.participants,
+        evidence=(
+            original.evidence[0],
+            EvidenceArtifact(
+                media_type="text/plain; charset=utf-8",
+                locator="message-body",
+                role="derived-text",
+                reference=f"obs:v1:{partition}:sha256:{body_digest}",
+            ),
+            EvidenceArtifact(
+                media_type="application/octet-stream",
+                locator="attachment:1",
+                role="attachment",
+                reference=f"obs:v1:{partition}:sha256:{attachment_digest}",
+            ),
+        ),
+        consent_basis=original.consent_basis,
+        data_classification=original.data_classification,
+        retention_class=original.retention_class,
+        original_language=original.original_language,
+        correlation_id=original.correlation_id,
+    )
+    connection = FakeConnection(
+        [
+            _routing_row(),
+            _delivery_row(status="processing"),
+            [(None,)],
+            [],
+            ("raw-object-001", "obs:v1:site-partition:sha256:" + "a" * 64),
+        ]
+    )
+
+    PostgresLocalPilotStorage(connection).persist_normalized_batch(
+        SCOPE,
+        email_key,
+        email_job,
+        (item,),
+        (normalized,),
+    )
+
+    evidence_params = [
+        params for sql, params in connection.executed if "INSERT INTO observer.evidence_refs" in sql
+    ]
+    assert [params[4] for params in evidence_params if params is not None] == [
+        "a" * 64,
+        body_digest,
+        attachment_digest,
+    ]
+    assert [params[8] for params in evidence_params if params is not None] == [
+        original.evidence[0].reference,
+        f"obs:v1:{partition}:sha256:{body_digest}",
+        f"obs:v1:{partition}:sha256:{attachment_digest}",
+    ]
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "https://example.invalid/private-body",
+        "obs:v1:wrong-partition:sha256:" + "b" * 64,
+        "obs:v1:" + "f" * 32 + ":sha256:" + "b" * 63,
+    ],
+)
+def test_persist_normalized_batch_rejects_untrusted_derived_evidence_reference(
+    reference: str,
+) -> None:
+    item, original = _normalized_item("email-event-unsafe")
+    email_key = ConnectorKey("email", KEY.instance_id)
+    email_job = replace(_processing_job(), connector="email")
+    normalized = NormalizedObservationInput(
+        channel="email",
+        participants=original.participants,
+        evidence=(
+            original.evidence[0],
+            EvidenceArtifact(
+                media_type="text/plain; charset=utf-8",
+                locator="message-body",
+                role="derived-text",
+                reference=reference,
+            ),
+        ),
+        consent_basis=original.consent_basis,
+        data_classification=original.data_classification,
+        retention_class=original.retention_class,
+        original_language=original.original_language,
+        correlation_id=original.correlation_id,
+    )
+    connection = FakeConnection([])
+
+    with pytest.raises(ValueError, match="evidence reference"):
+        PostgresLocalPilotStorage(connection).persist_normalized_batch(
+            SCOPE,
+            email_key,
+            email_job,
+            (item,),
+            (normalized,),
+        )
+
+    assert connection.transactions == 0
+
+
+def test_persist_normalized_batch_rejects_source_cas_ref_digest_mismatch() -> None:
+    partition = hashlib.sha256(f"site:{SCOPE.site_id}".encode()).hexdigest()[:32]
+    mismatched_ref = f"obs:v1:{partition}:sha256:" + "b" * 64
+    item, normalized = _normalized_item(
+        "event-source-mismatch",
+        source_ref=mismatched_ref,
+    )
+    connection = FakeConnection(
+        [
+            _routing_row(),
+            _delivery_row(
+                status="processing",
+                digest="a" * 64,
+                object_ref=mismatched_ref,
+            ),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="source evidence"):
+        PostgresLocalPilotStorage(connection).persist_normalized_batch(
+            SCOPE,
+            KEY,
+            _processing_job(),
+            (item,),
+            (normalized,),
+        )
+
+    assert not any(
+        "INSERT INTO observer.observation_events" in sql for sql, _ in connection.executed
+    )
 
 
 def test_persist_normalized_batch_replay_returns_original_and_conflict_is_fail_closed() -> None:

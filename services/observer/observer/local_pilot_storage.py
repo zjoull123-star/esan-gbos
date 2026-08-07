@@ -19,6 +19,7 @@ from .models import (
 from .storage import Connection, Cursor
 
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
+_CAS_OBJECT_REF = re.compile(r"^obs:v1:([a-f0-9]{32}):sha256:([a-f0-9]{64})$")
 _MAX_LEASE_SECONDS = 86_400
 _MAX_ATTEMPTS = 100
 
@@ -1067,6 +1068,7 @@ class PostgresLocalPilotStorage:
             delivery = _delivery_from_row(row)
             if delivery.processing_status != "processing":
                 raise JobConflict("normalized batch delivery is not processing")
+            _validate_source_evidence_binding(scope, delivery)
             for value in normalized:
                 if all(artifact.reference != delivery.object_ref for artifact in value.evidence):
                     raise NormalizedBatchConflict(
@@ -1264,6 +1266,13 @@ class PostgresLocalPilotStorage:
                     )
                 for index, artifact in enumerate(candidate.normalized.evidence):
                     evidence_id = candidate.evidence_ids[index]
+                    evidence_digest = _evidence_reference_digest(
+                        scope,
+                        artifact.reference,
+                        delivery_object_ref=delivery.object_ref,
+                        delivery_digest=delivery.exact_body_sha256,
+                        require_cas=artifact.role in {"derived-text", "attachment"},
+                    )
                     cursor.execute(
                         """
                         INSERT INTO observer.evidence_refs (
@@ -1277,7 +1286,7 @@ class PostgresLocalPilotStorage:
                             evidence_id,
                             candidate.event_id,
                             raw_object_id,
-                            delivery.exact_body_sha256,
+                            evidence_digest,
                             artifact.media_type,
                             json.dumps(
                                 {
@@ -2949,17 +2958,67 @@ def _validate_normalized_batch(
                 maximum=512,
             )
             if (
-                artifact.locator
-                not in {
-                    "delivery",
-                    "decrypted-message",
-                    "message",
-                }
-                and re.fullmatch(r"attachment:[1-9][0-9]{0,3}", artifact.locator) is None
+                artifact.locator in {"delivery", "decrypted-message", "message"}
+                and artifact.role == "source"
             ):
-                raise ValueError("normalized evidence locator is invalid")
-            if artifact.role not in {"source", "attachment"}:
-                raise ValueError("normalized evidence role is invalid")
+                continue
+            if (
+                artifact.locator == "message-body"
+                and artifact.role == "derived-text"
+                and artifact.media_type == "text/plain; charset=utf-8"
+            ):
+                _evidence_reference_digest(
+                    scope,
+                    artifact.reference,
+                    delivery_object_ref="",
+                    delivery_digest="",
+                    require_cas=True,
+                )
+                continue
+            if (
+                artifact.role == "attachment"
+                and re.fullmatch(r"attachment:[1-9][0-9]{0,3}", artifact.locator) is not None
+            ):
+                _evidence_reference_digest(
+                    scope,
+                    artifact.reference,
+                    delivery_object_ref="",
+                    delivery_digest="",
+                    require_cas=True,
+                )
+                continue
+            raise ValueError("normalized evidence locator or role is invalid")
+
+
+def _evidence_reference_digest(
+    scope: TenantScope,
+    reference: str | None,
+    *,
+    delivery_object_ref: str,
+    delivery_digest: str,
+    require_cas: bool,
+) -> str:
+    if reference == delivery_object_ref and delivery_object_ref:
+        return delivery_digest
+    match = _CAS_OBJECT_REF.fullmatch(reference or "")
+    expected_partition = hashlib.sha256(f"site:{scope.site_id}".encode()).hexdigest()[:32]
+    if match is not None and match.group(1) == expected_partition:
+        return match.group(2)
+    if require_cas:
+        raise ValueError("normalized evidence reference is not a site-local CAS object")
+    return delivery_digest
+
+
+def _validate_source_evidence_binding(
+    scope: TenantScope,
+    delivery: InboundDeliveryMetadata,
+) -> None:
+    match = _CAS_OBJECT_REF.fullmatch(delivery.object_ref)
+    if match is None:
+        return
+    expected_partition = hashlib.sha256(f"site:{scope.site_id}".encode()).hexdigest()[:32]
+    if match.group(1) != expected_partition or match.group(2) != delivery.exact_body_sha256:
+        raise ValueError("source evidence reference does not match delivery digest")
 
 
 def _normalized_candidate(

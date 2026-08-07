@@ -9,7 +9,7 @@ from observer.connectors.email_imap import (
     EmailImapMessage,
 )
 from observer.connectors.whatsapp_cloud import WhatsAppRuntimeMetadata
-from observer.models import ConnectorItem, RawDelivery
+from observer.models import ConnectorItem, EvidenceArtifact, RawDelivery
 from observer.normalizers import (
     EmailImapItemAdapter,
     EmailObservationNormalizer,
@@ -209,6 +209,46 @@ def test_email_adapter_fails_closed_and_never_copies_message_or_attachment_bytes
             source_ref=SOURCE_REF,
             attachment_refs=(),
         )
+
+
+def test_email_normalizer_preserves_transient_body_and_attachment_evidence_for_sink() -> None:
+    body = b"private email body"
+    attachment = b"private attachment"
+    item = ConnectorItem(
+        provider_event_id="imap:uidvalidity-7:uid-42",
+        occurred_at=NOW,
+        source_cursor="imap:uidvalidity-7:uid-42",
+        payload={
+            "kind": "email_raw_delivery",
+            "source_ref": SOURCE_REF,
+            "body_evidence": EvidenceArtifact(
+                media_type="text/plain; charset=utf-8",
+                locator="message-body",
+                role="derived-text",
+                content=body,
+            ),
+            "attachment_evidence": (
+                EvidenceArtifact(
+                    media_type="application/octet-stream",
+                    locator="attachment:1",
+                    role="attachment",
+                    content=attachment,
+                ),
+            ),
+        },
+    )
+
+    normalized = EmailObservationNormalizer().normalize(item, source_ref=SOURCE_REF)
+
+    assert tuple(artifact.reference for artifact in normalized.evidence) == (
+        SOURCE_REF,
+        None,
+        None,
+    )
+    assert normalized.evidence[1].content == body
+    assert normalized.evidence[2].content == attachment
+    assert body.decode() not in repr(item)
+    assert attachment.decode() not in repr(item)
 
 
 def test_normalizers_reject_unbounded_or_cross_adapter_payloads_with_safe_codes() -> None:

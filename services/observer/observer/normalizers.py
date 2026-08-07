@@ -49,6 +49,15 @@ class _EmailMessage(Protocol):
     attachment_error_code: str | None
 
 
+class _TransientEvidenceArtifact(EvidenceArtifact):
+    def __repr__(self) -> str:
+        return (
+            f"EvidenceArtifact(media_type={self.media_type!r}, "
+            f"locator={self.locator!r}, role={self.role!r}, "
+            f"content=<redacted bytes={len(self.content or b'')}>, reference=None)"
+        )
+
+
 def _require_ref(value: str, *, code: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip() or len(value) > 512:
         raise NormalizationRejected(code)
@@ -208,6 +217,11 @@ class EmailObservationNormalizer:
     ) -> NormalizedObservationInput:
         source_ref = _require_ref(source_ref, code="email.invalid_source_ref")
         payload = item.payload
+        if payload.get("kind") == "email_raw_delivery":
+            return self._normalize_raw_delivery(
+                item,
+                source_ref=source_ref,
+            )
         if (
             set(payload) != {"kind", "source_ref", "attachment_refs"}
             or payload.get("kind") != "email_imap_message"
@@ -236,6 +250,78 @@ class EmailObservationNormalizer:
                     reference=reference,
                 )
                 for index, reference in enumerate(references)
+            ),
+        )
+
+    @staticmethod
+    def _normalize_raw_delivery(
+        item: ConnectorItem,
+        *,
+        source_ref: str,
+    ) -> NormalizedObservationInput:
+        payload = item.payload
+        if (
+            set(payload)
+            != {
+                "kind",
+                "source_ref",
+                "body_evidence",
+                "attachment_evidence",
+            }
+            or payload.get("source_ref") != source_ref
+        ):
+            raise NormalizationRejected("email.invalid_adapter_shape")
+        body = payload.get("body_evidence")
+        attachments = payload.get("attachment_evidence")
+        if (
+            not isinstance(body, EvidenceArtifact)
+            or body.content is None
+            or body.reference is not None
+            or body.media_type != "text/plain; charset=utf-8"
+            or body.locator != "message-body"
+            or body.role != "derived-text"
+            or not isinstance(attachments, tuple)
+            or len(attachments) > 1_000
+            or not all(isinstance(value, EvidenceArtifact) for value in attachments)
+        ):
+            raise NormalizationRejected("email.invalid_evidence_shape")
+        checked: list[EvidenceArtifact] = [
+            _TransientEvidenceArtifact(
+                media_type=body.media_type,
+                locator=body.locator,
+                role=body.role,
+                content=body.content,
+            )
+        ]
+        for index, artifact in enumerate(attachments, start=1):
+            if (
+                artifact.content is None
+                or artifact.reference is not None
+                or artifact.locator != f"attachment:{index}"
+                or artifact.role != "attachment"
+            ):
+                raise NormalizationRejected("email.invalid_evidence_shape")
+            checked.append(
+                _TransientEvidenceArtifact(
+                    media_type=artifact.media_type,
+                    locator=artifact.locator,
+                    role=artifact.role,
+                    content=artifact.content,
+                )
+            )
+        return _normalized(
+            channel="email",
+            item=item,
+            role="unknown",
+            source_ref=source_ref,
+            evidence=(
+                EvidenceArtifact(
+                    media_type="message/rfc822",
+                    locator="message",
+                    role="source",
+                    reference=source_ref,
+                ),
+                *checked,
             ),
         )
 

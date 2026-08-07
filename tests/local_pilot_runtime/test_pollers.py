@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import NoReturn
 
 import pytest
@@ -12,6 +14,7 @@ from services.local_pilot_runtime.pollers import (
     compose_postgres_polling_state,
     compose_wecom_poller,
     main,
+    run_poll_daemon,
 )
 from services.observer.observer.connectors.email_imap import EmailImapConfig
 from services.observer.observer.connectors.wecom_archive import (
@@ -235,6 +238,8 @@ def test_email_poller_uses_injected_tls_factory_and_never_backfills_before_activ
     ]
     assert factory.calls == [("imap.example.invalid", 993)]
     assert ("LOGIN", credentials.username, credentials.password) in client.commands
+    assert ("SELECT", "INBOX", True) in client.commands
+    assert ("UID", "FETCH", "1", "(UID INTERNALDATE BODY.PEEK[])") in client.commands
     rendered = repr((runner, credentials))
     assert credentials.username not in rendered
     assert credentials.password not in rendered
@@ -431,3 +436,173 @@ def test_postgres_state_composition_routes_delivery_to_durable_inbox_without_cre
     assert isinstance(inbox.calls[0][3], str)
     assert "connection=<redacted>" in repr(state)
     assert main() == 78
+
+
+class _StopAfterWait:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def is_set(self) -> bool:
+        return self.stopped
+
+    def wait(self, seconds: float) -> bool:
+        assert seconds == 60
+        self.stopped = True
+        return True
+
+
+class _RetryRunner:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run_once(self) -> object:
+        self.calls += 1
+        return object()
+
+
+def test_poller_daemon_honors_stop_after_retry_iteration() -> None:
+    runner = _RetryRunner()
+    stop = _StopAfterWait()
+
+    run_poll_daemon(runner, stop_event=stop)  # type: ignore[arg-type]
+
+    assert runner.calls == 1
+
+
+def _private_json(path: Path, value: object) -> Path:
+    path.write_text(json.dumps(value), encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
+def _poller_files(tmp_path: Path, channel: str) -> tuple[Path, Path, Path]:
+    password_file = tmp_path / "postgres-password"
+    password_file.write_text("not-a-real-password", encoding="utf-8")
+    password_file.chmod(0o600)
+    manifest = {
+        "schema_version": "1.0",
+        "mode": "local_pilot",
+        "site_id": "alpha.example",
+        "production_go": False,
+        "local_pilot_go": True,
+        "local_pilot_status": "ready",
+        "deepseek": {"enabled": False},
+        "channels": {
+            name: {
+                "enabled": name == channel,
+                "activation_time": ("2026-08-08T09:00:00Z" if name == channel else None),
+                "backfill_history": False,
+                **({"credential_ref": None} if name != "media" else {"local_only": True}),
+            }
+            for name in ("email", "wecom", "whatsapp", "media")
+        },
+    }
+    runtime = {
+        "schema_version": "1.0",
+        "site_id": "alpha.example",
+        "postgres": {
+            "host": "postgres",
+            "port": 5432,
+            "database": "gbos",
+            "user": "gbos_observer_app",
+            "password_file": str(password_file),
+            "connect_timeout_seconds": 2,
+        },
+        "auth": {
+            "agent_api_bearer_file": str(password_file),
+            "context_api_bearer_file": str(password_file),
+            "context_client_bearer_file": str(password_file),
+            "context_auth_ref": "local",
+        },
+        "context_endpoint": {"base_url": "http://context-api:8001", "unix_socket": None},
+        "listen": {"host": "127.0.0.1", "agent_api_port": 8002, "context_api_port": 8001},
+        "components": {
+            name: {
+                "enabled": True,
+                "kill_switch": False,
+                "provider_mode": "disabled",
+                "synthetic_e2e": False,
+            }
+            for name in ("agent_api", "context_api", "agent_worker", "model_worker")
+        },
+        "worker": {
+            "worker_id": "poller-worker",
+            "idle_delay_seconds": 1,
+            "heartbeat_interval_seconds": 5,
+        },
+    }
+    credential_path = tmp_path / f"{channel}.json"
+    if channel == "email":
+        credential = {
+            "instance_id": "email-primary",
+            "team_ref": "team:sales",
+            "agent_task_type": "sales",
+            "host": "imap.example.invalid",
+            "port": 993,
+            "mailbox": "pilot-primary",
+            "folder": "INBOX",
+            "username": "private@example.invalid",
+            "password": "not-a-real-password",
+            "poll_limit": 10,
+            "max_message_bytes": 1_000_000,
+            "max_attachment_bytes": 100_000,
+            "max_attachments": 5,
+            "rescan_max_window_seconds": 86_400,
+            "rescan_max_uids": 100,
+            "initial_checkpoint": None,
+        }
+    else:
+        credential = {
+            "instance_id": "wecom-primary",
+            "team_ref": None,
+            "agent_task_type": None,
+            "corp_id": "not-a-real-corp",
+            "secret": "not-a-real-secret",
+            "private_key": "not-a-real-private-key",
+            "initial_checkpoint": "100",
+        }
+    _private_json(credential_path, credential)
+    connectors = {
+        "schema_version": "1.0",
+        "site_id": "alpha.example",
+        "external_send": False,
+        "evidence_cas_root": str(tmp_path / "cas"),
+        "channels": {
+            name: {
+                "enabled": name == channel,
+                "kill_switch": name != channel,
+                "activation_time": ("2026-08-08T09:00:00Z" if name == channel else None),
+                "backfill_history": False,
+                "credential_file": str(credential_path if name == channel else tmp_path / name),
+            }
+            for name in ("email", "wecom", "whatsapp", "media")
+        },
+    }
+    return (
+        _private_json(tmp_path / "manifest.json", manifest),
+        _private_json(tmp_path / "runtime.json", runtime),
+        _private_json(tmp_path / "connectors.json", connectors),
+    )
+
+
+def test_wecom_cli_without_official_sdk_factory_returns_78_before_database(
+    tmp_path: Path,
+) -> None:
+    manifest, runtime, connectors = _poller_files(tmp_path, "wecom")
+    database_calls: list[object] = []
+
+    result = main(
+        ["wecom"],
+        manifest_path=manifest,
+        runtime_config_path=runtime,
+        connectors_path=connectors,
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_CONNECTOR_KILL_SWITCH": "false",
+        },
+        connector=lambda **kwargs: database_calls.append(kwargs),
+        clock=lambda: NOW,
+    )
+
+    assert result == 78
+    assert database_calls == []
