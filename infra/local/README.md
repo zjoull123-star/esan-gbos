@@ -1,10 +1,13 @@
 # Local pilot composition
 
-This directory declares an isolated, default-off local topology. Its current
-composition state is `not_composed`: blocked service entrypoints and unrecorded
-local image identities prevent a real start. The checked-in manifest also keeps
-`local_pilot_go=false`. `scripts/local-pilot/start` therefore fails before
-secret materialization or container actions.
+This directory declares an isolated, default-off local topology. Its formal
+composition state remains `not_composed`: the checked-in manifest keeps
+`local_pilot_go=false`, and `scripts/local-pilot/start` must fail before secret
+materialization or container actions (`preflight --require-go` returns 78).
+That formal No-Go is separate from the current local synthetic-core snapshot:
+the runtime and Frappe images were built, and Frappe/PWA plus Context/Agent/
+Observer were run locally with channels, models, media, and tunnel disabled.
+This snapshot does not authorize a real start, external system, or production.
 
 PostgreSQL migrations run once per invocation in the frozen
 observer → context → agent → media order. An immutable checksum ledger makes a
@@ -28,40 +31,46 @@ readable by runtime user `10001`; this is host-specific evidence and must be
 rechecked on another container runtime.
 
 The Frappe, MariaDB, Redis, backend, worker, scheduler, websocket, and PWA
-services use local-pilot-specific volume names. The Frappe services require the
-unbuilt local image `esan-gbos-local-pilot-frappe:2026-08-08`; the upstream
-ERPNext image is not treated as a GBOS PWA. Site setup checks and installs
-`erpnext`, `crm`, and `esan_gbos`, then runs `bench migrate` twice. The optional
-`frappe-synthetic-bootstrap` profile reads a repository-external test-user
-password from `/run/secrets/frappe_demo_password` and calls only the governed
-synthetic fixture seed. After the approved stack is running, the explicit path
-is `scripts/local-pilot/bootstrap-synthetic-user --acknowledge-synthetic`.
-The helper reruns the real go/image/composition preflight and refuses to start
-missing dependencies implicitly. It is declared but has not been executed.
-`/gbos` remains unverified until that image is built and the route probe passes.
+services use local-pilot-specific volume names. The Frappe services use the
+recorded local image `esan-gbos-local-pilot-frappe:2026-08-08` with inspect digest
+`sha256:8e62faa8f76cf60348fde64c68e6b4820f6a602b9140f973bfffffb6efa87415`; the
+upstream ERPNext image is not treated as a GBOS PWA. Site setup reports
+`setup_complete=1`, Frappe/ERPNext/CRM/esan_gbos versions
+`16.30.0`/`16.31.0`/`1.81.0`/`0.1.0`, and `bench migrate` was checksum-consistent
+across two runs. The optional `frappe-synthetic-bootstrap` profile reads a
+repository-external test-user password from `/run/secrets/frappe_demo_password`
+and calls only the governed synthetic fixture seed. The snapshot ran
+`scripts/local-pilot/bootstrap-synthetic-user --acknowledge-synthetic`, and
+Playwright verified `/gbos/ceo`; the helper still reruns the real go/image/
+composition preflight and refuses to start missing dependencies implicitly.
 
 After PostgreSQL migrations and Frappe site setup, `start` runs the profile-only
 `frappe-materializer-bootstrap` before the runtime services. It reads the
 materializer API key and secret from mode-`0600` files without logging them and
 invokes the bench-only provisioning helper for the exact closed service
-identity. The helper is composed but has not been executed against a real local
-Frappe image or site.
+identity. The synthetic snapshot records materializer bootstrap as skipped/idempotent;
+formal materializer identity provisioning remains behind the formal No-Go gate.
 
 Published PostgreSQL, MariaDB, API, PWA, webhook, and optional monitoring ports
-bind only to `127.0.0.1`. Cloudflare Tunnel is profile-gated, has no API network
-membership, and routes only to WhatsApp webhook ingress.
+bind only to `127.0.0.1` (synthetic snapshot: PWA `58080`, Context `58001`, Agent
+`58002`, Observer `58003`, PostgreSQL `55432`, MariaDB `53306`). `local-internal`
+is a bridge with `enable_ip_masquerade=false`, not `internal: true`; pwa/context/
+agent/observer access to `api.deepseek.com:443` was blocked. `webhook-tunnel` remains
+internal, profile-gated, has no API network membership, and routes only to WhatsApp
+webhook ingress.
 
 `scripts/local-pilot/preflight --synthetic` validates only the checked-in,
 fully disabled smoke configuration. It is mutually exclusive with
 `--require-go` and does not waive the real composition, image, or governance
 gates.
 
-After the required local images have been built, recorded, and inspected,
-`scripts/local-pilot/start-synthetic --acknowledge-synthetic` can render a
-temporary core-only manifest and start the three runtime APIs plus
-Frappe/PWA. It never enables connector, model, media, or tunnel profiles and
-does not alter the checked-in manifest, composition state, or formal
-`start --require-go` gate. This path is declared but has not been executed.
+With the required local images built, recorded, and inspected,
+`scripts/local-pilot/start-synthetic --acknowledge-synthetic` renders a
+temporary core-only manifest and starts the three runtime APIs plus Frappe/PWA.
+It never enables connector, model, media, or tunnel profiles and does not alter
+the checked-in manifest, composition state, or formal `start --require-go` gate.
+The current snapshot completed this path once; it is local synthetic evidence,
+not a 72-hour pilot or formal Go.
 
 Build the runtime image explicitly with
 `scripts/local-pilot/build-runtime-image --confirm-network-build`. Python and
@@ -71,6 +80,6 @@ use network access. The command atomically records their inspected IDs,
 RepoDigests, and platforms only after a successful build.
 Build the GBOS Frappe/PWA image separately with
 `scripts/local-pilot/build-frappe-image --confirm-network-build`; the explicit
-flag acknowledges that the governed upstream builder verifies remote tags.
-Neither command has been run by this composition task, and neither lock entry
-is invented.
+flag acknowledges that the governed upstream builder verifies remote tags. The
+current lock entry is the digest recorded above; a later rebuild must produce a
+new evidence snapshot rather than silently reusing this one.

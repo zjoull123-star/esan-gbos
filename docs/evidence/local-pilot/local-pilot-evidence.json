@@ -1,0 +1,157 @@
+{
+  "schema_version": "1.0",
+  "evidence_id": "local-pilot-synthetic-core-20260808",
+  "captured_at": "2026-08-07T20:07:28Z",
+  "commit_sha": "64dc48cb5d6efb62c662f638d8da5f5c12c3a7de",
+  "commit_scope": "source/runtime baseline before this documentation-only evidence commit",
+  "environment": {
+    "host_scope": "current Mac local runtime",
+    "runtime_architecture": "linux/arm64 containers",
+    "data_mode": "synthetic only",
+    "external_systems_contacted": false,
+    "secrets_retained_in_evidence": false
+  },
+  "verdict": {
+    "formal": {
+      "composition_status": "not_composed",
+      "local_pilot_go": false,
+      "preflight_require_go": {
+        "command": "scripts/local-pilot/preflight --require-go",
+        "exit_code": 78,
+        "verdict": "no_go"
+      },
+      "production": "no_go",
+      "real_channels": "no_go",
+      "real_deepseek": "no_go",
+      "kingdee": "no_go",
+      "cloud_deployment": "no_go"
+    },
+    "synthetic_core": {
+      "verdict": "local_synthetic_observed",
+      "scope": "Frappe/PWA plus Context, Agent, and Observer only",
+      "channels_enabled": false,
+      "models_enabled": false,
+      "media_enabled": false,
+      "tunnel_enabled": false,
+      "formal_gate_changed": false
+    }
+  },
+  "runtime": {
+    "loopback_only": true,
+    "ports": {
+      "pwa": "127.0.0.1:58080",
+      "context": "127.0.0.1:58001",
+      "agent": "127.0.0.1:58002",
+      "observer": "127.0.0.1:58003",
+      "postgres": "127.0.0.1:55432",
+      "mariadb": "127.0.0.1:53306"
+    },
+    "networks": {
+      "local-internal": {
+        "driver": "bridge",
+        "internal": false,
+        "enable_ip_masquerade": false,
+        "deepseek_https_probe": {
+          "endpoint": "api.deepseek.com:443",
+          "containers": ["pwa", "context", "agent", "observer"],
+          "result": "blocked"
+        }
+      },
+      "webhook-tunnel": {
+        "internal": true
+      }
+    }
+  },
+  "frappe_site": {
+    "image_lock_digest": "sha256:8e62faa8f76cf60348fde64c68e6b4820f6a602b9140f973bfffffb6efa87415",
+    "setup_complete": 1,
+    "versions": {
+      "frappe": "16.30.0",
+      "erpnext": "16.31.0",
+      "crm": "1.81.0",
+      "esan_gbos": "0.1.0"
+    }
+  },
+  "persistence_and_fixtures": {
+    "migrations": {
+      "checksum_consistent_runs": 2,
+      "second_run_behavior": "no_op"
+    },
+    "materializer_bootstrap": "skipped_idempotent",
+    "fixture_second_run": {
+      "all_records_skipped": true,
+      "counts": {
+        "User": 13,
+        "Team": 5,
+        "CRM Organization": 500,
+        "CRM Contact": 500,
+        "CRM Lead": 500,
+        "CRM Deal": 500,
+        "Party Profile": 500,
+        "Product Brief": 240,
+        "Sample Project": 240,
+        "Iteration": 240,
+        "Shipment": 240,
+        "Feedback": 240,
+        "Demand": 240,
+        "Sourcing": 240,
+        "Work Item": 280,
+        "Review Case": 280
+      }
+    }
+  },
+  "browser_validation": {
+    "tool": "Playwright",
+    "user": "synthetic.ceo@example.invalid",
+    "route": "/gbos/ceo",
+    "result": "success",
+    "visible_text": ["经营总览", "演示 / 合成数据"],
+    "viewports_px": [375, 768, 1440],
+    "horizontal_overflow": false,
+    "console_errors": 0,
+    "console_warnings": 0,
+    "cache": {
+      "static_precache_entries": 21,
+      "api_cached": false
+    }
+  },
+  "verification_snapshot": {
+    "status": "captured_snapshot_not_final_signoff",
+    "pytest": {
+      "passed": 2151,
+      "skipped": 37,
+      "failed": 0
+    },
+    "python_static": {
+      "ruff": "pass",
+      "format": "pass",
+      "mypy": "pass",
+      "mypy_service_source_files": 117
+    },
+    "frontend": {
+      "lint": "pass",
+      "typecheck": "pass",
+      "vitest_passed": 88,
+      "build": "pass"
+    },
+    "rerun_required": true
+  },
+  "recoverable_failure": {
+    "first_partial_site": "moved_recoverably",
+    "data_volume_path": ".failed-gbos.localhost-20260808T033521",
+    "deleted": false
+  },
+  "limitations": [
+    "This is a local synthetic evidence snapshot, not a completed 72-hour pilot.",
+    "The formal composition remains not_composed and formal preflight remains a required No-Go gate.",
+    "No real channel, DeepSeek, Kingdee, cloud deployment, production credential, or external send was used.",
+    "The full verification counts above are a captured mainline snapshot; the primary agent must rerun them before final sign-off.",
+    "Synthetic fixture values and local browser success do not establish business outcomes or production availability."
+  ],
+  "redaction": {
+    "secret_values": "omitted",
+    "cookies": "omitted",
+    "keychain_values": "omitted",
+    "full_logs": "omitted"
+  }
+}

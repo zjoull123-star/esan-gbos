@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import plistlib
 from pathlib import Path
 
@@ -121,3 +123,40 @@ def test_runbook_documents_closed_channel_credential_json_without_real_secrets()
         assert field in runbook
     assert "sk-" not in runbook
     assert "-----BEGIN" not in runbook
+
+
+def test_local_pilot_evidence_snapshot_is_redacted_and_checksumable() -> None:
+    evidence_dir = ROOT / "docs" / "evidence" / "local-pilot"
+    evidence_path = evidence_dir / "local-pilot-evidence.json"
+    summary_path = evidence_dir / "local-pilot-summary.md"
+    sums_path = evidence_dir / "SHA256SUMS"
+
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert payload["captured_at"]
+    assert payload["commit_sha"].startswith("64dc48c")
+    assert payload["verdict"]["formal"]["composition_status"] == "not_composed"
+    assert payload["verdict"]["formal"]["local_pilot_go"] is False
+    assert payload["verdict"]["formal"]["preflight_require_go"]["exit_code"] == 78
+    assert payload["verdict"]["synthetic_core"]["verdict"] == "local_synthetic_observed"
+    assert payload["runtime"]["networks"]["local-internal"]["internal"] is False
+    assert payload["runtime"]["networks"]["webhook-tunnel"]["internal"] is True
+    assert payload["browser_validation"]["console_errors"] == 0
+    assert payload["browser_validation"]["console_warnings"] == 0
+    assert payload["verification_snapshot"]["status"] == "captured_snapshot_not_final_signoff"
+    assert payload["recoverable_failure"]["deleted"] is False
+
+    for text in (
+        evidence_path.read_text(encoding="utf-8"),
+        summary_path.read_text(encoding="utf-8"),
+    ):
+        assert "sk-" not in text
+        assert "-----BEGIN" not in text
+        assert "Cookie:" not in text
+
+    expected = {}
+    for line in sums_path.read_text(encoding="utf-8").splitlines():
+        digest, name = line.split(maxsplit=1)
+        expected[name] = digest
+    for path in (evidence_path, summary_path):
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        assert expected[path.name] == digest

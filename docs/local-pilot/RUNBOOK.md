@@ -2,12 +2,40 @@
 
 ## 当前结论
 
-当前状态仍是 **未组合，不可启动**。Frappe/PWA、MariaDB、Redis、
-PostgreSQL、API、worker、渠道入口、model projection 与本地 filesystem
-CAS 的拓扑已经声明，但尚未完成本地 runtime/Frappe 镜像构建、真实迁移、
-站点 bootstrap、健康检查和 `/gbos` 浏览器验证。它们是“已声明但未运行验证”，
-不是可用性证据。
-真实 UI 是 Frappe PWA，不是独立的 Python pilot UI。
+正式 production composition 仍是 **未组合，不可启动**：
+`composition.status=not_composed`、`local_pilot_go=false`，而
+`scripts/local-pilot/preflight --require-go` 必须返回 78。生产、真实渠道、
+真实 DeepSeek、Kingdee 与云部署均保持 No-Go。正式路径仍是“已声明但未运行验证”，
+不能把 synthetic 运行快照解释为正式可用性证据。
+
+与正式门分开，当前 Mac 已完成一次本地、禁用态 synthetic core 运行快照。它使用
+已构建的本地 runtime/Frappe 镜像，启动 Frappe PWA、Context、Agent、Observer；
+channels、models、media、tunnel 均 disabled。PWA、API 和数据库只监听 loopback：
+PWA `127.0.0.1:58080`，Context `58001`，Agent `58002`，Observer `58003`，
+PostgreSQL `55432`，MariaDB `53306`。真实 UI 是 Frappe PWA，不是独立的 Python
+pilot UI。
+
+该快照还观察到：`local-internal` 是 bridge 且
+`enable_ip_masquerade=false`，不是 `internal: true`；从 pwa/context/agent/observer
+容器访问 `api.deepseek.com:443` 均 blocked，`webhook-tunnel` 仍为 internal。
+这只证明本地 synthetic core 的隔离边界，不改变正式 No-Go。
+
+Frappe image lock 为
+`sha256:8e62faa8f76cf60348fde64c68e6b4820f6a602b9140f973bfffffb6efa87415`；
+site `setup_complete=1`，Frappe/ERPNext/CRM/esan_gbos 版本分别为
+`16.30.0`/`16.31.0`/`1.81.0`/`0.1.0`。连续两次 migrations
+checksum-consistent，materializer bootstrap 为 skipped/idempotent；fixture
+第二次运行全部 skipped（13 User、5 Team、各 500 CRM Organization/Contact/
+Lead/Deal/Party Profile、各 240 Product Brief/Sample Project/Iteration/Shipment/
+Feedback/Demand/Sourcing、280 Work Item、280 Review Case）。
+
+Playwright 使用 `synthetic.ceo@example.invalid` 登录后访问 `/gbos/ceo` 成功，页面
+显示“经营总览”和“演示 / 合成数据”；375/768/1440 宽度均无横向溢出，console
+errors/warnings 均为 0，cache 只有 21 个静态预缓存条目且 API `cached=false`。
+此前主线全量验证快照为 pytest `2151 passed/37 skipped`、ruff/format/mypy
+（services 117）、frontend lint/typecheck/Vitest `88`/build 全部通过；后续仍需
+由主代理复跑，不能冒充最终签字。首次部分 site 的失败目录已可恢复地移动到数据卷内
+`.failed-gbos.localhost-20260808T033521`，未删除。
 
 `infra/local/runtime-entrypoints.json` 如实区分可执行入口和仍受阻入口：
 WhatsApp webhook、Email poller 与 connector worker 已有默认组合；WeCom
@@ -31,7 +59,10 @@ Compose config 仅证明语法，均不能解除运行门。
 - Prometheus 是可选 profile，当前仅抓取自身，空 alerts 文件不宣称业务
   指标、SLO 或告警已经接线。
 - PostgreSQL、MariaDB、API、PWA、webhook 与可选 Prometheus 的宿主机端口
-  只绑定 `127.0.0.1`。
+  只绑定 `127.0.0.1`；本次 synthetic core 的已验证端口见上方快照。
+- `local-internal` 使用 bridge 网络并关闭 `enable_ip_masquerade`，不使用
+  `internal: true`；pwa/context/agent/observer 到 `api.deepseek.com:443` 的实测
+  出站均 blocked。`webhook-tunnel` 仍为 internal。
 - Cloudflare Tunnel 只连接 WhatsApp webhook ingress，且只允许
   `^/webhooks/whatsapp(/.*)?$`；它不连接 API 网络。
 - 仅 WhatsApp webhook ingress 可以被 tunnel 访问。
@@ -47,9 +78,12 @@ digest。`scripts/local-pilot/build-runtime-image --confirm-network-build`
 `uv sync --frozen` 也可能需要下载 lock 中的依赖。构建成功后脚本才原子记录
 Python base、uv builder 与 local runtime 的本机 image ID、RepoDigest 和平台。
 
-Frappe 使用独立的本地 image ref。只有显式运行
-`scripts/local-pilot/build-frappe-image --confirm-network-build` 后才记录
-本机 image ID。本手册不声称任何一个 build 已完成。
+Frappe 使用独立的本地 image ref。本次 snapshot 已记录
+`sha256:8e62faa8f76cf60348fde64c68e6b4820f6a602b9140f973bfffffb6efa87415`，
+并在该镜像上完成 synthetic site setup 与 `/gbos/ceo` 浏览器验证；这不等于正式
+composition 已 go。后续重建仍必须显式运行
+`scripts/local-pilot/build-frappe-image --confirm-network-build`，只在成功后记录
+新的本机 image ID。
 
 ## Keychain 与最小权限
 
@@ -84,8 +118,9 @@ key/secret，并调用 bench-only provisioning helper；secret 不写进 site co
 `gbos-materializer@localhost.invalid`，以及 `observation_processing`、
 `sales_follow_up`、`procurement_coordination`、
 `product_sample_management`、`metric_reporting` 五项 exact processing
-purposes，并创建 `Website User` / `desk_access=0` 的最小角色身份。该入口
-已组合，但尚未在本机真实 Frappe image/site 上执行验证。
+purposes，并创建 `Website User` / `desk_access=0` 的最小角色身份。当前 synthetic
+snapshot 记录该 bootstrap 为 skipped/idempotent；正式 materializer 身份和正式
+composition 仍受 `local_pilot_go=false` 门约束。
 
 ## 渠道 credential JSON
 
@@ -211,8 +246,8 @@ disabled manifest 生成临时、仓库外的 core-only runtime manifest。该 m
 保持 production、Kingdee、cloud、external send、所有 channel 与 DeepSeek
 关闭；只启动 Context/Agent/Observer API 和 Frappe worker/scheduler/PWA，
 不启动 connector、model、media 或 tunnel。它不会更改 checked-in manifest、
-`composition.status` 或 formal `start --require-go` 门。此路径已静态组合但
-尚未实际运行。
+`composition.status` 或 formal `start --require-go` 门。本次 snapshot 已按该路径
+运行并完成上述本地验证；这不是 72 小时试点完成，也不是正式 Go。
 
 状态与停止：
 
@@ -240,8 +275,8 @@ scripts/local-pilot/bootstrap-synthetic-user --acknowledge-synthetic
 ```
 
 密码只能来自 `/run/secrets/frappe_demo_password`；脚本不会隐式启动 stack，
-且仍受正式 go/composition/image preflight 约束。该路径与 `/gbos` 目前均为
-已声明但未运行验证。
+且仍受正式 go/composition/image preflight 约束。本次 synthetic snapshot 已完成
+该用户路径并由 Playwright 验证 `/gbos/ceo`；这不放宽正式门。
 
 ## LaunchAgent
 
