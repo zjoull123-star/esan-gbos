@@ -191,3 +191,166 @@ export const numberField = (
   const value = record[field];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 };
+
+export interface WorkItemPresentation {
+  name?: string;
+  title?: string;
+  team?: string;
+  assigned_to?: string;
+  priority?: string;
+  due_date?: string;
+  origin?: string;
+  business_status?: string;
+  review_status?: string;
+  revision?: number;
+  reference_doctype?: string;
+  reference_name?: string;
+  modified?: string;
+}
+
+export interface SourcingCandidatePresentation {
+  supplier_name?: string | null;
+  external_supplier_id?: string | null;
+  quoted_price?: number | null;
+  currency?: string | null;
+  lead_time_days?: number | null;
+  candidate_status?: string | null;
+  notes?: string | null;
+}
+
+export interface SourcingEventPresentation {
+  name?: string;
+  title?: string;
+  team?: string;
+  demand_signal?: string;
+  selected_supplier?: string;
+  owner_user?: string;
+  origin?: string;
+  business_status?: string;
+  review_status?: string;
+  revision?: number;
+  modified?: string;
+  candidates: readonly SourcingCandidatePresentation[];
+}
+
+export interface SourcingLanePresentation {
+  key: (typeof SOURCING_LANES)[number][0];
+  label: (typeof SOURCING_LANES)[number][1];
+  events: readonly SourcingEventPresentation[];
+}
+
+const projectTextFields = <T extends readonly string[]>(
+  record: Record<string, unknown>,
+  fields: T,
+) =>
+  Object.fromEntries(
+    fields.map((field) => [field, textField(record, field)]),
+  ) as Record<T[number], string | undefined>;
+
+export const workItemsFromPayload = (value: unknown): WorkItemPresentation[] => {
+  const records = Array.isArray(value)
+    ? value.filter(isRecord)
+    : isRecord(value)
+      ? recordsAt(value, "items")
+      : [];
+  return records.map((record) => ({
+    ...projectTextFields(record, [
+      "name",
+      "title",
+      "team",
+      "assigned_to",
+      "priority",
+      "due_date",
+      "origin",
+      "business_status",
+      "review_status",
+      "reference_doctype",
+      "reference_name",
+      "modified",
+    ] as const),
+    revision: numberField(record, "revision"),
+  }));
+};
+
+export const workItemReferenceLink = (
+  item: WorkItemPresentation,
+): { href: string; label: string } | undefined => {
+  if (!item.reference_name) {
+    return undefined;
+  }
+  if (item.reference_doctype === "GBOS Party Profile") {
+    return {
+      href: `/gbos/party/${encodeURIComponent(item.reference_name)}`,
+      label: "查看相关客户",
+    };
+  }
+  if (item.reference_doctype === "GBOS Sample Project") {
+    return {
+      href: `/gbos/sample/${encodeURIComponent(item.reference_name)}`,
+      label: "查看相关样品",
+    };
+  }
+  return undefined;
+};
+
+const sourcingCandidateFromRecord = (
+  record: Record<string, unknown>,
+): SourcingCandidatePresentation => ({
+  ...projectTextFields(record, [
+    "supplier_name",
+    "external_supplier_id",
+    "currency",
+    "candidate_status",
+    "notes",
+  ] as const),
+  quoted_price: numberField(record, "quoted_price"),
+  lead_time_days: numberField(record, "lead_time_days"),
+});
+
+const sourcingEventFromRecord = (
+  record: Record<string, unknown>,
+): SourcingEventPresentation => ({
+  ...projectTextFields(record, [
+    "name",
+    "title",
+    "team",
+    "demand_signal",
+    "selected_supplier",
+    "owner_user",
+    "origin",
+    "business_status",
+    "review_status",
+    "modified",
+  ] as const),
+  revision: numberField(record, "revision"),
+  candidates: recordsAt(record, "candidates").map(sourcingCandidateFromRecord),
+});
+
+export const sourcingLanesFromPayload = (
+  value: unknown,
+): SourcingLanePresentation[] => {
+  const lanes = isRecord(value) && isRecord(value.lanes) ? value.lanes : {};
+  return SOURCING_LANES.map(([key, label]) => ({
+    key,
+    label,
+    events: recordsAt(lanes, key).map(sourcingEventFromRecord),
+  }));
+};
+
+export const formatQuotedPrice = (
+  candidate: SourcingCandidatePresentation,
+): string => {
+  if (candidate.quoted_price === undefined || candidate.quoted_price === null) {
+    return "";
+  }
+  return candidate.currency
+    ? `${candidate.quoted_price} ${candidate.currency}`
+    : String(candidate.quoted_price);
+};
+
+export const formatLeadTimeDays = (
+  candidate: SourcingCandidatePresentation,
+): string =>
+  candidate.lead_time_days === undefined || candidate.lead_time_days === null
+    ? ""
+    : `${candidate.lead_time_days} 天`;

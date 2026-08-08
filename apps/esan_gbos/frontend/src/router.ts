@@ -32,22 +32,19 @@ export const APP_ROUTES = [
   {
     path: "/gbos/sales",
     name: "sales",
-    component: () => import("./views/WorkspaceView.vue"),
-    props: { workspace: "sales" },
+    component: () => import("./views/SalesWorkspaceView.vue"),
     meta: { roles: [...CEO_ROLES, ...SALES_ROLES] },
   },
   {
     path: "/gbos/purchase",
     name: "purchase",
-    component: () => import("./views/WorkspaceView.vue"),
-    props: { workspace: "purchase" },
+    component: () => import("./views/PurchaseWorkspaceView.vue"),
     meta: { roles: [...CEO_ROLES, ...PURCHASE_ROLES] },
   },
   {
     path: "/gbos/product",
     name: "product",
-    component: () => import("./views/WorkspaceView.vue"),
-    props: { workspace: "product" },
+    component: () => import("./views/ProductWorkspaceView.vue"),
     meta: { roles: [...CEO_ROLES, ...PRODUCT_ROLES] },
   },
   {
