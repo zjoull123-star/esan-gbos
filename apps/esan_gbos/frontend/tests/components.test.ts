@@ -11,7 +11,7 @@ import StatePanel from "@/components/StatePanel.vue";
 import { isFixturePayload } from "@/presentation";
 
 describe("沟通观察页面组合边界", () => {
-  it("列表和详情复用共享模板，详情不声明任何命令按钮", () => {
+  it("列表和详情复用共享模板及公共按钮，详情不声明任何命令按钮", () => {
     const listSource = readFileSync(
       resolve("src/views/CommunicationsView.vue"),
       "utf8",
@@ -24,11 +24,53 @@ describe("沟通观察页面组合边界", () => {
     expect(listSource).toMatch(/import PageHeader from/);
     expect(listSource).toMatch(/import OperationalListTemplate from/);
     expect(listSource).toMatch(/import ResourceBoundary from/);
+    expect(listSource).toMatch(/import GbosButton from/);
+    expect(listSource.match(/<GbosButton\b/g)).toHaveLength(3);
     expect(detailSource).toMatch(/import PageHeader from/);
     expect(detailSource).toMatch(/import DetailCommandTemplate from/);
     expect(detailSource).toMatch(/import EvidencePanel from/);
     expect(detailSource).toMatch(/import ResourceBoundary from/);
     expect(detailSource).not.toMatch(/<button\b/);
+  });
+
+  it("移动列表无需横向表格且两个页面不依赖 legacy theme class", () => {
+    const listSource = readFileSync(
+      resolve("src/views/CommunicationsView.vue"),
+      "utf8",
+    );
+    const detailSource = readFileSync(
+      resolve("src/views/CommunicationDetailView.vue"),
+      "utf8",
+    );
+    const legacyClasses = [
+      "button",
+      "filter-bar",
+      "status-list",
+      "command-card",
+      "evidence-ref-list",
+      "proposal-list",
+      "informal-label",
+      "restricted-notice",
+    ];
+    const staticClasses = [...`${listSource}\n${detailSource}`.matchAll(/\bclass="([^"]+)"/g)]
+      .flatMap((match) => (match[1] ?? "").split(/\s+/));
+
+    expect(listSource).toContain("data-mobile-list");
+    expect(listSource).toMatch(
+      /@media \(max-width: 767px\)[\s\S]*?\.communication-table\s*{[\s\S]*?display:\s*none/,
+    );
+    expect(listSource).toMatch(
+      /@media \(max-width: 767px\)[\s\S]*?\.communication-mobile-list\s*{[\s\S]*?display:\s*grid/,
+    );
+    for (const legacyClass of legacyClasses) {
+      expect(staticClasses).not.toContain(legacyClass);
+    }
+    expect(listSource).toContain("<style scoped>");
+    expect(detailSource).toContain("<style scoped>");
+    expect(listSource).not.toMatch(/var\(--(?!gbos-)/);
+    expect(detailSource).not.toMatch(/var\(--(?!gbos-)/);
+    expect(detailSource).toContain('class="communication-back-link"');
+    expect(detailSource).toMatch(/\.communication-back-link\s*{/);
   });
 });
 

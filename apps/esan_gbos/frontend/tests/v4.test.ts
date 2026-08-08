@@ -14,6 +14,7 @@ import ResourceBoundary from "@/components/feedback/ResourceBoundary.vue";
 import DetailCommandTemplate from "@/components/layout/DetailCommandTemplate.vue";
 import OperationalListTemplate from "@/components/layout/OperationalListTemplate.vue";
 import PageHeader from "@/components/layout/PageHeader.vue";
+import GbosButton from "@/components/ui/GbosButton.vue";
 import { navigationForRoles } from "@/navigation";
 import { APP_ROUTES, isRouteAllowed } from "@/router";
 import { refreshSession } from "@/session";
@@ -309,6 +310,7 @@ describe("v4 roles and pages", () => {
     expect(wrapper.findComponent(PageHeader).exists()).toBe(true);
     expect(wrapper.findComponent(OperationalListTemplate).exists()).toBe(true);
     expect(wrapper.findComponent(ResourceBoundary).exists()).toBe(true);
+    expect(wrapper.findAllComponents(GbosButton)).toHaveLength(3);
     expect(wrapper.text()).toContain("客户询问交期");
     expect(wrapper.get("form").attributes("aria-label")).toBe("沟通筛选");
     expect(wrapper.findAll("thead th").map((cell) => cell.text())).toEqual([
@@ -321,6 +323,32 @@ describe("v4 roles and pages", () => {
     expect(wrapper.get("a[href='/gbos/communications/OBS-1']").text()).toContain(
       "客户询问交期",
     );
+    const mobileFields = wrapper.findAll("[data-mobile-list] [data-label]");
+    expect(mobileFields.map((field) => field.attributes("data-label"))).toEqual([
+      "渠道",
+      "分类",
+      "时间",
+      "状态",
+      "团队",
+      "摘要",
+      "证据数",
+      "原始语言",
+      "详情",
+    ]);
+    expect(mobileFields.map((field) => field.get("dd").text())).toEqual([
+      "WhatsApp",
+      "Customer Request",
+      "2026-08-07T02:00:00Z",
+      "Unreviewed",
+      "TEAM-1",
+      "客户询问交期。",
+      "1",
+      "ar",
+      "查看详情",
+    ]);
+    expect(
+      wrapper.get("[data-mobile-list] [data-label='详情'] a").attributes("href"),
+    ).toBe("/gbos/communications/OBS-1");
     expect(wrapper.text()).toContain("下一页");
 
     await wrapper.get("select[name='channel']").setValue("WhatsApp");

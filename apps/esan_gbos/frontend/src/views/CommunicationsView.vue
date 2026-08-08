@@ -8,15 +8,15 @@
           description="销售角色只接收服务端按本人或团队裁剪后的结果；页面不会扩大数据范围。"
         >
           <template #actions>
-            <button class="button button--secondary" type="button" @click="resetFilters">
+            <GbosButton intent="secondary" type="button" @click="resetFilters">
               清除筛选
-            </button>
+            </GbosButton>
           </template>
         </PageHeader>
       </template>
 
       <template #filters>
-        <form class="filter-bar" aria-label="沟通筛选" @submit.prevent="applyFilters">
+        <form class="communication-filters" aria-label="沟通筛选" @submit.prevent="applyFilters">
           <label>
             渠道
             <select v-model="draftFilters.channel" name="channel">
@@ -39,9 +39,9 @@
               <option value="Reviewed">已审核</option>
             </select>
           </label>
-          <button class="button button--primary" type="submit">
+          <GbosButton intent="primary" type="submit">
             应用筛选
-          </button>
+          </GbosButton>
         </form>
       </template>
 
@@ -96,18 +96,71 @@
               </tbody>
             </table>
           </div>
+          <ul
+            class="communication-mobile-list"
+            data-mobile-list
+            aria-label="沟通观察移动列表"
+          >
+            <li v-for="item in communications" :key="item.observation_id">
+              <dl>
+                <div data-label="渠道">
+                  <dt>渠道</dt>
+                  <dd>{{ item.channel }}</dd>
+                </div>
+                <div data-label="分类">
+                  <dt>分类</dt>
+                  <dd>{{ item.classification }}</dd>
+                </div>
+                <div data-label="时间">
+                  <dt>时间</dt>
+                  <dd>{{ item.occurred_at }}</dd>
+                </div>
+                <div data-label="状态">
+                  <dt>状态</dt>
+                  <dd>{{ item.review_status }}</dd>
+                </div>
+                <div data-label="团队">
+                  <dt>团队</dt>
+                  <dd>{{ item.team_ref || "未关联" }}</dd>
+                </div>
+                <div data-label="摘要">
+                  <dt>摘要</dt>
+                  <dd>{{ item.summary_zh }}</dd>
+                </div>
+                <div data-label="证据数">
+                  <dt>证据数</dt>
+                  <dd>{{ item.evidence_count }}</dd>
+                </div>
+                <div data-label="原始语言">
+                  <dt>原始语言</dt>
+                  <dd>{{ item.original_language }}</dd>
+                </div>
+                <div data-label="详情">
+                  <dt>详情</dt>
+                  <dd>
+                    <RouterLink
+                      class="communication-detail-link"
+                      :to="`/gbos/communications/${encodeURIComponent(item.observation_id)}`"
+                    >
+                      查看详情
+                    </RouterLink>
+                  </dd>
+                </div>
+              </dl>
+            </li>
+          </ul>
         </ResourceBoundary>
       </template>
 
       <template v-if="nextCursor" #pagination>
-        <button
-          class="button button--secondary"
+        <GbosButton
+          intent="secondary"
           type="button"
           data-pagination="next"
           @click="nextPage"
         >
           下一页
-        </button>
+        </GbosButton>
       </template>
     </OperationalListTemplate>
   </section>
@@ -121,6 +174,7 @@ import type { CommunicationListQuery } from "@/api/types";
 import ResourceBoundary from "@/components/feedback/ResourceBoundary.vue";
 import OperationalListTemplate from "@/components/layout/OperationalListTemplate.vue";
 import PageHeader from "@/components/layout/PageHeader.vue";
+import GbosButton from "@/components/ui/GbosButton.vue";
 import { useOnlineResource } from "@/composables/useOnlineResource";
 
 const client = useBffClient();
@@ -175,11 +229,37 @@ const nextPage = () => {
 </script>
 
 <style scoped>
-.filter-bar {
+.communication-filters {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(128px, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
   margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
+}
+
+.communication-filters label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--gbos-muted);
+  font-family: var(--gbos-font-sans);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.communication-filters input,
+.communication-filters select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-text);
+  background: var(--gbos-surface);
+  font-family: var(--gbos-font-sans);
+  font-size: 14px;
 }
 
 .communication-table {
@@ -246,5 +326,81 @@ td small {
   color: var(--gbos-accent-text);
   font-weight: 700;
   line-height: 1.45;
+}
+
+.communication-mobile-list {
+  display: none;
+  min-width: 0;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.communication-mobile-list > li {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-card);
+  background: var(--gbos-surface);
+  box-shadow: var(--gbos-shadow-card);
+}
+
+.communication-mobile-list dl,
+.communication-mobile-list dt,
+.communication-mobile-list dd {
+  margin: 0;
+}
+
+.communication-mobile-list dl {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.communication-mobile-list [data-label] {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(76px, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.communication-mobile-list dt {
+  color: var(--gbos-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.communication-mobile-list dd {
+  min-width: 0;
+  color: var(--gbos-text);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.communication-detail-link {
+  color: var(--gbos-accent-text);
+  font-weight: 700;
+}
+
+@media (max-width: 767px) {
+  .communication-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .communication-filters input,
+  .communication-filters select {
+    min-height: 44px;
+  }
+
+  .communication-table {
+    display: none;
+  }
+
+  .communication-mobile-list {
+    display: grid;
+  }
 }
 </style>
