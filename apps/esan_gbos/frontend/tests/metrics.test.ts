@@ -1,4 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
+import type { Component } from "vue";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -9,7 +10,13 @@ import {
 } from "@/api/bff";
 import type { MetricDashboardPayload } from "@/api/types";
 import { BFF_CLIENT_KEY } from "@/api/injection";
-import WorkspaceView from "@/views/WorkspaceView.vue";
+import { APP_ROUTES } from "@/router";
+
+const loadCeoDashboardView = APP_ROUTES.find(
+  (route) => route.name === "ceo",
+)?.component as () => Promise<{ default: Component & { __name?: string } }>;
+
+const getCeoDashboardView = async () => (await loadCeoDashboardView()).default;
 
 const lineage = {
   source_system: "synthetic_kingdee_projection",
@@ -208,13 +215,19 @@ describe("Gate 5 governed metrics client", () => {
 });
 
 describe("CEO governed metrics cockpit", () => {
+  it("routes the CEO command center to its dedicated dashboard view", async () => {
+    const component = await getCeoDashboardView();
+
+    expect(component.__name).toBe("CeoDashboardView");
+  });
+
   it("distinguishes loading, offline, permission, and empty states", async () => {
+    const CeoDashboardView = await getCeoDashboardView();
     let resolveLoading: ((value: Response) => void) | undefined;
     const pendingResponse = new Promise<Response>((resolve) => {
       resolveLoading = resolve;
     });
-    const loadingWrapper = mount(WorkspaceView, {
-      props: { workspace: "ceo" },
+    const loadingWrapper = mount(CeoDashboardView, {
       global: {
         provide: {
           [BFF_CLIENT_KEY as symbol]: createBffClient({
@@ -230,8 +243,7 @@ describe("CEO governed metrics cockpit", () => {
     await flushPromises();
     loadingWrapper.unmount();
 
-    const offlineWrapper = mount(WorkspaceView, {
-      props: { workspace: "ceo" },
+    const offlineWrapper = mount(CeoDashboardView, {
       global: {
         provide: {
           [BFF_CLIENT_KEY as symbol]: createBffClient({
@@ -256,8 +268,7 @@ describe("CEO governed metrics cockpit", () => {
       }),
       { status: 403, headers: { "Content-Type": "application/json" } },
     );
-    const permissionWrapper = mount(WorkspaceView, {
-      props: { workspace: "ceo" },
+    const permissionWrapper = mount(CeoDashboardView, {
       global: {
         provide: {
           [BFF_CLIENT_KEY as symbol]: createBffClient({
@@ -271,8 +282,7 @@ describe("CEO governed metrics cockpit", () => {
     expect(permissionWrapper.text()).toContain("无权查看受治理指标");
     permissionWrapper.unmount();
 
-    const emptyWrapper = mount(WorkspaceView, {
-      props: { workspace: "ceo" },
+    const emptyWrapper = mount(CeoDashboardView, {
       global: {
         provide: {
           [BFF_CLIENT_KEY as symbol]: createBffClient({
@@ -289,21 +299,23 @@ describe("CEO governed metrics cockpit", () => {
   });
 
   it("shows synthetic provenance and every governed quality field without an unavailable value", async () => {
+    const CeoDashboardView = await getCeoDashboardView();
     const client = createBffClient({
       fetcher: vi.fn<Fetcher>().mockResolvedValue(response(dashboard)),
       isOnline: () => true,
     });
-    const wrapper = mount(WorkspaceView, {
-      props: { workspace: "ceo" },
+    const wrapper = mount(CeoDashboardView, {
       global: { provide: { [BFF_CLIENT_KEY as symbol]: client } },
     });
 
     await flushPromises();
 
     expect(wrapper.get("h1").text()).toBe("经营总览");
+    expect(wrapper.findAll(".metrics-source-banner")).toHaveLength(1);
     expect(wrapper.get("[role='status'].metrics-source-banner").text()).toContain(
       "演示 / 合成数据",
     );
+    expect(wrapper.findAll(".metric-tile")).toHaveLength(2);
     expect(wrapper.text()).toContain("销售订单金额");
     expect(wrapper.text()).toContain("125,000");
     expect(wrapper.text()).toContain("CNY");
@@ -315,6 +327,17 @@ describe("CEO governed metrics cockpit", () => {
     expect(wrapper.text()).toContain("synthetic_kingdee_projection");
     expect(wrapper.text()).toContain("reconciliation_failed");
 
+    const available = wrapper.get("[data-metric-key='sales.order_value']");
+    expect(available.get("[data-official-value]").text()).toContain("125,000");
+    expect(available.get(".metric-tile__quality").text()).toContain("新鲜");
+    expect(available.get(".metric-tile__quality").text()).toContain("100%");
+    expect(available.get(".metric-tile__quality").text()).toContain("已通过");
+    expect(available.get("details").text()).toContain("定义版本");
+    expect(available.get("details").text()).toContain("0.1.0");
+    expect(available.get("details").text()).toContain("gbos.localhost");
+    expect(available.get("details").text()).toContain("演示 / 合成");
+    expect(available.get("details").text()).toContain("synthetic_kingdee_projection");
+
     const unavailable = wrapper.get(
       "[data-metric-key='receivables.balance']",
     );
@@ -324,6 +347,7 @@ describe("CEO governed metrics cockpit", () => {
   });
 
   it("invalid metric responses render an error state and no metric card", async () => {
+    const CeoDashboardView = await getCeoDashboardView();
     const client = createBffClient({
       fetcher: vi.fn<Fetcher>().mockResolvedValue(
         response({
@@ -338,8 +362,7 @@ describe("CEO governed metrics cockpit", () => {
       ),
       isOnline: () => true,
     });
-    const wrapper = mount(WorkspaceView, {
-      props: { workspace: "ceo" },
+    const wrapper = mount(CeoDashboardView, {
       global: { provide: { [BFF_CLIENT_KEY as symbol]: client } },
     });
 

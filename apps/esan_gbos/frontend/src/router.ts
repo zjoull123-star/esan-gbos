@@ -26,8 +26,7 @@ export const APP_ROUTES = [
   {
     path: "/gbos/ceo",
     name: "ceo",
-    component: () => import("./views/WorkspaceView.vue"),
-    props: { workspace: "ceo" },
+    component: () => import("./views/CeoDashboardView.vue"),
     meta: { roles: CEO_ROLES },
   },
   {

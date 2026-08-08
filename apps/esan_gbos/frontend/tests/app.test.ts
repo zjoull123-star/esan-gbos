@@ -7,6 +7,7 @@ import { createBffClient, type Fetcher } from "@/api/bff";
 import { BFF_CLIENT_KEY } from "@/api/injection";
 import { APP_ROUTES } from "@/router";
 import { refreshSession } from "@/session";
+import OverviewView from "@/views/OverviewView.vue";
 import PartyDetailView from "@/views/PartyDetailView.vue";
 import SampleDetailView from "@/views/SampleDetailView.vue";
 import WorkspaceView from "@/views/WorkspaceView.vue";
@@ -462,6 +463,42 @@ describe("详情页", () => {
 });
 
 describe("应用壳", () => {
+  it("产品总览只显示当前授权模块与运行标签，且不读取业务 API 或正式数值", async () => {
+    setFrappeSession("sales@example.invalid", ["Sales User"]);
+    const fetcher = vi.fn<Fetcher>().mockResolvedValue(apiResponse([]));
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/gbos", component: OverviewView }],
+    });
+    await router.push("/gbos");
+    await router.isReady();
+
+    const wrapper = mount(OverviewView, {
+      global: {
+        plugins: [router],
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+          }),
+        },
+      },
+    });
+
+    expect(wrapper.get("h1").text()).toBe("产品总览");
+    expect(wrapper.find(".page-header__copy").exists()).toBe(true);
+    expect(wrapper.text()).toContain("sales@example.invalid");
+    expect(wrapper.text()).toContain("在线优先 · 不保留业务离线快照");
+    expect(
+      wrapper
+        .findAll("[aria-label='已授权工作台'] a")
+        .map((link) => link.text()),
+    ).toEqual(["进入销售协同", "进入沟通观察"]);
+    expect(wrapper.text()).not.toContain("经营总览");
+    expect(wrapper.find("[data-official-value]").exists()).toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("只显示当前角色导航，并在越权深链显示权限状态", async () => {
     setFrappeSession("sales@example.invalid", ["Sales User"]);
     const router = createRouter({
