@@ -216,6 +216,7 @@ git commit -m "feat(pwa): add role-aware GBOS entry"
 - Create: `apps/esan_gbos/frontend/src/components/shell/WorkspaceSidebar.vue`
 - Create: `apps/esan_gbos/frontend/src/components/shell/AppTopbar.vue`
 - Create: `apps/esan_gbos/frontend/tests/shell.test.ts`
+- Modify: `apps/esan_gbos/frontend/tests/app.test.ts`
 - Modify: `apps/esan_gbos/frontend/src/App.vue`
 - Modify: `apps/esan_gbos/frontend/src/main.ts`
 
@@ -297,6 +298,7 @@ git add apps/esan_gbos/frontend/src/design \
   apps/esan_gbos/frontend/src/components/shell/WorkspaceSidebar.vue \
   apps/esan_gbos/frontend/src/components/shell/AppTopbar.vue \
   apps/esan_gbos/frontend/tests/shell.test.ts \
+  apps/esan_gbos/frontend/tests/app.test.ts \
   apps/esan_gbos/frontend/src/App.vue \
   apps/esan_gbos/frontend/src/main.ts
 git diff --cached --check
