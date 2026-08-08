@@ -94,6 +94,7 @@ routes have migrated and the full suite is green.
 **Files:**
 
 - Modify: `apps/esan_gbos/frontend/tests/navigation.test.ts`
+- Modify: `apps/esan_gbos/frontend/tests/service-worker.test.ts`
 - Modify: `tests/domain/test_app_metadata.py`
 - Create: `apps/esan_gbos/frontend/src/views/OverviewView.vue`
 - Modify: `apps/esan_gbos/frontend/src/navigation.ts`
@@ -144,7 +145,7 @@ Run:
 ```bash
 uv run --frozen pytest -q tests/domain/test_app_metadata.py
 cd apps/esan_gbos/frontend
-pnpm test:unit -- tests/navigation.test.ts
+pnpm exec vitest run tests/navigation.test.ts tests/service-worker.test.ts
 ```
 
 Expected: failures because `/gbos`, `defaultWorkspaceForRoles`, and the Integration Admin
@@ -192,6 +193,7 @@ unchanged.
 
 ```bash
 git add apps/esan_gbos/frontend/tests/navigation.test.ts \
+  apps/esan_gbos/frontend/tests/service-worker.test.ts \
   tests/domain/test_app_metadata.py \
   apps/esan_gbos/frontend/src/views/OverviewView.vue \
   apps/esan_gbos/frontend/src/navigation.ts \
@@ -250,7 +252,7 @@ Import token CSS as raw text with Vite's `?raw` support for the source assertion
 
 ```bash
 cd apps/esan_gbos/frontend
-pnpm test:unit -- tests/shell.test.ts
+pnpm exec vitest run tests/shell.test.ts
 ```
 
 Expected: module-not-found failures for the new design and shell files.
@@ -280,7 +282,7 @@ compact grouped navigation, and no fixed Gate footer.
 - [ ] **Step 4: Run focused tests, typecheck, and build**
 
 ```bash
-pnpm test:unit -- tests/shell.test.ts tests/navigation.test.ts tests/app.test.ts
+pnpm exec vitest run tests/shell.test.ts tests/navigation.test.ts tests/app.test.ts
 pnpm typecheck
 pnpm build
 ```
@@ -332,7 +334,7 @@ non-CEO never receives unauthorized links.
 - [ ] **Step 2: Run and verify RED**
 
 ```bash
-pnpm test:unit -- tests/shell.test.ts
+pnpm exec vitest run tests/shell.test.ts
 ```
 
 Expected: missing mobile navigation components and failing focus behavior.
@@ -349,7 +351,7 @@ Expected: missing mobile navigation components and failing focus behavior.
 - [ ] **Step 4: Run focused GREEN and a production build**
 
 ```bash
-pnpm test:unit -- tests/shell.test.ts tests/navigation.test.ts
+pnpm exec vitest run tests/shell.test.ts tests/navigation.test.ts
 pnpm typecheck
 pnpm build
 ```
@@ -408,7 +410,7 @@ Also assert Arabic original text has `lang="ar"` and `dir="rtl"`.
 - [ ] **Step 2: Run the focused test and verify RED**
 
 ```bash
-pnpm test:unit -- tests/templates.test.ts
+pnpm exec vitest run tests/templates.test.ts
 ```
 
 Expected: module-not-found failures.
@@ -427,7 +429,7 @@ use native dialog semantics or an accessible Frappe UI Dialog and must never cal
 - [ ] **Step 4: Run focused GREEN and frontend static gates**
 
 ```bash
-pnpm test:unit -- tests/templates.test.ts tests/components.test.ts
+pnpm exec vitest run tests/templates.test.ts tests/components.test.ts
 pnpm lint
 pnpm typecheck
 pnpm build
@@ -484,7 +486,7 @@ Assert:
 - [ ] **Step 2: Run RED**
 
 ```bash
-pnpm test:unit -- tests/metrics.test.ts tests/app.test.ts
+pnpm exec vitest run tests/metrics.test.ts tests/app.test.ts
 ```
 
 Expected: failures for the new compact hierarchy and route component.
@@ -498,7 +500,7 @@ freshness, coverage, and reconciliation visible without opening the disclosure.
 - [ ] **Step 4: Run focused GREEN**
 
 ```bash
-pnpm test:unit -- tests/metrics.test.ts tests/app.test.ts
+pnpm exec vitest run tests/metrics.test.ts tests/app.test.ts
 pnpm typecheck
 ```
 
@@ -541,7 +543,7 @@ honest “产品与样品工作项” label and no Product Brief/Sample index cl
 - [ ] **Step 2: Run RED**
 
 ```bash
-pnpm test:unit -- tests/workspaces.test.ts
+pnpm exec vitest run tests/workspaces.test.ts
 ```
 
 Expected: missing page components.
@@ -555,7 +557,7 @@ Use `SourcingComparison` only with actual candidate fields.
 - [ ] **Step 4: Run focused GREEN and route regression**
 
 ```bash
-pnpm test:unit -- tests/workspaces.test.ts tests/navigation.test.ts tests/app.test.ts
+pnpm exec vitest run tests/workspaces.test.ts tests/navigation.test.ts tests/app.test.ts
 pnpm typecheck
 ```
 
@@ -596,7 +598,7 @@ Assert fact proposals and association suggestions remain proposals.
 - [ ] **Step 2: Run RED**
 
 ```bash
-pnpm test:unit -- tests/v4.test.ts tests/components.test.ts
+pnpm exec vitest run tests/v4.test.ts tests/components.test.ts
 ```
 
 Expected: failures for the new list and EvidencePanel structure.
@@ -610,7 +612,7 @@ do not exist in the current safe BFF.
 - [ ] **Step 4: Run focused GREEN**
 
 ```bash
-pnpm test:unit -- tests/v4.test.ts tests/components.test.ts
+pnpm exec vitest run tests/v4.test.ts tests/components.test.ts
 pnpm typecheck
 ```
 
@@ -652,7 +654,7 @@ Cover:
 - [ ] **Step 2: Run RED**
 
 ```bash
-pnpm test:unit -- tests/review.test.ts tests/v4.test.ts
+pnpm exec vitest run tests/review.test.ts tests/v4.test.ts
 ```
 
 Expected: failures for independent resource handling and form semantics.
@@ -666,7 +668,7 @@ revision/hash/policy/idempotency requests unchanged.
 - [ ] **Step 4: Run focused GREEN**
 
 ```bash
-pnpm test:unit -- tests/review.test.ts tests/v4.test.ts
+pnpm exec vitest run tests/review.test.ts tests/v4.test.ts
 pnpm typecheck
 ```
 
@@ -708,7 +710,7 @@ Add separate success/error semantics for sample feedback.
 - [ ] **Step 2: Run RED**
 
 ```bash
-pnpm test:unit -- tests/app.test.ts tests/components.test.ts
+pnpm exec vitest run tests/app.test.ts tests/components.test.ts
 ```
 
 Expected: failures for the new ObjectSummary/Timeline hierarchy and error alert.
@@ -721,7 +723,7 @@ do not create a Party list, quotation timeline, or supplier data from missing fi
 - [ ] **Step 4: Run focused GREEN**
 
 ```bash
-pnpm test:unit -- tests/app.test.ts tests/components.test.ts
+pnpm exec vitest run tests/app.test.ts tests/components.test.ts
 pnpm typecheck
 ```
 
@@ -770,7 +772,7 @@ expect(legacyCss).not.toContain("font-family: Georgia");
 - [ ] **Step 2: Run RED**
 
 ```bash
-pnpm test:unit -- tests/theme.test.ts
+pnpm exec vitest run tests/theme.test.ts
 ```
 
 Expected: old green/gold theme assertions fail.
@@ -789,7 +791,7 @@ local SVG and includes a maskable safe area.
 ```bash
 rg -n "WorkspaceView|RecordGrid|EvidenceCard|--forest|Georgia" \
   apps/esan_gbos/frontend/src apps/esan_gbos/frontend/tests
-pnpm test:unit -- tests/theme.test.ts tests/templates.test.ts
+pnpm exec vitest run tests/theme.test.ts tests/templates.test.ts
 pnpm lint
 pnpm typecheck
 pnpm build
