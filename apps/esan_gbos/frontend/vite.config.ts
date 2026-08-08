@@ -1,12 +1,18 @@
 import { fileURLToPath, URL } from "node:url";
 
 import vue from "@vitejs/plugin-vue";
+import frappeui from "frappe-ui/vite";
 import { VitePWA } from "vite-plugin-pwa";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   base: "/assets/esan_gbos/frontend/",
   plugins: [
+    frappeui({
+      frappeProxy: false,
+      jinjaBootData: false,
+      buildConfig: false,
+    }),
     vue(),
     VitePWA({
       strategies: "injectManifest",
@@ -24,9 +30,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
-      "@frappe-ui/button": fileURLToPath(
-        new URL("./node_modules/frappe-ui/src/components/Button/Button.vue", import.meta.url),
-      ),
     },
   },
   build: {
@@ -46,5 +49,10 @@ export default defineConfig({
     setupFiles: ["./tests/setup.ts"],
     css: true,
     restoreMocks: true,
+    server: {
+      deps: {
+        inline: [/frappe-ui/],
+      },
+    },
   },
 });

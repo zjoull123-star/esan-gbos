@@ -14,7 +14,8 @@
     "noEmit": true,
     "skipLibCheck": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "frappe-ui": ["./src/frappe-ui.d.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "tests/**/*.ts"],

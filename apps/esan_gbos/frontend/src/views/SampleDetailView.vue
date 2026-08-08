@@ -85,7 +85,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import Button from "@frappe-ui/button";
+import { Button } from "frappe-ui";
 
 import { BffError, createIdempotencyKey } from "@/api/bff";
 import { useBffClient } from "@/api/injection";
