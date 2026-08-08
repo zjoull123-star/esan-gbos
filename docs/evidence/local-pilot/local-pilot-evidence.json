@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
-  "evidence_id": "local-pilot-final-validation-20260808",
-  "captured_at": "2026-08-07T20:18:53Z",
+  "evidence_id": "local-pilot-responsive-interface-20260809",
+  "captured_at": "2026-08-08T20:12:31Z",
   "commit_sha": "64dc48cb5d6efb62c662f638d8da5f5c12c3a7de",
   "commit_scope": "historical source/runtime baseline retained for the compact evidence schema",
-  "validation_reference_commit": "9d64a7860adc6692d4321439ea3295ff9dc45cd6",
-  "evidence_commit_predecessor": "9d64a7860adc6692d4321439ea3295ff9dc45cd6",
-  "validation_reference_role": "final local validation and security-scan predecessor before this evidence-only commit",
+  "validation_reference_commit": "2b775ddd7aab116d6da288ac0c51efc999333a3e",
+  "evidence_commit_predecessor": "2b775ddd7aab116d6da288ac0c51efc999333a3e",
+  "validation_reference_role": "responsive frontend, local image lock, and final regression predecessor before this evidence-only commit",
   "environment": {
     "host_scope": "current Mac local runtime",
     "runtime_architecture": "linux/arm64 containers",
@@ -49,7 +49,14 @@
         "exit_code": 0
       }
     ],
-    "production_authorization": false
+    "production_authorization": false,
+    "carried_forward_from_previous_snapshot": true,
+    "dependency_and_container_scan_rerun": false,
+    "repository_secret_scan_current": {
+      "captured_at": "2026-08-08T20:12:31Z",
+      "exit_code": 0,
+      "result": "no_supported_patterns_detected"
+    }
   },
   "verdict": {
     "formal": {
@@ -103,7 +110,9 @@
     }
   },
   "frappe_site": {
-    "image_lock_digest": "sha256:8e62faa8f76cf60348fde64c68e6b4820f6a602b9140f973bfffffb6efa87415",
+    "image_lock_digest": "sha256:fdbaf8af7da81958de22798e33d9bade3c7c09d57c59faa69d39b56ab4e99542",
+    "image_source_commit": "9e0a0aa698de01c2ba0e87775e203d09fddcf305",
+    "image_created_at": "2026-08-09T04:06:07.648513297+08:00",
     "setup_complete": 1,
     "versions": {
       "frappe": "16.30.0",
@@ -147,31 +156,34 @@
       "route": "/gbos/ceo",
       "result": "success",
       "visible_text": ["经营总览", "演示 / 合成数据"],
-      "viewports_px": [375, 768, 1440],
+      "viewports_px": [320, 375, 720, 768, 1024, 1440],
       "horizontal_overflow": false,
       "console_errors": 0,
-      "console_warnings": 0,
       "cache": {
-        "static_precache_entries": 21,
+        "static_precache_entries": 51,
         "api_cached": false
       }
     },
     "frontend_harness": {
       "tool": "Playwright",
-      "passed": 7,
+      "passed": 21,
       "skipped": 0,
-      "failed": 0
+      "failed": 0,
+      "assertions": {
+        "responsive_widths_px": [320, 375, 720, 768, 1024, 1440],
+        "api_cache": false,
+        "gbos_business_storage": false,
+        "offline_fail_closed": "pass"
+      }
     },
     "frappe_site": {
       "tool": "Playwright",
-      "passed": 6,
-      "skipped": 1,
+      "passed": 4,
+      "skipped": 17,
       "failed": 0,
-      "skip_reason": "pure_frontend_route_sentinel",
-      "administrator_storage_state": {
-        "scope": "temporary_test_only",
-        "cookie_clear_performed": true,
-        "storage_state_file_overwritten": true,
+      "skip_reason": "frontend_harness_only_cases",
+      "ceo_storage_state": {
+        "scope": "temporary_synthetic_test_only",
         "retained_after_test": false
       },
       "assertions": {
@@ -179,41 +191,65 @@
         "viewports_px": [375, 768, 1440],
         "keyboard_order": "pass",
         "ceo_synthetic_values_and_provenance": "pass",
-        "channels_disabled_empty_states": "pass",
-        "api_cache": false,
-        "gbos_business_storage": false,
-        "offline_fail_closed": "pass"
+        "channels_disabled_empty_states": "pass"
       }
     },
+    "real_site_role_smoke": {
+      "tool": "Playwright programmatic browser",
+      "passed_role_cases": 7,
+      "failed_role_cases": 0,
+      "roles": [
+        "CEO",
+        "Sales User",
+        "Purchase Manager",
+        "Buyer",
+        "Product/R&D",
+        "Reviewer",
+        "Integration Admin"
+      ],
+      "ceo_first_level_menus": 7,
+      "ceo_detail_routes": ["Party 360", "Sample", "Review Case"],
+      "normal_role_denied_routes_verified": 6,
+      "navigation_scope": "pass",
+      "console_errors": 0,
+      "page_errors": 0,
+      "request_failures": 0,
+      "api_errors": 0,
+      "api_cached": false,
+      "gbos_business_storage": false,
+      "temporary_integration_role_removed": true,
+      "storage_state_files_removed": true
+    },
     "console_errors": 0,
-    "console_warnings": 0
+    "console_warnings": "not_asserted_in_current_browser_run"
   },
   "verification_snapshot": {
     "status": "captured_snapshot_not_final_signoff",
     "final_local_validation": true,
     "pytest": {
-      "passed": 2155,
+      "passed": 2163,
       "skipped": 37,
       "failed": 0,
       "warnings": 1
     },
     "python_static": {
       "ruff": "pass_all",
-      "format": "pass_446_files",
+      "format": "pass_453_files",
       "mypy": "pass",
       "mypy_service_source_files": 117
     },
     "frontend": {
       "lint": "pass",
       "typecheck": "pass",
-      "vitest_passed": 88,
+      "vitest_passed": 172,
       "build": "pass"
     },
     "playwright": {
-      "frontend_harness_passed": 7,
-      "frappe_site_passed": 6,
-      "frappe_site_skipped": 1,
-      "frappe_site_skip_reason": "pure_frontend_route_sentinel"
+      "frontend_harness_passed": 21,
+      "frappe_site_passed": 4,
+      "frappe_site_skipped": 17,
+      "frappe_site_skip_reason": "frontend_harness_only_cases",
+      "real_site_role_smoke_passed": 7
     },
     "release_signoff": false
   },
@@ -227,6 +263,8 @@
     "The formal composition remains not_composed and formal preflight remains a required No-Go gate.",
     "No real channel, DeepSeek, Kingdee, cloud deployment, production credential, or external send was used.",
     "The final local verification counts above are captured at the validation reference commit; they are not release sign-off.",
+    "Thirty-seven opt-in PostgreSQL integration tests were skipped because their explicit environment flags were not enabled; they are not reported as passed.",
+    "The current certification did not rerun the earlier dependency/container security scan; its result is carried forward and is not current-HEAD scan evidence.",
     "Synthetic fixture values and local browser success do not establish business outcomes or production availability."
   ],
   "redaction": {

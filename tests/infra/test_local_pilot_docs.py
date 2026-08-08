@@ -141,7 +141,11 @@ def test_local_pilot_evidence_snapshot_is_redacted_and_checksumable() -> None:
     assert payload["runtime"]["networks"]["local-internal"]["internal"] is False
     assert payload["runtime"]["networks"]["webhook-tunnel"]["internal"] is True
     assert payload["browser_validation"]["console_errors"] == 0
-    assert payload["browser_validation"]["console_warnings"] == 0
+    assert (
+        payload["browser_validation"]["console_warnings"] == "not_asserted_in_current_browser_run"
+    )
+    assert payload["browser_validation"]["real_site_role_smoke"]["passed_role_cases"] == 7
+    assert payload["browser_validation"]["real_site_role_smoke"]["storage_state_files_removed"]
     assert payload["verification_snapshot"]["status"] == "captured_snapshot_not_final_signoff"
     assert payload["recoverable_failure"]["deleted"] is False
 
