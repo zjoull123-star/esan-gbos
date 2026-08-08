@@ -35,11 +35,38 @@ describe("角色裁剪导航", () => {
   });
 
   it.each([
+    [[], []],
     [["Sales User"], ["销售协同", "沟通观察"]],
+    [["Sales Manager"], ["销售协同", "沟通观察"]],
+    [["Buyer"], ["采购协同"]],
     [["Purchase Manager"], ["采购协同"]],
     [["Product/R&D"], ["产品与样品"]],
     [["Reviewer"], ["审核队列"]],
     [["Integration Admin"], ["集成状态"]],
+    [
+      ["CEO"],
+      [
+        "经营总览",
+        "销售协同",
+        "采购协同",
+        "产品与样品",
+        "审核队列",
+        "集成状态",
+        "沟通观察",
+      ],
+    ],
+    [
+      ["GBOS Admin"],
+      [
+        "经营总览",
+        "销售协同",
+        "采购协同",
+        "产品与样品",
+        "审核队列",
+        "集成状态",
+        "沟通观察",
+      ],
+    ],
   ])("%j 只显示授权工作台", (roles, expected) => {
     expect(navigationForRoles(roles).map((item) => item.label)).toEqual(expected);
   });
