@@ -390,6 +390,7 @@ git commit -m "feat(pwa): add responsive GBOS navigation"
 - Create: `apps/esan_gbos/frontend/src/components/data/EvidencePanel.vue`
 - Create: `apps/esan_gbos/frontend/tests/templates.test.ts`
 - Modify: `apps/esan_gbos/frontend/src/frappe-ui.d.ts`
+- Modify: `apps/esan_gbos/frontend/tsconfig.app.json` (type-only public-package shim)
 - Modify: `apps/esan_gbos/frontend/vite.config.ts`
 - Modify: `apps/esan_gbos/frontend/tailwind.config.js`
 - Modify: `apps/esan_gbos/frontend/src/views/SampleDetailView.vue` (public Frappe UI import only)
@@ -426,8 +427,11 @@ slots only; no template may fetch data or infer permissions.
 
 `GbosButton` and `GbosField` import only public `frappe-ui` exports. Remove the internal
 source alias after the wrapper test proves the public import builds and the existing sample
-button import has moved to the same public export. `ConfirmDialog` must use native dialog
-semantics or an accessible Frappe UI Dialog and must never call `window.confirm`.
+button import has moved to the same public export. If upstream TypeScript declarations are
+not compatible with the frozen compiler, use a type-only `tsconfig.app.json` path to the
+local public-module declaration; do not enable the Frappe UI auto-import Vite plugin or
+generate global component declarations. `ConfirmDialog` must use native dialog semantics
+or an accessible Frappe UI Dialog and must never call `window.confirm`.
 
 - [ ] **Step 4: Run focused GREEN and frontend static gates**
 
@@ -456,6 +460,7 @@ git add apps/esan_gbos/frontend/src/components/feedback/ResourceBoundary.vue \
   apps/esan_gbos/frontend/src/components/data/EvidencePanel.vue \
   apps/esan_gbos/frontend/tests/templates.test.ts \
   apps/esan_gbos/frontend/src/frappe-ui.d.ts \
+  apps/esan_gbos/frontend/tsconfig.app.json \
   apps/esan_gbos/frontend/vite.config.ts \
   apps/esan_gbos/frontend/tailwind.config.js \
   apps/esan_gbos/frontend/src/views/SampleDetailView.vue
