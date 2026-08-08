@@ -204,17 +204,19 @@ def test_gate4_closure_checksum_manifest_covers_only_compact_files() -> None:
 
 def test_ceo_route_remains_the_gate5_metrics_cockpit_only() -> None:
     frontend_source = ROOT / "apps" / "esan_gbos" / "frontend" / "src"
-    workspace = (frontend_source / "views" / "WorkspaceView.vue").read_text(encoding="utf-8")
+    dashboard = (frontend_source / "views" / "CeoDashboardView.vue").read_text(encoding="utf-8")
+    router = (frontend_source / "router.ts").read_text(encoding="utf-8")
     all_source = "\n".join(
         path.read_text(encoding="utf-8")
         for path in sorted(frontend_source.rglob("*"))
         if path.is_file()
     )
 
-    assert 'workspace === "ceo"' in workspace
-    assert "client.getMetricDashboard()" in workspace
-    assert "<MetricCockpit" in workspace
-    assert 'gate: "Gate 5"' in workspace
+    assert 'path: "/gbos/ceo"' in router
+    assert 'import("./views/CeoDashboardView.vue")' in router
+    assert "client.getMetricDashboard()" in dashboard
+    assert "<MetricCockpit" in dashboard
+    assert "Gate 5" in dashboard
     assert "getCeoAgent" not in all_source
     assert "CEO-Agent" not in all_source
 
