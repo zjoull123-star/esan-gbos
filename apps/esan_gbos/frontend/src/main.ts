@@ -4,6 +4,8 @@ import App from "./App.vue";
 import { createBffClient } from "./api/bff";
 import { BFF_CLIENT_KEY } from "./api/injection";
 import { createAppRouter } from "./router";
+import "./design/tokens.css";
+import "./design/base.css";
 import "./styles.css";
 
 const app = createApp(App);
