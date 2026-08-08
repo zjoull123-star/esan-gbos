@@ -49,7 +49,7 @@ withDefaults(
   },
 );
 
-defineEmits<{ "update:modelValue": [value: string] }>();
+defineEmits<{ "update:modelValue": [value: string | number] }>();
 </script>
 
 <style scoped>

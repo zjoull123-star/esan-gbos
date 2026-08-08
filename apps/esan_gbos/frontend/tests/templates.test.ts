@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { mount } from "@vue/test-utils";
 import { nextTick } from "vue";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import EvidencePanel from "@/components/data/EvidencePanel.vue";
 import OperationalList from "@/components/data/OperationalList.vue";
@@ -66,6 +66,66 @@ const fieldStub = {
     </label>
   `,
 };
+
+const gbosButtonStub = {
+  name: "GbosButton",
+  props: { type: String, intent: String },
+  emits: ["click"],
+  template:
+    "<button :type='type' :data-intent='intent' @click='$emit(\"click\", $event)'><slot /></button>",
+};
+
+let restoreDialogPrototypes: (() => void) | undefined;
+
+const installDialogStubs = () => {
+  restoreDialogPrototypes?.();
+  const showModalDescriptor = Object.getOwnPropertyDescriptor(
+    HTMLDialogElement.prototype,
+    "showModal",
+  );
+  const closeDescriptor = Object.getOwnPropertyDescriptor(
+    HTMLDialogElement.prototype,
+    "close",
+  );
+  const showModal = vi.fn(function (this: HTMLDialogElement) {
+    this.setAttribute("open", "");
+  });
+  const close = vi.fn(function (this: HTMLDialogElement) {
+    this.removeAttribute("open");
+  });
+
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: { configurable: true, writable: true, value: showModal },
+    close: { configurable: true, writable: true, value: close },
+  });
+  restoreDialogPrototypes = () => {
+    if (showModalDescriptor) {
+      Object.defineProperty(
+        HTMLDialogElement.prototype,
+        "showModal",
+        showModalDescriptor,
+      );
+    } else {
+      Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal");
+    }
+    if (closeDescriptor) {
+      Object.defineProperty(
+        HTMLDialogElement.prototype,
+        "close",
+        closeDescriptor,
+      );
+    } else {
+      Reflect.deleteProperty(HTMLDialogElement.prototype, "close");
+    }
+  };
+
+  return { showModal, close };
+};
+
+afterEach(() => {
+  restoreDialogPrototypes?.();
+  restoreDialogPrototypes = undefined;
+});
 
 describe("ResourceBoundary", () => {
   it.each(["idle", "loading"] as const)(
@@ -257,6 +317,31 @@ describe("GBOS 基础控件", () => {
     expect(wrapper.emitted("update:modelValue")?.[0]).toEqual(["新名称"]);
   });
 
+  it("GbosField 不将 FormControl 的数值更新转成字符串", async () => {
+    const wrapper = mount(GbosField, {
+      props: { label: "数量", type: "number", modelValue: 1 },
+      global: {
+        stubs: {
+          FormControl: {
+            name: "FormControl",
+            emits: ["update:modelValue"],
+            template:
+              "<button data-emit-number type='button' @click='$emit(\"update:modelValue\", 42)'>更新</button>",
+          },
+        },
+      },
+    });
+
+    await wrapper.get("[data-emit-number]").trigger("click");
+    const value = wrapper.emitted("update:modelValue")?.[0]?.[0];
+    expect(value).toBe(42);
+    expect(typeof value).toBe("number");
+    const source = readFileSync(resolve("src/components/ui/GbosField.vue"), "utf8");
+    expect(source).toContain(
+      'defineEmits<{ "update:modelValue": [value: string | number] }>();',
+    );
+  });
+
   it("StatusBadge 只显示调用方提供的 tone 和文字", () => {
     const wrapper = mount(StatusBadge, {
       props: { tone: "warning", label: "等待人工审核" },
@@ -268,16 +353,7 @@ describe("GBOS 基础控件", () => {
 
   it("ConfirmDialog 受控关闭并发出 confirm/cancel", async () => {
     const onConfirm = vi.fn();
-    const showModal = vi.fn(function (this: HTMLDialogElement) {
-      this.setAttribute("open", "");
-    });
-    const close = vi.fn(function (this: HTMLDialogElement) {
-      this.removeAttribute("open");
-    });
-    Object.defineProperties(HTMLDialogElement.prototype, {
-      showModal: { configurable: true, value: showModal },
-      close: { configurable: true, value: close },
-    });
+    const { showModal, close } = installDialogStubs();
     const wrapper = mount(ConfirmDialog, {
       attachTo: document.body,
       props: {
@@ -289,15 +365,7 @@ describe("GBOS 基础控件", () => {
         onConfirm,
       },
       global: {
-        stubs: {
-          GbosButton: {
-            name: "GbosButton",
-            props: { type: String, intent: String },
-            emits: ["click"],
-            template:
-              "<button :type='type' :data-intent='intent' @click='$emit(\"click\", $event)'><slot /></button>",
-          },
-        },
+        stubs: { GbosButton: gbosButtonStub },
       },
     });
 
@@ -326,6 +394,35 @@ describe("GBOS 基础控件", () => {
     await wrapper.get("[data-action='cancel']").trigger("click");
     expect(wrapper.emitted("cancel")).toHaveLength(1);
     expect(wrapper.emitted("update:modelValue")?.at(-1)).toEqual([false]);
+    wrapper.unmount();
+  });
+
+  it("ConfirmDialog 直接卸载时关闭原生对话框并归还焦点", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "打开确认框";
+    document.body.append(trigger);
+    trigger.focus();
+    const { showModal, close } = installDialogStubs();
+    const wrapper = mount(ConfirmDialog, {
+      attachTo: document.body,
+      props: {
+        modelValue: true,
+        title: "确认操作？",
+        message: "此操作需要明确确认。",
+      },
+      global: { stubs: { GbosButton: gbosButtonStub } },
+    });
+
+    await nextTick();
+    expect(showModal).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).not.toBe(trigger);
+
+    wrapper.unmount();
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(trigger);
+    expect(wrapper.emitted("confirm")).toBeUndefined();
+    expect(wrapper.emitted("cancel")).toBeUndefined();
   });
 });
 

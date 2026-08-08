@@ -39,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, useId, watch } from "vue";
+import { nextTick, onBeforeUnmount, ref, useId, watch } from "vue";
 
 import GbosButton from "./GbosButton.vue";
 
@@ -69,6 +69,7 @@ const descriptionId = `${instanceId}-confirm-description`;
 const dialogRef = ref<HTMLDialogElement>();
 const cancelButtonRef = ref<{ $el?: HTMLElement }>();
 let returnFocus: HTMLElement | null = null;
+let unmounting = false;
 
 const requestClose = () => emit("update:modelValue", false);
 
@@ -82,12 +83,38 @@ const cancel = () => {
   requestClose();
 };
 
+const closeNativeDialog = () => {
+  const dialog = dialogRef.value;
+  if (!dialog?.open) {
+    return;
+  }
+  if (typeof dialog.close === "function") {
+    try {
+      dialog.close();
+      return;
+    } catch {
+      // Fall back to clearing the open state for incomplete dialog implementations.
+    }
+  }
+  dialog.removeAttribute("open");
+};
+
+const restoreReturnFocus = () => {
+  if (returnFocus?.isConnected) {
+    returnFocus.focus();
+  }
+  returnFocus = null;
+};
+
 watch(
   () => props.modelValue,
   async (open) => {
     if (open) {
       returnFocus = document.activeElement as HTMLElement | null;
       await nextTick();
+      if (unmounting) {
+        return;
+      }
       const dialog = dialogRef.value;
       if (dialog && !dialog.open) {
         if (typeof dialog.showModal === "function") {
@@ -103,21 +130,17 @@ watch(
       return;
     }
 
-    const dialog = dialogRef.value;
-    if (dialog?.open) {
-      if (typeof dialog.close === "function") {
-        dialog.close();
-      } else {
-        dialog.removeAttribute("open");
-      }
-    }
-    if (returnFocus?.isConnected) {
-      returnFocus.focus();
-    }
-    returnFocus = null;
+    closeNativeDialog();
+    restoreReturnFocus();
   },
   { immediate: true, flush: "post" },
 );
+
+onBeforeUnmount(() => {
+  unmounting = true;
+  closeNativeDialog();
+  restoreReturnFocus();
+});
 </script>
 
 <style scoped>
