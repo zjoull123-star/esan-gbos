@@ -239,9 +239,7 @@ def test_hooks_route_every_gbos_spa_path_to_the_authenticated_shell() -> None:
 def test_gbos_shell_uses_manifest_assets_and_non_executable_bootstrap_json() -> None:
     controller = (PACKAGE_ROOT / "www" / "gbos.py").read_text(encoding="utf-8")
     template = (PACKAGE_ROOT / "www" / "gbos.html").read_text(encoding="utf-8")
-    shell_roles = set(
-        _literal_assignment(PACKAGE_ROOT / "www" / "gbos.py", "_PWA_ROLES")
-    )
+    shell_roles = set(_literal_assignment(PACKAGE_ROOT / "www" / "gbos.py", "_PWA_ROLES"))
 
     assert "frappe.sessions.get_csrf_token()" in controller
     assert "frappe.session.user" in controller
