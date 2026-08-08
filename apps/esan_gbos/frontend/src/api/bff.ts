@@ -25,7 +25,7 @@ import type {
   WorkItemListQuery,
   WorkItemTransitionCommand,
 } from "./types";
-import { readGbosBootstrap } from "@/bootstrap";
+import { readGbosBootstrap } from "../bootstrap";
 import { parseMetricDashboard } from "./metrics";
 
 export const BFF_ENDPOINTS = {

@@ -91,7 +91,6 @@ const formatTimestamp = (value: string) => timestampFormatter.format(new Date(va
   width: 100%;
   color: inherit;
   font-size: 12px;
-  opacity: 0.82;
   overflow-wrap: anywhere;
 }
 

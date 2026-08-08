@@ -50,7 +50,7 @@ const frappeVariant = computed(() => intentMap[props.intent].variant);
 </script>
 
 <style scoped>
-.gbos-button {
+:global(.gbos-button) {
   min-height: 36px;
   border-radius: var(--gbos-radius-control);
   font-family: var(--gbos-font-sans);
@@ -58,19 +58,19 @@ const frappeVariant = computed(() => intentMap[props.intent].variant);
   font-weight: 700;
 }
 
-.gbos-button--primary:not(:disabled) {
+:global(.gbos-button--primary:not(:disabled)) {
   color: #fff;
   background: var(--gbos-primary);
 }
 
-.gbos-button--secondary:not(:disabled) {
+:global(.gbos-button--secondary:not(:disabled)) {
   color: var(--gbos-text);
   border-color: var(--gbos-border);
   background: var(--gbos-surface);
 }
 
 @media (max-width: 767px) {
-  .gbos-button {
+  :global(.gbos-button) {
     min-height: 44px;
   }
 }

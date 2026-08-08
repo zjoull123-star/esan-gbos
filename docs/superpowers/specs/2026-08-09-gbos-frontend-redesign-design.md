@@ -124,7 +124,7 @@ Readonly 是否具有 PWA 页面必须形成显式决定，不能继续出现 AP
 | Accent | `#0F9F8F` |
 | Accent Text | `#0A6F65` |
 | Text | `#172033` |
-| Muted Text | `#64748B` |
+| Muted Text | `#526078`（实浏览器对比度修正） |
 | Border | `#E2E8F0` |
 | Danger | `#C33D4B` |
 | Warning Text | `#8A5A00` |

@@ -542,6 +542,7 @@ describe("Frappe UI 公共导入边界", () => {
     );
 
     expect(buttonSource).toMatch(/import\s*{\s*Button\s*}\s*from\s*"frappe-ui"/);
+    expect(buttonSource).toContain(":global(.gbos-button--primary:not(:disabled))");
     expect(fieldSource).toMatch(
       /import\s*{\s*FormControl\s*}\s*from\s*"frappe-ui"/,
     );

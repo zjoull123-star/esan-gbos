@@ -30,7 +30,12 @@ import { sessionState } from "@/session";
 
 const route = useRoute();
 const router = useRouter();
-const online = ref(typeof navigator === "undefined" || navigator.onLine);
+const offlineShell =
+  typeof document !== "undefined" &&
+  document.documentElement.dataset.gbosOfflineShell === "true";
+const online = ref(
+  !offlineShell && (typeof navigator === "undefined" || navigator.onLine),
+);
 const navigation = computed(() => navigationForRoles(sessionState.roles));
 const allowed = computed(() => isRouteAllowed(route.path, sessionState.roles));
 const sessionLabel = computed(() =>
@@ -41,18 +46,36 @@ const permissionMessage = computed(() =>
     ? "当前角色无权查看此页面，请从可用工作台继续。"
     : "Frappe session 已失效，请重新登录后刷新页面。",
 );
+const reportNetworkState = (isOnline: boolean) => {
+  navigator.serviceWorker?.controller?.postMessage({
+    type: "GBOS_NETWORK_STATE",
+    online: isOnline,
+  });
+};
 const recheckConnection = () => {
-  online.value = typeof navigator === "undefined" || navigator.onLine;
+  const isOnline = typeof navigator === "undefined" || navigator.onLine;
+  online.value = isOnline;
+  if (isOnline) {
+    delete document.documentElement.dataset.gbosOfflineShell;
+  } else {
+    document.documentElement.dataset.gbosOfflineShell = "true";
+  }
+  reportNetworkState(isOnline);
 };
 const markOffline = () => {
   online.value = false;
+  document.documentElement.dataset.gbosOfflineShell = "true";
+  reportNetworkState(false);
 };
 const markOnline = () => {
   online.value = true;
+  delete document.documentElement.dataset.gbosOfflineShell;
+  reportNetworkState(true);
 };
 onMounted(() => {
   window.addEventListener("offline", markOffline);
   window.addEventListener("online", markOnline);
+  reportNetworkState(online.value);
 });
 onBeforeUnmount(() => {
   window.removeEventListener("offline", markOffline);
