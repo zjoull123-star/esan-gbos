@@ -39,7 +39,7 @@
               <h4 :id="`quote-${lane.key}-${eventIndex}`">
                 报价快照
               </h4>
-              <div class="quote-snapshot__table">
+              <div class="quote-snapshot__table" data-desktop-table>
                 <table>
                   <thead>
                     <tr>
@@ -78,6 +78,30 @@
                   </tbody>
                 </table>
               </div>
+              <ul class="quote-snapshot__mobile" data-mobile-list>
+                <li
+                  v-for="(candidate, candidateIndex) in event.candidates"
+                  :key="`${candidate.supplier_name ?? ''}-${candidateIndex}`"
+                >
+                  <dl>
+                    <div><dt>供应商</dt><dd>{{ candidate.supplier_name }}</dd></div>
+                    <div>
+                      <dt>外部供应商 ID</dt>
+                      <dd>{{ candidate.external_supplier_id }}</dd>
+                    </div>
+                    <div><dt>报价</dt><dd>{{ formatQuotedPrice(candidate) }}</dd></div>
+                    <div>
+                      <dt>预计交期</dt>
+                      <dd>{{ formatLeadTimeDays(candidate) }}</dd>
+                    </div>
+                    <div>
+                      <dt>候选状态</dt>
+                      <dd>{{ candidate.candidate_status }}</dd>
+                    </div>
+                    <div><dt>备注</dt><dd>{{ candidate.notes }}</dd></div>
+                  </dl>
+                </li>
+              </ul>
             </section>
           </article>
         </li>
@@ -181,6 +205,52 @@ const hasFixtureData = computed(() => isFixturePayload(props.lanes));
   border-radius: var(--gbos-radius-control);
 }
 
+.quote-snapshot__mobile {
+  display: none;
+  margin: 8px 0 0;
+  padding: 0;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  list-style: none;
+}
+
+.quote-snapshot__mobile > li {
+  padding: 12px;
+  border-bottom: 1px solid var(--gbos-border);
+}
+
+.quote-snapshot__mobile > li:last-child {
+  border-bottom: 0;
+}
+
+.quote-snapshot__mobile dl,
+.quote-snapshot__mobile dt,
+.quote-snapshot__mobile dd {
+  margin: 0;
+}
+
+.quote-snapshot__mobile dl {
+  display: grid;
+  gap: 10px;
+}
+
+.quote-snapshot__mobile dl > div {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.8fr) minmax(0, 1.4fr);
+  gap: 12px;
+}
+
+.quote-snapshot__mobile dt {
+  color: var(--gbos-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.quote-snapshot__mobile dd {
+  min-height: 1.4em;
+  overflow-wrap: anywhere;
+}
+
 table {
   width: 100%;
   min-width: 720px;
@@ -206,5 +276,15 @@ th {
 
 tbody tr:last-child td {
   border-bottom: 0;
+}
+
+@media (max-width: 767px) {
+  .quote-snapshot__table {
+    display: none;
+  }
+
+  .quote-snapshot__mobile {
+    display: block;
+  }
 }
 </style>

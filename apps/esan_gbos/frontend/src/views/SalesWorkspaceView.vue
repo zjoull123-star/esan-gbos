@@ -33,7 +33,7 @@
         >
           <div data-work-items>
             <DemoBanner v-if="hasFixtureData" />
-            <div class="work-item-table">
+            <div class="work-item-table" data-desktop-table>
               <table>
                 <thead>
                   <tr>
@@ -84,19 +84,51 @@
                     <td>{{ item.revision }}</td>
                     <td>
                       <span>{{ referenceLabel(item) }}</span>
-                      <a
+                      <RouterLink
                         v-if="workItemReferenceLink(item)"
                         class="text-link"
-                        :href="workItemReferenceLink(item)?.href"
+                        :to="workItemReferenceLink(item)?.href ?? ''"
                       >
                         {{ workItemReferenceLink(item)?.label }}
-                      </a>
+                      </RouterLink>
                     </td>
                     <td>{{ item.modified }}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
+            <ul class="work-item-mobile" data-mobile-list>
+              <li v-for="(item, index) in items" :key="item.name ?? index">
+                <dl>
+                  <div>
+                    <dt>工作项 / 下一动作</dt>
+                    <dd><strong>{{ item.title }}</strong></dd>
+                  </div>
+                  <div><dt>编号</dt><dd>{{ item.name }}</dd></div>
+                  <div><dt>团队</dt><dd>{{ item.team }}</dd></div>
+                  <div><dt>负责人</dt><dd>{{ item.assigned_to }}</dd></div>
+                  <div><dt>优先级</dt><dd>{{ item.priority }}</dd></div>
+                  <div><dt>到期日</dt><dd>{{ item.due_date }}</dd></div>
+                  <div><dt>业务状态</dt><dd>{{ item.business_status }}</dd></div>
+                  <div><dt>审核状态</dt><dd>{{ item.review_status }}</dd></div>
+                  <div><dt>版本</dt><dd>{{ item.revision }}</dd></div>
+                  <div>
+                    <dt>相关记录</dt>
+                    <dd>
+                      <span>{{ referenceLabel(item) }}</span>
+                      <RouterLink
+                        v-if="workItemReferenceLink(item)"
+                        class="text-link"
+                        :to="workItemReferenceLink(item)?.href ?? ''"
+                      >
+                        {{ workItemReferenceLink(item)?.label }}
+                      </RouterLink>
+                    </dd>
+                  </div>
+                  <div><dt>更新时间</dt><dd>{{ item.modified }}</dd></div>
+                </dl>
+              </li>
+            </ul>
           </div>
         </ResourceBoundary>
       </template>
@@ -174,6 +206,53 @@ const referenceLabel = (item: WorkItemPresentation) =>
   background: var(--gbos-surface);
 }
 
+.work-item-mobile {
+  display: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-card);
+  background: var(--gbos-surface);
+  list-style: none;
+}
+
+.work-item-mobile > li {
+  padding: 14px;
+  border-bottom: 1px solid var(--gbos-border);
+}
+
+.work-item-mobile > li:last-child {
+  border-bottom: 0;
+}
+
+.work-item-mobile dl,
+.work-item-mobile dt,
+.work-item-mobile dd {
+  margin: 0;
+}
+
+.work-item-mobile dl {
+  display: grid;
+  gap: 10px;
+}
+
+.work-item-mobile dl > div {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.8fr) minmax(0, 1.4fr);
+  gap: 12px;
+}
+
+.work-item-mobile dt {
+  color: var(--gbos-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.work-item-mobile dd {
+  min-height: 1.4em;
+  overflow-wrap: anywhere;
+}
+
 table {
   width: 100%;
   min-width: 1180px;
@@ -215,5 +294,15 @@ td small {
 
 td a {
   margin-top: 5px;
+}
+
+@media (max-width: 767px) {
+  .work-item-table {
+    display: none;
+  }
+
+  .work-item-mobile {
+    display: block;
+  }
 }
 </style>

@@ -1,4 +1,7 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { flushPromises, mount, RouterLinkStub } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { describe, expect, it, vi } from "vitest";
 
@@ -63,7 +66,10 @@ const clientWith = (
 
 const mountSales = (client: ReturnType<typeof createBffClient>) =>
   mount(SalesWorkspaceView, {
-    global: { provide: { [BFF_CLIENT_KEY as symbol]: client } },
+    global: {
+      provide: { [BFF_CLIENT_KEY as symbol]: client },
+      stubs: { RouterLink: RouterLinkStub },
+    },
   });
 
 describe("销售工作台", () => {
@@ -120,15 +126,76 @@ describe("销售工作台", () => {
     }
     expect(wrapper.text()).toContain("演示数据");
     expect(wrapper.text()).toContain("Sales Order · SO-1");
-    expect(wrapper.get('a[href="/gbos/party/PARTY%20%2F%201"]').text()).toBe(
+    const links = wrapper.findAllComponents(RouterLinkStub);
+    expect(
+      links.filter(
+        (link) => link.props("to") === "/gbos/party/PARTY%20%2F%201",
+      ),
+    ).toHaveLength(2);
+    expect(
+      links.filter((link) => link.props("to") === "/gbos/sample/SAMPLE-1"),
+    ).toHaveLength(2);
+    expect(links.map((link) => link.text())).toEqual([
       "查看相关客户",
-    );
-    expect(wrapper.get('a[href="/gbos/sample/SAMPLE-1"]').text()).toBe(
       "查看相关样品",
-    );
+      "查看相关客户",
+      "查看相关样品",
+    ]);
+    expect(
+      wrapper.findAllComponents(RouterLinkStub).some((link) =>
+        String(link.props("to")).includes("SO-1"),
+      ),
+    ).toBe(false);
     expect(wrapper.find('a[href*="SO-1"]').exists()).toBe(false);
     expect(wrapper.text()).not.toContain("客户名称");
     expect(wrapper.text()).not.toContain("金额");
+  });
+
+  it("在 767px 以下切换为字段完整的移动标签行", async () => {
+    const wrapper = mountSales(
+      clientWith({
+        items: [
+          {
+            name: "WORK-MOBILE",
+            title: "移动端跟进",
+            team: "Sales",
+            assigned_to: "owner@example.invalid",
+            priority: "High",
+            due_date: "2026-08-20",
+            business_status: "Open",
+            review_status: "Pending",
+            revision: 4,
+            reference_doctype: "Sales Order",
+            reference_name: "SO-MOBILE",
+            modified: "2026-08-09 12:00:00",
+          },
+        ],
+      }),
+    );
+    await flushPromises();
+
+    expect(wrapper.find("[data-desktop-table]").exists()).toBe(true);
+    const mobileRow = wrapper.get("[data-mobile-list] li");
+    expect(mobileRow.findAll("dt").map((label) => label.text())).toEqual([
+      "工作项 / 下一动作",
+      "编号",
+      "团队",
+      "负责人",
+      "优先级",
+      "到期日",
+      "业务状态",
+      "审核状态",
+      "版本",
+      "相关记录",
+      "更新时间",
+    ]);
+    expect(mobileRow.text()).toContain("移动端跟进");
+    expect(mobileRow.text()).toContain("Sales Order · SO-MOBILE");
+
+    const source = readFileSync(resolve("src/views/SalesWorkspaceView.vue"), "utf8");
+    expect(source).toContain("@media (max-width: 767px)");
+    expect(source).toContain(".work-item-mobile {\n    display: block;");
+    expect(source).toContain(".work-item-table {\n    display: none;");
   });
 
   it("使用 response.meta.next_cursor 请求下一页，切页清旧数据且迟到响应不能覆盖首页", async () => {
@@ -271,6 +338,57 @@ describe("采购工作台", () => {
     expect(wrapper.text()).not.toContain("0 天");
     expect(wrapper.text()).not.toContain("已选定");
     expect(wrapper.text()).not.toContain("暂无报价");
+  });
+
+  it("候选报价在 767px 以下切换为字段完整的移动标签行", () => {
+    const wrapper = mount(SourcingComparison, {
+      props: {
+        lanes: [
+          {
+            key: "Collecting",
+            label: "收集中",
+            events: [
+              {
+                name: "SRC-MOBILE",
+                title: "移动报价",
+                candidates: [
+                  {
+                    supplier_name: "供应商 Mobile",
+                    external_supplier_id: "EXT-MOBILE",
+                    quoted_price: 19.75,
+                    currency: "AED",
+                    lead_time_days: 14,
+                    candidate_status: "Quoted",
+                    notes: "移动标签完整",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(wrapper.find("[data-desktop-table]").exists()).toBe(true);
+    const mobileRow = wrapper.get("[data-mobile-list] li");
+    expect(mobileRow.findAll("dt").map((label) => label.text())).toEqual([
+      "供应商",
+      "外部供应商 ID",
+      "报价",
+      "预计交期",
+      "候选状态",
+      "备注",
+    ]);
+    expect(mobileRow.text()).toContain("19.75 AED");
+    expect(mobileRow.text()).toContain("14 天");
+
+    const source = readFileSync(
+      resolve("src/components/data/SourcingComparison.vue"),
+      "utf8",
+    );
+    expect(source).toContain("@media (max-width: 767px)");
+    expect(source).toContain(".quote-snapshot__mobile {\n    display: block;");
+    expect(source).toContain(".quote-snapshot__table {\n    display: none;");
   });
 });
 
