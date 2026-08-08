@@ -390,6 +390,42 @@ describe("采购工作台", () => {
     expect(source).toContain(".quote-snapshot__mobile {\n    display: block;");
     expect(source).toContain(".quote-snapshot__table {\n    display: none;");
   });
+
+  it("同一询源泳道的多个报价区域具有唯一可访问名称", () => {
+    const wrapper = mount(SourcingComparison, {
+      props: {
+        lanes: [
+          {
+            key: "Evaluating",
+            label: "评估中",
+            events: [
+              {
+                name: "SRC-A11Y-1",
+                title: "第一项询源",
+                candidates: [{ supplier_name: "供应商一" }],
+              },
+              {
+                name: "SRC-A11Y-2",
+                title: "第二项询源",
+                candidates: [{ supplier_name: "供应商二" }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const regions = wrapper.findAll(".quote-snapshot");
+    const accessibleNames = regions.map((region) => {
+      const labelledBy = region.attributes("aria-labelledby");
+      return wrapper.get(`#${labelledBy}`).text().replace(/\s+/gu, " ").trim();
+    });
+    expect(new Set(accessibleNames).size).toBe(accessibleNames.length);
+    expect(accessibleNames).toEqual([
+      "报价快照 · SRC-A11Y-1",
+      "报价快照 · SRC-A11Y-2",
+    ]);
+  });
 });
 
 describe("产品工作台", () => {

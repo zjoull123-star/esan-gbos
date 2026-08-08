@@ -38,6 +38,9 @@
             >
               <h4 :id="`quote-${lane.key}-${eventIndex}`">
                 报价快照
+                <span class="visually-hidden">
+                  · {{ event.name || `${lane.key}-${eventIndex + 1}` }}
+                </span>
               </h4>
               <div class="quote-snapshot__table" data-desktop-table>
                 <table>
@@ -196,6 +199,18 @@ const hasFixtureData = computed(() => isFixturePayload(props.lanes));
 
 .quote-snapshot {
   margin-top: 18px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .quote-snapshot__table {
