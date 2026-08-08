@@ -8,6 +8,13 @@ import {
   type Fetcher,
 } from "@/api/bff";
 import { BFF_CLIENT_KEY } from "@/api/injection";
+import ReviewDecisionForm from "@/components/ReviewDecisionForm.vue";
+import ResourceBoundary from "@/components/feedback/ResourceBoundary.vue";
+import DetailCommandTemplate from "@/components/layout/DetailCommandTemplate.vue";
+import OperationalListTemplate from "@/components/layout/OperationalListTemplate.vue";
+import PageHeader from "@/components/layout/PageHeader.vue";
+import GbosButton from "@/components/ui/GbosButton.vue";
+import { refreshSession } from "@/session";
 import ReviewDetailView from "@/views/ReviewDetailView.vue";
 import ReviewQueueView from "@/views/ReviewQueueView.vue";
 
@@ -39,6 +46,7 @@ const detailFixture = {
       snapshot: {
         title: "中东客户试香反馈",
         summary_zh: "客户希望降低甜度后再确认。",
+        nested: { market: "GCC", tags: ["citrus", "less-sweet"] },
       },
     },
     evidence: [
@@ -139,12 +147,229 @@ describe("Gate 4 人工审核界面", () => {
     });
     await flushPromises();
 
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(String(fetcher.mock.calls[0]?.[0])).toContain(BFF_V2_ENDPOINTS.reviewList);
+    expect(
+      fetcher.mock.calls.some(([url]) =>
+        String(url).includes(BFF_V2_ENDPOINTS.reviewList),
+      ),
+    ).toBe(true);
+    expect(wrapper.findComponent(PageHeader).exists()).toBe(true);
+    expect(wrapper.findComponent(OperationalListTemplate).exists()).toBe(true);
+    expect(wrapper.findAllComponents(ResourceBoundary).length).toBeGreaterThanOrEqual(2);
     expect(wrapper.text()).toContain("确认客户反馈事实");
     expect(wrapper.text()).toContain("待审核");
     expect(wrapper.text()).toContain("演示数据");
     expect(wrapper.text()).not.toContain("客户希望降低甜度");
+  });
+
+  it("AI Draft 读取失败时仍展示可用 Review Cases，且失败状态保持独立", async () => {
+    const host = globalThis as typeof globalThis & {
+      frappe?: {
+        session: { user: string };
+        boot: { user: { roles: string[] } };
+      };
+    };
+    host.frappe = {
+      session: { user: "reviewer@example.invalid" },
+      boot: { user: { roles: ["Reviewer"] } },
+    };
+    refreshSession();
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("review_case.list")) {
+        return Promise.resolve(
+          ok({ cases: [detailFixture.case], total: 1, next_cursor: null }),
+        );
+      }
+      return Promise.reject(new TypeError("Failed to fetch"));
+    });
+    const wrapper = mount(ReviewQueueView, {
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.get("[data-review-resource='cases']").text()).toContain(
+      "确认客户反馈事实",
+    );
+    expect(
+      wrapper.find("[data-review-resource='drafts'] .state-panel--offline").exists(),
+    ).toBe(true);
+
+    delete host.frappe;
+    refreshSession();
+  });
+
+  it("Review Cases 权限失败时仍展示 AI Draft，但不把草稿伪装为正式案件", async () => {
+    const host = globalThis as typeof globalThis & {
+      frappe?: {
+        session: { user: string };
+        boot: { user: { roles: string[] } };
+      };
+    };
+    host.frappe = {
+      session: { user: "reviewer@example.invalid" },
+      boot: { user: { roles: ["Reviewer"] } },
+    };
+    refreshSession();
+    const permission = new Response(
+      JSON.stringify({
+        message: {
+          error: {
+            code: "permission_denied",
+            message: "无权读取审核案件。",
+            request_id: "req-review-denied",
+            details: {},
+          },
+        },
+      }),
+      { status: 403, headers: { "Content-Type": "application/json" } },
+    );
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("review_case.list")) {
+        return Promise.resolve(permission.clone());
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            message: {
+              data: {
+                drafts: [
+                  {
+                    draft_id: "DRAFT-PARTIAL",
+                    kind: "Review Case",
+                    status: "AI Draft",
+                    origin: "AI",
+                    subject: "只是一份 AI 草稿",
+                    evidence: [],
+                    model: { name: "deepseek-v4-flash", version: "2026-08-01" },
+                    revision: 1,
+                  },
+                ],
+                next_cursor: null,
+              },
+              meta: { request_id: "req-draft", schema_version: "4.0" },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    });
+    const wrapper = mount(ReviewQueueView, {
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(
+      wrapper.find("[data-review-resource='cases'] .state-panel--permission").exists(),
+    ).toBe(true);
+    expect(wrapper.get("[data-review-resource='drafts']").text()).toContain(
+      "只是一份 AI 草稿",
+    );
+    expect(wrapper.find("a[href*='/gbos/review/DRAFT-PARTIAL']").exists()).toBe(false);
+
+    delete host.frappe;
+    refreshSession();
+  });
+
+  it("Review Cases 使用 opaque cursor，可回首页并丢弃迟到的上一页结果", async () => {
+    let resolveLatePage: ((response: Response) => void) | undefined;
+    let reviewRequest = 0;
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      const url = new URL(String(input), "https://gbos.invalid");
+      if (!url.pathname.includes("review_case.list")) {
+        return Promise.resolve(ok({ drafts: [], next_cursor: null }));
+      }
+      reviewRequest += 1;
+      if (reviewRequest === 1) {
+        return Promise.resolve(
+          ok({
+            cases: [detailFixture.case],
+            total: 1,
+            next_cursor: "opaque:%2F下一页==",
+          }),
+        );
+      }
+      if (reviewRequest === 2) {
+        return new Promise<Response>((resolve) => {
+          resolveLatePage = resolve;
+        });
+      }
+      return Promise.resolve(
+        ok({
+          cases: [{ ...detailFixture.case, name: "REVIEW-HOME", title: "首页最新案件" }],
+          total: 1,
+          next_cursor: null,
+        }),
+      );
+    });
+    const wrapper = mount(ReviewQueueView, {
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    await wrapper.get("button[data-pagination='next']").trigger("click");
+    expect(wrapper.text()).not.toContain("确认客户反馈事实");
+    const nextUrl = new URL(
+      String(fetcher.mock.calls.find(([url]) => String(url).includes("cursor="))?.[0]),
+      "https://gbos.invalid",
+    );
+    expect(nextUrl.searchParams.get("cursor")).toBe("opaque:%2F下一页==");
+
+    await wrapper.get("button[data-pagination='home']").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("首页最新案件");
+
+    resolveLatePage?.(
+      ok({
+        cases: [{ ...detailFixture.case, name: "REVIEW-LATE", title: "迟到案件" }],
+        total: 1,
+        next_cursor: null,
+      }),
+    );
+    await flushPromises();
+    expect(wrapper.text()).toContain("首页最新案件");
+    expect(wrapper.text()).not.toContain("迟到案件");
+  });
+
+  it("审核说明持续展示最少字符帮助、当前计数和 aria 关联，并阻止重复提交", async () => {
+    const wrapper = mount(ReviewDecisionForm, {
+      props: { submitting: false, resetKey: 0 },
+    });
+    const textarea = wrapper.get("textarea");
+    const describedBy = textarea.attributes("aria-describedby")?.split(" ") ?? [];
+
+    expect(describedBy).toHaveLength(2);
+    expect(describedBy.every((id) => wrapper.find(`#${id}`).exists())).toBe(true);
+    expect(wrapper.text()).toContain("至少 4 个字符");
+    expect(wrapper.text()).toContain("0 / 1000");
+    expect(wrapper.findAllComponents(GbosButton)).toHaveLength(2);
+
+    await textarea.setValue("证据充分");
+    expect(wrapper.text()).toContain("4 / 1000");
+    await wrapper.get('[data-decision="Approved"]').trigger("click");
+    await wrapper.get('[data-decision="Approved"]').trigger("click");
+    expect(wrapper.emitted("decide")).toEqual([["Approved", "证据充分"]]);
   });
 
   it("详情页只能决定案件，批准后不发送任何主体修改请求", async () => {
@@ -176,8 +401,13 @@ describe("Gate 4 人工审核界面", () => {
     });
     await flushPromises();
 
+    expect(wrapper.findComponent(DetailCommandTemplate).exists()).toBe(true);
     expect(wrapper.text()).toContain("客户希望降低甜度后再确认");
     expect(wrapper.text()).toContain("EVID-01HZX");
+    expect(wrapper.text()).toContain(detailFixture.case.case_payload_hash);
+    expect(wrapper.text()).toContain(detailFixture.case.subject.payload_hash);
+    expect(wrapper.text()).toContain('"market": "GCC"');
+    expect(wrapper.text()).toContain('"tags": [');
     await wrapper.get("textarea").setValue("证据充分，可以确认。");
     await wrapper.get('button[data-decision="Approved"]').trigger("click");
     await flushPromises();

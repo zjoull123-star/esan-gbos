@@ -14,6 +14,7 @@ import ResourceBoundary from "@/components/feedback/ResourceBoundary.vue";
 import DetailCommandTemplate from "@/components/layout/DetailCommandTemplate.vue";
 import OperationalListTemplate from "@/components/layout/OperationalListTemplate.vue";
 import PageHeader from "@/components/layout/PageHeader.vue";
+import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import GbosButton from "@/components/ui/GbosButton.vue";
 import { navigationForRoles } from "@/navigation";
 import { APP_ROUTES, isRouteAllowed } from "@/router";
@@ -44,6 +45,27 @@ const okV1 = (data: unknown) =>
     }),
     { status: 200, headers: { "Content-Type": "application/json" } },
   );
+
+const gbosButtonStub = {
+  name: "GbosButton",
+  inheritAttrs: false,
+  props: {
+    type: String,
+    intent: String,
+    loading: Boolean,
+    disabled: Boolean,
+  },
+  emits: ["click"],
+  template: `
+    <button
+      v-bind="$attrs"
+      :type="type"
+      :disabled="disabled || loading"
+      :data-intent="intent"
+      @click="$emit('click', $event)"
+    ><slot /></button>
+  `,
+};
 
 describe("BFF v4 typed client", () => {
   it("冻结十个 exact URL", () => {
@@ -254,6 +276,7 @@ describe("v4 roles and pages", () => {
       );
     const wrapper = mount(IntegrationsView, {
       global: {
+        stubs: { GbosButton: gbosButtonStub },
         provide: {
           [BFF_CLIENT_KEY as symbol]: createBffClient({
             fetcher,
@@ -264,10 +287,203 @@ describe("v4 roles and pages", () => {
       },
     });
     await flushPromises();
+    expect(wrapper.findComponent(PageHeader).exists()).toBe(true);
+    expect(wrapper.findComponent(OperationalListTemplate).exists()).toBe(true);
+    expect(wrapper.findAllComponents(ResourceBoundary)).toHaveLength(2);
     expect(wrapper.text()).toContain("WhatsApp");
     expect(wrapper.text()).toContain("50.00 USD");
     expect(wrapper.text()).toContain("100.00 USD");
     expect(wrapper.text()).not.toMatch(/access[_ -]?token|secret|密钥/iu);
+  });
+
+  it("模型用量失败不会隐藏连接器状态", async () => {
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("integration.list_status")) {
+        return Promise.resolve(
+          okV4({
+            connectors: [
+              {
+                instance_id: "wecom-main",
+                channel: "WeCom",
+                status: "enabled",
+                checkpoint_version: 3,
+                backlog: 0,
+                last_success_at: null,
+                safe_error_code: null,
+                freshness: "fresh",
+                revision: 2,
+              },
+            ],
+          }),
+        );
+      }
+      return Promise.reject(new TypeError("Failed to fetch"));
+    });
+    const wrapper = mount(IntegrationsView, {
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.get("[data-integration-resource='connectors']").text()).toContain(
+      "WeCom",
+    );
+    expect(
+      wrapper.find("[data-integration-resource='usage'] .state-panel--offline").exists(),
+    ).toBe(true);
+  });
+
+  it("连接器状态失败不会用模型用量伪装集成可用", async () => {
+    const permission = new Response(
+      JSON.stringify({
+        message: {
+          error: {
+            code: "permission_denied",
+            message: "无权读取连接器状态。",
+            request_id: "req-status-denied",
+            details: {},
+          },
+        },
+      }),
+      { status: 403, headers: { "Content-Type": "application/json" } },
+    );
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      if (String(input).includes("integration.list_status")) {
+        return Promise.resolve(permission.clone());
+      }
+      return Promise.resolve(
+        okV4({
+          model: "deepseek-v4-flash",
+          period: "2026-08",
+          tokens: 20,
+          token_state: "known",
+          cost: { currency: "USD", amount: 0.1, state: "known" },
+          soft_limit_usd: 50,
+          hard_limit_usd: 100,
+          state: "normal",
+        }),
+      );
+    });
+    const wrapper = mount(IntegrationsView, {
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(
+      wrapper.find("[data-integration-resource='connectors'] .state-panel--permission").exists(),
+    ).toBe(true);
+    expect(wrapper.get("[data-integration-resource='usage']").text()).toContain(
+      "deepseek-v4-flash",
+    );
+    expect(wrapper.find("[data-integration-resource='connectors'] [data-connector]").exists()).toBe(false);
+  });
+
+  it("重放通过 ConfirmDialog 确认、阻止重复点击并在冲突后只刷新状态资源", async () => {
+    const connector = {
+      instance_id: "wa-main",
+      channel: "WhatsApp",
+      status: "enabled" as const,
+      checkpoint_version: 12,
+      backlog: 3,
+      last_success_at: "2026-08-07T02:00:00Z",
+      safe_error_code: null,
+      freshness: "fresh" as const,
+      revision: 4,
+    };
+    let resolveReplay: ((response: Response) => void) | undefined;
+    let statusReads = 0;
+    let usageReads = 0;
+    let replayCalls = 0;
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("integration.list_status")) {
+        statusReads += 1;
+        return Promise.resolve(
+          okV4({ connectors: [{ ...connector, revision: statusReads + 3 }] }),
+        );
+      }
+      if (url.includes("model.get_usage")) {
+        usageReads += 1;
+        return Promise.resolve(
+          okV4({
+            model: "deepseek-v4-flash",
+            period: "2026-08",
+            tokens: 1200,
+            token_state: "known",
+            cost: { currency: "USD", amount: 3.25, state: "known" },
+            soft_limit_usd: 50,
+            hard_limit_usd: 100,
+            state: "normal",
+          }),
+        );
+      }
+      replayCalls += 1;
+      return new Promise<Response>((resolve) => {
+        resolveReplay = resolve;
+      });
+    });
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const wrapper = mount(IntegrationsView, {
+      global: {
+        stubs: { GbosButton: gbosButtonStub },
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+            getCsrfToken: () => "csrf",
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    await wrapper.get("button[data-command='replay']").trigger("click");
+    expect(wrapper.findComponent(ConfirmDialog).props()).toMatchObject({
+      modelValue: true,
+      confirmLabel: "确认重放",
+    });
+    expect(wrapper.findComponent(ConfirmDialog).text()).toContain("可能重复处理历史消息");
+    await wrapper.get("dialog button[data-action='confirm']").trigger("click");
+    await wrapper.get("button[data-command='replay']").trigger("click");
+    expect(replayCalls).toBe(1);
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    resolveReplay?.(
+      new Response(
+        JSON.stringify({
+          message: {
+            error: {
+              code: "revision_conflict",
+              message: "连接器版本已更新，请刷新。",
+              request_id: "req-replay-conflict",
+              details: {},
+            },
+          },
+        }),
+        { status: 409, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    await flushPromises();
+
+    expect(statusReads).toBe(2);
+    expect(usageReads).toBe(1);
+    expect(replayCalls).toBe(1);
+    expect(wrapper.get("[role='alert']").text()).toContain("连接器版本已更新");
+    confirmSpy.mockRestore();
   });
 
   it("沟通列表以紧凑模板保留筛选、cursor 和详情深链", async () => {
@@ -529,7 +745,7 @@ describe("v4 roles and pages", () => {
     expect(wrapper.findAll("button")).toHaveLength(0);
   });
 
-  it("复用审核队列将 AI Draft 受控送入 Pending", async () => {
+  it("复用审核队列经 ConfirmDialog 将 AI Draft 受控送入 Pending并阻止重复提交", async () => {
     const host = globalThis as typeof globalThis & {
       frappe?: {
         session: { user: string };
@@ -551,6 +767,8 @@ describe("v4 roles and pages", () => {
       model: { name: "deepseek-v4-flash", version: "2026-08-01" },
       revision: 2,
     };
+    let resolveSubmit: ((response: Response) => void) | undefined;
+    let submitCalls = 0;
     const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
       const url = String(input);
       if (url.includes("review_case.list")) {
@@ -559,13 +777,14 @@ describe("v4 roles and pages", () => {
         );
       }
       if (url.includes("ai_draft.submit_for_review")) {
-        return Promise.resolve(
-          okV4({ draft: { ...draft, status: "Pending", revision: 3 } }),
-        );
+        submitCalls += 1;
+        return new Promise<Response>((resolve) => {
+          resolveSubmit = resolve;
+        });
       }
       return Promise.resolve(okV4({ drafts: [draft], next_cursor: null }));
     });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const confirm = vi.spyOn(window, "confirm");
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [{ path: "/gbos/review/:id", component: { template: "<div />" } }],
@@ -573,6 +792,7 @@ describe("v4 roles and pages", () => {
     const wrapper = mount(ReviewQueueView, {
       global: {
         plugins: [router],
+        stubs: { GbosButton: gbosButtonStub },
         provide: {
           [BFF_CLIENT_KEY as symbol]: createBffClient({
             fetcher,
@@ -585,10 +805,19 @@ describe("v4 roles and pages", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("AI Draft → Pending");
-    await wrapper.get("button.button--primary").trigger("click");
+    await wrapper.get("button[data-draft-submit='DRAFT-1']").trigger("click");
+    expect(wrapper.findComponent(ConfirmDialog).props("modelValue")).toBe(true);
+    await wrapper.get("dialog button[data-action='confirm']").trigger("click");
+    await wrapper.get("button[data-draft-submit='DRAFT-1']").trigger("click");
+    expect(submitCalls).toBe(1);
+
+    resolveSubmit?.(
+      okV4({ draft: { ...draft, status: "Pending", revision: 3 } }),
+    );
     await flushPromises();
 
     expect(wrapper.text()).toContain("已进入 Pending");
+    expect(wrapper.get("[role='status']").text()).toContain("已进入 Pending");
     const submitCall = fetcher.mock.calls.find(([url]) =>
       String(url).includes("ai_draft.submit_for_review"),
     );
@@ -597,7 +826,94 @@ describe("v4 roles and pages", () => {
       expected_revision: "2",
     });
 
+    expect(confirm).not.toHaveBeenCalled();
     confirm.mockRestore();
+    delete host.frappe;
+    refreshSession();
+  });
+
+  it("AI Draft 冲突后刷新草稿资源且不自动重放提交", async () => {
+    const host = globalThis as typeof globalThis & {
+      frappe?: {
+        session: { user: string };
+        boot: { user: { roles: string[] } };
+      };
+    };
+    host.frappe = {
+      session: { user: "reviewer@example.invalid" },
+      boot: { user: { roles: ["Reviewer"] } },
+    };
+    refreshSession();
+    const draft = {
+      draft_id: "DRAFT-CONFLICT",
+      kind: "Review Case" as const,
+      status: "AI Draft" as const,
+      origin: "AI" as const,
+      subject: "旧草稿",
+      evidence: [],
+      model: { name: "deepseek-v4-flash" as const, version: "2026-08-01" },
+      revision: 2,
+    };
+    let draftReads = 0;
+    let submitCalls = 0;
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("review_case.list")) {
+        return Promise.resolve(okV1({ cases: [], total: 0, next_cursor: null }));
+      }
+      if (url.includes("ai_draft.list")) {
+        draftReads += 1;
+        return Promise.resolve(
+          okV4({
+            drafts: [
+              draftReads === 1
+                ? draft
+                : { ...draft, subject: "刷新后的草稿", revision: 3 },
+            ],
+            next_cursor: null,
+          }),
+        );
+      }
+      submitCalls += 1;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            message: {
+              error: {
+                code: "revision_conflict",
+                message: "草稿版本已更新，请重新核对。",
+                request_id: "req-draft-conflict",
+                details: {},
+              },
+            },
+          }),
+          { status: 409, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    });
+    const wrapper = mount(ReviewQueueView, {
+      global: {
+        stubs: { GbosButton: gbosButtonStub },
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+            getCsrfToken: () => "csrf-review",
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    await wrapper.get("button[data-draft-submit='DRAFT-CONFLICT']").trigger("click");
+    await wrapper.get("dialog button[data-action='confirm']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[role='alert']").text()).toContain("草稿版本已更新");
+    expect(wrapper.text()).toContain("刷新后的草稿");
+    expect(draftReads).toBe(2);
+    expect(submitCalls).toBe(1);
+
     delete host.frappe;
     refreshSession();
   });
