@@ -8,9 +8,9 @@
           description="查看经过新鲜度、覆盖率、对账和来源链路治理的经营指标。"
         >
           <template #actions>
-            <button class="button button--secondary" type="button" @click="load">
+            <GbosButton intent="secondary" type="button" @click="load">
               刷新
-            </button>
+            </GbosButton>
           </template>
         </PageHeader>
       </template>
@@ -38,6 +38,7 @@ import MetricCockpit from "@/components/MetricCockpit.vue";
 import ResourceBoundary from "@/components/feedback/ResourceBoundary.vue";
 import DashboardTemplate from "@/components/layout/DashboardTemplate.vue";
 import PageHeader from "@/components/layout/PageHeader.vue";
+import GbosButton from "@/components/ui/GbosButton.vue";
 import { useOnlineResource } from "@/composables/useOnlineResource";
 
 const client = useBffClient();

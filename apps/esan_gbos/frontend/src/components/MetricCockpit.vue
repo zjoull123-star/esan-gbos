@@ -50,13 +50,69 @@ const formatTimestamp = (value: string) => timestampFormatter.format(new Date(va
 </script>
 
 <style scoped>
+.metrics-cockpit {
+  min-width: 0;
+}
+
 .metrics-source-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
   margin-bottom: 10px;
   padding: 10px 12px;
+  border: 1px solid var(--gbos-accent);
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-accent-text);
+  background: rgb(15 159 143 / 10%);
+}
+
+.metrics-source-banner--synthetic {
+  border-color: rgb(180 120 20 / 55%);
+  color: rgb(120 74 8);
+  background: rgb(245 177 54 / 16%);
+}
+
+.metrics-source-banner strong {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-surface);
+  background: var(--gbos-accent-text);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.metrics-source-banner--synthetic strong {
+  background: rgb(120 74 8);
+}
+
+.metrics-source-banner__meta {
+  width: 100%;
+  color: inherit;
+  font-size: 12px;
+  opacity: 0.82;
+  overflow-wrap: anywhere;
 }
 
 .metric-grid {
+  display: grid;
+  min-width: 0;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
   gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.metric-grid > li {
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  .metrics-source-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 </style>

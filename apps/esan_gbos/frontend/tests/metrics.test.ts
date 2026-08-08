@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { flushPromises, mount } from "@vue/test-utils";
 import type { Component } from "vue";
 import { describe, expect, it, vi } from "vitest";
@@ -17,6 +20,11 @@ const loadCeoDashboardView = APP_ROUTES.find(
 )?.component as () => Promise<{ default: Component & { __name?: string } }>;
 
 const getCeoDashboardView = async () => (await loadCeoDashboardView()).default;
+
+const scopedStyle = (path: string) => {
+  const source = readFileSync(resolve(path), "utf8");
+  return source.match(/<style scoped>([\s\S]*?)<\/style>/u)?.[1] ?? "";
+};
 
 const lineage = {
   source_system: "synthetic_kingdee_projection",
@@ -215,6 +223,62 @@ describe("Gate 5 governed metrics client", () => {
 });
 
 describe("CEO governed metrics cockpit", () => {
+  it("owns every source strip and metric layout rule inside scoped components", () => {
+    const cockpitStyle = scopedStyle("src/components/MetricCockpit.vue");
+    const tileStyle = scopedStyle("src/components/data/MetricTile.vue");
+
+    for (const selector of [
+      ".metrics-cockpit",
+      ".metrics-source-banner",
+      ".metrics-source-banner--synthetic",
+      ".metrics-source-banner__meta",
+      ".metric-grid",
+      ".metric-grid > li",
+    ]) {
+      expect(cockpitStyle).toContain(selector);
+    }
+    for (const selector of [
+      ".metric-card",
+      ".metric-card--unavailable",
+      ".metric-card__header",
+      ".metric-status",
+      ".metric-status--unavailable",
+      ".metric-value",
+      ".metric-unavailable",
+      ".metric-facts",
+      ".metric-lineage",
+    ]) {
+      expect(tileStyle).toContain(selector);
+    }
+  });
+
+  it("uses only GBOS semantic tokens and the shared refresh button wrapper", () => {
+    const cockpitSource = readFileSync(
+      resolve("src/components/MetricCockpit.vue"),
+      "utf8",
+    );
+    const tileSource = readFileSync(
+      resolve("src/components/data/MetricTile.vue"),
+      "utf8",
+    );
+    const viewSource = readFileSync(
+      resolve("src/views/CeoDashboardView.vue"),
+      "utf8",
+    );
+    const metricSources = `${cockpitSource}\n${tileSource}`;
+
+    expect(metricSources).toContain("var(--gbos-surface)");
+    expect(metricSources).toContain("var(--gbos-border)");
+    expect(metricSources).toContain("var(--gbos-text)");
+    expect(metricSources).toContain("var(--gbos-muted)");
+    expect(metricSources).not.toMatch(
+      /#f5f3ec|Georgia|var\(--(?:forest|muted|line|paper|shadow|coral|forest-soft)\)/u,
+    );
+    expect(viewSource).toMatch(/import GbosButton from/);
+    expect(viewSource).toContain("<GbosButton");
+    expect(viewSource).not.toMatch(/<button\b/u);
+  });
+
   it("routes the CEO command center to its dedicated dashboard view", async () => {
     const component = await getCeoDashboardView();
 

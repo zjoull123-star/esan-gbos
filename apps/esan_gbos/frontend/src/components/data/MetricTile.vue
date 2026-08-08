@@ -6,7 +6,7 @@
   >
     <header class="metric-card__header">
       <div>
-        <p class="eyebrow">
+        <p class="metric-card__eyebrow">
           {{ metric.metric_key }}
         </p>
         <h2>{{ metric.display_name }}</h2>
@@ -186,9 +186,108 @@ const unavailableReason = (reason: MetricUnavailableReason) =>
 </script>
 
 <style scoped>
-.metric-tile {
+.metric-card {
+  height: 100%;
+  min-width: 0;
   padding: 16px;
-  box-shadow: none;
+  border: 1px solid var(--gbos-border);
+  border-top: 4px solid var(--gbos-accent);
+  border-radius: var(--gbos-radius-card);
+  color: var(--gbos-text);
+  background: var(--gbos-surface);
+  box-shadow: var(--gbos-shadow-card);
+}
+
+.metric-card--unavailable {
+  border-top-color: rgb(190 24 93 / 72%);
+}
+
+.metric-card__header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metric-card__header > div {
+  min-width: 0;
+}
+
+.metric-card__eyebrow {
+  margin: 0;
+  color: var(--gbos-accent-text);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+.metric-card h2 {
+  margin: 4px 0 0;
+  color: var(--gbos-text);
+  font-size: 18px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.metric-status {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-accent-text);
+  background: rgb(15 159 143 / 12%);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.metric-status--unavailable {
+  color: rgb(159 18 57);
+  background: rgb(190 24 93 / 10%);
+}
+
+.metric-value {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.metric-value strong {
+  color: var(--gbos-text);
+  font-family: var(--gbos-font-sans);
+  font-size: clamp(30px, 5vw, 46px);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.metric-value span {
+  color: var(--gbos-muted);
+  font-weight: 800;
+}
+
+.metric-unavailable {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid rgb(190 24 93 / 38%);
+  border-radius: var(--gbos-radius-control);
+  color: rgb(159 18 57);
+  background: rgb(190 24 93 / 7%);
+}
+
+.metric-unavailable span,
+.metric-unavailable code {
+  overflow-wrap: anywhere;
+}
+
+.metric-unavailable code {
+  font-size: 12px;
 }
 
 .metric-tile__value,
@@ -210,12 +309,12 @@ const unavailableReason = (reason: MetricUnavailableReason) =>
 .metric-tile__quality > div {
   min-width: 0;
   padding: 8px;
-  border-radius: 8px;
-  background: #f5f3ec;
+  border-radius: var(--gbos-radius-control);
+  background: var(--gbos-canvas);
 }
 
 .metric-tile__quality dt {
-  color: var(--gbos-muted, var(--muted));
+  color: var(--gbos-muted);
   font-size: 11px;
   font-weight: 750;
 }
@@ -232,8 +331,84 @@ const unavailableReason = (reason: MetricUnavailableReason) =>
   margin-top: 12px;
 }
 
+.metric-facts {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.metric-facts > div {
+  min-width: 0;
+  padding: 9px;
+  border-radius: var(--gbos-radius-control);
+  background: var(--gbos-canvas);
+}
+
+.metric-facts dt {
+  color: var(--gbos-muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.metric-facts dd {
+  margin: 3px 0 0;
+  color: var(--gbos-text);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.metric-lineage {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--gbos-border);
+}
+
+.metric-lineage summary {
+  cursor: pointer;
+  color: var(--gbos-accent-text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.metric-lineage ol {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding-inline-start: 20px;
+}
+
+.metric-lineage li {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  background: var(--gbos-canvas);
+}
+
+.metric-lineage li > * {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.metric-lineage li span {
+  margin-top: 3px;
+  color: var(--gbos-muted);
+  font-size: 12px;
+}
+
+.metric-lineage code {
+  margin-top: 5px;
+  color: var(--gbos-text);
+  font-size: 11px;
+}
+
 @media (max-width: 520px) {
-  .metric-tile__quality {
+  .metric-tile__quality,
+  .metric-facts {
     grid-template-columns: 1fr;
   }
 }
