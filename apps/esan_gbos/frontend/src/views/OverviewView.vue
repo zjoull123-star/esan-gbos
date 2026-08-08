@@ -21,12 +21,12 @@
       <li v-for="item in navigation" :key="item.id">
         <article class="overview-module">
           <div>
-            <p class="eyebrow">
+            <p class="overview-module__eyebrow">
               {{ groupLabels[item.group] }}
             </p>
             <h2>{{ item.label }}</h2>
           </div>
-          <RouterLink class="button button--secondary" :to="item.to">
+          <RouterLink class="overview-module__link" :to="item.to">
             进入{{ item.label }}
           </RouterLink>
         </article>
@@ -70,20 +70,20 @@ const groupLabels: Record<NavigationGroupId, string> = {
 .overview-runtime > div {
   min-width: 0;
   padding: 12px 14px;
-  border: 1px solid var(--gbos-border, var(--line));
+  border: 1px solid var(--gbos-border);
   border-radius: 12px;
-  background: var(--gbos-surface, var(--paper));
+  background: var(--gbos-surface);
 }
 
 .overview-runtime dt {
-  color: var(--gbos-muted, var(--muted));
+  color: var(--gbos-muted);
   font-size: 12px;
   font-weight: 700;
 }
 
 .overview-runtime dd {
   margin: 4px 0 0;
-  color: var(--gbos-text, var(--forest));
+  color: var(--gbos-text);
   font-size: 14px;
   font-weight: 650;
   overflow-wrap: anywhere;
@@ -105,21 +105,50 @@ const groupLabels: Record<NavigationGroupId, string> = {
   justify-content: space-between;
   gap: 12px;
   padding: 14px;
-  border: 1px solid var(--gbos-border, var(--line));
+  border: 1px solid var(--gbos-border);
   border-radius: 14px;
-  background: var(--gbos-surface, var(--paper));
+  background: var(--gbos-surface);
 }
 
 .overview-module h2 {
   margin: 3px 0 0;
-  color: var(--gbos-text, var(--forest));
+  color: var(--gbos-text);
   font-size: 17px;
+}
+
+.overview-module__eyebrow {
+  margin: 0;
+  color: var(--gbos-accent-text);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.overview-module__link {
+  display: inline-flex;
+  min-height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-primary);
+  background: var(--gbos-surface);
+  font-size: 13px;
+  font-weight: 750;
+  text-decoration: none;
 }
 
 @media (max-width: 520px) {
   .overview-module {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .overview-module__link {
+    min-height: 44px;
   }
 }
 </style>
