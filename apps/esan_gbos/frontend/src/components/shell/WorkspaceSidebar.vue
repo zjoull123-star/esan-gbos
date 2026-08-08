@@ -1,8 +1,13 @@
 <template>
   <aside class="workspace-sidebar">
-    <RouterLink class="workspace-sidebar__brand" to="/gbos">
+    <RouterLink
+      class="workspace-sidebar__brand"
+      to="/gbos"
+      aria-label="ESAN GBOS 产品首页"
+      title="ESAN GBOS 产品首页"
+    >
       <span class="workspace-sidebar__mark" aria-hidden="true">E</span>
-      <span>
+      <span class="workspace-sidebar__brand-copy">
         <strong>ESAN GBOS</strong>
         <small>治理型业务操作系统</small>
       </span>
@@ -21,10 +26,16 @@
               class="workspace-sidebar__link"
               :class="{ 'workspace-sidebar__link--current': isCurrent(item.to) }"
               :to="item.to"
+              :aria-label="item.label"
               :aria-current="isCurrent(item.to) ? 'page' : undefined"
+              :title="item.label"
             >
-              <span class="workspace-sidebar__link-mark" aria-hidden="true" />
-              <span>{{ item.label }}</span>
+              <span
+                class="workspace-sidebar__link-mark"
+                :data-icon="item.icon"
+                aria-hidden="true"
+              >{{ item.label.charAt(0) }}</span>
+              <span class="workspace-sidebar__link-label">{{ item.label }}</span>
             </RouterLink>
           </li>
         </ul>
@@ -175,23 +186,67 @@ nav {
 }
 
 .workspace-sidebar__link-mark {
-  width: 7px;
-  height: 7px;
+  display: grid;
+  width: 26px;
+  height: 26px;
   flex: 0 0 auto;
-  border-radius: 50%;
-  background: #64748b;
+  place-items: center;
+  border-radius: 8px;
+  color: #cbd5e1;
+  background: rgb(255 255 255 / 7%);
+  font-size: 10px;
+  font-weight: 800;
 }
 
 .workspace-sidebar__link--current .workspace-sidebar__link-mark,
 .workspace-sidebar__link.router-link-active .workspace-sidebar__link-mark {
-  background: #a99df3;
+  color: white;
+  background: rgb(169 157 243 / 30%);
 }
 
-@media (max-width: 800px) {
+@media (min-width: 768px) and (max-width: 1199px) {
   .workspace-sidebar {
-    position: static;
-    width: 100%;
-    height: auto;
+    width: 72px;
+    padding: 16px 10px;
+  }
+
+  .workspace-sidebar__brand {
+    justify-content: center;
+    margin: 0 0 22px;
+  }
+
+  .workspace-sidebar__brand-copy,
+  .workspace-sidebar__group h2,
+  .workspace-sidebar__link-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    padding: 0;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .workspace-sidebar__group + .workspace-sidebar__group {
+    margin-top: 10px;
+  }
+
+  .workspace-sidebar__link {
+    justify-content: center;
+    gap: 0;
+    padding: 5px;
+  }
+
+  .workspace-sidebar__link-mark {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+@media (max-width: 767px) {
+  .workspace-sidebar {
+    display: none;
   }
 }
 </style>

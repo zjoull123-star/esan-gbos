@@ -6,24 +6,56 @@
       <AppTopbar
         :navigation="navigation"
         :session-label="sessionLabel"
+        :drawer-id="drawerId"
+        :drawer-open="drawerOpen"
+        @open-navigation="openDrawer"
       />
       <main id="main-content" tabindex="-1">
         <slot />
       </main>
     </div>
+    <MobileBottomNav
+      :navigation="navigation"
+      @open-navigation="openDrawer"
+    />
+    <MobileNavDrawer
+      :open="drawerOpen"
+      :navigation="navigation"
+      :drawer-id="drawerId"
+      :title-id="drawerTitleId"
+      :return-focus-id="menuButtonId"
+      @close="closeDrawer"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from "vue";
+
 import type { NavigationItem } from "@/navigation";
 
 import AppTopbar from "./AppTopbar.vue";
+import MobileBottomNav from "./MobileBottomNav.vue";
+import MobileNavDrawer from "./MobileNavDrawer.vue";
 import WorkspaceSidebar from "./WorkspaceSidebar.vue";
 
 defineProps<{
   navigation: readonly NavigationItem[];
   sessionLabel: string;
 }>();
+
+const drawerId = "mobile-navigation-drawer";
+const drawerTitleId = "mobile-navigation-drawer-title";
+const menuButtonId = "mobile-navigation-menu-button";
+const drawerOpen = ref(false);
+
+const openDrawer = () => {
+  drawerOpen.value = true;
+};
+
+const closeDrawer = () => {
+  drawerOpen.value = false;
+};
 </script>
 
 <style scoped>
@@ -74,9 +106,19 @@ defineProps<{
   transform: translateY(0);
 }
 
-@media (max-width: 800px) {
+@media (min-width: 768px) and (max-width: 1199px) {
+  .app-shell {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
   .app-shell {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  #main-content {
+    padding: 16px 16px calc(76px + env(safe-area-inset-bottom));
   }
 }
 </style>

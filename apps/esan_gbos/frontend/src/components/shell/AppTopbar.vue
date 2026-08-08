@@ -1,5 +1,19 @@
 <template>
   <header class="app-topbar">
+    <button
+      id="mobile-navigation-menu-button"
+      class="app-topbar__menu-button"
+      type="button"
+      aria-label="打开导航菜单"
+      title="打开导航菜单"
+      :aria-controls="drawerId"
+      :aria-expanded="drawerOpen"
+      @click="emit('open-navigation')"
+    >
+      <span aria-hidden="true" />
+      <span aria-hidden="true" />
+      <span aria-hidden="true" />
+    </button>
     <div class="app-topbar__context">
       <span>当前页面</span>
       <strong>{{ currentPageLabel }}</strong>
@@ -23,6 +37,12 @@ import type { NavigationItem } from "@/navigation";
 const props = defineProps<{
   navigation: readonly NavigationItem[];
   sessionLabel: string;
+  drawerId: string;
+  drawerOpen: boolean;
+}>();
+
+const emit = defineEmits<{
+  "open-navigation": [];
 }>();
 
 const route = useRoute();
@@ -59,6 +79,29 @@ const sessionInitial = computed(() =>
   display: grid;
   min-width: 0;
   gap: 2px;
+}
+
+.app-topbar__menu-button {
+  display: none;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 11px;
+  border: 1px solid var(--gbos-border);
+  border-radius: 12px;
+  background: white;
+  cursor: pointer;
+}
+
+.app-topbar__menu-button span {
+  display: block;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--gbos-text);
+}
+
+.app-topbar__menu-button span + span {
+  margin-top: 4px;
 }
 
 .app-topbar__context span,
@@ -99,5 +142,40 @@ const sessionInitial = computed(() =>
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+  .app-topbar {
+    position: sticky;
+    z-index: 600;
+    top: 0;
+    min-height: 56px;
+    gap: 10px;
+    padding: 6px 12px;
+  }
+
+  .app-topbar__menu-button {
+    display: block;
+  }
+
+  .app-topbar__context {
+    flex: 1 1 auto;
+  }
+
+  .app-topbar__context span,
+  .app-topbar__session-copy {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    padding: 0;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .app-topbar__session {
+    flex: 0 0 auto;
+  }
 }
 </style>

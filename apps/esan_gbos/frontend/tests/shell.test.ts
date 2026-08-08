@@ -6,6 +6,7 @@ import App from "@/App.vue";
 import AppShell from "@/components/shell/AppShell.vue";
 import appShellSource from "@/components/shell/AppShell.vue?raw";
 import appTopbarSource from "@/components/shell/AppTopbar.vue?raw";
+import workspaceSidebarSource from "@/components/shell/WorkspaceSidebar.vue?raw";
 import { navigationForRoles } from "@/navigation";
 import { APP_ROUTES } from "@/router";
 import { refreshSession } from "@/session";
@@ -48,6 +49,8 @@ afterEach(() => {
       value: true,
     });
   }
+  document.body.style.overflow = "";
+  document.body.innerHTML = "";
 });
 
 describe("GBOS 语义设计基础", () => {
@@ -130,5 +133,187 @@ describe("桌面应用壳", () => {
     expect(wrapper.find(".state-panel--offline").exists()).toBe(true);
     expect(wrapper.text()).toContain("需要联网");
     expect(wrapper.text()).not.toContain("Frappe session 已失效");
+  });
+});
+
+describe("响应式应用导航", () => {
+  const mountShell = async (
+    roles: readonly string[] = ["CEO"],
+    path = "/gbos/ceo",
+  ) => {
+    const router = await appRouterAt(path);
+    const wrapper = mount(AppShell, {
+      attachTo: document.body,
+      props: {
+        navigation: navigationForRoles(roles),
+        sessionLabel: "mobile@example.invalid",
+      },
+      slots: { default: "<p>移动工作区</p>" },
+      global: { plugins: [router] },
+    });
+    return { router, wrapper };
+  };
+
+  it("菜单按钮打开模态抽屉并把焦点移到第一个链接", async () => {
+    const { wrapper } = await mountShell();
+    const menuButton = wrapper.get("button[aria-controls='mobile-navigation-drawer']");
+
+    expect(menuButton.attributes("aria-expanded")).toBe("false");
+    await menuButton.trigger("click");
+    await flushPromises();
+
+    expect(menuButton.attributes("aria-expanded")).toBe("true");
+    const drawer = wrapper.get("#mobile-navigation-drawer");
+    expect(drawer.attributes("role")).toBe("dialog");
+    expect(drawer.attributes("aria-modal")).toBe("true");
+    expect(drawer.attributes("aria-labelledby")).toBe(
+      "mobile-navigation-drawer-title",
+    );
+    expect(document.activeElement).toBe(drawer.get("a").element);
+
+    wrapper.unmount();
+  });
+
+  it("Escape 关闭抽屉并把焦点还给菜单按钮", async () => {
+    const { wrapper } = await mountShell();
+    const menuButton = wrapper.get("button[aria-controls='mobile-navigation-drawer']");
+    await menuButton.trigger("click");
+    await flushPromises();
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    await flushPromises();
+
+    expect(wrapper.find("#mobile-navigation-drawer").exists()).toBe(false);
+    expect(menuButton.attributes("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(menuButton.element);
+
+    wrapper.unmount();
+  });
+
+  it("在抽屉首尾动作项之间循环 Tab 与 Shift+Tab", async () => {
+    const { wrapper } = await mountShell();
+    await wrapper
+      .get("button[aria-controls='mobile-navigation-drawer']")
+      .trigger("click");
+    await flushPromises();
+
+    const drawer = wrapper.get("#mobile-navigation-drawer");
+    const actions = drawer.findAll<HTMLElement>("a, button");
+    const first = actions[0]!.element;
+    const last = actions.at(-1)!.element;
+
+    last.focus();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(first);
+
+    first.focus();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    expect(document.activeElement).toBe(last);
+
+    wrapper.unmount();
+  });
+
+  it("点击背景或路由变化都会关闭抽屉", async () => {
+    const { router, wrapper } = await mountShell();
+    const menuButton = wrapper.get("button[aria-controls='mobile-navigation-drawer']");
+    await menuButton.trigger("click");
+    await flushPromises();
+
+    await wrapper.get(".mobile-nav-drawer__backdrop").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("#mobile-navigation-drawer").exists()).toBe(false);
+
+    await menuButton.trigger("click");
+    await flushPromises();
+    await router.push("/gbos/sales");
+    await flushPromises();
+    expect(wrapper.find("#mobile-navigation-drawer").exists()).toBe(false);
+
+    wrapper.unmount();
+  });
+
+  it("组件卸载时恢复打开抽屉前的 body 滚动状态", async () => {
+    document.body.style.overflow = "scroll";
+    const { wrapper } = await mountShell();
+    await wrapper
+      .get("button[aria-controls='mobile-navigation-drawer']")
+      .trigger("click");
+    await flushPromises();
+
+    expect(document.body.style.overflow).toBe("hidden");
+    wrapper.unmount();
+    expect(document.body.style.overflow).toBe("scroll");
+  });
+
+  it("CEO 底部导航严格显示首页、销售、沟通、审核、更多", async () => {
+    const { wrapper } = await mountShell();
+    const bottomNavigation = wrapper.get(
+      "nav[aria-label='移动端快捷导航']",
+    );
+
+    expect(
+      bottomNavigation
+        .findAll(".mobile-bottom-nav__item")
+        .map((item) => item.text()),
+    ).toEqual(["首页", "销售", "沟通", "审核", "更多"]);
+    expect(bottomNavigation.get("a[href='/gbos']").attributes("href")).toBe(
+      "/gbos",
+    );
+    await bottomNavigation.get("button").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("#mobile-navigation-drawer").attributes("role")).toBe(
+      "dialog",
+    );
+
+    wrapper.unmount();
+  });
+
+  it("销售用户的所有移动与桌面入口都不泄露未授权业务链接", async () => {
+    const { wrapper } = await mountShell(["Sales User"], "/gbos/sales");
+
+    const hrefs = wrapper.findAll("a").map((link) => link.attributes("href"));
+    for (const unauthorizedPath of [
+      "/gbos/purchase",
+      "/gbos/product",
+      "/gbos/review",
+      "/gbos/integrations",
+    ]) {
+      expect(hrefs).not.toContain(unauthorizedPath);
+    }
+    expect(wrapper.text()).not.toContain("采购协同");
+    expect(wrapper.text()).not.toContain("产品与样品");
+    expect(wrapper.text()).not.toContain("审核队列");
+    expect(wrapper.text()).not.toContain("集成状态");
+
+    wrapper.unmount();
+  });
+
+  it("为 1200/768 断点、72px 轨道和无障碍轨道链接声明静态契约", async () => {
+    expect(appShellSource).toContain(
+      "grid-template-columns: 240px minmax(0, 1fr);",
+    );
+    expect(appShellSource).toContain("@media (min-width: 768px) and (max-width: 1199px)");
+    expect(appShellSource).toContain("grid-template-columns: 72px minmax(0, 1fr);");
+    expect(appShellSource).toContain("@media (max-width: 767px)");
+    expect(workspaceSidebarSource).toContain("@media (min-width: 768px) and (max-width: 1199px)");
+    expect(workspaceSidebarSource).toContain("width: 72px;");
+    expect(workspaceSidebarSource).toContain("@media (max-width: 767px)");
+
+    const { wrapper } = await mountShell();
+    for (const link of wrapper.findAll(".workspace-sidebar a")) {
+      expect(link.attributes("aria-label")).toBe(link.attributes("title"));
+      expect(link.attributes("title")).toBeTruthy();
+    }
+    wrapper.unmount();
   });
 });
