@@ -392,6 +392,7 @@ git commit -m "feat(pwa): add responsive GBOS navigation"
 - Modify: `apps/esan_gbos/frontend/src/frappe-ui.d.ts`
 - Modify: `apps/esan_gbos/frontend/vite.config.ts`
 - Modify: `apps/esan_gbos/frontend/tailwind.config.js`
+- Modify: `apps/esan_gbos/frontend/src/views/SampleDetailView.vue` (public Frappe UI import only)
 
 - [ ] **Step 1: Write failing component-contract tests**
 
@@ -424,9 +425,9 @@ event, and exposes a default slot only in ready state. The three templates conta
 slots only; no template may fetch data or infer permissions.
 
 `GbosButton` and `GbosField` import only public `frappe-ui` exports. Remove the internal
-source alias after the wrapper test proves the public import builds. `ConfirmDialog` must
-use native dialog semantics or an accessible Frappe UI Dialog and must never call
-`window.confirm`.
+source alias after the wrapper test proves the public import builds and the existing sample
+button import has moved to the same public export. `ConfirmDialog` must use native dialog
+semantics or an accessible Frappe UI Dialog and must never call `window.confirm`.
 
 - [ ] **Step 4: Run focused GREEN and frontend static gates**
 
@@ -456,7 +457,8 @@ git add apps/esan_gbos/frontend/src/components/feedback/ResourceBoundary.vue \
   apps/esan_gbos/frontend/tests/templates.test.ts \
   apps/esan_gbos/frontend/src/frappe-ui.d.ts \
   apps/esan_gbos/frontend/vite.config.ts \
-  apps/esan_gbos/frontend/tailwind.config.js
+  apps/esan_gbos/frontend/tailwind.config.js \
+  apps/esan_gbos/frontend/src/views/SampleDetailView.vue
 git diff --cached --check
 git commit -m "feat(pwa): add GBOS page templates"
 ```
