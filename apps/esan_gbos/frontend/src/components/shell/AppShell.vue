@@ -48,7 +48,7 @@ defineProps<{
   min-width: 0;
   max-width: 1600px;
   margin-inline: auto;
-  padding: clamp(20px, 3vw, 40px);
+  padding: 24px;
 }
 
 .app-shell :deep(:focus-visible) {

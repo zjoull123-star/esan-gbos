@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import App from "@/App.vue";
 import AppShell from "@/components/shell/AppShell.vue";
+import appShellSource from "@/components/shell/AppShell.vue?raw";
+import appTopbarSource from "@/components/shell/AppTopbar.vue?raw";
 import { navigationForRoles } from "@/navigation";
 import { APP_ROUTES } from "@/router";
 import { refreshSession } from "@/session";
@@ -74,6 +76,11 @@ describe("GBOS 语义设计基础", () => {
 });
 
 describe("桌面应用壳", () => {
+  it("遵循 64px 顶栏与 24px 主内容桌面尺寸", () => {
+    expect.soft(appTopbarSource).toContain("min-height: 64px;");
+    expect.soft(appShellSource).toContain("padding: 24px;");
+  });
+
   it("按授权导航分组并保留可访问主内容与会话上下文", async () => {
     const router = await appRouterAt("/gbos/ceo");
     const wrapper = mount(AppShell, {

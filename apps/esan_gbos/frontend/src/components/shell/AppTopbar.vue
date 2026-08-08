@@ -45,7 +45,7 @@ const sessionInitial = computed(() =>
 .app-topbar {
   display: flex;
   min-width: 0;
-  min-height: 68px;
+  min-height: 64px;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
