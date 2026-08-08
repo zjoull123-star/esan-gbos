@@ -544,6 +544,7 @@ git commit -m "feat(pwa): redesign the GBOS command center"
 - Create: `apps/esan_gbos/frontend/tests/workspaces.test.ts`
 - Modify: `apps/esan_gbos/frontend/src/router.ts`
 - Modify: `apps/esan_gbos/frontend/src/presentation.ts`
+- Modify: `apps/esan_gbos/frontend/tests/app.test.ts`
 - Delete after GREEN: `apps/esan_gbos/frontend/src/views/WorkspaceView.vue`
 
 - [ ] **Step 1: Write failing page-specific tests**
@@ -552,6 +553,10 @@ Sales assertions: title, owner, status, due date, next action, related Party/Sam
 cursor pagination. Purchase assertions: sourcing lane, candidate status, quoted-price
 snapshot label, currency, lead time, and no invented supplier score. Product assertions:
 honest “产品与样品工作项” label and no Product Brief/Sample index claim.
+
+Move the existing workspace behavior cases in `app.test.ts` to the three page-specific
+views before deleting `WorkspaceView.vue`; do not retain a compatibility wrapper only to
+keep stale tests green.
 
 - [ ] **Step 2: Run RED**
 
@@ -587,6 +592,7 @@ git add apps/esan_gbos/frontend/src/views/SalesWorkspaceView.vue \
   apps/esan_gbos/frontend/src/views/WorkspaceView.vue \
   apps/esan_gbos/frontend/src/components/data/SourcingComparison.vue \
   apps/esan_gbos/frontend/tests/workspaces.test.ts \
+  apps/esan_gbos/frontend/tests/app.test.ts \
   apps/esan_gbos/frontend/src/router.ts \
   apps/esan_gbos/frontend/src/presentation.ts
 git diff --cached --check
