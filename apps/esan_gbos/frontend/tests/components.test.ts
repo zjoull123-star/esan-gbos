@@ -5,9 +5,10 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 
 import DemoBanner from "@/components/DemoBanner.vue";
-import EvidenceCard from "@/components/EvidenceCard.vue";
-import RecordGrid from "@/components/RecordGrid.vue";
 import StatePanel from "@/components/StatePanel.vue";
+import EvidencePanel from "@/components/data/EvidencePanel.vue";
+import ObjectSummary from "@/components/data/ObjectSummary.vue";
+import Timeline from "@/components/data/Timeline.vue";
 import { isFixturePayload } from "@/presentation";
 
 describe("沟通观察页面组合边界", () => {
@@ -107,7 +108,7 @@ describe("可操作中文状态", () => {
 describe("多语言证据与演示数据", () => {
   it("中文摘要优先，同时原样保留原文和原始语言", () => {
     const original = "نحتاج عينة برائحة الحمضيات";
-    const wrapper = mount(EvidenceCard, {
+    const wrapper = mount(EvidencePanel, {
       props: {
         title: "客户反馈",
         summaryZh: "客户需要柑橘香调样品。",
@@ -128,7 +129,7 @@ describe("多语言证据与演示数据", () => {
   });
 
   it("不确定或缺失摘要时明确提示人工确认，不伪造翻译", () => {
-    const wrapper = mount(EvidenceCard, {
+    const wrapper = mount(EvidencePanel, {
       props: {
         title: "外部消息",
         originalText: "Need approval by Friday.",
@@ -147,51 +148,79 @@ describe("多语言证据与演示数据", () => {
     expect(isFixturePayload({ origin: "Manual" })).toBe(false);
   });
 
-  it("工作项引用和详情分组生成受控客户或样品链接", () => {
-    const wrapper = mount(RecordGrid, {
+  it("对象摘要只展示显式字段并保留受控详情链接", () => {
+    const wrapper = mount(ObjectSummary, {
       props: {
-        records: [
+        title: "客户档案",
+        eyebrow: "PARTY-1",
+        fields: [
           {
-            name: "WRK-1",
-            title: "客户跟进",
-            reference_doctype: "GBOS Party Profile",
-            reference_name: "PTY-1",
+            key: "party_name",
+            label: "客户名称",
+            value: "海湾香氛贸易",
           },
           {
-            name: "SAM-1",
-            title: "第一轮样品",
-            presentation_section: "样品项目",
+            key: "sample",
+            label: "样品项目",
+            value: "第一轮样品",
+            to: "/gbos/sample/SAM-1",
           },
+          { key: "missing", label: "缺失字段", value: undefined },
         ],
+      },
+      global: {
+        stubs: {
+          RouterLink: {
+            props: ["to"],
+            template: '<a :href="to"><slot /></a>',
+          },
+        },
       },
     });
 
-    expect(wrapper.findAll("a.text-link").map((link) => link.attributes("href"))).toEqual([
-      "/gbos/party/PTY-1",
-      "/gbos/sample/SAM-1",
-    ]);
+    expect(wrapper.get("h2").text()).toBe("客户档案");
+    expect(wrapper.text()).toContain("海湾香氛贸易");
+    expect(wrapper.get('a[href="/gbos/sample/SAM-1"]').text()).toBe("第一轮样品");
+    expect(wrapper.text()).not.toContain("缺失字段");
   });
 
-  it("采购候选卡片展示供应商、报价、交期和候选状态", () => {
-    const wrapper = mount(RecordGrid, {
+  it("时间线按服务端顺序展示类型化字段，不转储任意 JSON", () => {
+    const wrapper = mount(Timeline, {
       props: {
-        records: [
+        title: "样品迭代",
+        entries: [
           {
-            name: "CANDIDATE-1",
-            presentation_section: "评估中 · 候选供应商",
-            supplier_name: "合成供应商 A",
-            quoted_price: 12.5,
-            currency: "USD",
-            lead_time_days: 21,
-            candidate_status: "Shortlisted",
+            id: "ITER-2",
+            title: "第 2 轮",
+            fields: [
+              { key: "summary", label: "摘要", value: "调整柑橘前调" },
+              { key: "revision", label: "版本", value: 4 },
+            ],
           },
         ],
       },
     });
 
-    expect(wrapper.text()).toContain("合成供应商 A");
-    expect(wrapper.text()).toContain("12.5 USD");
-    expect(wrapper.text()).toContain("21 天");
-    expect(wrapper.text()).toContain("Shortlisted");
+    expect(wrapper.get("h2").text()).toBe("样品迭代");
+    expect(wrapper.text()).toContain("第 2 轮");
+    expect(wrapper.text()).toContain("调整柑橘前调");
+    expect(wrapper.text()).toContain("版本");
+    expect(wrapper.text()).not.toContain('{"');
+  });
+
+  it("客户与样品详情不再依赖通用 RecordGrid 或 legacy 状态面板", () => {
+    const partySource = readFileSync(resolve("src/views/PartyDetailView.vue"), "utf8");
+    const sampleSource = readFileSync(resolve("src/views/SampleDetailView.vue"), "utf8");
+
+    for (const source of [partySource, sampleSource]) {
+      expect(source).toMatch(/import PageHeader from/);
+      expect(source).toMatch(/import ResourceBoundary from/);
+      expect(source).not.toMatch(/import RecordGrid from/);
+      expect(source).not.toMatch(/import StatePanel from/);
+      expect(source).not.toMatch(/var\(--(?!gbos-)/);
+    }
+    expect(partySource).toMatch(/from "@\/components\/data\/ObjectSummary\.vue"/);
+    expect(sampleSource).toMatch(/from "@\/components\/data\/Timeline\.vue"/);
+    expect(sampleSource).toMatch(/import GbosButton from/);
   });
 });

@@ -260,6 +260,16 @@ describe("页面模板", () => {
     expect(wrapper.get("section[data-region='main']").element.tagName).toBe("SECTION");
     expect(wrapper.get("aside[data-region='command']").element.tagName).toBe("ASIDE");
   });
+
+  it("DetailCommandTemplate 无命令区域时主内容占满可用宽度", () => {
+    const wrapper = mount(DetailCommandTemplate, {
+      slots: { main: "<div data-slot='main' />" },
+    });
+
+    expect(wrapper.get(".detail-command-template__body").attributes("data-has-command"))
+      .toBe("false");
+    expect(wrapper.find("aside[data-region='command']").exists()).toBe(false);
+  });
 });
 
 describe("GBOS 基础控件", () => {
@@ -517,7 +527,7 @@ describe("数据展示组件", () => {
 });
 
 describe("Frappe UI 公共导入边界", () => {
-  it("包装层和样品页只使用 frappe-ui 公共导出", () => {
+  it("包装层使用 frappe-ui 公共导出，样品页只复用受控包装层", () => {
     const buttonSource = readFileSync(
       resolve("src/components/ui/GbosButton.vue"),
       "utf8",
@@ -535,7 +545,10 @@ describe("Frappe UI 公共导入边界", () => {
     expect(fieldSource).toMatch(
       /import\s*{\s*FormControl\s*}\s*from\s*"frappe-ui"/,
     );
-    expect(sampleSource).toMatch(/import\s*{\s*Button\s*}\s*from\s*"frappe-ui"/);
+    expect(sampleSource).toMatch(
+      /import GbosButton from "@\/components\/ui\/GbosButton\.vue"/,
+    );
+    expect(sampleSource).not.toMatch(/from\s*"frappe-ui"/);
     expect(`${buttonSource}\n${fieldSource}\n${sampleSource}`).not.toContain(
       "@frappe-ui/button",
     );

@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "@/App.vue";
 import { createBffClient, type Fetcher } from "@/api/bff";
 import { BFF_CLIENT_KEY } from "@/api/injection";
+import ObjectSummary from "@/components/data/ObjectSummary.vue";
+import Timeline from "@/components/data/Timeline.vue";
+import DetailCommandTemplate from "@/components/layout/DetailCommandTemplate.vue";
+import PageHeader from "@/components/layout/PageHeader.vue";
 import { APP_ROUTES } from "@/router";
 import { refreshSession } from "@/session";
 import OverviewView from "@/views/OverviewView.vue";
@@ -153,25 +157,35 @@ describe("详情页", () => {
     expect(wrapper.find("form").exists()).toBe(false);
   });
 
-  it("客户 360 以中文摘要优先且保留原文", async () => {
+  it("客户 360 只展示固定 DTO 字段，不转储额外载荷", async () => {
     const wrapper = mount(PartyDetailView, {
       props: { id: "PARTY-1" },
       global: {
         provide: {
           [BFF_CLIENT_KEY as symbol]: clientWith({
-            name: "PARTY-1",
-            title: "海湾香氛贸易",
-            summary_zh: "客户希望先确认小样。",
-            original_text: "Please confirm the sample first.",
-            original_language: "en",
+            profile: {
+              name: "PARTY-1",
+              party_name: "海湾香氛贸易",
+              team: "TEAM-1",
+              business_status: "Active",
+              unexpected_secret: "MUST-NOT-RENDER",
+            },
+            organization: null,
+            contact: null,
+            lead: null,
+            deal: null,
+            product_briefs: [],
+            samples: [],
+            demands: [],
           }),
         },
       },
     });
     await flushPromises();
     expect(wrapper.text()).toContain("客户 360");
-    expect(wrapper.text()).toContain("客户希望先确认小样。");
-    expect(wrapper.get("blockquote").text()).toBe("Please confirm the sample first.");
+    expect(wrapper.text()).toContain("海湾香氛贸易");
+    expect(wrapper.text()).not.toContain("MUST-NOT-RENDER");
+    expect(wrapper.find("blockquote").exists()).toBe(false);
   });
 
   it("客户 360 展开真实嵌套响应的全部分组", async () => {
@@ -180,11 +194,11 @@ describe("详情页", () => {
       global: {
         provide: {
           [BFF_CLIENT_KEY as symbol]: clientWith({
-            profile: { name: "PARTY-1", display_name: "海湾香氛贸易" },
+            profile: { name: "PARTY-1", party_name: "海湾香氛贸易" },
             organization: { name: "ORG-1", organization_name: "Gulf Aroma LLC" },
             contact: { name: "CONTACT-1", full_name: "Mariam" },
             lead: { name: "LEAD-1", lead_name: "Dubai retail lead" },
-            deal: { name: "DEAL-1", title: "2026 香氛项目" },
+            deal: { name: "DEAL-1", organization: "ORG-1", status: "Open" },
             product_briefs: [{ name: "BRIEF-1", title: "柑橘香型" }],
             samples: [{ name: "SAMPLE-1", title: "第一轮小样" }],
             demands: [{ name: "DEMAND-1", title: "迪拜交付" }],
@@ -193,6 +207,10 @@ describe("详情页", () => {
       },
     });
     await flushPromises();
+
+    expect(wrapper.findComponent(PageHeader).exists()).toBe(true);
+    expect(wrapper.findComponent(DetailCommandTemplate).exists()).toBe(true);
+    expect(wrapper.findAllComponents(ObjectSummary).length).toBeGreaterThanOrEqual(8);
 
     for (const text of [
       "客户档案",
@@ -205,9 +223,20 @@ describe("详情页", () => {
       "客户需求",
       "Gulf Aroma LLC",
       "Mariam",
+      "海湾香氛贸易",
     ]) {
       expect(wrapper.text()).toContain(text);
     }
+    const sampleSummary = wrapper
+      .findAllComponents(ObjectSummary)
+      .find((summary) => summary.props("eyebrow") === "SAMPLE-1");
+    expect(sampleSummary?.props("fields")).toContainEqual(
+      expect.objectContaining({
+        key: "sample_link",
+        value: "第一轮小样",
+        to: "/gbos/sample/SAMPLE-1",
+      }),
+    );
   });
 
   it("Sent 样品反馈表从 project.revision 提交 revision、幂等键和 CSRF", async () => {
@@ -253,6 +282,14 @@ describe("详情页", () => {
     });
     await flushPromises();
 
+    expect(wrapper.findComponent(PageHeader).exists()).toBe(true);
+    expect(wrapper.findComponent(DetailCommandTemplate).exists()).toBe(true);
+    expect(wrapper.findComponent(ObjectSummary).exists()).toBe(true);
+    expect(wrapper.findAllComponents(Timeline)).toHaveLength(3);
+    expect(wrapper.text()).toContain("样品迭代");
+    expect(wrapper.text()).toContain("寄样记录");
+    expect(wrapper.text()).toContain("客户反馈");
+
     await wrapper.get("textarea[name='summary']").setValue("客户确认第一轮香气偏弱。");
     await wrapper.get("form").trigger("submit");
     await flushPromises();
@@ -265,6 +302,59 @@ describe("详情页", () => {
       expected_revision: "3",
     });
     expect(wrapper.text()).toContain("反馈已记录");
+    expect(wrapper.get("[role='status']").text()).toContain("反馈已记录");
+  });
+
+  it("样品反馈失败使用 alert 且不伪装为成功", async () => {
+    setFrappeSession("sales@example.invalid", ["Sales User"]);
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValueOnce(
+        apiResponse({
+          project: {
+            name: "SAMPLE-ERROR",
+            title: "失败用例样品",
+            revision: 5,
+            business_status: "Sent",
+          },
+          iterations: [],
+          shipments: [],
+          feedback: [],
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "internal_error",
+              message: "反馈暂时无法保存",
+              request_id: "req-feedback-error",
+              details: {},
+            },
+          }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    const wrapper = mount(SampleDetailView, {
+      props: { id: "SAMPLE-ERROR" },
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+            getCsrfToken: () => "csrf-error",
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    await wrapper.get("textarea[name='summary']").setValue("客户反馈内容");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.get("[role='alert']").text()).toContain("反馈暂时无法保存");
+    expect(wrapper.find("[role='status']").exists()).toBe(false);
   });
 
   it("CEO 查看 Sent 样品时保持只读且不显示反馈命令", async () => {

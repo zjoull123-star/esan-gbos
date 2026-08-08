@@ -11,7 +11,13 @@
     >
       <slot name="facts" />
     </section>
-    <div class="detail-command-template__body">
+    <div
+      class="detail-command-template__body"
+      :class="{
+        'detail-command-template__body--with-command': Boolean($slots.command),
+      }"
+      :data-has-command="Boolean($slots.command)"
+    >
       <section class="detail-command-template__main" data-region="main">
         <slot name="main" />
       </section>
@@ -42,9 +48,13 @@
 .detail-command-template__body {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+}
+
+.detail-command-template__body--with-command {
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
 }
 
 .detail-command-template__command {
@@ -53,7 +63,7 @@
 }
 
 @media (max-width: 1023px) {
-  .detail-command-template__body {
+  .detail-command-template__body--with-command {
     grid-template-columns: minmax(0, 1fr);
   }
 
