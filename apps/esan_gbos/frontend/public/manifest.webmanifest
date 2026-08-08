@@ -4,7 +4,7 @@
   "description": "ESAN 治理型业务操作系统",
   "lang": "zh-CN",
   "dir": "ltr",
-  "start_url": "/gbos/ceo",
+  "start_url": "/gbos",
   "scope": "/gbos/",
   "display": "standalone",
   "orientation": "any",

@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { navigationForRoles } from "@/navigation";
+import {
+  defaultWorkspaceForRoles,
+  navigationForRoles,
+} from "@/navigation";
 import { APP_ROUTES, isRouteAllowed } from "@/router";
 import { clearSession, readFrappeSession } from "@/session";
 
 describe("角色裁剪导航", () => {
-  it("精确声明 Local Pilot 的十一条业务路由", () => {
+  it("在现有业务路由前声明角色化产品入口", () => {
     expect(APP_ROUTES.map((route) => route.path)).toEqual([
+      "/gbos",
       "/gbos/ceo",
       "/gbos/sales",
       "/gbos/purchase",
@@ -19,6 +23,15 @@ describe("角色裁剪导航", () => {
       "/gbos/party/:id",
       "/gbos/sample/:id",
     ]);
+  });
+
+  it("按当前角色选择第一个授权工作台", () => {
+    expect(defaultWorkspaceForRoles(["CEO"])).toBe("/gbos/ceo");
+    expect(defaultWorkspaceForRoles(["Sales User"])).toBe("/gbos/sales");
+    expect(defaultWorkspaceForRoles(["Integration Admin"])).toBe(
+      "/gbos/integrations",
+    );
+    expect(defaultWorkspaceForRoles([])).toBeUndefined();
   });
 
   it.each([

@@ -51,7 +51,7 @@ describe("Service Worker 敏感数据边界", () => {
       name: "ESAN GBOS",
       lang: "zh-CN",
       display: "standalone",
-      start_url: "/gbos/ceo",
+      start_url: "/gbos",
       scope: "/gbos/",
     });
     expect(viteConfig).toContain('scope: "/gbos/"');

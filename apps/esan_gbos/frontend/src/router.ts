@@ -1,10 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from "vue-router";
 
-import {
-  hasFullNavigationAccess,
-  WORKSPACE_NAVIGATION,
-} from "./navigation";
-
 const CEO_ROLES = ["CEO"] as const;
 const SALES_ROLES = ["Sales Manager", "Sales User"] as const;
 const PURCHASE_ROLES = ["Purchase Manager", "Buyer"] as const;
@@ -12,8 +7,22 @@ const PRODUCT_ROLES = ["Product/R&D"] as const;
 const REVIEW_ROLES = ["Reviewer"] as const;
 const INTEGRATION_ROLES = ["Integration Admin"] as const;
 const COMMUNICATION_ROLES = [...CEO_ROLES, ...SALES_ROLES] as const;
+const OVERVIEW_ROLES = [
+  ...CEO_ROLES,
+  ...SALES_ROLES,
+  ...PURCHASE_ROLES,
+  ...PRODUCT_ROLES,
+  ...REVIEW_ROLES,
+  ...INTEGRATION_ROLES,
+] as const;
 
 export const APP_ROUTES = [
+  {
+    path: "/gbos",
+    name: "overview",
+    component: () => import("./views/OverviewView.vue"),
+    meta: { roles: OVERVIEW_ROLES },
+  },
   {
     path: "/gbos/ceo",
     name: "ceo",
@@ -26,33 +35,33 @@ export const APP_ROUTES = [
     name: "sales",
     component: () => import("./views/WorkspaceView.vue"),
     props: { workspace: "sales" },
-    meta: { roles: SALES_ROLES },
+    meta: { roles: [...CEO_ROLES, ...SALES_ROLES] },
   },
   {
     path: "/gbos/purchase",
     name: "purchase",
     component: () => import("./views/WorkspaceView.vue"),
     props: { workspace: "purchase" },
-    meta: { roles: PURCHASE_ROLES },
+    meta: { roles: [...CEO_ROLES, ...PURCHASE_ROLES] },
   },
   {
     path: "/gbos/product",
     name: "product",
     component: () => import("./views/WorkspaceView.vue"),
     props: { workspace: "product" },
-    meta: { roles: PRODUCT_ROLES },
+    meta: { roles: [...CEO_ROLES, ...PRODUCT_ROLES] },
   },
   {
     path: "/gbos/review",
     name: "review",
     component: () => import("./views/ReviewQueueView.vue"),
-    meta: { roles: REVIEW_ROLES },
+    meta: { roles: [...CEO_ROLES, ...REVIEW_ROLES] },
   },
   {
     path: "/gbos/integrations",
     name: "integrations",
     component: () => import("./views/IntegrationsView.vue"),
-    meta: { roles: INTEGRATION_ROLES },
+    meta: { roles: [...CEO_ROLES, ...INTEGRATION_ROLES] },
   },
   {
     path: "/gbos/communications",
@@ -100,12 +109,6 @@ const pathMatches = (pattern: string, actual: string) => {
 
 export const isRouteAllowed = (path: string, roles: readonly string[]) => {
   if (roles.includes("GBOS Admin")) {
-    return true;
-  }
-  if (
-    hasFullNavigationAccess(roles) &&
-    WORKSPACE_NAVIGATION.some((item) => pathMatches(item.to, path))
-  ) {
     return true;
   }
   const route = APP_ROUTES.find((candidate) => pathMatches(candidate.path, path));

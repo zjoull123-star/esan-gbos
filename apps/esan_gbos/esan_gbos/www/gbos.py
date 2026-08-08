@@ -18,6 +18,7 @@ _PWA_ROLES = {
     "Buyer",
     "Product/R&D",
     "Reviewer",
+    "Integration Admin",
 }
 
 

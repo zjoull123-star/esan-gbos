@@ -2,7 +2,7 @@
   <a class="skip-link" href="#main-content">跳到主要内容</a>
   <div class="app-shell">
     <header class="app-header">
-      <a class="brand" href="/gbos/ceo" aria-label="ESAN GBOS 首页">
+      <a class="brand" href="/gbos" aria-label="ESAN GBOS 首页">
         <span class="brand__mark" aria-hidden="true">E</span>
         <span>
           <strong>ESAN GBOS</strong>
@@ -53,7 +53,10 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import StatePanel from "@/components/StatePanel.vue";
-import { navigationForRoles } from "@/navigation";
+import {
+  defaultWorkspaceForRoles,
+  navigationForRoles,
+} from "@/navigation";
 import { isRouteAllowed } from "@/router";
 import { sessionState } from "@/session";
 
@@ -88,11 +91,11 @@ onBeforeUnmount(() => {
   window.removeEventListener("online", markOnline);
 });
 const goToAvailable = () => {
-  const first = navigation.value[0];
+  const first = defaultWorkspaceForRoles(sessionState.roles);
   if (first) {
-    void router.push(first.to);
+    void router.push(first);
   } else {
-    window.location.assign("/login?redirect-to=/gbos/ceo");
+    window.location.assign("/login?redirect-to=/gbos");
   }
 };
 </script>
