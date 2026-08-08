@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 
@@ -6,6 +9,28 @@ import EvidenceCard from "@/components/EvidenceCard.vue";
 import RecordGrid from "@/components/RecordGrid.vue";
 import StatePanel from "@/components/StatePanel.vue";
 import { isFixturePayload } from "@/presentation";
+
+describe("沟通观察页面组合边界", () => {
+  it("列表和详情复用共享模板，详情不声明任何命令按钮", () => {
+    const listSource = readFileSync(
+      resolve("src/views/CommunicationsView.vue"),
+      "utf8",
+    );
+    const detailSource = readFileSync(
+      resolve("src/views/CommunicationDetailView.vue"),
+      "utf8",
+    );
+
+    expect(listSource).toMatch(/import PageHeader from/);
+    expect(listSource).toMatch(/import OperationalListTemplate from/);
+    expect(listSource).toMatch(/import ResourceBoundary from/);
+    expect(detailSource).toMatch(/import PageHeader from/);
+    expect(detailSource).toMatch(/import DetailCommandTemplate from/);
+    expect(detailSource).toMatch(/import EvidencePanel from/);
+    expect(detailSource).toMatch(/import ResourceBoundary from/);
+    expect(detailSource).not.toMatch(/<button\b/);
+  });
+});
 
 describe("可操作中文状态", () => {
   it("加载中使用可访问状态语义", () => {
