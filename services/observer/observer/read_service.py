@@ -6,8 +6,9 @@ import hmac
 import json
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from .identity_resolution import IdentityResolutionRepository
@@ -21,6 +22,8 @@ _IDENTITY_REF = re.compile(
 _PHONE_LIKE_IDENTITY_TAIL = re.compile(r"^[0-9][0-9 ()-]{7,}[0-9]$")
 _MAPPING_REF = re.compile(r"^EID-[0-9A-HJKMNP-TV-Z]{26}$")
 _SUGGESTION_TYPE = re.compile(r"^[a-z][a-z0-9_.-]{0,79}$")
+IDENTITY_SELF_ACCESS_MAX_AGE = timedelta(hours=2)
+_IDENTITY_SELF_ACCESS_MAX_AGE_SECONDS = int(IDENTITY_SELF_ACCESS_MAX_AGE.total_seconds())
 
 
 class InvalidCursor(ValueError):
@@ -293,6 +296,21 @@ class CommunicationRepository(Protocol):
         access: CommunicationAccess,
         raw_policy: str,
     ) -> CommunicationDetail | None: ...
+
+
+class IdentityAuthorityFreshness(Protocol):
+    """Independent resolver-health evidence required for User self-access."""
+
+    def is_confirmed_fresh(
+        self,
+        scope: TenantScope,
+        identity_provider: str,
+        identity_ref: str,
+        team_ref: str,
+        *,
+        now: datetime,
+        max_age: timedelta,
+    ) -> bool: ...
 
 
 class PostgresCommunicationRepository:
@@ -609,14 +627,23 @@ class _InMemoryCommunicationRecord:
 class InMemoryCommunicationRepository:
     """Policy-parity communication repository for unit tests and offline use."""
 
-    __slots__ = ("_identity_repository", "_records")
+    __slots__ = (
+        "_authority_freshness",
+        "_clock",
+        "_identity_repository",
+        "_records",
+    )
 
     def __init__(
         self,
         *,
         identity_repository: IdentityResolutionRepository,
+        authority_freshness: IdentityAuthorityFreshness | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._identity_repository = identity_repository
+        self._authority_freshness = authority_freshness
+        self._clock = clock or _utc_now
         self._records: dict[tuple[str, str, str], _InMemoryCommunicationRecord] = {}
 
     def __repr__(self) -> str:
@@ -715,6 +742,8 @@ class InMemoryCommunicationRepository:
     ) -> CommunicationSummary:
         actor_refs: set[str] = set()
         party_ref: str | None = None
+        now = self._clock()
+        _require_aware(now, "identity authority clock")
         for participant_ref in record.participant_refs:
             parsed = _parse_external_subject_ref(participant_ref)
             if parsed is None:
@@ -731,7 +760,12 @@ class InMemoryCommunicationRepository:
                 or resolution.team_ref != record.detail.summary.team_ref
             ):
                 continue
-            if resolution.target_type == "User":
+            if resolution.target_type == "User" and self._has_fresh_user_authority(
+                record,
+                provider,
+                subject_ref,
+                now=now,
+            ):
                 actor_refs.add(resolution.target_ref)
             elif resolution.target_type == "Party" and party_ref is None:
                 party_ref = resolution.target_ref
@@ -739,6 +773,26 @@ class InMemoryCommunicationRepository:
             record.detail.summary,
             party_ref=party_ref,
             actor_refs=frozenset(actor_refs),
+        )
+
+    def _has_fresh_user_authority(
+        self,
+        record: _InMemoryCommunicationRecord,
+        provider: str,
+        subject_ref: str,
+        *,
+        now: datetime,
+    ) -> bool:
+        team_ref = record.detail.summary.team_ref
+        if self._authority_freshness is None or team_ref is None:
+            return False
+        return self._authority_freshness.is_confirmed_fresh(
+            record.scope,
+            provider,
+            subject_ref,
+            team_ref,
+            now=now,
+            max_age=IDENTITY_SELF_ACCESS_MAX_AGE,
         )
 
     def _project_participant_identities(
@@ -957,7 +1011,7 @@ class LocalPilotReadService:
             raise InvalidCursor("invalid cursor") from None
 
 
-_COMMUNICATION_COLUMNS = """
+_COMMUNICATION_COLUMNS = f"""
     event.event_id,
     event.channel,
     event.occurred_at,
@@ -1019,13 +1073,29 @@ _COMMUNICATION_COLUMNS = """
         AND latest_actor.status = 'confirmed'
         AND latest_actor.target_type = 'User'
         AND latest_actor.team_ref = event.team_ref
+        AND EXISTS (
+          SELECT 1
+          FROM observer.identity_resolution_work AS authority
+          WHERE authority.site_id = actor_participant.site_id
+            AND authority.identity_provider = split_part(
+                actor_participant.identity_ref, ':', 3
+            )
+            AND authority.identity_ref = actor_participant.identity_ref
+            AND authority.team_ref = event.team_ref
+            AND authority.last_resolution_status = 'confirmed'
+            AND authority.status NOT IN ('conflict', 'dead_letter')
+            AND authority.last_resolution_success_at >=
+                current_timestamp - make_interval(
+                    secs => {_IDENTITY_SELF_ACCESS_MAX_AGE_SECONDS}
+                )
+        )
       ORDER BY latest_actor.target_ref ASC
     )
 """
 
 
 def _confirmed_access_predicate() -> str:
-    return """
+    return f"""
         (
           event.team_ref = ANY(%s)
           OR (
@@ -1053,6 +1123,22 @@ def _confirmed_access_predicate() -> str:
                 AND latest_actor.target_type = 'User'
                 AND latest_actor.team_ref = event.team_ref
                 AND latest_actor.target_ref = %s
+                AND EXISTS (
+                  SELECT 1
+                  FROM observer.identity_resolution_work AS authority
+                  WHERE authority.site_id = actor.site_id
+                    AND authority.identity_provider = split_part(
+                        actor.identity_ref, ':', 3
+                    )
+                    AND authority.identity_ref = actor.identity_ref
+                    AND authority.team_ref = event.team_ref
+                    AND authority.last_resolution_status = 'confirmed'
+                    AND authority.status NOT IN ('conflict', 'dead_letter')
+                    AND authority.last_resolution_success_at >=
+                        current_timestamp - make_interval(
+                            secs => {_IDENTITY_SELF_ACCESS_MAX_AGE_SECONDS}
+                        )
+                )
             )
           )
         )
@@ -1061,6 +1147,10 @@ def _confirmed_access_predicate() -> str:
 
 def _confirmed_access_params(access: CommunicationAccess) -> list[Any]:
     return [sorted(access.team_refs), access.actor_ref, access.actor_ref]
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 def _parse_external_subject_ref(value: str) -> tuple[str, str] | None:

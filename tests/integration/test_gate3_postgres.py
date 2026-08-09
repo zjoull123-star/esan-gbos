@@ -543,6 +543,34 @@ def test_gate3_identity_projection_fences_replay_revocation_and_confirmed_reads(
         assert projection.record(scope, user) == user
         assert projection.record(scope, party) == party
         assert projection.latest(other_scope, "email", user_subject) is None
+
+        work_repository = PostgresIdentityResolutionWorkRepository(connection)
+        authority = work_repository.enqueue(
+            scope,
+            identity_provider="email",
+            identity_ref=user_subject,
+            team_ref="team-sales",
+            now=now - timedelta(hours=4),
+            max_attempts=3,
+        )
+        stale_claim = work_repository.claim(
+            scope,
+            worker_id="identity-read-worker",
+            now=now - timedelta(hours=3, seconds=1),
+            lease_duration=timedelta(seconds=30),
+        )
+        assert stale_claim is not None and stale_claim.work_id == authority.work_id
+        stale_authority = work_repository.record_outcome(
+            scope,
+            authority.work_id,
+            worker_id="identity-read-worker",
+            fence_token=stale_claim.fence_token,
+            now=now - timedelta(hours=3),
+            outcome="confirmed",
+            latency=timedelta(milliseconds=20),
+            recheck_at=now - timedelta(hours=2),
+        )
+        assert stale_authority.last_resolution_status == "confirmed"
         with pytest.raises(IdentityResolutionConflict, match="stale"):
             projection.record(
                 scope,
@@ -685,6 +713,26 @@ def test_gate3_identity_projection_fences_replay_revocation_and_confirmed_reads(
                 page_size=1,
             ).communications
         ] == [event_id]
+        assert reader.list_communications(scope, self_access).communications == ()
+
+        fresh_claim = work_repository.claim(
+            scope,
+            worker_id="identity-read-worker",
+            now=now,
+            lease_duration=timedelta(seconds=30),
+        )
+        assert fresh_claim is not None and fresh_claim.work_id == authority.work_id
+        fresh_authority = work_repository.record_outcome(
+            scope,
+            authority.work_id,
+            worker_id="identity-read-worker",
+            fence_token=fresh_claim.fence_token,
+            now=now,
+            outcome="confirmed",
+            latency=timedelta(milliseconds=20),
+            recheck_at=now + timedelta(hours=1),
+        )
+        assert fresh_authority.last_resolution_success_at == now
         assert [
             item.observation_id
             for item in reader.list_communications(scope, self_access).communications

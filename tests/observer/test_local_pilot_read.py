@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from observer.models import TenantScope
 from observer.read_service import (
+    IDENTITY_SELF_ACCESS_MAX_AGE,
     CommunicationAccess,
     CommunicationDetail,
     CommunicationNotFound,
@@ -34,6 +35,27 @@ SUMMARY = CommunicationSummary(
     evidence_count=1,
 )
 MODEL = {"name": "deepseek-v4-flash", "version": "2026-08-08"}
+
+
+class _AuthorityFreshness:
+    def __init__(self, fresh_identity_refs: frozenset[str]) -> None:
+        self.fresh_identity_refs = fresh_identity_refs
+        self.calls: list[tuple[str, str, str, datetime, timedelta]] = []
+
+    def is_confirmed_fresh(
+        self,
+        scope: TenantScope,
+        identity_provider: str,
+        identity_ref: str,
+        team_ref: str,
+        *,
+        now: datetime,
+        max_age: timedelta,
+    ) -> bool:
+        assert scope == SCOPE
+        assert identity_provider == "email"
+        self.calls.append((identity_ref, team_ref, identity_provider, now, max_age))
+        return identity_ref in self.fresh_identity_refs
 
 
 class _SqlCursor:
@@ -205,14 +227,21 @@ def _identity_resolution(
     )
 
 
-def _in_memory_reader(*resolutions: object) -> LocalPilotReadService:
+def _in_memory_reader(
+    *resolutions: object,
+    fresh_identity_refs: frozenset[str] = frozenset(),
+) -> LocalPilotReadService:
     from observer.identity_resolution import InMemoryIdentityResolutionRepository
     from observer.read_service import InMemoryCommunicationRepository
 
     identity_repository = InMemoryIdentityResolutionRepository()
     for resolution in resolutions:
         identity_repository.record(SCOPE, resolution)
-    repository = InMemoryCommunicationRepository(identity_repository=identity_repository)
+    repository = InMemoryCommunicationRepository(
+        identity_repository=identity_repository,
+        authority_freshness=_AuthorityFreshness(fresh_identity_refs),
+        clock=lambda: NOW + timedelta(hours=1),
+    )
     repository.put(
         SCOPE,
         CommunicationDetail(
@@ -275,12 +304,28 @@ def test_confirmed_user_projection_grants_self_access_but_raw_participant_never_
     with pytest.raises(ScopeMismatch):
         unresolved.get_communication(SCOPE, outside_team, observation_id="event-001")
 
-    confirmed = _in_memory_reader(
+    confirmed_but_stale = _in_memory_reader(
         _identity_resolution(
             subject="extid:v1:email:user-opaque",
             target_type="User",
             target_ref=actor,
         )
+    )
+    assert confirmed_but_stale.list_communications(SCOPE, outside_team).communications == ()
+    with pytest.raises(ScopeMismatch):
+        confirmed_but_stale.get_communication(
+            SCOPE,
+            outside_team,
+            observation_id="event-001",
+        )
+
+    confirmed = _in_memory_reader(
+        _identity_resolution(
+            subject="extid:v1:email:user-opaque",
+            target_type="User",
+            target_ref=actor,
+        ),
+        fresh_identity_refs=frozenset({"extid:v1:email:user-opaque"}),
     )
     page = confirmed.list_communications(SCOPE, outside_team)
     assert [item.observation_id for item in page.communications] == ["event-001"]
@@ -293,6 +338,37 @@ def test_confirmed_user_projection_grants_self_access_but_raw_participant_never_
         == "event-001"
     )
     assert actor not in repr(outside_team)
+
+
+def test_postgres_self_access_requires_nonterminal_fresh_confirmed_authority() -> None:
+    connection = _SqlConnection([[]])
+    repository = PostgresCommunicationRepository(connection=connection)
+
+    assert (
+        repository.list_communications(
+            SCOPE,
+            CommunicationAccess(
+                team_refs=frozenset({"team-finance"}),
+                actor_ref="protected-user@example.invalid",
+            ),
+            channel=None,
+            classification=None,
+            review_status=None,
+            before=None,
+            limit=20,
+        )
+        == ()
+    )
+
+    query, _params = connection.executed[1]
+    assert query.count("observer.identity_resolution_work") >= 2
+    assert "authority.last_resolution_status = 'confirmed'" in query
+    assert "authority.status NOT IN ('conflict', 'dead_letter')" in query
+    assert "authority.identity_ref = actor.identity_ref" in query
+    assert "authority.team_ref = event.team_ref" in query
+    assert "current_timestamp - make_interval" in query
+    assert "secs => 7200" in query
+    assert timedelta(hours=2) == IDENTITY_SELF_ACCESS_MAX_AGE
 
 
 def test_confirmed_party_projection_enriches_without_using_immutable_event_party_ref() -> None:
