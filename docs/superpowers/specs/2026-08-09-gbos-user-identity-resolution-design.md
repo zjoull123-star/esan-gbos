@@ -111,7 +111,9 @@ identity endpoint 解析 approved mapping，并在 PostgreSQL 保存最小投影
 - target type、target ref
 - status、resolved_at
 
-投影不复制姓名、邮箱、电话或客户原文。
+投影不复制 provider 原始 subject、display name、电话或客户原文。
+`target_ref` 是受权限保护的 Frappe 权威文档名；当 `User.name` 本身采用邮箱时，
+它只作为内部授权引用存在，不得进入模型请求、日志、错误或无权限响应。
 
 ## 5. 权限语义
 
@@ -147,7 +149,8 @@ identity endpoint 解析 approved mapping，并在 PostgreSQL 保存最小投影
 
 - 同一 sender 的两条消息得到相同 opaque identity ref。
 - 不同 site/purpose 的同一 sender 得到不同 ref。
-- 仓库、日志、PostgreSQL 和模型请求中没有测试邮箱/电话哨兵。
+- provider 原始邮箱/电话哨兵不进入 token 字段、日志、模型请求或无权限响应；
+  受权限保护的 `User` 权威引用仅存在于必要的映射记录和解析投影。
 - Approved User 映射后 self-access 生效；Pending/Rejected 映射不生效。
 - Party 映射只影响客户关联展示，不授予该客户系统访问权限。
 - AI 只能创建 proposal 和 Review Case，不能自动批准 External Identity。

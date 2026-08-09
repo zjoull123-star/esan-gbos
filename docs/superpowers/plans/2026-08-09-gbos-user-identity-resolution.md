@@ -171,7 +171,7 @@ except (IndexError, KeyError, TypeError, json.JSONDecodeError):
 - [ ] Add migration `009` with nullable `account_user_ref` on connector routing and a separate `participant_identity_resolutions` table.
 - [ ] Force RLS and site policy; grant only the Observer application role the minimum SELECT/INSERT/UPDATE rights.
 - [ ] Keep `event.team_ref` sourced only from the locked Connector Instance row; never accept team/user/party from normalized or model output.
-- [ ] Store mapping ref/revision, target type/ref, team, status and timestamps; store no name, email, phone, prompt or raw response.
+- [ ] Store mapping ref/revision, target type/ref, team, status and timestamps; store no provider subject, display name, phone, prompt or raw response. A Frappe `User.name` may be an email-shaped authoritative internal reference, but must remain permission-protected and absent from model/log/error surfaces.
 - [ ] Enforce idempotent upsert by site/provider/subject/mapping revision and reject target drift.
 - [ ] Preserve immutable participant refs and event rows; resolution is an additive projection, not an event rewrite.
 - [ ] Add real PostgreSQL tests for migration twice, RLS, cross-site writes, restart, replay, revocation and ABA/fencing behavior.
@@ -273,7 +273,7 @@ Email fixture
 - [ ] Frappe fresh install, double migrate and native permission tests pass.
 - [ ] Observer/Context/Agent PostgreSQL migrations run twice with forced RLS.
 - [ ] Same sender resolves stably; cross-site/purpose identity does not correlate.
-- [ ] No raw identity appears in MariaDB token fields, PostgreSQL projection, logs, errors, model request or CI artifacts.
+- [ ] No raw provider subject appears in token fields, logs, errors, model requests or CI artifacts; permission-protected Frappe target refs appear only in the authoritative mapping and minimal resolution projection.
 - [ ] Pending/Rejected/Revoked mappings never grant self-access.
 - [ ] Team routing cannot be changed by provider or model output.
 - [ ] AI cannot approve, merge, send, quote, change Deal stage or create an order.
