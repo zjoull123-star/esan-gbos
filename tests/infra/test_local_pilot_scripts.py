@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -77,6 +78,39 @@ def _write_docker_inspect_stub(tmp_path: Path, image_lock: dict[str, object]) ->
     )
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return stub
+
+
+def test_local_pilot_preflight_compiles_with_default_python3(tmp_path: Path) -> None:
+    python3 = shutil.which("python3", path=os.defpath)
+    assert python3 is not None
+    environment = os.environ.copy()
+    environment["PYTHONPYCACHEPREFIX"] = str(tmp_path)
+
+    result = subprocess.run(
+        [python3, "-m", "py_compile", str(SCRIPTS / "preflight.py")],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_ci_compiles_tracked_python_before_static_checks() -> None:
+    workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
+    ruff_job = workflow.split("  ruff:\n", 1)[1].split("\n  compose-config:\n", 1)[0]
+
+    tracked_files = ruff_job.index("git ls-files -z")
+    compileall = ruff_job.index("python -m compileall")
+    ruff_check = ruff_job.index("ruff check .")
+    mypy = ruff_job.index("mypy")
+
+    assert tracked_files < compileall < ruff_check < mypy
+    assert "xargs -0" in ruff_job
+    for directory in ("apps", "services", "scripts", "tests"):
+        assert f"'{directory}/**/*.py'" in ruff_job
 
 
 def test_operational_scripts_are_executable_and_shell_safe() -> None:
@@ -259,16 +293,23 @@ def test_preflight_references_governed_manifest_schema_and_disabled_manifest_fai
     assert all(not channel["enabled"] for channel in manifest["channels"].values())
 
     result = _run_preflight("--manifest", str(MANIFEST), "--require-go")
-    assert result.returncode != 0
+    assert result.returncode == 78
     assert "local_pilot_go must be true" in result.stderr
 
 
-def test_synthetic_runtime_preflight_accepts_recorded_images_without_waiving_go() -> None:
+def test_synthetic_runtime_preflight_accepts_recorded_images_without_waiving_go(
+    tmp_path: Path,
+) -> None:
+    image_lock = json.loads(_read(IMAGE_LOCK))
+    docker_inspect_stub = _write_docker_inspect_stub(tmp_path, image_lock)
+
     result = _run_preflight(
         "--manifest",
         str(MANIFEST),
         "--synthetic",
         "--require-runtime-images",
+        skip_image_check=False,
+        docker_inspect_stub=docker_inspect_stub,
     )
 
     assert result.returncode == 0

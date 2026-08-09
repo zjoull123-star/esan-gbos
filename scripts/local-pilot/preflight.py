@@ -218,7 +218,7 @@ def _inspect_image(reference: str) -> tuple[str, tuple[str, ...], str] | None:
         image_id = item["Id"]
         repo_digests = item.get("RepoDigests") or []
         platform = f"{item['Os']}/{item['Architecture']}"
-    except IndexError, KeyError, TypeError, json.JSONDecodeError:
+    except (IndexError, KeyError, TypeError, json.JSONDecodeError):  # fmt: skip
         return None
     if not isinstance(image_id, str) or not isinstance(repo_digests, list):
         return None

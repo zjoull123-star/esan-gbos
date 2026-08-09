@@ -64,10 +64,20 @@ jobs:
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           enable-cache: true
+      - name: Compile tracked Python
+        run: |
+          mkdir -p "${RUNNER_TEMP}/gate-logs"
+          git ls-files -z -- \
+              'apps/**/*.py' \
+              'services/**/*.py' \
+              'scripts/**/*.py' \
+              'tests/**/*.py' | \
+            xargs -0 uv run --frozen python -m compileall -q 2>&1 | \
+            tee "${RUNNER_TEMP}/gate-logs/python-static.log"
       - run: |
           mkdir -p "${RUNNER_TEMP}/gate-logs"
           uv run --frozen ruff check . 2>&1 | \
-            tee "${RUNNER_TEMP}/gate-logs/python-static.log"
+            tee -a "${RUNNER_TEMP}/gate-logs/python-static.log"
       - run: |
           uv run --frozen ruff format --check . 2>&1 | \
             tee -a "${RUNNER_TEMP}/gate-logs/python-static.log"
