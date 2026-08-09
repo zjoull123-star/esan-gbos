@@ -480,6 +480,7 @@ def main(
             now=active_clock(),
             team_ref=credential.team_ref,
             agent_task_type=credential.agent_task_type,
+            account_user_ref=credential.account_user_ref,
         )
         inbox = DurableDeliveryInbox(
             storage=storage,

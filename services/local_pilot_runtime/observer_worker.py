@@ -29,6 +29,7 @@ from services.observer.observer.evidence_store import (
     EvidenceIntegrityError,
     SiteIsolationError,
 )
+from services.observer.observer.identity_tokens import HmacSha256IdentityTokenResolver
 from services.observer.observer.local_pilot_ingestion import (
     DeliveryIntegrityError,
     DeliveryQuarantine,
@@ -85,6 +86,7 @@ from .runtime_support import (
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
 DEFAULT_CONNECTORS_CONFIG = Path("/config/connectors.json")
+DEFAULT_IDENTITY_HMAC_KEY = Path("/run/secrets/identity_hmac_key")
 StorageFactory = Callable[[object], LocalPilotStorage]
 
 _SUPPORTED_CONNECTORS = frozenset({"email", "wecom", "whatsapp"})
@@ -396,6 +398,7 @@ def main(
     manifest_path: Path = DEFAULT_MANIFEST,
     runtime_config_path: Path = DEFAULT_RUNTIME_CONFIG,
     connectors_path: Path = DEFAULT_CONNECTORS_CONFIG,
+    identity_hmac_key_path: Path = DEFAULT_IDENTITY_HMAC_KEY,
     environ: Mapping[str, str] | None = None,
     connector: Callable[..., object] | None = None,
     storage_factory: StorageFactory | None = None,
@@ -441,6 +444,8 @@ def main(
         if not {"email", "whatsapp"} & set(credentials):
             raise ChannelConfigError("Observer worker has no supported active pipeline")
 
+        identity_resolver = HmacSha256IdentityTokenResolver.from_secret_file(identity_hmac_key_path)
+
         connection = connect_postgres(runtime.postgres, connector=connector)
         storage = (
             PostgresLocalPilotStorage(cast(Connection, connection))
@@ -457,6 +462,7 @@ def main(
                 now=active_clock(),
                 team_ref=credential.team_ref,
                 agent_task_type=credential.agent_task_type,
+                account_user_ref=credential.account_user_ref,
             )
             if isinstance(credential, EmailCredentialConfig):
                 pipelines["email"] = ConnectorPipeline(
@@ -466,14 +472,22 @@ def main(
                         max_attachments=credential.max_attachments,
                         max_text_bytes=credential.max_message_bytes,
                     ),
-                    normalizer=EmailObservationNormalizer(),
+                    normalizer=EmailObservationNormalizer(
+                        identity_resolver=identity_resolver,
+                        site_id=scope.site_id,
+                        purpose=scope.processing_purpose,
+                    ),
                 )
             elif isinstance(credential, WhatsAppCredentialConfig):
                 pipelines["whatsapp"] = ConnectorPipeline(
                     decoder=WhatsAppCloudWebhookDecoder(
                         max_body_bytes=credential.max_body_bytes,
                     ),
-                    normalizer=WhatsAppObservationNormalizer(),
+                    normalizer=WhatsAppObservationNormalizer(
+                        identity_resolver=identity_resolver,
+                        site_id=scope.site_id,
+                        purpose=scope.processing_purpose,
+                    ),
                 )
             # WeCom stays intentionally unconfigured: encrypted deliveries are
             # quarantined until an injected official SDK can persist decrypted evidence.

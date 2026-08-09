@@ -20,6 +20,14 @@ from .storage import Connection, Cursor
 
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _CAS_OBJECT_REF = re.compile(r"^obs:v1:([a-f0-9]{32}):sha256:([a-f0-9]{64})$")
+_DELIVERY_UNRESOLVED_IDENTITY = re.compile(
+    r"^unresolved:delivery:(?:[0-9A-HJKMNP-TV-Z]{26}|[a-f0-9]{64})$"
+)
+_OPAQUE_IDENTITY = re.compile(
+    r"^extid:v1:(email|wecom|whatsapp|phone|manual_import):"
+    r"([A-Za-z0-9][A-Za-z0-9._~-]{0,127})$"
+)
+_PHONE_LIKE_IDENTITY_TAIL = re.compile(r"^[0-9][0-9 ()-]{7,}[0-9]$")
 _MAX_LEASE_SECONDS = 86_400
 _MAX_ATTEMPTS = 100
 
@@ -1015,6 +1023,7 @@ class PostgresLocalPilotStorage:
         normalized: tuple[NormalizedObservationInput, ...],
     ) -> PersistedNormalizedBatch:
         _validate_normalized_batch(scope, key, job, items, normalized)
+        stable_participants = _stable_participant_identities(key, normalized)
         candidates = tuple(
             _normalized_candidate(
                 scope=scope,
@@ -1045,6 +1054,10 @@ class PostgresLocalPilotStorage:
             if routing_row is None:
                 raise ConnectorRoutingConflict("connector routing is unavailable")
             team_ref, _agent_task_type = _trusted_connector_routing_from_row(routing_row)
+            if stable_participants and team_ref is None:
+                raise ConnectorRoutingConflict(
+                    "connector routing team is required for stable participant identity"
+                )
             cursor.execute(
                 f"""
                 SELECT {_qualified_columns(_DELIVERY_COLUMNS, "delivery")}
@@ -1356,6 +1369,16 @@ class PostgresLocalPilotStorage:
                     payload_sha256=candidate.payload_sha256,
                     replayed=False,
                 )
+            if team_ref is not None:
+                for identity_provider, identity_ref in stable_participants:
+                    _enqueue_identity_resolution_work(
+                        cursor,
+                        site_id=scope.site_id,
+                        identity_provider=identity_provider,
+                        identity_ref=identity_ref,
+                        team_ref=team_ref,
+                        now=job.created_at,
+                    )
             return PersistedNormalizedBatch(
                 observations=tuple(persisted[item.provider_event_id] for item in items)
             )
@@ -2909,6 +2932,91 @@ def _as_int(value: object, field_name: str) -> int:
     return value
 
 
+def _participant_identity_provider(key: ConnectorKey, identity_ref: str) -> str | None:
+    if _DELIVERY_UNRESOLVED_IDENTITY.fullmatch(identity_ref) is not None:
+        return None
+    match = _OPAQUE_IDENTITY.fullmatch(identity_ref)
+    if match is None:
+        raise ValueError("normalized participant identity is invalid")
+    provider, opaque_tail = match.groups()
+    if provider != key.connector or _PHONE_LIKE_IDENTITY_TAIL.fullmatch(opaque_tail) is not None:
+        raise ValueError("normalized participant identity is invalid")
+    return provider
+
+
+def _stable_participant_identities(
+    key: ConnectorKey,
+    normalized: tuple[NormalizedObservationInput, ...],
+) -> tuple[tuple[str, str], ...]:
+    values: set[tuple[str, str]] = set()
+    for observation in normalized:
+        for participant in observation.participants:
+            provider = _participant_identity_provider(key, participant.identity_ref)
+            if provider is not None:
+                values.add((provider, participant.identity_ref))
+    return tuple(sorted(values))
+
+
+def _identity_resolution_work_id(
+    site_id: str,
+    identity_provider: str,
+    identity_ref: str,
+    team_ref: str,
+) -> str:
+    digest = hashlib.sha256(
+        (
+            f"identity-resolution-work-v1\x1f{site_id}\x1f{identity_provider}"
+            f"\x1f{identity_ref}\x1f{team_ref}"
+        ).encode()
+    ).hexdigest()
+    return f"IRW-{digest}"
+
+
+def _enqueue_identity_resolution_work(
+    cursor: Cursor,
+    *,
+    site_id: str,
+    identity_provider: str,
+    identity_ref: str,
+    team_ref: str,
+    now: datetime,
+    max_attempts: int = 5,
+) -> None:
+    cursor.execute(
+        """
+        INSERT INTO observer.identity_resolution_work AS work (
+            site_id, work_id, identity_provider, identity_ref, team_ref,
+            status, attempt_count, max_attempts, next_attempt_at,
+            lease_generation, first_seen_at, last_seen_at, created_at, updated_at
+        ) VALUES (
+            %s, %s, %s, %s, %s, 'queued', 0, %s, %s, 0, %s, %s, %s, %s
+        )
+        ON CONFLICT (site_id, identity_provider, identity_ref, team_ref)
+        DO UPDATE SET
+            last_seen_at = GREATEST(work.last_seen_at, EXCLUDED.last_seen_at),
+            updated_at = GREATEST(work.updated_at, EXCLUDED.updated_at)
+        """,
+        (
+            site_id,
+            _identity_resolution_work_id(
+                site_id,
+                identity_provider,
+                identity_ref,
+                team_ref,
+            ),
+            identity_provider,
+            identity_ref,
+            team_ref,
+            max_attempts,
+            now,
+            now,
+            now,
+            now,
+            now,
+        ),
+    )
+
+
 def _validate_normalized_batch(
     scope: TenantScope,
     key: ConnectorKey,
@@ -2958,11 +3066,9 @@ def _validate_normalized_batch(
         if not 1 <= len(value.participants) <= 100:
             raise ValueError("normalized batch participant count is invalid")
         for participant in value.participants:
-            if (
-                not participant.identity_ref.startswith("unresolved:delivery:")
-                or participant.display_name is not None
-            ):
-                raise ValueError("normalized participants must remain unresolved")
+            if participant.display_name is not None:
+                raise ValueError("normalized participant identity is invalid")
+            _participant_identity_provider(key, participant.identity_ref)
         if not 1 <= len(value.evidence) <= 1_000:
             raise ValueError("normalized batch evidence count is invalid")
         for artifact in value.evidence:
@@ -3207,7 +3313,10 @@ def _validate_connector_routing(
         not isinstance(account_user_ref, str)
         or not 1 <= len(account_user_ref) <= 256
         or account_user_ref != account_user_ref.strip()
-        or any(ord(character) < 32 or ord(character) == 127 for character in account_user_ref)
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in account_user_ref
+        )
     ):
         raise ValueError("invalid connector routing account_user_ref")
 

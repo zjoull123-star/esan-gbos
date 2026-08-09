@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import NoReturn
@@ -537,6 +538,7 @@ def _poller_files(tmp_path: Path, channel: str) -> tuple[Path, Path, Path]:
             "instance_id": "email-primary",
             "team_ref": "team:sales",
             "agent_task_type": "sales",
+            "account_user_ref": "owner@example.invalid",
             "host": "imap.example.invalid",
             "port": 993,
             "mailbox": "pilot-primary",
@@ -556,6 +558,7 @@ def _poller_files(tmp_path: Path, channel: str) -> tuple[Path, Path, Path]:
             "instance_id": "wecom-primary",
             "team_ref": None,
             "agent_task_type": None,
+            "account_user_ref": "USER-WECOM-OWNER",
             "corp_id": "not-a-real-corp",
             "secret": "not-a-real-secret",
             "private_key": "not-a-real-private-key",
@@ -606,3 +609,78 @@ def test_wecom_cli_without_official_sdk_factory_returns_78_before_database(
 
     assert result == 78
     assert database_calls == []
+
+
+class _EntryConnection:
+    class Cursor:
+        def __enter__(self) -> _EntryConnection.Cursor:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, *args: object) -> None:
+            return None
+
+        def fetchone(self) -> tuple[None, int, str]:
+            return None, 0, "healthy"
+
+    def transaction(self) -> nullcontext[None]:
+        return nullcontext()
+
+    def cursor(self) -> _EntryConnection.Cursor:
+        return self.Cursor()
+
+    def close(self) -> None:
+        return None
+
+
+class _EntryStorage:
+    def __init__(self) -> None:
+        self.account_user_refs: list[object] = []
+
+    def register_connector_instance(self, *args: object, **kwargs: object) -> None:
+        self.account_user_refs.append(kwargs.get("account_user_ref"))
+
+    def compare_and_swap_checkpoint(self, *args: object, **kwargs: object) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ("channel", "expected_owner"),
+    [("email", "owner@example.invalid"), ("wecom", "USER-WECOM-OWNER")],
+)
+def test_poller_registration_passes_account_owner_without_inference(
+    tmp_path: Path,
+    channel: str,
+    expected_owner: str,
+) -> None:
+    manifest, runtime, connectors = _poller_files(tmp_path, channel)
+    storage = _EntryStorage()
+    captured: list[object] = []
+
+    result = main(
+        [channel],
+        manifest_path=manifest,
+        runtime_config_path=runtime,
+        connectors_path=connectors,
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_CONNECTOR_KILL_SWITCH": "false",
+        },
+        connector=lambda **kwargs: _EntryConnection(),
+        storage_factory=lambda connection: storage,  # type: ignore[arg-type]
+        tls_client_factory=(
+            RecordingTlsFactory(FakeImapClient(search_uids=())) if channel == "email" else None
+        ),
+        wecom_sdk_factory=(
+            (lambda credential: FakeOfficialWeComSdk(())) if channel == "wecom" else None
+        ),
+        daemon_runner=lambda runner, **kwargs: captured.append(runner),
+        clock=lambda: NOW,
+    )
+
+    assert result == 0
+    assert storage.account_user_refs == [expected_owner]
+    assert expected_owner != "private@example.invalid"
+    assert len(captured) == 1

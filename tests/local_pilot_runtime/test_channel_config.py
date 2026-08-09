@@ -9,6 +9,7 @@ import pytest
 from services.local_pilot_runtime.channel_config import (
     ChannelConfigError,
     EmailCredentialConfig,
+    WeComCredentialConfig,
     WhatsAppCredentialConfig,
     load_channel_config,
     load_channel_credential,
@@ -124,6 +125,7 @@ def test_email_credential_is_exact_private_bounded_and_redacted(tmp_path: Path) 
         "instance_id": "email-primary",
         "team_ref": "team:sales",
         "agent_task_type": "sales",
+        "account_user_ref": "owner@example.invalid",
         "host": "imap.example.invalid",
         "port": 993,
         "mailbox": "pilot-primary",
@@ -144,9 +146,11 @@ def test_email_credential_is_exact_private_bounded_and_redacted(tmp_path: Path) 
 
     assert isinstance(credential, EmailCredentialConfig)
     assert credential.folder == "INBOX"
+    assert credential.account_user_ref == "owner@example.invalid"
     rendered = repr(credential)
     assert secret["username"] not in rendered
     assert secret["password"] not in rendered
+    assert secret["account_user_ref"] not in rendered
     assert "username=<redacted>" in rendered
 
     secret["extra"] = "rejected"
@@ -192,6 +196,7 @@ def test_whatsapp_credential_schema_is_exact_and_redacted(tmp_path: Path) -> Non
         "instance_id": "wa-primary",
         "team_ref": None,
         "agent_task_type": None,
+        "account_user_ref": "USER-WHATSAPP-OWNER",
         "app_secret": "not-a-real-app-secret",
         "verify_token": "not-a-real-verify-token",
         "path": "/webhooks/whatsapp",
@@ -203,7 +208,67 @@ def test_whatsapp_credential_schema_is_exact_and_redacted(tmp_path: Path) -> Non
 
     assert isinstance(credential, WhatsAppCredentialConfig)
     assert credential.path == "/webhooks/whatsapp"
+    assert credential.account_user_ref == "USER-WHATSAPP-OWNER"
     rendered = repr(credential)
     assert secret["app_secret"] not in rendered
     assert secret["verify_token"] not in rendered
+    assert secret["account_user_ref"] not in rendered
     assert "app_secret=<redacted>" in rendered
+
+
+def test_wecom_credential_accepts_explicit_null_account_owner_and_redacts_it(
+    tmp_path: Path,
+) -> None:
+    config = load_channel_config(
+        _connectors(tmp_path),
+        expected_site_id="alpha.example",
+        manifest=_manifest(),
+    )
+    secret = {
+        "instance_id": "wecom-primary",
+        "team_ref": "team:sales",
+        "agent_task_type": "sales",
+        "account_user_ref": None,
+        "corp_id": "not-a-real-corp",
+        "secret": "not-a-real-secret",
+        "private_key": "not-a-real-key",
+        "initial_checkpoint": "100",
+    }
+    _private_json(tmp_path / "wecom.json", secret)
+
+    credential = load_channel_credential(config, "wecom")
+
+    assert isinstance(credential, WeComCredentialConfig)
+    assert credential.account_user_ref is None
+    assert "account_user_ref=<redacted>" in repr(credential)
+
+
+@pytest.mark.parametrize(
+    "account_user_ref",
+    ["", " owner@example.invalid", "owner example.invalid", "owner\texample.invalid", "x" * 257],
+)
+def test_account_user_ref_rejects_empty_whitespace_controls_and_oversize(
+    tmp_path: Path,
+    account_user_ref: str,
+) -> None:
+    config = load_channel_config(
+        _connectors(tmp_path),
+        expected_site_id="alpha.example",
+        manifest=_manifest(),
+    )
+    _private_json(
+        tmp_path / "whatsapp.json",
+        {
+            "instance_id": "wa-primary",
+            "team_ref": None,
+            "agent_task_type": None,
+            "account_user_ref": account_user_ref,
+            "app_secret": "not-a-real-app-secret",
+            "verify_token": "not-a-real-verify-token",
+            "path": "/webhooks/whatsapp",
+            "max_body_bytes": 1_048_576,
+        },
+    )
+
+    with pytest.raises(ChannelConfigError):
+        load_channel_credential(config, "whatsapp")

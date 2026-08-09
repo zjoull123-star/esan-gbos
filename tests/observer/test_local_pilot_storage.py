@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from observer.identity_resolution_work import InMemoryIdentityResolutionWorkRepository
 from observer.local_pilot_storage import (
     AuthenticatedIngressMetadata,
     CheckpointConflict,
@@ -484,6 +485,209 @@ def test_persist_normalized_batch_uses_one_transaction_and_one_outbox_per_event(
     assert sum("INSERT INTO observer.observation_events" in sql for sql in inserts) == 2
     assert sum("INSERT INTO observer.context_publication_outbox" in sql for sql in inserts) == 2
     assert all(value.replayed is False for value in result.observations)
+
+
+def test_persist_normalized_batch_enqueues_each_distinct_stable_participant_once_from_db_team() -> (
+    None
+):
+    item1, original1 = _normalized_item("stable-event-001")
+    item2, original2 = _normalized_item("stable-event-002")
+    identity_ref = "extid:v1:wecom:opaque-participant"
+    normalized1 = replace(
+        original1,
+        participants=(
+            Participant("external", identity_ref),
+            Participant("external", identity_ref),
+        ),
+    )
+    normalized2 = replace(
+        original2,
+        participants=(Participant("external", identity_ref),),
+    )
+    connection = FakeConnection(
+        [
+            _routing_row(team_ref="team:db-authority", agent_task_type="sales"),
+            _delivery_row(status="processing"),
+            [(None,), (None,)],
+            [],
+            ("raw-object-001", "obs:v1:site-partition:sha256:" + "a" * 64),
+        ]
+    )
+
+    PostgresLocalPilotStorage(connection).persist_normalized_batch(
+        SCOPE,
+        KEY,
+        _processing_job(),
+        (item1, item2),
+        (normalized1, normalized2),
+    )
+
+    work_inserts = [
+        (sql, params)
+        for sql, params in connection.executed
+        if "INSERT INTO observer.identity_resolution_work" in sql
+    ]
+    assert len(work_inserts) == 1
+    sql, params = work_inserts[0]
+    expected_work = InMemoryIdentityResolutionWorkRepository().enqueue(
+        SCOPE,
+        identity_provider="wecom",
+        identity_ref=identity_ref,
+        team_ref="team:db-authority",
+        now=NOW,
+    )
+    assert params is not None
+    assert params[:5] == (
+        SCOPE.site_id,
+        expected_work.work_id,
+        "wecom",
+        identity_ref,
+        "team:db-authority",
+    )
+    conflict_clause = sql.split("ON CONFLICT", 1)[1]
+    assert "last_seen_at = GREATEST" in conflict_clause
+    assert "updated_at = GREATEST" in conflict_clause
+    for protected_field in ("status =", "attempt_count =", "next_attempt_at ="):
+        assert protected_field not in conflict_clause
+    assert connection.transactions == 1
+
+
+def test_persist_normalized_batch_replay_updates_stable_identity_seen_time_without_reopen() -> None:
+    item, original = _normalized_item("stable-replay-event")
+    normalized = replace(
+        original,
+        participants=(Participant("external", "extid:v1:wecom:stable-replay"),),
+    )
+    probe = FakeConnection(
+        [
+            _routing_row(team_ref="team:db-authority"),
+            _delivery_row(status="processing"),
+            [(None,)],
+            [],
+            ("raw-object-001", "obs:v1:site-partition:sha256:" + "a" * 64),
+        ]
+    )
+    persisted = PostgresLocalPilotStorage(probe).persist_normalized_batch(
+        SCOPE,
+        KEY,
+        _processing_job(),
+        (item,),
+        (normalized,),
+    )
+    original_event = persisted.observations[0]
+    replay = FakeConnection(
+        [
+            _routing_row(team_ref="team:db-authority"),
+            _delivery_row(status="processing"),
+            [(None,)],
+            [
+                (
+                    item.provider_event_id,
+                    original_event.event_id,
+                    original_event.payload_sha256,
+                    original_event.outbox_id,
+                )
+            ],
+        ]
+    )
+
+    result = PostgresLocalPilotStorage(replay).persist_normalized_batch(
+        SCOPE,
+        KEY,
+        _processing_job(),
+        (item,),
+        (normalized,),
+    )
+
+    assert result.observations[0].replayed is True
+    assert (
+        sum("INSERT INTO observer.identity_resolution_work" in sql for sql, _ in replay.executed)
+        == 1
+    )
+    assert not any("INSERT INTO observer.observation_events" in sql for sql, _ in replay.executed)
+
+
+@pytest.mark.parametrize(
+    "identity_ref",
+    [
+        "sender@example.invalid",
+        "+15551234567",
+        "extid:v1:unknown:opaque",
+        "extid:v1:email:opaque",
+        "extid:v1:wecom:",
+        "extid:v1:wecom:raw@example.invalid",
+        "unresolved:delivery:not-closed",
+    ],
+)
+def test_persist_normalized_batch_rejects_raw_malformed_or_provider_mismatched_participants(
+    identity_ref: str,
+) -> None:
+    item, original = _normalized_item("unsafe-identity-event")
+    normalized = replace(
+        original,
+        participants=(Participant("external", identity_ref),),
+    )
+    connection = FakeConnection([])
+
+    with pytest.raises(ValueError, match="participant identity") as captured:
+        PostgresLocalPilotStorage(connection).persist_normalized_batch(
+            SCOPE,
+            KEY,
+            _processing_job(),
+            (item,),
+            (normalized,),
+        )
+
+    assert connection.transactions == 0
+    assert identity_ref not in repr(captured.value)
+
+
+def test_persist_normalized_batch_requires_trusted_team_before_stable_identity_write() -> None:
+    item, original = _normalized_item("stable-without-team")
+    normalized = replace(
+        original,
+        participants=(Participant("external", "extid:v1:wecom:opaque-participant"),),
+    )
+    connection = FakeConnection([_routing_row(team_ref=None)])
+
+    with pytest.raises(ValueError, match="connector routing"):
+        PostgresLocalPilotStorage(connection).persist_normalized_batch(
+            SCOPE,
+            KEY,
+            _processing_job(),
+            (item,),
+            (normalized,),
+        )
+
+    assert not any(
+        "INSERT INTO observer.observation_events" in sql for sql, _ in connection.executed
+    )
+
+
+def test_identity_resolution_work_key_separates_site_provider_ref_and_team() -> None:
+    module = importlib.import_module("observer.local_pilot_storage")
+    base = module._identity_resolution_work_id(
+        "alpha.example",
+        "email",
+        "extid:v1:email:opaque-a",
+        "team:sales",
+    )
+
+    variants = {
+        module._identity_resolution_work_id(
+            "beta.example", "email", "extid:v1:email:opaque-a", "team:sales"
+        ),
+        module._identity_resolution_work_id(
+            "alpha.example", "email", "extid:v1:email:opaque-b", "team:sales"
+        ),
+        module._identity_resolution_work_id(
+            "alpha.example", "email", "extid:v1:email:opaque-a", "team:purchase"
+        ),
+    }
+
+    assert base.startswith("IRW-")
+    assert len(variants) == 3
+    assert base not in variants
 
 
 def test_persist_normalized_batch_uses_each_materialized_evidence_own_digest() -> None:

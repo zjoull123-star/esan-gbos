@@ -15,6 +15,7 @@ from services.local_pilot_runtime.observer_worker import (
 )
 from services.observer.observer.connectors.email_delivery import EmailRawDeliveryDecoder
 from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
+from services.observer.observer.identity_tokens import IdentityTokenError
 from services.observer.observer.local_pilot_storage import (
     InboundDeliveryMetadata,
     ProcessingJobMetadata,
@@ -504,6 +505,7 @@ def _worker_files(tmp_path: Path) -> tuple[Path, Path, Path]:
             "instance_id": "email-primary",
             "team_ref": None,
             "agent_task_type": None,
+            "account_user_ref": "email-owner@example.invalid",
             "host": "imap.example.invalid",
             "port": 993,
             "mailbox": "pilot-primary",
@@ -526,6 +528,7 @@ def _worker_files(tmp_path: Path) -> tuple[Path, Path, Path]:
             "instance_id": "wa-primary",
             "team_ref": None,
             "agent_task_type": None,
+            "account_user_ref": "USER-WA-OWNER",
             "app_secret": "not-a-real-secret",
             "verify_token": "not-a-real-token",
             "path": "/webhooks/whatsapp",
@@ -571,7 +574,7 @@ class _EntryConnection:
 
 class _EntryStorage:
     def __init__(self) -> None:
-        self.registered: list[ConnectorKey] = []
+        self.registered: list[tuple[ConnectorKey, object]] = []
 
     def register_connector_instance(
         self,
@@ -580,13 +583,16 @@ class _EntryStorage:
         **kwargs: object,
     ) -> None:
         assert scope == SCOPE
-        self.registered.append(key)
+        self.registered.append((key, kwargs.get("account_user_ref")))
 
 
 def test_main_composes_email_and_whatsapp_only_and_closes_connection(
     tmp_path: Path,
 ) -> None:
     manifest, runtime, connectors = _worker_files(tmp_path)
+    identity_key = tmp_path / "identity-hmac-key"
+    identity_key.write_bytes(b"i" * 32)
+    identity_key.chmod(0o600)
     connection = _EntryConnection()
     storage = _EntryStorage()
     daemon_calls: list[ObserverConnectorWorker] = []
@@ -595,6 +601,7 @@ def test_main_composes_email_and_whatsapp_only_and_closes_connection(
         manifest_path=manifest,
         runtime_config_path=runtime,
         connectors_path=connectors,
+        identity_hmac_key_path=identity_key,
         environ={
             "GBOS_LOCAL_RUNTIME_ENABLED": "true",
             "GBOS_CONNECTOR_KILL_SWITCH": "false",
@@ -610,8 +617,8 @@ def test_main_composes_email_and_whatsapp_only_and_closes_connection(
 
     assert result == 0
     assert storage.registered == [
-        ConnectorKey("email", "email-primary"),
-        ConnectorKey("whatsapp", "wa-primary"),
+        (ConnectorKey("email", "email-primary"), "email-owner@example.invalid"),
+        (ConnectorKey("whatsapp", "wa-primary"), "USER-WA-OWNER"),
     ]
     assert len(daemon_calls) == 1
     assert connection.closed is True
@@ -627,3 +634,127 @@ def test_main_plaintext_secret_rejects_before_database() -> None:
 
     assert result == 78
     assert database_calls == []
+
+
+def test_main_missing_identity_key_exits_before_database_or_storage(tmp_path: Path) -> None:
+    manifest, runtime, connectors = _worker_files(tmp_path)
+    database_calls: list[object] = []
+    storage_calls: list[object] = []
+
+    result = main(
+        manifest_path=manifest,
+        runtime_config_path=runtime,
+        connectors_path=connectors,
+        identity_hmac_key_path=tmp_path / "missing-identity-key",
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_CONNECTOR_KILL_SWITCH": "false",
+        },
+        connector=lambda **kwargs: database_calls.append(kwargs),
+        storage_factory=lambda connection: storage_calls.append(connection),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+    assert result == 78
+    assert database_calls == []
+    assert storage_calls == []
+
+
+def test_main_injects_scoped_identity_resolver_into_supported_normalizers(
+    tmp_path: Path,
+) -> None:
+    manifest, runtime, connectors = _worker_files(tmp_path)
+    identity_key = tmp_path / "identity-hmac-key"
+    identity_key.write_bytes(b"i" * 32)
+    identity_key.chmod(0o600)
+    connection = _EntryConnection()
+    storage = _EntryStorage()
+    daemon_calls: list[ObserverConnectorWorker] = []
+
+    result = main(
+        manifest_path=manifest,
+        runtime_config_path=runtime,
+        connectors_path=connectors,
+        identity_hmac_key_path=identity_key,
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_CONNECTOR_KILL_SWITCH": "false",
+        },
+        connector=lambda **kwargs: connection,
+        storage_factory=lambda _connection: storage,  # type: ignore[arg-type]
+        daemon_runner=lambda worker, scope, **kwargs: daemon_calls.append(worker),
+        clock=lambda: NOW,
+    )
+
+    assert result == 0
+    pipelines = daemon_calls[0]._pipelines
+    for name in ("email", "whatsapp"):
+        normalizer = pipelines[name].normalizer
+        assert normalizer._site_id == SCOPE.site_id
+        assert normalizer._purpose == "observation_processing"
+        rendered = repr(normalizer._identity_resolver)
+        assert "key=<redacted" in rendered
+        assert "i" * 32 not in rendered
+
+
+def test_worker_tokenization_failure_quarantines_before_sink_or_completion(
+    tmp_path: Path,
+) -> None:
+    class RejectingResolver:
+        def resolve(self, *args: object) -> str:
+            raise IdentityTokenError("identity_token.invalid_subject")
+
+    evidence = ContentAddressedEvidenceStore(tmp_path)
+    raw = (
+        b"From: pii-sentinel@example.invalid\r\n"
+        b"To: pilot@example.invalid\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\nprivate email body"
+    )
+    stored = evidence.put(SCOPE, raw, media_type="message/rfc822")
+    job = _job("email")
+    delivery = InboundDeliveryMetadata(
+        site_id=SCOPE.site_id,
+        connector="email",
+        connector_instance_id="primary",
+        delivery_id=job.delivery_id,
+        exact_body_sha256=stored.sha256,
+        object_ref=stored.object_ref,
+        byte_size=stored.size,
+        media_type="message/rfc822",
+        received_at=NOW,
+        processing_status="processing",
+        attempt_count=1,
+        correlation_id="corr-email",
+        last_attempt_at=NOW,
+        last_error_code=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    storage = FakeStorage(job=job, delivery=delivery)
+    sink = Sink()
+    worker = ObserverConnectorWorker(
+        storage=storage,
+        evidence_store=evidence,
+        pipelines={
+            "email": ConnectorPipeline(
+                decoder=EmailRawDeliveryDecoder(),
+                normalizer=EmailObservationNormalizer(
+                    identity_resolver=RejectingResolver(),
+                    site_id=SCOPE.site_id,
+                    purpose=SCOPE.processing_purpose,
+                ),
+            )
+        },
+        sink=sink,
+        worker_id="observer-worker",
+        clock=lambda: NOW,
+    )
+
+    result = worker.run_once(SCOPE)
+
+    assert result is not None and result.status == "quarantined"
+    assert sink.calls == []
+    assert storage.completed == []
+    assert storage.quarantines == ["email.invalid_subject"]
+    assert "pii-sentinel@example.invalid" not in repr(result)

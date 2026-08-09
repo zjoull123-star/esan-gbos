@@ -30,6 +30,7 @@ _EMAIL_FIELDS = frozenset(
         "instance_id",
         "team_ref",
         "agent_task_type",
+        "account_user_ref",
         "host",
         "port",
         "mailbox",
@@ -50,6 +51,7 @@ _WHATSAPP_FIELDS = frozenset(
         "instance_id",
         "team_ref",
         "agent_task_type",
+        "account_user_ref",
         "app_secret",
         "verify_token",
         "path",
@@ -61,6 +63,7 @@ _WECOM_FIELDS = frozenset(
         "instance_id",
         "team_ref",
         "agent_task_type",
+        "account_user_ref",
         "corp_id",
         "secret",
         "private_key",
@@ -116,6 +119,7 @@ class EmailCredentialConfig:
     instance_id: str
     team_ref: str | None
     agent_task_type: str | None
+    account_user_ref: str | None
     host: str
     port: int
     mailbox: str
@@ -133,6 +137,7 @@ class EmailCredentialConfig:
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(instance_id=<redacted>, routing=<redacted>, "
+            "account_user_ref=<redacted>, "
             "host=<redacted>, port=<redacted>, mailbox=<redacted>, folder=<redacted>, "
             "username=<redacted>, password=<redacted>, "
             f"poll_limit={self.poll_limit}, max_message_bytes={self.max_message_bytes}, "
@@ -148,6 +153,7 @@ class WhatsAppCredentialConfig:
     instance_id: str
     team_ref: str | None
     agent_task_type: str | None
+    account_user_ref: str | None
     app_secret: str
     verify_token: str
     path: str
@@ -156,6 +162,7 @@ class WhatsAppCredentialConfig:
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(instance_id=<redacted>, routing=<redacted>, "
+            "account_user_ref=<redacted>, "
             "app_secret=<redacted>, verify_token=<redacted>, "
             f"path={self.path!r}, max_body_bytes={self.max_body_bytes})"
         )
@@ -166,6 +173,7 @@ class WeComCredentialConfig:
     instance_id: str
     team_ref: str | None
     agent_task_type: str | None
+    account_user_ref: str | None
     corp_id: str
     secret: str
     private_key: str
@@ -174,6 +182,7 @@ class WeComCredentialConfig:
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(instance_id=<redacted>, routing=<redacted>, "
+            "account_user_ref=<redacted>, "
             "corp_id=<redacted>, secret=<redacted>, private_key=<redacted>, "
             "initial_checkpoint=<redacted>)"
         )
@@ -301,13 +310,14 @@ def _channel(value: Mapping[str, Any]) -> ChannelSettings:
 
 
 def _email(value: Mapping[str, Any]) -> EmailCredentialConfig:
-    if set(value) != _EMAIL_FIELDS:
+    if not _matches_credential_fields(value, _EMAIL_FIELDS):
         raise ChannelConfigError("email credential must use the closed schema")
     team_ref, task = _routing(value)
     return EmailCredentialConfig(
         instance_id=_text(value, "instance_id", maximum=256),
         team_ref=team_ref,
         agent_task_type=task,
+        account_user_ref=_account_user_ref(value.get("account_user_ref")),
         host=_text(value, "host", maximum=253),
         port=_integer(value, "port", minimum=1, maximum=65_535),
         mailbox=_text(value, "mailbox", maximum=256),
@@ -332,7 +342,7 @@ def _email(value: Mapping[str, Any]) -> EmailCredentialConfig:
 
 
 def _whatsapp(value: Mapping[str, Any]) -> WhatsAppCredentialConfig:
-    if set(value) != _WHATSAPP_FIELDS:
+    if not _matches_credential_fields(value, _WHATSAPP_FIELDS):
         raise ChannelConfigError("WhatsApp credential must use the closed schema")
     team_ref, task = _routing(value)
     path = _text(value, "path", maximum=255)
@@ -342,6 +352,7 @@ def _whatsapp(value: Mapping[str, Any]) -> WhatsAppCredentialConfig:
         instance_id=_text(value, "instance_id", maximum=256),
         team_ref=team_ref,
         agent_task_type=task,
+        account_user_ref=_account_user_ref(value.get("account_user_ref")),
         app_secret=_text(value, "app_secret", maximum=4_096),
         verify_token=_text(value, "verify_token", maximum=4_096),
         path=path,
@@ -350,13 +361,14 @@ def _whatsapp(value: Mapping[str, Any]) -> WhatsAppCredentialConfig:
 
 
 def _wecom(value: Mapping[str, Any]) -> WeComCredentialConfig:
-    if set(value) != _WECOM_FIELDS:
+    if not _matches_credential_fields(value, _WECOM_FIELDS):
         raise ChannelConfigError("WeCom credential must use the closed schema")
     team_ref, task = _routing(value)
     return WeComCredentialConfig(
         instance_id=_text(value, "instance_id", maximum=256),
         team_ref=team_ref,
         agent_task_type=task,
+        account_user_ref=_account_user_ref(value.get("account_user_ref")),
         corp_id=_text(value, "corp_id", maximum=256),
         secret=_text(value, "secret", maximum=4_096),
         private_key=_text(value, "private_key", maximum=16_384),
@@ -372,6 +384,24 @@ def _routing(value: Mapping[str, Any]) -> tuple[str | None, str | None]:
     if task is not None and team_ref is None:
         raise ChannelConfigError("credential task routing requires a team")
     return team_ref, task
+
+
+def _matches_credential_fields(
+    value: Mapping[str, Any],
+    fields: frozenset[str],
+) -> bool:
+    provided = set(value)
+    return provided <= fields and fields - {"account_user_ref"} <= provided
+
+
+def _account_user_ref(value: object) -> str | None:
+    account_user_ref = _optional_text(value, maximum=256)
+    if account_user_ref is not None and any(
+        character.isspace() or ord(character) < 32 or ord(character) == 127
+        for character in account_user_ref
+    ):
+        raise ChannelConfigError("credential account user reference is invalid")
+    return account_user_ref
 
 
 def _read_json_object(path: Path, *, maximum: int, private: bool) -> dict[str, Any]:
