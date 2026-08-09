@@ -71,6 +71,9 @@ def _value(source: object, fieldname: str, default: Any = None) -> Any:
 
 
 class GBOSExternalIdentity(GBOSDocument):
+    def on_trash(self) -> None:
+        raise frappe.PermissionError
+
     def db_set(
         self,
         fieldname: str | dict[str, Any],

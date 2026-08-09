@@ -49,6 +49,7 @@ _BUSINESS_DOCTYPES = frozenset(
     }
 )
 _INTEGRATION_DOCTYPES = frozenset({"GBOS External Identity", "GBOS External Crosswalk"})
+_NON_DELETABLE_DOCTYPES = frozenset({"GBOS External Identity"})
 _ALL_PARENT_DOCTYPES = _BUSINESS_DOCTYPES | _INTEGRATION_DOCTYPES | {"GBOS Team"}
 INTERNAL_MATERIALIZER_ROLE = "Agent TrustedMaterializer"
 IDENTITY_RESOLVER_ROLE = "Observer Identity Resolver"
@@ -138,6 +139,8 @@ def role_has_doctype_permission(
     """Return the coarse DocPerm capability before record-level scope is applied."""
     if doctype not in _ALL_PARENT_DOCTYPES:
         return False
+    if permission_type == "delete" and doctype in _NON_DELETABLE_DOCTYPES:
+        return False
     if role == IDENTITY_RESOLVER_ROLE:
         return False
     if role == INTERNAL_MATERIALIZER_ROLE:
@@ -177,6 +180,8 @@ def can_access_record(
     assigned_roles = frozenset(roles)
 
     if doctype not in _ALL_PARENT_DOCTYPES:
+        return False
+    if permission_type == "delete" and doctype in _NON_DELETABLE_DOCTYPES:
         return False
     if (
         "Reviewer" in assigned_roles

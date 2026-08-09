@@ -178,3 +178,29 @@ class TestGBOSExternalIdentityAuthority(IntegrationTestCase):
         identity = frappe.get_doc(identity.doctype, identity.name)
         self.assertEqual(identity.review_status, "Superseded")
         self.assertEqual(identity.business_status, "Archived")
+
+    def test_physical_delete_is_denied_for_every_mapping_lifecycle(self) -> None:
+        identity = self._identity()
+        subject_ref = identity.external_subject
+        target_ref = identity.user
+
+        for review_status in ("AI Draft", "Pending", "Approved", "Rejected", "Superseded"):
+            for business_status in ("Active", "Revoked", "Archived"):
+                frappe.db.set_value(
+                    identity.doctype,
+                    identity.name,
+                    {
+                        "review_status": review_status,
+                        "business_status": business_status,
+                    },
+                    update_modified=False,
+                )
+                with self.assertRaises(frappe.PermissionError) as error:
+                    frappe.delete_doc(
+                        identity.doctype,
+                        identity.name,
+                        ignore_permissions=True,
+                    )
+                self.assertNotIn(subject_ref, repr(error.exception))
+                self.assertNotIn(target_ref, repr(error.exception))
+                self.assertTrue(frappe.db.exists(identity.doctype, identity.name))

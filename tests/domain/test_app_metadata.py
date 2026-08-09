@@ -225,6 +225,16 @@ def test_internal_materializer_doctype_permissions_are_exactly_the_coarse_minimu
         assert granted == allowed, doctype
 
 
+def test_external_identity_delete_is_closed_in_shipped_and_migrated_docperm() -> None:
+    document = _doctype_documents()["GBOS External Identity"]
+    install_source = (PACKAGE_ROOT / "install.py").read_text(encoding="utf-8")
+
+    assert document["permissions"]
+    assert all(row.get("delete", 0) == 0 for row in document["permissions"])
+    assert 'can_delete = role_has_doctype_permission(role, doctype, "delete")' in install_source
+    assert '"delete": int(can_delete)' in install_source
+
+
 def test_gbos_pwa_security_headers_are_scoped_and_deny_unsafe_defaults() -> None:
     source = (PACKAGE_ROOT / "security.py").read_text(encoding="utf-8")
 

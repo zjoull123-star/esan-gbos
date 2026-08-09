@@ -231,6 +231,34 @@ def test_integration_admin_is_limited_to_external_mapping_records() -> None:
     )
 
 
+def test_external_identity_has_no_physical_delete_permission_even_for_gbos_admin() -> None:
+    assert not role_has_doctype_permission(
+        "GBOS Admin",
+        "GBOS External Identity",
+        "delete",
+    )
+    assert not can_access_record(
+        roles={"GBOS Admin"},
+        doctype="GBOS External Identity",
+        permission_type="delete",
+        is_team_member=False,
+    )
+
+
+def test_gbos_admin_delete_permission_for_unrelated_doctypes_is_unchanged() -> None:
+    assert role_has_doctype_permission(
+        "GBOS Admin",
+        "GBOS Work Item",
+        "delete",
+    )
+    assert can_access_record(
+        roles={"GBOS Admin"},
+        doctype="GBOS Work Item",
+        permission_type="delete",
+        is_team_member=False,
+    )
+
+
 def test_sales_and_product_crm_access_stays_team_scoped() -> None:
     assert can_access_crm_record(
         roles={"Sales User"},
