@@ -683,7 +683,13 @@ def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def _manifest(path: Path, *, enabled: bool) -> Path:
+def _manifest(
+    path: Path,
+    *,
+    enabled: bool,
+    identity_channel_enabled: bool | None = None,
+) -> Path:
+    channel_enabled = enabled if identity_channel_enabled is None else identity_channel_enabled
     value = {
         "schema_version": "1.0",
         "mode": "local_pilot",
@@ -692,6 +698,12 @@ def _manifest(path: Path, *, enabled: bool) -> Path:
         "local_pilot_go": enabled,
         "local_pilot_status": "ready" if enabled else "disabled",
         "deepseek": {"enabled": False, "kill_switch": True},
+        "channels": {
+            "email": {"enabled": channel_enabled},
+            "wecom": {"enabled": False},
+            "whatsapp": {"enabled": False},
+            "media": {"enabled": False},
+        },
     }
     _write_json(path, value)
     return path
@@ -822,6 +834,34 @@ def test_disabled_formal_manifest_and_missing_private_secret_fail_before_db_http
 
     assert disabled == 78
     assert enabled_missing_secret == 78
+    assert db_calls == []
+    assert http_calls == []
+
+
+def test_enabled_manifest_without_identity_channel_fails_before_db_http(
+    tmp_path: Path,
+) -> None:
+    db_calls: list[object] = []
+    http_calls: list[object] = []
+
+    result = main(
+        manifest_path=_manifest(
+            tmp_path / "manifest.json",
+            enabled=True,
+            identity_channel_enabled=False,
+        ),
+        runtime_config_path=_runtime_config(tmp_path / "runtime.json", tmp_path),
+        api_key_file=_secret(tmp_path / "api-key", "resolver-key"),
+        api_secret_file=_secret(tmp_path / "api-secret", "resolver-secret"),
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_IDENTITY_RESOLUTION_KILL_SWITCH": "false",
+        },
+        connector=lambda **kwargs: db_calls.append(kwargs),
+        transport_factory=_recording_transport_factory(http_calls),
+    )
+
+    assert result == 78
     assert db_calls == []
     assert http_calls == []
 

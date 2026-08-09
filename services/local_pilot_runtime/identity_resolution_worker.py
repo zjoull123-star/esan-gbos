@@ -720,6 +720,10 @@ def main(
             component="identity-resolution-worker",
             environ=environment,
         )
+        if not _identity_capable_channel_enabled(manifest):
+            raise LocalEntrypointDisabled(
+                "identity resolution worker requires an enabled identity-capable channel"
+            )
         runtime = load_runtime_config(runtime_config_path)
         validate_manifest_binding(manifest, runtime)
         if runtime.context_endpoint.base_url != DEFAULT_FRAPPE_BASE_URL:
@@ -789,6 +793,16 @@ def main(
         if connection is not None:
             with suppress(Exception):
                 close_connection(connection)
+
+
+def _identity_capable_channel_enabled(manifest: Mapping[str, Any]) -> bool:
+    channels = manifest.get("channels")
+    if not isinstance(channels, Mapping):
+        return False
+    return any(
+        isinstance(channels.get(channel), Mapping) and channels[channel].get("enabled") is True
+        for channel in ("email", "wecom", "whatsapp")
+    )
 
 
 def _parse_resolution(
