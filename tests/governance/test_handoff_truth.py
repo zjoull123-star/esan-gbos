@@ -30,8 +30,7 @@ def _read(path: Path) -> str:
 def test_readme_reports_the_current_doctype_inventory_and_local_boundary() -> None:
     readme = _read(README)
     documents = [
-        json.loads(path.read_text(encoding="utf-8"))
-        for path in DOCTYPE_ROOT.glob("*/*.json")
+        json.loads(path.read_text(encoding="utf-8")) for path in DOCTYPE_ROOT.glob("*/*.json")
     ]
     parent_count = sum(not document.get("istable") for document in documents)
     child_count = sum(bool(document.get("istable")) for document in documents)
