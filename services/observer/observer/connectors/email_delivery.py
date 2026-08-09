@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime
 from email import policy
+from email.headerregistry import AddressHeader
 from email.message import EmailMessage, Message
 from email.parser import BytesParser
 from html.parser import HTMLParser
 
+from ..identity_tokens import (
+    IdentityTokenError,
+    TransientIdentitySubject,
+    normalize_identity_subject,
+)
 from ..local_pilot_ingestion import DeliveryQuarantine
 from ..models import ConnectorItem, EvidenceArtifact
 
@@ -85,6 +91,7 @@ class EmailRawDeliveryDecoder:
         "_max_depth",
         "_max_header_bytes",
         "_max_headers",
+        "_max_identity_recipients",
         "_max_message_bytes",
         "_max_parts",
         "_max_text_bytes",
@@ -99,6 +106,7 @@ class EmailRawDeliveryDecoder:
         max_text_bytes: int = 1_000_000,
         max_header_bytes: int = 65_536,
         max_headers: int = 200,
+        max_identity_recipients: int = 64,
         max_parts: int = 100,
         max_depth: int = 10,
     ) -> None:
@@ -109,6 +117,7 @@ class EmailRawDeliveryDecoder:
             max_text_bytes,
             max_header_bytes,
             max_headers,
+            max_identity_recipients,
             max_parts,
             max_depth,
         )
@@ -116,7 +125,12 @@ class EmailRawDeliveryDecoder:
             raise ValueError("email decoder boundaries must be positive integers")
         if max_message_bytes > 100_000_000 or max_attachment_bytes > 100_000_000:
             raise ValueError("email decoder byte boundary is unbounded")
-        if max_attachments > 1_000 or max_parts > 10_000 or max_depth > 128:
+        if (
+            max_attachments > 1_000
+            or max_identity_recipients > 1_000
+            or max_parts > 10_000
+            or max_depth > 128
+        ):
             raise ValueError("email decoder structural boundary is unbounded")
         self._max_message_bytes = max_message_bytes
         self._max_attachment_bytes = max_attachment_bytes
@@ -124,6 +138,7 @@ class EmailRawDeliveryDecoder:
         self._max_text_bytes = max_text_bytes
         self._max_header_bytes = max_header_bytes
         self._max_headers = max_headers
+        self._max_identity_recipients = max_identity_recipients
         self._max_parts = max_parts
         self._max_depth = max_depth
 
@@ -159,6 +174,7 @@ class EmailRawDeliveryDecoder:
             raise DeliveryQuarantine("email.invalid_message") from None
         if not isinstance(message, EmailMessage) or message.defects:
             raise DeliveryQuarantine("email.invalid_message")
+        identity_subjects = self._identity_subjects(message)
 
         parts = self._bounded_parts(message)
         text_parts: list[tuple[str, bytes]] = []
@@ -218,9 +234,55 @@ class EmailRawDeliveryDecoder:
                     "source_ref": source_ref,
                     "body_evidence": body,
                     "attachment_evidence": tuple(attachments),
+                    "identity_subjects": identity_subjects,
                 },
             ),
         )
+
+    def _identity_subjects(
+        self,
+        message: EmailMessage,
+    ) -> tuple[TransientIdentitySubject, ...]:
+        sender_headers = message.get_all("from", [])
+        if len(sender_headers) > 1:
+            raise DeliveryQuarantine("email.ambiguous_sender")
+        sender_addresses = self._addresses(sender_headers, code="email.invalid_sender")
+        if len(sender_addresses) > 1:
+            raise DeliveryQuarantine("email.ambiguous_sender")
+
+        recipients: list[str] = []
+        for field in ("to", "cc", "bcc"):
+            recipients.extend(
+                self._addresses(message.get_all(field, []), code="email.invalid_recipient")
+            )
+        if len(recipients) > self._max_identity_recipients:
+            raise DeliveryQuarantine("email.recipient_limit")
+
+        ordered = [*sender_addresses, *recipients]
+        deduplicated: list[TransientIdentitySubject] = []
+        seen: set[str] = set()
+        for subject in ordered:
+            try:
+                canonical = normalize_identity_subject("email", subject)
+            except IdentityTokenError:
+                raise DeliveryQuarantine("email.invalid_address") from None
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            deduplicated.append(TransientIdentitySubject(provider="email", subject=subject))
+        return tuple(deduplicated)
+
+    @staticmethod
+    def _addresses(headers: list[object], *, code: str) -> list[str]:
+        addresses: list[str] = []
+        for header in headers:
+            if not isinstance(header, AddressHeader) or getattr(header, "defects", False):
+                raise DeliveryQuarantine(code)
+            for address in header.addresses:
+                if not address.username or not address.domain:
+                    raise DeliveryQuarantine(code)
+                addresses.append(address.addr_spec)
+        return addresses
 
     @staticmethod
     def _validate_metadata(

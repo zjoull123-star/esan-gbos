@@ -22,6 +22,16 @@ NOW = datetime(2026, 8, 7, 9, 30, tzinfo=UTC)
 SOURCE_REF = "obs:v1:site-partition:sha256:" + "a" * 64
 
 
+def _identity_resolver() -> object:
+    from observer.identity_tokens import (
+        HmacSha256IdentityTokenResolver,
+        IdentityTokenResolver,
+    )
+
+    resolver: IdentityTokenResolver = HmacSha256IdentityTokenResolver(b"i" * 32)
+    return resolver
+
+
 def test_normalized_connector_slice_exposes_explicit_bounded_adapters() -> None:
     module = importlib.import_module("observer.normalizers")
 
@@ -89,6 +99,83 @@ def test_whatsapp_normalizer_emits_only_unresolved_identity_and_evidence_refs() 
     assert other_site.participants[0].identity_ref != normalized.participants[0].identity_ref
 
 
+def test_whatsapp_normalizer_uses_validated_sender_for_stable_opaque_identity() -> None:
+    phone = "15550002222"
+    item = ConnectorItem(
+        provider_event_id="wamid-stable-001",
+        occurred_at=NOW,
+        source_cursor="wamid-stable-001",
+        payload={
+            "kind": "whatsapp_message",
+            "message": {
+                "id": "wamid-stable-001",
+                "timestamp": "1786095000",
+                "type": "text",
+                "from": phone,
+                "text": {"body": "body sentinel"},
+            },
+            "raw_contacts": ({"wa_id": phone, "profile": {"name": "name sentinel"}},),
+            "runtime_metadata": WhatsAppRuntimeMetadata(
+                statuses=(), provider_errors=(), provider_metadata=()
+            ),
+        },
+    )
+    replay = ConnectorItem(
+        provider_event_id="wamid-stable-002",
+        occurred_at=NOW,
+        source_cursor="wamid-stable-002",
+        payload={
+            **dict(item.payload),
+            "message": {**dict(item.payload["message"]), "id": "wamid-stable-002"},
+        },
+    )
+    normalizer = WhatsAppObservationNormalizer(
+        identity_resolver=_identity_resolver(),
+        site_id="gbos.localhost",
+        purpose="observation_processing",
+    )
+
+    first = normalizer.normalize(item, source_ref=SOURCE_REF)
+    second = normalizer.normalize(replay, source_ref=SOURCE_REF)
+
+    assert first.participants[0].identity_ref == second.participants[0].identity_ref
+    assert first.participants[0].identity_ref.startswith("extid:v1:whatsapp:")
+    assert phone not in repr(first)
+    assert first.participants[0].display_name is None
+
+
+def test_whatsapp_normalizer_quarantines_malformed_or_ambiguous_subjects() -> None:
+    sentinel = "PII-SENTINEL"
+    base = {
+        "kind": "whatsapp_message",
+        "message": {
+            "id": "wamid-invalid",
+            "timestamp": "1786095000",
+            "type": "text",
+            "from": "15550002222",
+            "text": {"body": sentinel},
+        },
+        "raw_contacts": ({"wa_id": "15550009999", "profile": {"name": sentinel}},),
+        "runtime_metadata": WhatsAppRuntimeMetadata(
+            statuses=(), provider_errors=(), provider_metadata=()
+        ),
+    }
+    item = ConnectorItem(
+        provider_event_id="wamid-invalid",
+        occurred_at=NOW,
+        source_cursor="wamid-invalid",
+        payload=base,
+    )
+
+    with pytest.raises(NormalizationRejected, match="whatsapp.ambiguous_sender") as captured:
+        WhatsAppObservationNormalizer(
+            identity_resolver=_identity_resolver(),
+            site_id="gbos.localhost",
+            purpose="observation_processing",
+        ).normalize(item, source_ref=SOURCE_REF)
+    assert sentinel not in repr(captured.value)
+
+
 def test_wecom_normalizer_requires_closed_adapter_shape_and_preserves_only_refs() -> None:
     decrypted_ref = "obs:v1:site-partition:sha256:" + "b" * 64
     item = ConnectorItem(
@@ -99,6 +186,7 @@ def test_wecom_normalizer_requires_closed_adapter_shape_and_preserves_only_refs(
             "message_type": "text",
             "decrypted_content_ref": decrypted_ref,
             "media_pending": False,
+            "identity_subjects": (),
         },
     )
 
@@ -125,6 +213,7 @@ def test_wecom_normalizer_requires_closed_adapter_shape_and_preserves_only_refs(
             "message_type": "text",
             "decrypted_content_ref": decrypted_ref,
             "media_pending": False,
+            "identity_subjects": (),
             "body": secret,
         },
     )
@@ -140,6 +229,7 @@ def test_wecom_normalizer_requires_closed_adapter_shape_and_preserves_only_refs(
             "message_type": "voice",
             "decrypted_content_ref": decrypted_ref,
             "media_pending": True,
+            "identity_subjects": (),
         },
     )
     with pytest.raises(NormalizationRejected, match="wecom.media_pending"):
@@ -147,6 +237,90 @@ def test_wecom_normalizer_requires_closed_adapter_shape_and_preserves_only_refs(
             media_pending,
             source_ref=SOURCE_REF,
         )
+
+
+def test_email_and_wecom_normalizers_emit_only_opaque_deduplicated_participants() -> None:
+    from observer.identity_tokens import TransientIdentitySubject
+
+    email_sentinel = "PII-SENTINEL@Example.INVALID"
+    email_item = ConnectorItem(
+        provider_event_id="imap:uidvalidity-7:uid-identity",
+        occurred_at=NOW,
+        source_cursor="imap:uidvalidity-7:uid-identity",
+        payload={
+            "kind": "email_raw_delivery",
+            "source_ref": SOURCE_REF,
+            "body_evidence": EvidenceArtifact(
+                media_type="text/plain; charset=utf-8",
+                locator="message-body",
+                role="derived-text",
+                content=b"body without address",
+            ),
+            "attachment_evidence": (),
+            "identity_subjects": (
+                TransientIdentitySubject(provider="email", subject=email_sentinel),
+                TransientIdentitySubject(provider="email", subject=email_sentinel.lower()),
+            ),
+        },
+    )
+    resolver = _identity_resolver()
+    email = EmailObservationNormalizer(
+        identity_resolver=resolver,
+        site_id="gbos.localhost",
+        purpose="observation_processing",
+    ).normalize(email_item, source_ref=SOURCE_REF)
+
+    assert len(email.participants) == 1
+    assert email.participants[0].identity_ref.startswith("extid:v1:email:")
+    assert email_sentinel not in repr(email)
+    assert email.participants[0].display_name is None
+
+    wecom_sentinel = "wmCaseSensitive_001"
+    wecom_item = ConnectorItem(
+        provider_event_id="wecom-msg-identity",
+        occurred_at=NOW,
+        source_cursor="45",
+        payload={
+            "message_type": "text",
+            "decrypted_content_ref": SOURCE_REF,
+            "media_pending": False,
+            "identity_subjects": (
+                TransientIdentitySubject(provider="wecom", subject=wecom_sentinel),
+                TransientIdentitySubject(provider="wecom", subject=wecom_sentinel),
+            ),
+        },
+    )
+    wecom = WeComObservationNormalizer(
+        identity_resolver=resolver,
+        site_id="gbos.localhost",
+        purpose="observation_processing",
+    ).normalize(wecom_item, source_ref=SOURCE_REF)
+
+    assert len(wecom.participants) == 1
+    assert wecom.participants[0].identity_ref.startswith("extid:v1:wecom:")
+    assert wecom_sentinel not in repr(wecom)
+
+
+def test_configured_normalizer_keeps_absent_subject_delivery_scoped() -> None:
+    item = ConnectorItem(
+        provider_event_id="wecom-msg-no-subject",
+        occurred_at=NOW,
+        source_cursor="46",
+        payload={
+            "message_type": "text",
+            "decrypted_content_ref": SOURCE_REF,
+            "media_pending": False,
+            "identity_subjects": (),
+        },
+    )
+
+    normalized = WeComObservationNormalizer(
+        identity_resolver=_identity_resolver(),
+        site_id="gbos.localhost",
+        purpose="observation_processing",
+    ).normalize(item, source_ref=SOURCE_REF)
+
+    assert normalized.participants[0].identity_ref.startswith("unresolved:delivery:")
 
 
 def test_email_adapter_fails_closed_and_never_copies_message_or_attachment_bytes() -> None:
@@ -235,6 +409,7 @@ def test_email_normalizer_preserves_transient_body_and_attachment_evidence_for_s
                     content=attachment,
                 ),
             ),
+            "identity_subjects": (),
         },
     )
 

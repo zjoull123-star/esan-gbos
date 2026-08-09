@@ -158,8 +158,82 @@ def test_decrypt_and_normalize_are_separate_and_duplicate_msgids_are_deduplicate
         "message_type": "text",
         "decrypted_content_ref": "object://decrypted/11",
         "media_pending": False,
+        "identity_subjects": (),
     }
     assert normalized.duplicate_msgids == ("message-001",)
+
+
+def test_normalize_batch_emits_only_official_identity_fields_with_redacted_repr() -> None:
+    from observer.identity_tokens import TransientIdentitySubject
+
+    sentinel = "wmPII_SENTINEL_001"
+    message = DecryptedMessage(
+        seq=11,
+        exact_bytes=(
+            b'{"msgid":"identity-001","msgtime":1786075800000,"msgtype":"text",'
+            b'"from":"internal-user","external_userid":"'
+            + sentinel.encode()
+            + b'","to":["internal-user","recipient-user"]}'
+        ),
+    )
+
+    item = (
+        _adapter(FakeOfficialSdk())
+        .normalize_batch(
+            (message,),
+            content_refs=("object://decrypted/identity",),
+        )
+        .items[0]
+    )
+
+    assert item.payload["identity_subjects"] == (
+        TransientIdentitySubject(provider="wecom", subject="internal-user"),
+        TransientIdentitySubject(provider="wecom", subject=sentinel),
+        TransientIdentitySubject(provider="wecom", subject="recipient-user"),
+    )
+    assert sentinel not in repr(item.payload["identity_subjects"])
+    assert sentinel not in repr(item)
+
+
+def test_normalize_batch_quarantines_malformed_official_identity_fields_safely() -> None:
+    sentinel = "PII SENTINEL"
+    message = DecryptedMessage(
+        seq=11,
+        exact_bytes=(
+            b'{"msgid":"identity-invalid","msgtime":1786075800000,"msgtype":"text",'
+            b'"userid":"' + sentinel.encode() + b'"}'
+        ),
+    )
+
+    with pytest.raises(WeComArchiveError) as captured:
+        _adapter(FakeOfficialSdk()).normalize_batch(
+            (message,),
+            content_refs=("object://decrypted/identity-invalid",),
+        )
+
+    assert captured.value.code == "wecom_archive.invalid_identity_subject"
+    assert captured.value.disposition is ArchiveDisposition.QUARANTINE
+    assert sentinel not in repr(captured.value)
+
+
+def test_normalize_batch_quarantines_oversized_official_identity_sets() -> None:
+    recipients = ",".join(f'"user-{index}"' for index in range(1001))
+    message = DecryptedMessage(
+        seq=11,
+        exact_bytes=(
+            '{"msgid":"identity-oversized","msgtime":1786075800000,'
+            f'"msgtype":"text","to":[{recipients}]}}'
+        ).encode(),
+    )
+
+    with pytest.raises(WeComArchiveError) as captured:
+        _adapter(FakeOfficialSdk()).normalize_batch(
+            (message,),
+            content_refs=("object://decrypted/identity-oversized",),
+        )
+
+    assert captured.value.code == "wecom_archive.identity_subject_limit"
+    assert captured.value.disposition is ArchiveDisposition.QUARANTINE
 
 
 def test_decrypt_failure_is_retryable_and_does_not_expose_sdk_details() -> None:

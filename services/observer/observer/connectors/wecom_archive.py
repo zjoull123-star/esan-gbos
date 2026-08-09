@@ -16,6 +16,11 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import NoReturn, Protocol, cast
 
+from ..identity_tokens import (
+    IdentityTokenError,
+    TransientIdentitySubject,
+    normalize_identity_subject,
+)
 from ..models import ConnectorItem, RawDelivery
 
 _MAX_PROVIDER_BATCH_SIZE = 1000
@@ -23,6 +28,7 @@ _DEFAULT_MAX_DECRYPTED_BYTES = 4 * 1024 * 1024
 _DEFAULT_MAX_JSON_DEPTH = 32
 _DEFAULT_MAX_JSON_NODES = 20_000
 _DEFAULT_MAX_MEDIA_REQUESTS = 32
+_MAX_IDENTITY_SUBJECTS = 1000
 _MEDIA_MESSAGE_TYPES = frozenset({"image", "voice", "video", "emotion", "file"})
 _CONTROL_MESSAGE_TYPES = frozenset({"revoke", "agree", "disagree"})
 _BUSINESS_MESSAGE_TYPES = frozenset(
@@ -542,6 +548,7 @@ class WeComArchiveAdapter:
                         "message_type": msgtype,
                         "decrypted_content_ref": content_ref,
                         "media_pending": msgtype in _MEDIA_MESSAGE_TYPES,
+                        "identity_subjects": _official_identity_subjects(payload),
                     },
                 )
             )
@@ -710,6 +717,56 @@ def _required_string(payload: Mapping[str, object], field_name: str) -> str:
             ArchiveDisposition.QUARANTINE,
         )
     return value
+
+
+def _official_identity_subjects(
+    payload: Mapping[str, object],
+) -> tuple[TransientIdentitySubject, ...]:
+    candidates: list[str] = []
+    for field_name in ("from", "userid", "external_userid"):
+        if field_name not in payload:
+            continue
+        value = payload[field_name]
+        if not isinstance(value, str):
+            raise WeComArchiveError(
+                "wecom_archive.invalid_identity_subject",
+                ArchiveDisposition.QUARANTINE,
+            )
+        candidates.append(value)
+    for field_name in ("to", "tolist"):
+        if field_name not in payload:
+            continue
+        value = payload[field_name]
+        if isinstance(value, str):
+            candidates.append(value)
+        elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+            candidates.extend(value)
+        else:
+            raise WeComArchiveError(
+                "wecom_archive.invalid_identity_subject",
+                ArchiveDisposition.QUARANTINE,
+            )
+        if len(candidates) > _MAX_IDENTITY_SUBJECTS:
+            raise WeComArchiveError(
+                "wecom_archive.identity_subject_limit",
+                ArchiveDisposition.QUARANTINE,
+            )
+
+    result: list[TransientIdentitySubject] = []
+    seen: set[str] = set()
+    for subject in candidates:
+        try:
+            canonical = normalize_identity_subject("wecom", subject)
+        except IdentityTokenError:
+            raise WeComArchiveError(
+                "wecom_archive.invalid_identity_subject",
+                ArchiveDisposition.QUARANTINE,
+            ) from None
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        result.append(TransientIdentitySubject(provider="wecom", subject=subject))
+    return tuple(result)
 
 
 def _message_time(payload: Mapping[str, object]) -> datetime:

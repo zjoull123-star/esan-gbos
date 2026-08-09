@@ -4,6 +4,12 @@ import re
 from collections.abc import Mapping
 from typing import Protocol
 
+from .identity_tokens import (
+    IdentityTokenError,
+    IdentityTokenResolver,
+    TransientIdentitySubject,
+    normalize_identity_subject,
+)
 from .models import (
     ConnectorItem,
     EvidenceArtifact,
@@ -14,6 +20,10 @@ from .models import (
 )
 
 _SAFE_KIND = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,79}$")
+_OPAQUE_IDENTITY = re.compile(
+    r"^extid:v1:(email|wecom|whatsapp|phone|manual_import):"
+    r"[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"
+)
 _POLICY = {
     "consent_basis": "pilot_deferred_review",
     "data_classification": "Restricted",
@@ -85,10 +95,12 @@ def _normalized(
     role: str,
     source_ref: str,
     evidence: tuple[EvidenceArtifact, ...],
+    participants: tuple[Participant, ...] | None = None,
 ) -> NormalizedObservationInput:
     return NormalizedObservationInput(
         channel=channel,
-        participants=(
+        participants=participants
+        or (
             Participant(
                 role=role,
                 identity_ref=_unresolved_identity(
@@ -108,13 +120,92 @@ def _normalized(
     )
 
 
-class WhatsAppObservationNormalizer:
-    __slots__ = ("_max_contacts",)
+def _validate_identity_configuration(
+    resolver: IdentityTokenResolver | None,
+    site_id: str | None,
+    purpose: str | None,
+) -> None:
+    configured = (resolver is not None, site_id is not None, purpose is not None)
+    if any(configured) and not all(configured):
+        raise ValueError("identity token configuration must be complete")
+    if resolver is not None and not callable(getattr(resolver, "resolve", None)):
+        raise TypeError("invalid identity token resolver")
 
-    def __init__(self, *, max_contacts: int = 64) -> None:
+
+def _scoped_participants(
+    *,
+    item: ConnectorItem,
+    channel: str,
+    source_ref: str,
+    provider: str,
+    subjects: tuple[TransientIdentitySubject, ...],
+    role: str,
+    resolver: IdentityTokenResolver | None,
+    site_id: str | None,
+    purpose: str | None,
+    invalid_code: str,
+) -> tuple[Participant, ...]:
+    if len(subjects) > 1_000 or any(
+        not isinstance(value, TransientIdentitySubject) or value.provider != provider
+        for value in subjects
+    ):
+        raise NormalizationRejected(invalid_code)
+
+    normalized_subjects: list[str] = []
+    for value in subjects:
+        try:
+            normalized_subjects.append(normalize_identity_subject(provider, value.subject))
+        except IdentityTokenError:
+            raise NormalizationRejected(invalid_code) from None
+    if not normalized_subjects or resolver is None or site_id is None or purpose is None:
+        return (
+            Participant(
+                role=role,
+                identity_ref=_unresolved_identity(
+                    channel,
+                    source_ref,
+                    item.provider_event_id,
+                ),
+            ),
+        )
+
+    participants: list[Participant] = []
+    seen: set[str] = set()
+    for normalized_subject in normalized_subjects:
+        try:
+            identity_ref = resolver.resolve(site_id, purpose, provider, normalized_subject)
+        except IdentityTokenError:
+            raise NormalizationRejected(invalid_code) from None
+        except Exception:
+            raise NormalizationRejected(f"{provider}.identity_token_failed") from None
+        match = _OPAQUE_IDENTITY.fullmatch(identity_ref) if isinstance(identity_ref, str) else None
+        if match is None or match.group(1) != provider:
+            raise NormalizationRejected(f"{provider}.identity_token_failed")
+        if identity_ref in seen:
+            continue
+        seen.add(identity_ref)
+        participants.append(Participant(role=role, identity_ref=identity_ref))
+    return tuple(participants)
+
+
+class WhatsAppObservationNormalizer:
+    __slots__ = ("_identity_resolver", "_max_contacts", "_purpose", "_site_id")
+
+    def __init__(
+        self,
+        *,
+        max_contacts: int = 64,
+        identity_resolver: IdentityTokenResolver | None = None,
+        site_id: str | None = None,
+        purpose: str | None = None,
+    ) -> None:
         if isinstance(max_contacts, bool) or not 0 <= max_contacts <= 1_000:
             raise ValueError("invalid max_contacts")
+        _validate_identity_configuration(identity_resolver, site_id, purpose)
         self._max_contacts = max_contacts
+        self._identity_resolver = identity_resolver
+        self._site_id = site_id
+        self._purpose = purpose
 
     def normalize(
         self,
@@ -148,18 +239,47 @@ class WhatsAppObservationNormalizer:
             raise NormalizationRejected("whatsapp.invalid_adapter_shape")
         if message.get("id") != item.provider_event_id:
             raise NormalizationRejected("whatsapp.provider_event_mismatch")
-        sender = message.get("from")
-        if sender is None:
-            role = "unknown"
-        elif isinstance(sender, str) and sender and len(sender) <= 256:
-            role = "external"
+        raw_sender = message.get("from")
+        contact_subjects: list[str] = []
+        for contact in contacts:
+            contact_subject = contact.get("wa_id")
+            if not isinstance(contact_subject, str):
+                raise NormalizationRejected("whatsapp.invalid_sender")
+            contact_subjects.append(contact_subject)
+        unique_contacts = tuple(dict.fromkeys(contact_subjects))
+        if raw_sender is None:
+            if len(unique_contacts) > 1:
+                raise NormalizationRejected("whatsapp.ambiguous_sender")
+            sender = unique_contacts[0] if unique_contacts else None
+        elif isinstance(raw_sender, str) and raw_sender and len(raw_sender) <= 256:
+            sender = raw_sender
+            if unique_contacts and unique_contacts != (sender,):
+                raise NormalizationRejected("whatsapp.ambiguous_sender")
         else:
             raise NormalizationRejected("whatsapp.invalid_sender")
+        if sender is None:
+            role = "unknown"
+            identity_subjects: tuple[TransientIdentitySubject, ...] = ()
+        else:
+            role = "external"
+            identity_subjects = (TransientIdentitySubject(provider="whatsapp", subject=sender),)
         return _normalized(
             channel="chat",
             item=item,
             role=role,
             source_ref=source_ref,
+            participants=_scoped_participants(
+                item=item,
+                channel="chat",
+                source_ref=source_ref,
+                provider="whatsapp",
+                subjects=identity_subjects,
+                role=role,
+                resolver=self._identity_resolver,
+                site_id=self._site_id,
+                purpose=self._purpose,
+                invalid_code="whatsapp.invalid_sender",
+            ),
             evidence=(
                 EvidenceArtifact(
                     media_type="application/json",
@@ -209,6 +329,20 @@ class EmailImapItemAdapter:
 
 
 class EmailObservationNormalizer:
+    __slots__ = ("_identity_resolver", "_purpose", "_site_id")
+
+    def __init__(
+        self,
+        *,
+        identity_resolver: IdentityTokenResolver | None = None,
+        site_id: str | None = None,
+        purpose: str | None = None,
+    ) -> None:
+        _validate_identity_configuration(identity_resolver, site_id, purpose)
+        self._identity_resolver = identity_resolver
+        self._site_id = site_id
+        self._purpose = purpose
+
     def normalize(
         self,
         item: ConnectorItem,
@@ -253,8 +387,8 @@ class EmailObservationNormalizer:
             ),
         )
 
-    @staticmethod
     def _normalize_raw_delivery(
+        self,
         item: ConnectorItem,
         *,
         source_ref: str,
@@ -267,12 +401,14 @@ class EmailObservationNormalizer:
                 "source_ref",
                 "body_evidence",
                 "attachment_evidence",
+                "identity_subjects",
             }
             or payload.get("source_ref") != source_ref
         ):
             raise NormalizationRejected("email.invalid_adapter_shape")
         body = payload.get("body_evidence")
         attachments = payload.get("attachment_evidence")
+        identity_subjects = payload.get("identity_subjects")
         if (
             not isinstance(body, EvidenceArtifact)
             or body.content is None
@@ -283,6 +419,7 @@ class EmailObservationNormalizer:
             or not isinstance(attachments, tuple)
             or len(attachments) > 1_000
             or not all(isinstance(value, EvidenceArtifact) for value in attachments)
+            or not isinstance(identity_subjects, tuple)
         ):
             raise NormalizationRejected("email.invalid_evidence_shape")
         checked: list[EvidenceArtifact] = [
@@ -314,6 +451,18 @@ class EmailObservationNormalizer:
             item=item,
             role="unknown",
             source_ref=source_ref,
+            participants=_scoped_participants(
+                item=item,
+                channel="email",
+                source_ref=source_ref,
+                provider="email",
+                subjects=identity_subjects,
+                role="unknown",
+                resolver=self._identity_resolver,
+                site_id=self._site_id,
+                purpose=self._purpose,
+                invalid_code="email.invalid_subject",
+            ),
             evidence=(
                 EvidenceArtifact(
                     media_type="message/rfc822",
@@ -327,6 +476,20 @@ class EmailObservationNormalizer:
 
 
 class WeComObservationNormalizer:
+    __slots__ = ("_identity_resolver", "_purpose", "_site_id")
+
+    def __init__(
+        self,
+        *,
+        identity_resolver: IdentityTokenResolver | None = None,
+        site_id: str | None = None,
+        purpose: str | None = None,
+    ) -> None:
+        _validate_identity_configuration(identity_resolver, site_id, purpose)
+        self._identity_resolver = identity_resolver
+        self._site_id = site_id
+        self._purpose = purpose
+
     def normalize(
         self,
         item: ConnectorItem,
@@ -339,16 +502,19 @@ class WeComObservationNormalizer:
             "message_type",
             "decrypted_content_ref",
             "media_pending",
+            "identity_subjects",
         }:
             raise NormalizationRejected("wecom.invalid_adapter_shape")
         message_type = payload.get("message_type")
         decrypted_ref = payload.get("decrypted_content_ref")
         media_pending = payload.get("media_pending")
+        identity_subjects = payload.get("identity_subjects")
         if (
             not isinstance(message_type, str)
             or _SAFE_KIND.fullmatch(message_type) is None
             or not isinstance(decrypted_ref, str)
             or not isinstance(media_pending, bool)
+            or not isinstance(identity_subjects, tuple)
         ):
             raise NormalizationRejected("wecom.invalid_adapter_shape")
         if media_pending:
@@ -363,6 +529,18 @@ class WeComObservationNormalizer:
             item=item,
             role="unknown",
             source_ref=source_ref,
+            participants=_scoped_participants(
+                item=item,
+                channel="chat",
+                source_ref=source_ref,
+                provider="wecom",
+                subjects=identity_subjects,
+                role="unknown",
+                resolver=self._identity_resolver,
+                site_id=self._site_id,
+                purpose=self._purpose,
+                invalid_code="wecom.invalid_subject",
+            ),
             evidence=tuple(
                 EvidenceArtifact(
                     media_type="application/json",

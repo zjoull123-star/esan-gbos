@@ -69,6 +69,61 @@ def test_decoder_binds_provider_event_to_durable_delivery_id_not_message_id() ->
     assert "private@example.invalid" not in rendered
 
 
+def test_decoder_emits_redacted_sender_and_bounded_deduplicated_recipients() -> None:
+    from services.observer.observer.identity_tokens import TransientIdentitySubject
+
+    message = EmailMessage()
+    message["From"] = "Private Sender < Sender@Example.INVALID >"
+    message["To"] = "first@example.invalid, FIRST@example.invalid"
+    message["Cc"] = "Second Person <second@example.invalid>"
+    message.set_content("private body")
+
+    item = EmailRawDeliveryDecoder(max_identity_recipients=3).decode_delivery(
+        message.as_bytes(),
+        delivery_id="imap:uidvalidity-7:uid-identity",
+        received_at=NOW,
+        source_ref=SOURCE_REF,
+    )[0]
+
+    subjects = item.payload["identity_subjects"]
+    assert subjects == (
+        TransientIdentitySubject(provider="email", subject="Sender@Example.INVALID"),
+        TransientIdentitySubject(provider="email", subject="first@example.invalid"),
+        TransientIdentitySubject(provider="email", subject="second@example.invalid"),
+    )
+    assert "Sender@Example.INVALID" not in repr(subjects)
+    assert "first@example.invalid" not in repr(subjects)
+
+
+def test_decoder_quarantines_ambiguous_or_oversized_address_headers_safely() -> None:
+    ambiguous = EmailMessage()
+    ambiguous["From"] = "first@example.invalid, PII-SENTINEL@example.invalid"
+    ambiguous["To"] = "recipient@example.invalid"
+    ambiguous.set_content("body")
+
+    with pytest.raises(DeliveryQuarantine) as captured:
+        EmailRawDeliveryDecoder().decode_delivery(
+            ambiguous.as_bytes(),
+            delivery_id="imap:uidvalidity-7:uid-ambiguous",
+            received_at=NOW,
+            source_ref=SOURCE_REF,
+        )
+    assert str(captured.value) == "email.ambiguous_sender"
+    assert "PII-SENTINEL" not in repr(captured.value)
+
+    too_many = EmailMessage()
+    too_many["From"] = "sender@example.invalid"
+    too_many["To"] = "one@example.invalid, two@example.invalid"
+    too_many.set_content("body")
+    with pytest.raises(DeliveryQuarantine, match="email.recipient_limit"):
+        EmailRawDeliveryDecoder(max_identity_recipients=1).decode_delivery(
+            too_many.as_bytes(),
+            delivery_id="imap:uidvalidity-7:uid-too-many",
+            received_at=NOW,
+            source_ref=SOURCE_REF,
+        )
+
+
 def test_decoder_requires_persisted_delivery_metadata() -> None:
     with pytest.raises(DeliveryQuarantine, match="email.delivery_metadata_required"):
         EmailRawDeliveryDecoder().decode(_message())
