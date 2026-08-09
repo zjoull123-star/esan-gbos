@@ -25,7 +25,7 @@ _MAX_ATTEMPTS = 100
 
 _CONNECTOR_COLUMNS = """
     site_id, connector, connector_instance_id, status, registered_at, updated_at,
-    control_revision, team_ref, agent_task_type
+    control_revision, team_ref, agent_task_type, account_user_ref
 """
 _DELIVERY_COLUMNS = """
     site_id, connector, connector_instance_id, delivery_id, exact_body_sha256,
@@ -98,6 +98,7 @@ class ConnectorInstanceMetadata:
     control_revision: int
     team_ref: str | None
     agent_task_type: str | None
+    account_user_ref: str | None
 
     def __repr__(self) -> str:
         return (
@@ -105,7 +106,8 @@ class ConnectorInstanceMetadata:
             f"connector={self.connector!r}, "
             f"connector_instance_id={self.connector_instance_id!r}, "
             f"status={self.status!r}, control_revision={self.control_revision}, "
-            "team_ref=<redacted>, agent_task_type=<redacted>)"
+            "team_ref=<redacted>, agent_task_type=<redacted>, "
+            "account_user_ref=<redacted>)"
         )
 
 
@@ -257,6 +259,7 @@ class LocalPilotStorage(Protocol):
         replay_window_seconds: int = 0,
         team_ref: str | None = None,
         agent_task_type: str | None = None,
+        account_user_ref: str | None = None,
     ) -> ConnectorInstanceMetadata: ...
 
     def get_connector_instance(
@@ -278,6 +281,7 @@ class LocalPilotStorage(Protocol):
         expected_control_revision: int,
         team_ref: str | None,
         agent_task_type: str | None,
+        account_user_ref: str | None = None,
         now: datetime,
     ) -> ConnectorInstanceMetadata: ...
 
@@ -553,10 +557,11 @@ class PostgresLocalPilotStorage:
         replay_window_seconds: int = 0,
         team_ref: str | None = None,
         agent_task_type: str | None = None,
+        account_user_ref: str | None = None,
     ) -> ConnectorInstanceMetadata:
         _validate_scope_key(scope, key)
         _require_aware(now, "now")
-        _validate_connector_routing(team_ref, agent_task_type)
+        _validate_connector_routing(team_ref, agent_task_type, account_user_ref)
         if not 0 <= replay_window_seconds <= 31_536_000:
             raise ValueError("replay_window_seconds is outside the valid range")
         with self._connection.transaction(), self._connection.cursor() as cursor:
@@ -565,8 +570,9 @@ class PostgresLocalPilotStorage:
                 f"""
                 INSERT INTO observer.connector_instances (
                     site_id, connector, connector_instance_id, status,
-                    registered_at, updated_at, team_ref, agent_task_type
-                ) VALUES (%s, %s, %s, 'healthy', %s, %s, %s, %s)
+                    registered_at, updated_at, team_ref, agent_task_type,
+                    account_user_ref
+                ) VALUES (%s, %s, %s, 'healthy', %s, %s, %s, %s, %s)
                 ON CONFLICT (site_id, connector, connector_instance_id)
                 DO NOTHING
                 RETURNING {_CONNECTOR_COLUMNS}
@@ -579,6 +585,7 @@ class PostgresLocalPilotStorage:
                     now,
                     team_ref,
                     agent_task_type,
+                    account_user_ref,
                 ),
             )
             row = cursor.fetchone()
@@ -600,7 +607,11 @@ class PostgresLocalPilotStorage:
                     "connector routing metadata conflict: instance is unavailable"
                 )
             metadata = _connector_from_row(row)
-            if metadata.team_ref != team_ref or metadata.agent_task_type != agent_task_type:
+            if (
+                metadata.team_ref != team_ref
+                or metadata.agent_task_type != agent_task_type
+                or metadata.account_user_ref != account_user_ref
+            ):
                 raise ConnectorRoutingConflict("connector routing metadata conflict")
             cursor.execute(
                 """
@@ -668,11 +679,12 @@ class PostgresLocalPilotStorage:
         expected_control_revision: int,
         team_ref: str | None,
         agent_task_type: str | None,
+        account_user_ref: str | None = None,
         now: datetime,
     ) -> ConnectorInstanceMetadata:
         _validate_scope_key(scope, key)
         _require_aware(now, "now")
-        _validate_connector_routing(team_ref, agent_task_type)
+        _validate_connector_routing(team_ref, agent_task_type, account_user_ref)
         if (
             isinstance(expected_control_revision, bool)
             or not isinstance(expected_control_revision, int)
@@ -686,6 +698,7 @@ class PostgresLocalPilotStorage:
                 UPDATE observer.connector_instances
                 SET team_ref = %s,
                     agent_task_type = %s,
+                    account_user_ref = %s,
                     control_revision = control_revision + 1,
                     updated_at = %s
                 WHERE site_id = %s
@@ -697,6 +710,7 @@ class PostgresLocalPilotStorage:
                 (
                     team_ref,
                     agent_task_type,
+                    account_user_ref,
                     now,
                     scope.site_id,
                     key.connector,
@@ -2736,7 +2750,8 @@ class PostgresLocalPilotStorage:
 def _connector_from_row(row: tuple[object, ...]) -> ConnectorInstanceMetadata:
     team_ref = None if row[7] is None else str(row[7])
     agent_task_type = None if row[8] is None else str(row[8])
-    _validate_connector_routing(team_ref, agent_task_type)
+    account_user_ref = None if row[9] is None else str(row[9])
+    _validate_connector_routing(team_ref, agent_task_type, account_user_ref)
     control_revision = _as_int(row[6], "control_revision")
     if control_revision < 0:
         raise RuntimeError("invalid persisted control_revision")
@@ -2750,6 +2765,7 @@ def _connector_from_row(row: tuple[object, ...]) -> ConnectorInstanceMetadata:
         control_revision=control_revision,
         team_ref=team_ref,
         agent_task_type=agent_task_type,
+        account_user_ref=account_user_ref,
     )
 
 
@@ -3170,6 +3186,7 @@ def _require_connector_status(status: str) -> None:
 def _validate_connector_routing(
     team_ref: str | None,
     agent_task_type: str | None,
+    account_user_ref: str | None = None,
 ) -> None:
     if team_ref is not None and (
         not isinstance(team_ref, str)
@@ -3186,6 +3203,13 @@ def _validate_connector_routing(
         raise ValueError("invalid connector routing agent_task_type")
     if agent_task_type is not None and team_ref is None:
         raise ValueError("invalid connector routing: agent task requires team_ref")
+    if account_user_ref is not None and (
+        not isinstance(account_user_ref, str)
+        or not 1 <= len(account_user_ref) <= 256
+        or account_user_ref != account_user_ref.strip()
+        or any(ord(character) < 32 or ord(character) == 127 for character in account_user_ref)
+    ):
+        raise ValueError("invalid connector routing account_user_ref")
 
 
 def _authenticated_identity_ref(key: ConnectorKey) -> str:

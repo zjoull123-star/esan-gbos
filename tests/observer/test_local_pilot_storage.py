@@ -43,6 +43,9 @@ NORMALIZED_MIGRATION = (
 ROUTING_MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "007_local_pilot_connector_routing.sql"
 )
+IDENTITY_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "009_local_pilot_identity_resolution.sql"
+)
 MIGRATION_SCRIPT = ROOT / "scripts" / "dev" / "gate3-migrate"
 NOW = datetime(2026, 8, 7, 9, 30, tzinfo=UTC)
 SCOPE = TenantScope("alpha.example", "observation_processing")
@@ -106,6 +109,7 @@ def _connector_row(
     control_revision: int = 0,
     team_ref: str | None = None,
     agent_task_type: str | None = None,
+    account_user_ref: str | None = None,
 ) -> tuple[Any, ...]:
     return (
         SCOPE.site_id,
@@ -117,6 +121,7 @@ def _connector_row(
         control_revision,
         team_ref,
         agent_task_type,
+        account_user_ref,
     )
 
 
@@ -821,15 +826,18 @@ def test_register_get_and_list_connector_instances_use_per_call_site_transaction
             _connector_row(
                 team_ref="team:sales",
                 agent_task_type="product_sample",
+                account_user_ref="owner@example.invalid",
             ),
             _connector_row(
                 team_ref="team:sales",
                 agent_task_type="product_sample",
+                account_user_ref="owner@example.invalid",
             ),
             [
                 _connector_row(
                     team_ref="team:sales",
                     agent_task_type="product_sample",
+                    account_user_ref="owner@example.invalid",
                 ),
                 _connector_row(connector="email", instance_id="support"),
             ],
@@ -844,6 +852,7 @@ def test_register_get_and_list_connector_instances_use_per_call_site_transaction
         replay_window_seconds=60,
         team_ref="team:sales",
         agent_task_type="product_sample",
+        account_user_ref="owner@example.invalid",
     )
     loaded = repository.get_connector_instance(SCOPE, KEY)
     listed = repository.list_connector_instances(SCOPE)
@@ -859,15 +868,22 @@ def test_register_get_and_list_connector_instances_use_per_call_site_transaction
     assert registered.team_ref == "team:sales"
     assert registered.agent_task_type == "product_sample"
     assert registered.control_revision == 0
+    assert registered.account_user_ref == "owner@example.invalid"
     assert "team:sales" not in repr(registered)
     assert "product_sample" not in repr(registered)
+    assert "owner@example.invalid" not in repr(registered)
     assert not hasattr(registered, "config")
     assert not hasattr(registered, "secret")
 
 
 def test_register_connector_routing_replay_is_idempotent_and_different_metadata_conflicts() -> None:
     team_ref = "team:trusted-sales"
-    same = _connector_row(team_ref=team_ref, agent_task_type="sales")
+    owner = "owner@example.invalid"
+    same = _connector_row(
+        team_ref=team_ref,
+        agent_task_type="sales",
+        account_user_ref=owner,
+    )
     different = _connector_row(team_ref="team:other", agent_task_type="sales")
     connection = FakeConnection([same, None, same, None, different])
     repository = PostgresLocalPilotStorage(connection)
@@ -878,6 +894,7 @@ def test_register_connector_routing_replay_is_idempotent_and_different_metadata_
         now=NOW,
         team_ref=team_ref,
         agent_task_type="sales",
+        account_user_ref=owner,
     )
     replay = repository.register_connector_instance(
         SCOPE,
@@ -885,6 +902,7 @@ def test_register_connector_routing_replay_is_idempotent_and_different_metadata_
         now=NOW + timedelta(seconds=1),
         team_ref=team_ref,
         agent_task_type="sales",
+        account_user_ref=owner,
     )
 
     assert first == replay
@@ -903,25 +921,32 @@ def test_register_connector_routing_replay_is_idempotent_and_different_metadata_
             now=NOW + timedelta(seconds=2),
             team_ref=team_ref,
             agent_task_type="purchase",
+            account_user_ref=owner,
         )
     assert team_ref not in repr(first)
 
 
 @pytest.mark.parametrize(
-    ("team_ref", "agent_task_type"),
+    ("team_ref", "agent_task_type", "account_user_ref"),
     [
-        ("", None),
-        ("team\nsales", None),
-        ("team\rsales", None),
-        ("team\x00sales", None),
-        ("t" * 257, None),
-        ("team:sales", "unknown"),
-        (None, "sales"),
+        ("", None, None),
+        ("team\nsales", None, None),
+        ("team\rsales", None, None),
+        ("team\x00sales", None, None),
+        ("t" * 257, None, None),
+        ("team:sales", "unknown", None),
+        (None, "sales", None),
+        ("team:sales", None, ""),
+        ("team:sales", None, " owner@example.invalid"),
+        ("team:sales", None, "owner\n@example.invalid"),
+        ("team:sales", None, "owner\x7f@example.invalid"),
+        ("team:sales", None, "u" * 257),
     ],
 )
 def test_connector_routing_rejects_invalid_metadata_before_opening_a_transaction(
     team_ref: str | None,
     agent_task_type: str | None,
+    account_user_ref: str | None,
 ) -> None:
     connection = FakeConnection([])
 
@@ -932,6 +957,7 @@ def test_connector_routing_rejects_invalid_metadata_before_opening_a_transaction
             now=NOW,
             team_ref=team_ref,
             agent_task_type=agent_task_type,
+            account_user_ref=account_user_ref,
         )
 
     assert connection.transactions == 0
@@ -944,6 +970,7 @@ def test_update_connector_routing_uses_site_scoped_control_revision_cas() -> Non
                 control_revision=4,
                 team_ref="team:ceo-visible",
                 agent_task_type=None,
+                account_user_ref="ceo@example.invalid",
             ),
             None,
         ]
@@ -956,10 +983,12 @@ def test_update_connector_routing_uses_site_scoped_control_revision_cas() -> Non
         expected_control_revision=3,
         team_ref="team:ceo-visible",
         agent_task_type=None,
+        account_user_ref="ceo@example.invalid",
         now=NOW,
     )
     assert updated.control_revision == 4
     assert updated.team_ref == "team:ceo-visible"
+    assert updated.account_user_ref == "ceo@example.invalid"
     update_sql, update_params = connection.executed[1]
     assert "control_revision = control_revision + 1" in update_sql
     assert "control_revision = %s" in update_sql
@@ -976,8 +1005,17 @@ def test_update_connector_routing_uses_site_scoped_control_revision_cas() -> Non
             expected_control_revision=3,
             team_ref=None,
             agent_task_type=None,
+            account_user_ref=None,
             now=NOW + timedelta(seconds=1),
         )
+
+
+def test_identity_migration_protects_connector_owner_with_repeatable_constraint() -> None:
+    sql = IDENTITY_MIGRATION.read_text()
+
+    assert "connector_instances_account_user_ref_safe_ck" in sql
+    assert "account_user_ref !~ '[[:cntrl:]]'" in sql
+    assert "VALIDATE CONSTRAINT connector_instances_account_user_ref_safe_ck" in sql
 
 
 def test_accept_delivery_is_idempotent_for_same_digest_and_rejects_changed_body() -> None:

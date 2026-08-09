@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Protocol
 
+from .identity_resolution import IdentityResolutionRepository
 from .models import TenantScope, _require_aware
 from .storage import Connection
 
@@ -28,7 +29,7 @@ class CommunicationNotFound(LookupError):
     """The site-local observation does not exist."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class CommunicationAccess:
     team_refs: frozenset[str]
     actor_ref: str | None = None
@@ -63,8 +64,17 @@ class CommunicationAccess:
             or (self.actor_ref is not None and self.actor_ref in actor_refs)
         )
 
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(team_refs={sorted(self.team_refs)!r}, "
+            "actor_ref=<redacted>, "
+            f"allow_all_teams={self.allow_all_teams!r}, "
+            f"can_read_raw={self.can_read_raw!r}, "
+            f"can_read_restricted_raw={self.can_read_restricted_raw!r})"
+        )
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class CommunicationSummary:
     observation_id: str
     channel: str
@@ -102,6 +112,16 @@ class CommunicationSummary:
             "party_ref": self.party_ref,
             "evidence_count": self.evidence_count,
         }
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(observation_id={self.observation_id!r}, "
+            f"channel={self.channel!r}, occurred_at={self.occurred_at!r}, "
+            f"classification={self.classification!r}, "
+            f"review_status={self.review_status!r}, team_ref={self.team_ref!r}, "
+            "party_ref=<redacted>, actor_refs=<redacted>, "
+            f"evidence_count={self.evidence_count})"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +181,7 @@ class CommunicationRepository(Protocol):
         scope: TenantScope,
         observation_id: str,
         *,
+        access: CommunicationAccess,
         raw_policy: str,
     ) -> CommunicationDetail | None: ...
 
@@ -302,24 +323,8 @@ class PostgresCommunicationRepository:
         ]
         params: list[Any] = [scope.site_id, scope.processing_purpose]
         if not access.allow_all_teams:
-            predicates.append(
-                """
-                (
-                  event.team_ref = ANY(%s)
-                  OR (
-                    CAST(%s AS text) IS NOT NULL
-                    AND EXISTS (
-                      SELECT 1
-                      FROM observer.participants AS actor
-                      WHERE actor.site_id = event.site_id
-                        AND actor.event_id = event.event_id
-                        AND actor.identity_ref = %s
-                    )
-                  )
-                )
-                """
-            )
-            params.extend([sorted(access.team_refs), access.actor_ref, access.actor_ref])
+            predicates.append(_confirmed_access_predicate())
+            params.extend(_confirmed_access_params(access))
         if channel is not None:
             predicates.append("event.channel = %s")
             params.append(channel)
@@ -355,10 +360,21 @@ class PostgresCommunicationRepository:
         scope: TenantScope,
         observation_id: str,
         *,
+        access: CommunicationAccess,
         raw_policy: str,
     ) -> CommunicationDetail | None:
         if raw_policy not in {"omit", "nonrestricted", "all"}:
             raise ValueError("invalid raw policy")
+        predicates = [
+            "event.site_id = %s",
+            "event.event_id = %s",
+            "event.processing_purpose = %s",
+            "(event.retention_until IS NULL OR event.retention_until > current_timestamp)",
+        ]
+        params: list[Any] = [scope.site_id, observation_id, scope.processing_purpose]
+        if not access.allow_all_teams:
+            predicates.append(_confirmed_access_predicate())
+            params.extend(_confirmed_access_params(access))
         with self._connection.transaction(), self._connection.cursor() as cursor:
             _set_site(cursor, scope)
             cursor.execute(
@@ -372,15 +388,9 @@ class PostgresCommunicationRepository:
                 JOIN observer.communication_projections AS projection
                   ON projection.site_id = event.site_id
                  AND projection.observation_event_id = event.event_id
-                WHERE event.site_id = %s
-                  AND event.event_id = %s
-                  AND event.processing_purpose = %s
-                  AND (
-                    event.retention_until IS NULL
-                    OR event.retention_until > current_timestamp
-                  )
+                WHERE {" AND ".join(predicates)}
                 """,
-                (scope.site_id, observation_id, scope.processing_purpose),
+                tuple(params),
             )
             row = cursor.fetchone()
             if row is None:
@@ -422,6 +432,148 @@ class PostgresCommunicationRepository:
             association_suggestions=tuple(_json_list(row[12], "association suggestions")),
             model={"name": str(row[13]), "version": str(row[14])},
             original_text=original_text,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _InMemoryCommunicationRecord:
+    scope: TenantScope
+    detail: CommunicationDetail
+    participant_refs: tuple[str, ...]
+
+
+class InMemoryCommunicationRepository:
+    """Policy-parity communication repository for unit tests and offline use."""
+
+    __slots__ = ("_identity_repository", "_records")
+
+    def __init__(
+        self,
+        *,
+        identity_repository: IdentityResolutionRepository,
+    ) -> None:
+        self._identity_repository = identity_repository
+        self._records: dict[tuple[str, str, str], _InMemoryCommunicationRecord] = {}
+
+    def __repr__(self) -> str:
+        return "InMemoryCommunicationRepository(records=<redacted>)"
+
+    def put(
+        self,
+        scope: TenantScope,
+        detail: CommunicationDetail,
+        *,
+        participant_refs: tuple[str, ...],
+    ) -> None:
+        if not isinstance(participant_refs, tuple) or any(
+            not isinstance(value, str) or not value or len(value) > 256
+            for value in participant_refs
+        ):
+            raise ValueError("invalid participant refs")
+        key = (scope.site_id, scope.processing_purpose, detail.summary.observation_id)
+        if key in self._records:
+            raise ValueError("communication already exists")
+        self._records[key] = _InMemoryCommunicationRecord(
+            scope=scope,
+            detail=detail,
+            participant_refs=participant_refs,
+        )
+
+    def list_communications(
+        self,
+        scope: TenantScope,
+        access: CommunicationAccess,
+        *,
+        channel: str | None,
+        classification: str | None,
+        review_status: str | None,
+        before: tuple[datetime, str] | None,
+        limit: int,
+    ) -> tuple[CommunicationSummary, ...]:
+        rows: list[CommunicationSummary] = []
+        for record in self._records.values():
+            if record.scope != scope:
+                continue
+            summary = self._project_summary(record)
+            if not access.allows(summary.team_ref, summary.actor_refs):
+                continue
+            if channel is not None and summary.channel != channel:
+                continue
+            if classification is not None and summary.classification != classification:
+                continue
+            if review_status is not None and summary.review_status != review_status:
+                continue
+            if (
+                before is not None
+                and (
+                    summary.occurred_at,
+                    summary.observation_id,
+                )
+                >= before
+            ):
+                continue
+            rows.append(summary)
+        rows.sort(
+            key=lambda item: (item.occurred_at, item.observation_id),
+            reverse=True,
+        )
+        return tuple(rows[:limit])
+
+    def get_communication(
+        self,
+        scope: TenantScope,
+        observation_id: str,
+        *,
+        access: CommunicationAccess,
+        raw_policy: str,
+    ) -> CommunicationDetail | None:
+        if raw_policy not in {"omit", "nonrestricted", "all"}:
+            raise ValueError("invalid raw policy")
+        record = self._records.get((scope.site_id, scope.processing_purpose, observation_id))
+        if record is None:
+            return None
+        summary = self._project_summary(record)
+        allowed = access.allows(summary.team_ref, summary.actor_refs)
+        include_original = allowed and (
+            raw_policy == "all"
+            or (raw_policy == "nonrestricted" and summary.classification != "Restricted")
+        )
+        return replace(
+            record.detail,
+            summary=summary,
+            original_text=(record.detail.original_text if include_original else None),
+        )
+
+    def _project_summary(
+        self,
+        record: _InMemoryCommunicationRecord,
+    ) -> CommunicationSummary:
+        actor_refs: set[str] = set()
+        party_ref: str | None = None
+        for participant_ref in record.participant_refs:
+            parsed = _parse_external_subject_ref(participant_ref)
+            if parsed is None:
+                continue
+            provider, subject_ref = parsed
+            resolution = self._identity_repository.latest(
+                record.scope,
+                provider,
+                subject_ref,
+            )
+            if (
+                resolution is None
+                or resolution.status != "confirmed"
+                or resolution.team_ref != record.detail.summary.team_ref
+            ):
+                continue
+            if resolution.target_type == "User":
+                actor_refs.add(resolution.target_ref)
+            elif resolution.target_type == "Party" and party_ref is None:
+                party_ref = resolution.target_ref
+        return replace(
+            record.detail.summary,
+            party_ref=party_ref,
+            actor_refs=frozenset(actor_refs),
         )
 
 
@@ -507,6 +659,7 @@ class LocalPilotReadService:
         detail = self._repository.get_communication(
             scope,
             observation_id,
+            access=access,
             raw_policy=raw_policy,
         )
         if detail is None:
@@ -606,7 +759,31 @@ _COMMUNICATION_COLUMNS = """
     event.data_classification,
     projection.review_status,
     event.team_ref,
-    event.party_ref,
+    (
+      SELECT latest_party.target_ref
+      FROM observer.participants AS party_participant
+      CROSS JOIN LATERAL (
+        SELECT resolution.target_ref,
+               resolution.target_type,
+               resolution.status,
+               resolution.team_ref
+        FROM observer.participant_identity_resolutions AS resolution
+        WHERE resolution.site_id = party_participant.site_id
+          AND resolution.external_subject_ref = party_participant.identity_ref
+          AND resolution.identity_provider = split_part(
+              party_participant.identity_ref, ':', 3
+          )
+        ORDER BY resolution.mapping_revision DESC
+        LIMIT 1
+      ) AS latest_party
+      WHERE party_participant.site_id = event.site_id
+        AND party_participant.event_id = event.event_id
+        AND latest_party.status = 'confirmed'
+        AND latest_party.target_type = 'Party'
+        AND latest_party.team_ref = event.team_ref
+      ORDER BY party_participant.participant_id ASC
+      LIMIT 1
+    ),
     (
       SELECT count(*)
       FROM observer.event_evidence AS evidence_count
@@ -614,13 +791,79 @@ _COMMUNICATION_COLUMNS = """
         AND evidence_count.event_id = event.event_id
     ),
     ARRAY(
-      SELECT participant.identity_ref
-      FROM observer.participants AS participant
-      WHERE participant.site_id = event.site_id
-        AND participant.event_id = event.event_id
-      ORDER BY participant.identity_ref ASC
+      SELECT DISTINCT latest_actor.target_ref
+      FROM observer.participants AS actor_participant
+      CROSS JOIN LATERAL (
+        SELECT resolution.target_ref,
+               resolution.target_type,
+               resolution.status,
+               resolution.team_ref
+        FROM observer.participant_identity_resolutions AS resolution
+        WHERE resolution.site_id = actor_participant.site_id
+          AND resolution.external_subject_ref = actor_participant.identity_ref
+          AND resolution.identity_provider = split_part(
+              actor_participant.identity_ref, ':', 3
+          )
+        ORDER BY resolution.mapping_revision DESC
+        LIMIT 1
+      ) AS latest_actor
+      WHERE actor_participant.site_id = event.site_id
+        AND actor_participant.event_id = event.event_id
+        AND latest_actor.status = 'confirmed'
+        AND latest_actor.target_type = 'User'
+        AND latest_actor.team_ref = event.team_ref
+      ORDER BY latest_actor.target_ref ASC
     )
 """
+
+
+def _confirmed_access_predicate() -> str:
+    return """
+        (
+          event.team_ref = ANY(%s)
+          OR (
+            CAST(%s AS text) IS NOT NULL
+            AND EXISTS (
+              SELECT 1
+              FROM observer.participants AS actor
+              CROSS JOIN LATERAL (
+                SELECT resolution.target_ref,
+                       resolution.target_type,
+                       resolution.status,
+                       resolution.team_ref
+                FROM observer.participant_identity_resolutions AS resolution
+                WHERE resolution.site_id = actor.site_id
+                  AND resolution.external_subject_ref = actor.identity_ref
+                  AND resolution.identity_provider = split_part(
+                      actor.identity_ref, ':', 3
+                  )
+                ORDER BY resolution.mapping_revision DESC
+                LIMIT 1
+              ) AS latest_actor
+              WHERE actor.site_id = event.site_id
+                AND actor.event_id = event.event_id
+                AND latest_actor.status = 'confirmed'
+                AND latest_actor.target_type = 'User'
+                AND latest_actor.team_ref = event.team_ref
+                AND latest_actor.target_ref = %s
+            )
+          )
+        )
+    """
+
+
+def _confirmed_access_params(access: CommunicationAccess) -> list[Any]:
+    return [sorted(access.team_refs), access.actor_ref, access.actor_ref]
+
+
+def _parse_external_subject_ref(value: str) -> tuple[str, str] | None:
+    parts = value.split(":", 3)
+    if len(parts) != 4 or parts[0:2] != ["extid", "v1"]:
+        return None
+    provider = parts[2]
+    if not provider or not parts[3]:
+        return None
+    return provider, value
 
 
 def _set_site(cursor: Any, scope: TenantScope) -> None:

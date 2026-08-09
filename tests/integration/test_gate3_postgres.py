@@ -4,6 +4,7 @@ import hashlib
 import os
 import subprocess
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -23,6 +24,11 @@ from services.local_pilot_runtime.model_projection_worker import ProjectionLease
 from services.observer.observer.api import create_observer_app
 from services.observer.observer.application import ManualImportPipeline, canonical_import_body
 from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
+from services.observer.observer.identity_resolution import (
+    IdentityResolutionConflict,
+    ParticipantIdentityResolution,
+    PostgresIdentityResolutionRepository,
+)
 from services.observer.observer.local_pilot_ingestion import DurableDeliveryInbox
 from services.observer.observer.local_pilot_storage import (
     ConnectorRoutingConflict,
@@ -56,6 +62,12 @@ from services.observer.observer.processing import (
 )
 from services.observer.observer.projection_outbox import (
     PostgresProjectionOutboxRepository,
+)
+from services.observer.observer.read_service import (
+    CommunicationAccess,
+    CommunicationNotFound,
+    LocalPilotReadService,
+    PostgresCommunicationRepository,
 )
 from services.observer.observer.security import (
     HMACServiceIdentity,
@@ -119,7 +131,7 @@ def _container_sql(
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 9
+    assert _migration_ledger_count() == 10
     result = _container_sql(
         """
         SELECT count(*)
@@ -140,13 +152,13 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
               'inbound_delivery_events', 'connector_checkpoints',
               'persistent_nonces', 'processing_jobs',
               'context_publication_outbox', 'local_pilot_quarantine',
-              'local_pilot_dead_letter'
+              'local_pilot_dead_letter', 'participant_identity_resolutions'
           )
           AND c.relrowsecurity
           AND c.relforcerowsecurity
         """
     )
-    assert int(result.stdout.strip()) == 30
+    assert int(result.stdout.strip()) == 31
 
 
 def _migration_ledger_count() -> int:
@@ -163,11 +175,337 @@ def _migration_ledger_count() -> int:
               'observer/006_local_pilot_control.sql',
               'observer/007_local_pilot_connector_routing.sql',
               'observer/008_local_pilot_projection_fencing.sql',
+              'observer/009_local_pilot_identity_resolution.sql',
               'context/001_gate3_context.sql'
         )
         """
     )
     return int(result.stdout.strip())
+
+
+def test_gate3_identity_projection_fences_replay_revocation_and_confirmed_reads() -> None:
+    if not all((CONTEXT_HOST, CONTEXT_PORT, CONTEXT_DATABASE, CONTEXT_PASSWORD)):
+        pytest.fail("Gate 3 Observer app-role connection components are required")
+
+    def connect():
+        return connect_postgres_components(
+            host=str(CONTEXT_HOST),
+            port=int(str(CONTEXT_PORT)),
+            database=str(CONTEXT_DATABASE),
+            user="gbos_observer_app",
+            password=str(CONTEXT_PASSWORD),
+        )
+
+    suffix = uuid.uuid4().hex[:12]
+    site = f"identity-{suffix}"
+    other_site = f"identity-other-{suffix}"
+    scope = ObserverTenantScope(site, "observation_processing")
+    other_scope = ObserverTenantScope(other_site, "observation_processing")
+    now = datetime.now(UTC).replace(microsecond=0)
+    event_id = f"event-{suffix}"
+    unauthorized_event_id = f"event-unauthorized-{suffix}"
+    user_subject = f"extid:v1:email:user-{suffix}"
+    party_subject = f"extid:v1:email:party-{suffix}"
+    cross_team_subject = f"extid:v1:email:cross-{suffix}"
+    protected_user = f"protected-{suffix}@example.invalid"
+    raw_actor = f"raw-{suffix}@example.invalid"
+    user_mapping = "EID-01K" + "A" * 23
+    party_mapping = "EID-01K" + "B" * 23
+    connection = connect()
+    restart = None
+    try:
+        storage = PostgresLocalPilotStorage(connection)
+        key = ConnectorKey("email", f"sales-{suffix}")
+        registered = storage.register_connector_instance(
+            scope,
+            key,
+            now=now,
+            team_ref="team-sales",
+            agent_task_type="sales",
+            account_user_ref=protected_user,
+        )
+        assert registered.account_user_ref == protected_user
+        assert protected_user not in repr(registered)
+        with pytest.raises(ConnectorRoutingConflict):
+            storage.register_connector_instance(
+                scope,
+                key,
+                now=now + timedelta(seconds=1),
+                team_ref="team-sales",
+                agent_task_type="sales",
+                account_user_ref=f"other-{suffix}@example.invalid",
+            )
+        updated = storage.update_connector_routing(
+            scope,
+            key,
+            expected_control_revision=0,
+            team_ref="team-sales",
+            agent_task_type="sales",
+            account_user_ref=protected_user,
+            now=now + timedelta(seconds=2),
+        )
+        assert updated.control_revision == 1
+        with pytest.raises(ConnectorRoutingConflict):
+            storage.update_connector_routing(
+                scope,
+                key,
+                expected_control_revision=0,
+                team_ref="team-sales",
+                agent_task_type="sales",
+                account_user_ref=None,
+                now=now + timedelta(seconds=3),
+            )
+
+        projection = PostgresIdentityResolutionRepository(connection)
+        user = ParticipantIdentityResolution(
+            site_id=site,
+            identity_provider="email",
+            external_subject_ref=user_subject,
+            mapping_ref=user_mapping,
+            mapping_revision=3,
+            team_ref="team-sales",
+            target_type="User",
+            target_ref=protected_user,
+            status="confirmed",
+            resolved_at=now,
+            recorded_at=now + timedelta(seconds=1),
+        )
+        party = ParticipantIdentityResolution(
+            site_id=site,
+            identity_provider="email",
+            external_subject_ref=party_subject,
+            mapping_ref=party_mapping,
+            mapping_revision=3,
+            team_ref="team-sales",
+            target_type="Party",
+            target_ref=f"PARTY-{suffix}",
+            status="confirmed",
+            resolved_at=now,
+            recorded_at=now + timedelta(seconds=1),
+        )
+        assert projection.record(scope, user) == user
+        assert projection.record(scope, party) == party
+        assert projection.latest(other_scope, "email", user_subject) is None
+        with pytest.raises(IdentityResolutionConflict, match="stale"):
+            projection.record(
+                scope,
+                replace(
+                    user,
+                    mapping_revision=2,
+                    resolved_at=now - timedelta(seconds=1),
+                    recorded_at=now,
+                ),
+            )
+        with pytest.raises(IdentityResolutionConflict, match="mapping"):
+            projection.record(
+                scope,
+                replace(
+                    user,
+                    mapping_revision=4,
+                    target_ref=f"other-{suffix}@example.invalid",
+                    resolved_at=now + timedelta(minutes=1),
+                    recorded_at=now + timedelta(minutes=1, seconds=1),
+                ),
+            )
+
+        restart = connect()
+        replayed = PostgresIdentityResolutionRepository(restart).record(
+            scope,
+            replace(user, recorded_at=user.recorded_at + timedelta(hours=1)),
+        )
+        assert replayed.recorded_at == user.recorded_at
+
+        cross_team = replace(
+            user,
+            external_subject_ref=cross_team_subject,
+            mapping_ref="EID-01K" + "C" * 23,
+            team_ref="team-other",
+        )
+        projection.record(scope, cross_team)
+        with connection.transaction(), connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (site,))
+            cursor.execute(
+                """
+                INSERT INTO observer.observation_events (
+                    site_id, event_id, connector, channel, processing_purpose,
+                    consent_basis, data_classification, retention_class,
+                    correlation_id, occurred_at, ingested_at, document, team_ref
+                ) VALUES (
+                    %s, %s, 'manual_import', 'email', 'observation_processing',
+                    'pilot_deferred_review', 'Restricted', 'R1-operational',
+                    %s, %s, %s, '{}'::jsonb, 'team-sales'
+                )
+                """,
+                (site, event_id, f"corr-{suffix}", now, now),
+            )
+            cursor.execute(
+                """
+                INSERT INTO observer.observation_events (
+                    site_id, event_id, connector, channel, processing_purpose,
+                    consent_basis, data_classification, retention_class,
+                    correlation_id, occurred_at, ingested_at, document, team_ref
+                ) VALUES (
+                    %s, %s, 'manual_import', 'email', 'observation_processing',
+                    'pilot_deferred_review', 'Restricted', 'R1-operational',
+                    %s, %s, %s, '{}'::jsonb, 'team-other'
+                )
+                """,
+                (
+                    site,
+                    unauthorized_event_id,
+                    f"corr-unauthorized-{suffix}",
+                    now + timedelta(minutes=1),
+                    now + timedelta(minutes=1),
+                ),
+            )
+            cursor.execute(
+                """
+                INSERT INTO observer.participants (
+                    site_id, event_id, participant_id, role, identity_ref
+                ) VALUES
+                    (%s, %s, 'user', 'internal', %s),
+                    (%s, %s, 'party', 'external', %s),
+                    (%s, %s, 'cross-team', 'internal', %s),
+                    (%s, %s, 'raw-equality', 'internal', %s)
+                """,
+                (
+                    site,
+                    event_id,
+                    user_subject,
+                    site,
+                    event_id,
+                    party_subject,
+                    site,
+                    event_id,
+                    cross_team_subject,
+                    site,
+                    event_id,
+                    raw_actor,
+                ),
+            )
+            cursor.execute(
+                """
+                INSERT INTO observer.communication_projections (
+                    site_id, observation_event_id, summary_zh,
+                    original_language, review_status, model_name,
+                    model_version, projected_at
+                ) VALUES
+                    (
+                        %s, %s, 'identity projection', 'en', 'AI Draft',
+                        'deepseek-v4-flash', 'integration-test', %s
+                    ),
+                    (
+                        %s, %s, 'unauthorized newer projection', 'en',
+                        'AI Draft', 'deepseek-v4-flash', 'integration-test', %s
+                    )
+                """,
+                (
+                    site,
+                    event_id,
+                    now,
+                    site,
+                    unauthorized_event_id,
+                    now + timedelta(minutes=1),
+                ),
+            )
+
+        reader = LocalPilotReadService(
+            repository=PostgresCommunicationRepository(connection=connection),
+            cursor_secret=b"i" * 32,
+        )
+        team_access = CommunicationAccess(team_refs=frozenset({"team-sales"}))
+        self_access = CommunicationAccess(
+            team_refs=frozenset({"team-finance"}), actor_ref=protected_user
+        )
+        raw_equality_only = CommunicationAccess(
+            team_refs=frozenset({"team-finance"}), actor_ref=raw_actor
+        )
+        assert [
+            item.observation_id
+            for item in reader.list_communications(
+                scope,
+                team_access,
+                page_size=1,
+            ).communications
+        ] == [event_id]
+        assert [
+            item.observation_id
+            for item in reader.list_communications(scope, self_access).communications
+        ] == [event_id]
+        assert reader.list_communications(scope, raw_equality_only).communications == ()
+        detail = reader.get_communication(
+            scope,
+            self_access,
+            observation_id=event_id,
+        )
+        assert detail.summary.party_ref == f"PARTY-{suffix}"
+
+        user_revoked = replace(
+            user,
+            mapping_revision=4,
+            status="revoked",
+            resolved_at=now + timedelta(minutes=2),
+            recorded_at=now + timedelta(minutes=2, seconds=1),
+        )
+        party_revoked = replace(
+            party,
+            mapping_revision=4,
+            status="revoked",
+            resolved_at=now + timedelta(minutes=2),
+            recorded_at=now + timedelta(minutes=2, seconds=1),
+        )
+        projection.record(scope, user_revoked)
+        projection.record(scope, party_revoked)
+        assert reader.list_communications(scope, self_access).communications == ()
+        with pytest.raises(CommunicationNotFound):
+            reader.get_communication(scope, self_access, observation_id=event_id)
+        team_detail = reader.get_communication(
+            scope,
+            team_access,
+            observation_id=event_id,
+        )
+        assert team_detail.summary.party_ref is None
+        global_detail = reader.get_communication(
+            scope,
+            CommunicationAccess(team_refs=frozenset({"*"}), allow_all_teams=True),
+            observation_id=event_id,
+        )
+        assert global_detail.raw_access_allowed is False
+        with pytest.raises(IdentityResolutionConflict, match="transition"):
+            projection.record(
+                scope,
+                replace(
+                    user,
+                    mapping_revision=5,
+                    resolved_at=now + timedelta(minutes=3),
+                    recorded_at=now + timedelta(minutes=3, seconds=1),
+                ),
+            )
+
+        cross_site_write = _container_sql(
+            f"""
+            BEGIN;
+            SET LOCAL ROLE gbos_observer_app;
+            SET LOCAL app.site_id = '{site}';
+            INSERT INTO observer.participant_identity_resolutions (
+                site_id, identity_provider, external_subject_ref, mapping_ref,
+                mapping_revision, team_ref, target_type, target_ref,
+                status, resolved_at, recorded_at
+            ) VALUES (
+                '{other_site}', 'email', 'extid:v1:email:cross-site-{suffix}',
+                'EID-01K{"D" * 23}', 1, 'team-sales', 'Party',
+                'PARTY-CROSS-{suffix}', 'confirmed', current_timestamp,
+                current_timestamp
+            );
+            COMMIT;
+            """,
+            check=False,
+        )
+        assert cross_site_write.returncode != 0
+    finally:
+        if restart is not None:
+            restart.close()
+        connection.close()
 
 
 def test_gate3_projection_outbox_reclaim_fences_same_worker_and_cross_site() -> None:
