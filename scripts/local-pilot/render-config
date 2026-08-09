@@ -14,12 +14,14 @@ from typing import Any
 
 _ROLES = {
     "observer": "gbos_observer_app",
+    "identity": "gbos_observer_app",
     "context": "gbos_context_app",
     "agent": "gbos_agent_app",
     "media": "gbos_media_app",
 }
 _ROLE_PASSWORD_FILES = {
     "observer": "/run/secrets/postgres_observer_password",
+    "identity": "/run/secrets/postgres_observer_password",
     "context": "/run/secrets/postgres_context_password",
     "agent": "/run/secrets/postgres_agent_password",
     "media": "/run/secrets/postgres_media_password",
@@ -158,7 +160,9 @@ def _runtime_config(
         ),
     }
     endpoint = (
-        "http://frappe-backend:8000" if purpose == "materialization" else "http://context-api:8001"
+        "http://frappe-backend:8000"
+        if purpose in {"identity", "materialization"}
+        else "http://context-api:8001"
     )
     return {
         "schema_version": "1.0",
@@ -176,9 +180,13 @@ def _runtime_config(
             "context_api_bearer_file": "/run/secrets/context_api_bearer",
             "context_client_bearer_file": "/run/secrets/context_client_bearer",
             "context_auth_ref": (
-                "agent-materializer-v1"
-                if purpose == "materialization"
-                else "local-pilot-context-auth-v1"
+                "observer-identity-resolver-v1"
+                if purpose == "identity"
+                else (
+                    "agent-materializer-v1"
+                    if purpose == "materialization"
+                    else "local-pilot-context-auth-v1"
+                )
             ),
         },
         "context_endpoint": {

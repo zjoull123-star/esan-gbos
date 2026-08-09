@@ -60,6 +60,7 @@ def test_local_compose_isolated_and_remote_images_are_digest_pinned() -> None:
         "agent-api",
         "observer-api",
         "connector-worker",
+        "identity-resolution-worker",
         "model-projection-worker",
         "email-poller",
         "wecom-poller",
@@ -170,7 +171,7 @@ def test_health_dependencies_kill_switches_and_file_secrets_are_explicit() -> No
     assert not re.search(r"(?i)(password|token|api_key):\s*[\"']?[A-Za-z0-9_-]{12,}", compose)
 
 
-def test_optional_prometheus_does_not_claim_unimplemented_runtime_metrics() -> None:
+def test_optional_prometheus_scrapes_authenticated_identity_metrics_with_low_cardinality() -> None:
     compose = _read(COMPOSE)
     prometheus = _read(LOCAL_INFRA / "prometheus" / "prometheus.yml")
     alerts = _read(LOCAL_INFRA / "prometheus" / "alerts.yml")
@@ -178,7 +179,33 @@ def test_optional_prometheus_does_not_claim_unimplemented_runtime_metrics() -> N
     block = _service_block(compose, "prometheus")
     assert 'profiles: ["observability"]' in block
     assert "job_name: prometheus" in prometheus
-    for absent in ("webhook-ingress", "agent-runtime", "observer-api", "context-api"):
-        assert f"job_name: {absent}" not in prometheus
-    assert "groups: []" in alerts
-    assert "gbos_local_pilot_" not in alerts
+    assert "job_name: identity-resolution" in prometheus
+    assert "metrics_path: /internal/v1/metrics/identity-resolution" in prometheus
+    assert 'targets: ["observer-api:8003"]' in prometheus
+    assert "credentials_file: /run/secrets/agent_api_bearer" in prometheus
+    assert "X-GBOS-Local-Auth-Ref:" in prometheus
+    assert 'values: ["local-pilot-context-auth-v1"]' in prometheus
+    assert "X-Site-ID:" in prometheus
+    assert 'values: ["gbos.localhost"]' in prometheus
+    assert "X-Processing-Purpose:" in prometheus
+    assert 'values: ["identity_resolution_metrics"]' in prometheus
+    assert "X-Request-ID:" in prometheus
+    assert 'values: ["prometheus-identity-resolution"]' in prometheus
+    assert "agent_api_bearer" in block
+    for alert in (
+        "IdentityResolverNotReady",
+        "IdentityResolverHeartbeatStale",
+        "IdentityResolverBacklogStale",
+        "IdentityResolverConflict",
+        "IdentityResolverLatencyHigh",
+    ):
+        assert f"alert: {alert}" in alerts
+    for forbidden_label in ("site", "team", "identity", "provider", "target"):
+        assert f"{forbidden_label}:" not in alerts
+    entrypoints = json.loads(_read(LOCAL_INFRA / "runtime-entrypoints.json"))
+    metrics = entrypoints["identity_resolution_metrics"]
+    assert metrics["status"] == "executable"
+    assert metrics["target"] == "observer-api:8003/internal/v1/metrics/identity-resolution"
+    assert metrics["purpose"] == "identity_resolution_metrics"
+    assert metrics["auth_ref"] == "local-pilot-context-auth-v1"
+    assert metrics["auth_ref"] != "observer-identity-resolver-v1"

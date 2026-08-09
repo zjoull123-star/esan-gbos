@@ -166,6 +166,7 @@ def test_start_runs_fail_closed_preflight_before_secret_or_compose_actions() -> 
     assert "--require-go" in start
     assert 'GBOS_CONNECTOR_KILL_SWITCH="true"' in start
     assert 'GBOS_MODEL_KILL_SWITCH="true"' in start
+    assert 'GBOS_IDENTITY_RESOLUTION_KILL_SWITCH="true"' in start
     assert 'GBOS_EXTERNAL_SEND_ENABLED="false"' in start
     assert "EMERGENCY_STOP" in start
     assert "export GBOS_LOCAL_PILOT_MANIFEST" in start
@@ -191,6 +192,7 @@ def test_synthetic_start_is_explicit_image_gated_and_never_enables_external_prof
         "media",
         "model",
         "tunnel",
+        "identity",
     ):
         assert f'--profile "{forbidden_profile}"' not in start
     assert 'GBOS_CONNECTOR_KILL_SWITCH="true"' in start
@@ -237,6 +239,7 @@ def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() ->
         "email-poller",
         "wecom-poller",
         "connector-worker",
+        "identity-resolution-worker",
         "model-projection-worker",
         "media-worker",
         "agent-worker",

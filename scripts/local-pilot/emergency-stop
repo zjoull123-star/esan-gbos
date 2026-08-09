@@ -23,6 +23,7 @@ docker compose \
   email-poller \
   wecom-poller \
   connector-worker \
+  identity-resolution-worker \
   model-projection-worker \
   media-worker \
   agent-worker \
@@ -31,4 +32,4 @@ docker compose \
   frappe-worker \
   frappe-scheduler || true
 
-echo "Emergency stop latched: tunnel, pollers, webhook, model, and media workers stopped."
+echo "Emergency stop latched: identity, tunnel, pollers, webhook, model, and media workers stopped."

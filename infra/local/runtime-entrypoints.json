@@ -19,6 +19,14 @@
     "minio_required": false
   },
   "durable_model_queue": false,
+  "identity_resolution_metrics": {
+    "status": "executable",
+    "target": "observer-api:8003/internal/v1/metrics/identity-resolution",
+    "purpose": "identity_resolution_metrics",
+    "auth_ref": "local-pilot-context-auth-v1",
+    "bearer_file": "/run/secrets/agent_api_bearer",
+    "prometheus_contract": "3.7 scrape_config authorization and http_headers"
+  },
   "services": {
     "migrations": {
       "path": "scripts/local-pilot/migrate",
@@ -40,6 +48,12 @@
       "path": "services/local_pilot_runtime/observer_worker.py",
       "status": "executable"
     },
+    "identity-resolution-worker": {
+      "path": "services/local_pilot_runtime/identity_resolution_worker.py",
+      "status": "executable",
+      "network": "internal_only",
+      "required_when_enabled": true
+    },
     "model-projection-worker": {
       "path": "services/local_pilot_runtime/model_projection_worker.py",
       "status": "blocked_user_lexicon_and_credentials",
@@ -60,6 +74,11 @@
     "frappe-materializer-bootstrap": {
       "path": "apps/esan_gbos/esan_gbos/local_pilot.py",
       "status": "executable"
+    },
+    "frappe-identity-resolver-bootstrap": {
+      "path": "apps/esan_gbos/esan_gbos/identity_resolver_service.py",
+      "status": "executable",
+      "required_when_enabled": true
     },
     "webhook-ingress": {
       "path": "services/local_pilot_runtime/webhook.py",
@@ -91,15 +110,21 @@
   "required_when_enabled": {
     "email": {
       "email-poller": "services/local_pilot_runtime/pollers.py",
-      "connector-worker": "services/local_pilot_runtime/observer_worker.py"
+      "connector-worker": "services/local_pilot_runtime/observer_worker.py",
+      "identity-resolution-worker": "services/local_pilot_runtime/identity_resolution_worker.py",
+      "frappe-identity-resolver-bootstrap": "apps/esan_gbos/esan_gbos/identity_resolver_service.py"
     },
     "wecom": {
       "wecom-poller": "services/local_pilot_runtime/pollers.py",
-      "connector-worker": "services/local_pilot_runtime/observer_worker.py"
+      "connector-worker": "services/local_pilot_runtime/observer_worker.py",
+      "identity-resolution-worker": "services/local_pilot_runtime/identity_resolution_worker.py",
+      "frappe-identity-resolver-bootstrap": "apps/esan_gbos/esan_gbos/identity_resolver_service.py"
     },
     "whatsapp": {
       "webhook-ingress": "services/local_pilot_runtime/webhook.py",
-      "connector-worker": "services/local_pilot_runtime/observer_worker.py"
+      "connector-worker": "services/local_pilot_runtime/observer_worker.py",
+      "identity-resolution-worker": "services/local_pilot_runtime/identity_resolution_worker.py",
+      "frappe-identity-resolver-bootstrap": "apps/esan_gbos/esan_gbos/identity_resolver_service.py"
     },
     "deepseek": {
       "agent-worker": "services/local_pilot_runtime/agent_worker.py",

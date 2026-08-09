@@ -200,12 +200,39 @@ services:
       GBOS_CONNECTOR_KILL_SWITCH: ${GBOS_CONNECTOR_KILL_SWITCH:-true}
     secrets:
       - postgres_observer_password
+      - identity_hmac_key
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
       - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-observer.json:/config/local-pilot-runtime.json:ro
       - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/connectors.json:/config/connectors.json:ro
       - ../../.runtime/local-pilot:/run/gbos:ro
       - local-pilot-evidence-cas:/var/lib/gbos/evidence
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  identity-resolution-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["identity"]
+    command: ["python", "-m", "services.local_pilot_runtime.identity_resolution_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_IDENTITY_RESOLUTION_KILL_SWITCH: ${GBOS_IDENTITY_RESOLUTION_KILL_SWITCH:-true}
+    secrets:
+      - postgres_observer_password
+      - source: frappe_identity_resolver_api_key
+        target: identity_resolver_api_key
+        mode: 0600
+      - source: frappe_identity_resolver_api_secret
+        target: identity_resolver_api_secret
+        mode: 0600
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-identity.json:/config/local-pilot-runtime.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
     networks: [local-internal]
     depends_on:
       migrations:
@@ -525,6 +552,11 @@ services:
           "$$site")";
         bench --site "$$site" set-config -p \
           gbos_agent_materialization_identities "$$materializer_identities";
+        identity_resolver_identities="$$(printf \
+          '{"observer-identity-resolver-v1":{"user":"gbos-identity-resolver@localhost.invalid","site_id":"%s","processing_purposes":["identity_resolution"]}}' \
+          "$$site")";
+        bench --site "$$site" set-config -p \
+          gbos_identity_resolver_identities "$$identity_resolver_identities";
         bench --site "$$site" migrate;
         bench --site "$$site" migrate
     secrets:
@@ -584,6 +616,39 @@ services:
     secrets:
       - frappe_materializer_api_key
       - frappe_materializer_api_secret
+    volumes:
+      - local-pilot-frappe-sites:/home/frappe/frappe-bench/sites
+      - local-pilot-frappe-logs:/home/frappe/frappe-bench/logs
+    networks: [local-internal]
+    depends_on:
+      frappe-site:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+  frappe-identity-resolver-bootstrap:
+    image: *frappe-image
+    pull_policy: never
+    profiles: ["identity-bootstrap"]
+    environment:
+      GBOS_LOCAL_PILOT_SITE_ID: "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}"
+      GBOS_PRODUCTION_ENABLED: "false"
+      GBOS_IDENTITY_RESOLVER_API_KEY_FILE: /run/secrets/frappe_identity_resolver_api_key
+      GBOS_IDENTITY_RESOLVER_API_SECRET_FILE: /run/secrets/frappe_identity_resolver_api_secret
+    entrypoint: ["/bin/sh", "-ceu"]
+    command:
+      - >-
+        test -s /run/secrets/frappe_identity_resolver_api_key;
+        test -s /run/secrets/frappe_identity_resolver_api_secret;
+        bench --site "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}" execute esan_gbos.identity_resolver_service.provision_identity_resolver --kwargs "{'confirm_local_pilot': True}"
+    secrets:
+      - frappe_identity_resolver_api_key
+      - frappe_identity_resolver_api_secret
     volumes:
       - local-pilot-frappe-sites:/home/frappe/frappe-bench/sites
       - local-pilot-frappe-logs:/home/frappe/frappe-bench/logs
@@ -729,6 +794,10 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - local-pilot-prometheus-data:/prometheus
+    secrets:
+      - source: agent_api_bearer
+        target: agent_api_bearer
+        mode: 0600
     ports:
       - "127.0.0.1:${GBOS_LOCAL_PROMETHEUS_PORT:-59090}:9090"
     networks: [local-internal]
@@ -833,6 +902,12 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/frappe_materializer_api_key
   frappe_materializer_api_secret:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/frappe_materializer_api_secret
+  identity_hmac_key:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/identity_hmac_key
+  frappe_identity_resolver_api_key:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/frappe_identity_resolver_api_key
+  frappe_identity_resolver_api_secret:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/frappe_identity_resolver_api_secret
   email_credential:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_credential
   wecom_credential:

@@ -135,6 +135,7 @@ def test_renderer_emits_closed_role_scoped_configs_with_secret_file_refs(tmp_pat
     assert result.returncode == 0, result.stderr
     expected_roles = {
         "runtime-observer.json": ("gbos_observer_app", "postgres_observer_password"),
+        "runtime-identity.json": ("gbos_observer_app", "postgres_observer_password"),
         "runtime-context.json": ("gbos_context_app", "postgres_context_password"),
         "runtime-agent.json": ("gbos_agent_app", "postgres_agent_password"),
         "runtime-media.json": ("gbos_media_app", "postgres_media_password"),
@@ -160,6 +161,15 @@ def test_renderer_emits_closed_role_scoped_configs_with_secret_file_refs(tmp_pat
             if key.endswith("_file")
         )
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    identity = json.loads(_read(output / "runtime-identity.json"))
+    assert identity["context_endpoint"] == {
+        "base_url": "http://frappe-backend:8000",
+        "unix_socket": None,
+    }
+    assert identity["auth"]["context_auth_ref"] == "observer-identity-resolver-v1"
+    assert identity["worker"]["worker_id"] == "local-pilot-identity-worker"
+    assert all(not component["enabled"] for component in identity["components"].values())
 
     connectors = json.loads(_read(output / "connectors.json"))
     assert set(connectors) == {
@@ -249,6 +259,7 @@ def test_compose_declares_full_isolated_topology_and_filesystem_cas_truth() -> N
         "agent-api",
         "observer-api",
         "connector-worker",
+        "identity-resolution-worker",
         "model-projection-worker",
         "agent-worker",
         "materialization-worker",
@@ -344,6 +355,7 @@ def test_frappe_site_keeps_multiline_bench_arguments_in_one_shell_command() -> N
     site = _service_block(compose, "frappe-site")
     synthetic = _service_block(compose, "frappe-synthetic-bootstrap")
     materializer = _service_block(compose, "frappe-materializer-bootstrap")
+    identity = _service_block(compose, "frappe-identity-resolver-bootstrap")
 
     assert 'bench new-site "$$site" \\' in site
     assert '--mariadb-user-host-login-scope="%" \\' in site
@@ -372,6 +384,60 @@ def test_frappe_site_keeps_multiline_bench_arguments_in_one_shell_command() -> N
         "execute esan_gbos.local_pilot.provision_materializer "
         """--kwargs "{'confirm_local_pilot': True}\""""
     ) in materializer
+    assert (
+        'bench --site "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}" '
+        "execute esan_gbos.identity_resolver_service.provision_identity_resolver "
+        """--kwargs "{'confirm_local_pilot': True}"""
+    ) in identity
+
+
+def test_identity_resolution_worker_is_internal_profile_gated_and_secret_separated() -> None:
+    compose = _read(INFRA / "compose.yml")
+    worker = _service_block(compose, "identity-resolution-worker")
+    connector = _service_block(compose, "connector-worker")
+
+    assert 'profiles: ["identity"]' in worker
+    assert (
+        'command: ["python", "-m", "services.local_pilot_runtime.identity_resolution_worker"]'
+    ) in worker
+    assert "GBOS_IDENTITY_RESOLUTION_KILL_SWITCH" in worker
+    assert "runtime-identity.json:/config/local-pilot-runtime.json:ro" in worker
+    assert "postgres_observer_password" in worker
+    assert "identity_resolver_api_key" in worker
+    assert "identity_resolver_api_secret" in worker
+    assert "identity_hmac_key" not in worker
+    assert "controlled-egress" not in worker
+    assert "ports:" not in worker
+    assert "identity_hmac_key" in connector
+    assert "identity_resolver_api_key" not in connector
+    assert "identity_resolver_api_secret" not in connector
+
+
+def test_identity_resolver_bootstrap_is_profile_only_and_runs_before_worker() -> None:
+    compose = _read(INFRA / "compose.yml")
+    entrypoints = json.loads(_read(INFRA / "runtime-entrypoints.json"))
+    bootstrap = _service_block(compose, "frappe-identity-resolver-bootstrap")
+    site = _service_block(compose, "frappe-site")
+    start = _read(SCRIPTS / "start")
+
+    assert 'profiles: ["identity-bootstrap"]' in bootstrap
+    assert "GBOS_IDENTITY_RESOLVER_API_KEY_FILE" in bootstrap
+    assert "GBOS_IDENTITY_RESOLVER_API_SECRET_FILE" in bootstrap
+    assert "test -s /run/secrets/frappe_identity_resolver_api_key" in bootstrap
+    assert "test -s /run/secrets/frappe_identity_resolver_api_secret" in bootstrap
+    assert "identity_hmac_key" not in bootstrap
+    assert "gbos_identity_resolver_identities" in site
+    assert "observer-identity-resolver-v1" in site
+    assert "gbos-identity-resolver@localhost.invalid" in site
+    assert '"processing_purposes":["identity_resolution"]' in site
+    assert entrypoints["services"]["frappe-identity-resolver-bootstrap"]["status"] == ("executable")
+    migration = "compose --profile runtime run --rm migrations"
+    bootstrap_run = (
+        "compose --profile runtime --profile identity-bootstrap "
+        "run --rm --no-deps frappe-identity-resolver-bootstrap"
+    )
+    runtime_up = 'compose "${profile_args[@]}" up -d --wait'
+    assert start.index(migration) < start.index(bootstrap_run) < start.index(runtime_up)
 
 
 def test_materializer_identity_bootstrap_is_profile_only_and_secret_file_backed() -> None:
@@ -510,6 +576,9 @@ def test_channel_commands_configs_and_profiles_match_the_concrete_entrypoints() 
         "connector-worker": (
             'command: ["python", "-m", "services.local_pilot_runtime.observer_worker"]'
         ),
+        "identity-resolution-worker": (
+            'command: ["python", "-m", "services.local_pilot_runtime.identity_resolution_worker"]'
+        ),
         "webhook-ingress": ('command: ["python", "-m", "services.local_pilot_runtime.webhook"]'),
         "email-poller": (
             'command: ["python", "-m", "services.local_pilot_runtime.pollers", "email"]'
@@ -523,14 +592,21 @@ def test_channel_commands_configs_and_profiles_match_the_concrete_entrypoints() 
         assert command in block
         assert "/config/local-pilot-manifest.json:ro" in block
         assert "/config/local-pilot-runtime.json:ro" in block
-        assert "/config/connectors.json:ro" in block
-        assert "GBOS_CONNECTOR_KILL_SWITCH" in block
+        if service != "identity-resolution-worker":
+            assert "/config/connectors.json:ro" in block
+            assert "GBOS_CONNECTOR_KILL_SWITCH" in block
         assert 'GBOS_EXTERNAL_SEND_ENABLED: "false"' in compose
         assert "condition: service_healthy" not in block
 
     assert entrypoints["required_when_enabled"]["wecom"] == {
         "wecom-poller": "services/local_pilot_runtime/pollers.py",
         "connector-worker": "services/local_pilot_runtime/observer_worker.py",
+        "identity-resolution-worker": (
+            "services/local_pilot_runtime/identity_resolution_worker.py"
+        ),
+        "frappe-identity-resolver-bootstrap": (
+            "apps/esan_gbos/esan_gbos/identity_resolver_service.py"
+        ),
     }
 
 
@@ -604,6 +680,7 @@ def test_start_orders_config_and_migration_before_runtime_and_keeps_real_gate() 
     assert "local-pilot-evidence-cas" not in stop
     for worker in (
         "connector-worker",
+        "identity-resolution-worker",
         "model-projection-worker",
         "agent-worker",
         "materialization-worker",
@@ -717,6 +794,9 @@ def test_secret_materialization_covers_runtime_crypto_frappe_and_channels() -> N
         "deepseek_api_key",
         "frappe_materializer_api_key",
         "frappe_materializer_api_secret",
+        "identity_hmac_key",
+        "frappe_identity_resolver_api_key",
+        "frappe_identity_resolver_api_secret",
         "frappe_demo_password",
         "email_credential",
         "wecom_credential",
@@ -741,6 +821,9 @@ def test_secret_materialization_covers_runtime_crypto_frappe_and_channels() -> N
     assert "OrbStack" in _read(INFRA / "README.md")
     assert "uid 10001" in _read(INFRA / "README.md")
     assert "keychain://com.esan.gbos.local-pilot/trusted-phrase-lexicon" in prepare
+    assert "keychain://com.esan.gbos.local-pilot/identity-hmac-key" in prepare
+    assert "keychain://com.esan.gbos.local-pilot/frappe-identity-resolver-api-key" in prepare
+    assert "keychain://com.esan.gbos.local-pilot/frappe-identity-resolver-api-secret" in prepare
     projection = _service_block(compose, "model-projection-worker")
     assert "- trusted_phrase_lexicon" in projection
     for unrelated in ("agent-worker", "materialization-worker", "connector-worker"):
