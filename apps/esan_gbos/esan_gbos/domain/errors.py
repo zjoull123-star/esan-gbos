@@ -43,12 +43,13 @@ def build_success_envelope(
     data: Any,
     request_id: str,
     meta: dict[str, Any] | None = None,
+    schema_version: str = "1.0",
 ) -> dict[str, Any]:
     return {
         "data": data,
         "meta": {
             "request_id": request_id,
-            "schema_version": "1.0",
+            "schema_version": schema_version,
             **(meta or {}),
         },
     }

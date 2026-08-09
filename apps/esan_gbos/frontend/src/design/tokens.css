@@ -1,0 +1,16 @@
+:root {
+  --gbos-canvas: #f6f8fb;
+  --gbos-sidebar: #0b1220;
+  --gbos-primary: #6c5ce7;
+  --gbos-accent: #0f9f8f;
+  --gbos-text: #172033;
+  --gbos-muted: #526078;
+  --gbos-border: #e2e8f0;
+  --gbos-accent-text: #0a6f65;
+  --gbos-surface: #ffffff;
+  --gbos-radius-control: 14px;
+  --gbos-radius-card: 16px;
+  --gbos-font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei",
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --gbos-shadow-card: 0 12px 32px rgb(15 23 42 / 8%);
+}

@@ -19,5 +19,8 @@
     {"fieldname": "revision", "label": "Revision", "fieldtype": "Int", "default": "0", "read_only": 1},
     {"fieldname": "last_request_id", "label": "Last Request ID", "fieldtype": "Data", "read_only": 1}
   ],
-  "permissions": [{"role": "GBOS Admin", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1}]
+  "permissions": [
+    {"role": "GBOS Admin", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1},
+    {"role": "Agent TrustedMaterializer", "read": 1}
+  ]
 }

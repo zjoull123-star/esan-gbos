@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -6,6 +6,22 @@ import { describe, expect, it } from "vitest";
 const root = resolve(import.meta.dirname, "..");
 const source = readFileSync(resolve(root, "src/service-worker.ts"), "utf8");
 const viteConfig = readFileSync(resolve(root, "vite.config.ts"), "utf8");
+
+const applicationSourceFiles = (directory: string): string[] =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) {
+      return applicationSourceFiles(path);
+    }
+    if (
+      !entry.isFile() ||
+      !/\.(?:ts|vue)$/u.test(entry.name) ||
+      entry.name === "service-worker.ts"
+    ) {
+      return [];
+    }
+    return [path];
+  });
 
 describe("Service Worker 敏感数据边界", () => {
   it("/api/ 总是 NetworkOnly", () => {
@@ -24,20 +40,25 @@ describe("Service Worker 敏感数据边界", () => {
   });
 
   it("浏览器持久化只由 Workbox 管理静态 shell", () => {
-    const applicationSource = [
-      readFileSync(resolve(root, "src/api/bff.ts"), "utf8"),
-      readFileSync(resolve(root, "src/session.ts"), "utf8"),
-      readFileSync(resolve(root, "src/App.vue"), "utf8"),
-    ].join("\n");
+    const applicationSource = applicationSourceFiles(resolve(root, "src"))
+      .map((path) => readFileSync(path, "utf8"))
+      .join("\n");
     expect(applicationSource).not.toMatch(
-      /\blocalStorage\b|\bsessionStorage\b|\bindexedDB\b|\bCacheStorage\b/u,
+      /\blocalStorage\b|\bsessionStorage\b|\bindexedDB\b|\bCacheStorage\b|\bcaches\b/u,
     );
     expect(source).toContain("precacheAndRoute(self.__WB_MANIFEST)");
   });
 
   it("在线导航直取 Frappe shell，仅断网时回退无敏感空壳", () => {
+    expect(source).toContain('data.type === "GBOS_NETWORK_STATE"');
+    expect(source).toContain('data.type === "GBOS_NETWORK_STATE_QUERY"');
+    expect(source).toContain("offlineClientIds.add(sourceId)");
+    expect(source).toContain("offlineClientIds.delete(sourceId)");
+    expect(source).toContain("clientReportedOffline || !self.navigator.onLine");
+    expect(source).toContain('data-gbos-offline-shell="true"');
+    expect(source).toContain("offlineShellResponse(options)");
     expect(source).toContain("await fetch(options.request)");
-    expect(source).toContain("return offlineShellHandler(options)");
+    expect(source).toContain("return offlineShellResponse(options)");
     expect(source).not.toContain(
       "new NavigationRoute(createHandlerBoundToURL",
     );
@@ -51,7 +72,7 @@ describe("Service Worker 敏感数据边界", () => {
       name: "ESAN GBOS",
       lang: "zh-CN",
       display: "standalone",
-      start_url: "/gbos/ceo",
+      start_url: "/gbos",
       scope: "/gbos/",
     });
     expect(viteConfig).toContain('scope: "/gbos/"');

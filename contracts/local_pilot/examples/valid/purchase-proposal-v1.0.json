@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "proposal_id": "purchase-proposal-SYNTH-001",
+  "agent_kind": "purchase",
+  "action_type": "internal.review_case.propose",
+  "status": "proposed",
+  "subject_ref": "SOURCING-SYNTH-001",
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "confidence": 0.78,
+  "requires_human_review": true,
+  "payload": {
+    "title": "候选供应商比较审核",
+    "summary": "比较候选资料并提交采购人员人工审核。",
+    "candidate_refs": [
+      "supplier-SYNTH-A",
+      "supplier-SYNTH-B"
+    ],
+    "recommendation": "提交内部审核案例。"
+  }
+}

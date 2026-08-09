@@ -9,5 +9,6 @@
   {"doctype": "Role", "name": "Buyer", "role_name": "Buyer", "desk_access": 1},
   {"doctype": "Role", "name": "Product/R&D", "role_name": "Product/R&D", "desk_access": 1},
   {"doctype": "Role", "name": "Reviewer", "role_name": "Reviewer", "desk_access": 1},
-  {"doctype": "Role", "name": "Finance Readonly", "role_name": "Finance Readonly", "desk_access": 1}
+  {"doctype": "Role", "name": "Finance Readonly", "role_name": "Finance Readonly", "desk_access": 1},
+  {"doctype": "Role", "name": "Agent TrustedMaterializer", "role_name": "Agent TrustedMaterializer", "desk_access": 0}
 ]

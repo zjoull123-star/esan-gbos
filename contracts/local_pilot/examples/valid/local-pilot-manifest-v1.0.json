@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "mode": "local_pilot",
+  "site_id": "gbos.localhost",
+  "compliance_state": "pilot_deferred_review",
+  "retention_days": 30,
+  "production_go": false,
+  "local_pilot_go": false,
+  "local_pilot_status": "disabled",
+  "capabilities": {
+    "kingdee": false,
+    "cloud_server": false,
+    "cloud_business_storage": false,
+    "external_send": false,
+    "formal_business_commands": false
+  },
+  "deepseek": {
+    "enabled": false,
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-flash",
+    "keychain_ref": null,
+    "kill_switch": true,
+    "thinking_default": "disabled",
+    "max_input_tokens": 32768,
+    "max_output_tokens": 4096,
+    "soft_limit_usd": 50,
+    "hard_limit_usd": 100
+  },
+  "channels": {
+    "email": {
+      "enabled": false,
+      "activation_time": null,
+      "backfill_history": false,
+      "credential_ref": null
+    },
+    "wecom": {
+      "enabled": false,
+      "activation_time": null,
+      "backfill_history": false,
+      "credential_ref": null
+    },
+    "whatsapp": {
+      "enabled": false,
+      "activation_time": null,
+      "backfill_history": false,
+      "credential_ref": null,
+      "named_tunnel_ref": null
+    },
+    "media": {
+      "enabled": false,
+      "activation_time": null,
+      "backfill_history": false,
+      "local_only": true,
+      "ffmpeg_sha256": null,
+      "whisper_model_sha256": null
+    }
+  }
+}

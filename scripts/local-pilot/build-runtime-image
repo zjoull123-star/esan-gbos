@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+if [[ "${1:-}" != "--confirm-network-build" || $# -ne 1 ]]; then
+  echo "Usage: scripts/local-pilot/build-runtime-image --confirm-network-build" >&2
+  echo "The digest-pinned base images and frozen Python dependencies may require network access." >&2
+  exit 64
+fi
+
+RUNTIME_IMAGE="$(
+  python3 - "${REPO_ROOT}/infra/local/runtime-entrypoints.json" <<'PY'
+import json
+import sys
+
+print(json.load(open(sys.argv[1], encoding="utf-8"))["runtime_image"])
+PY
+)"
+IMAGE_LOCK="${REPO_ROOT}/infra/local/images.lock.json"
+locked_reference() {
+  python3 - "${IMAGE_LOCK}" "$1" <<'PY'
+import json
+import sys
+
+service = sys.argv[2]
+matches = [
+    item["reference"]
+    for item in json.load(open(sys.argv[1], encoding="utf-8"))["images"]
+    if item["service"] == service
+]
+if len(matches) != 1 or not isinstance(matches[0], str):
+    raise SystemExit(f"invalid locked image reference for {service}")
+print(matches[0])
+PY
+}
+PYTHON_BASE_IMAGE="$(locked_reference python-runtime-base)"
+UV_IMAGE="$(locked_reference uv-builder)"
+
+# BuildKit may consume pinned bases without installing them in the local image
+# store. Install both exact references so record-images can verify their IDs
+# and RepoDigests rather than inventing evidence from the Containerfile.
+docker pull --platform linux/arm64 "${PYTHON_BASE_IMAGE}"
+docker pull --platform linux/arm64 "${UV_IMAGE}"
+
+docker build \
+  --pull \
+  --platform linux/arm64 \
+  --file "${REPO_ROOT}/infra/local/Containerfile.runtime" \
+  --tag "${RUNTIME_IMAGE}" \
+  "${REPO_ROOT}"
+
+"${SCRIPT_DIR}/record-images" \
+  --lock-file "${REPO_ROOT}/infra/local/images.lock.json" \
+  --service python-runtime-base \
+  --service uv-builder \
+  --service local-runtime

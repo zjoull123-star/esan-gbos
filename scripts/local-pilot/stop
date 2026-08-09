@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+read_secret_dir
+read_config_dir
+# Named volumes are deliberately preserved. Never add --volumes or -v here.
+compose --profile "*" down --remove-orphans
+cleanup_config_dir
+cleanup_secret_dir
+echo "Local pilot stopped; all named volumes and the emergency latch were preserved."

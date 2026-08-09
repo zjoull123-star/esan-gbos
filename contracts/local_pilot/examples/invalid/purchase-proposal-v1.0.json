@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "proposal_id": "purchase-proposal-SYNTH-INVALID",
+  "agent_kind": "purchase",
+  "action_type": "internal.review_case.propose",
+  "status": "proposed",
+  "subject_ref": "SOURCING-SYNTH-001",
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "confidence": 0.78,
+  "requires_human_review": true,
+  "payload": {
+    "title": "Forbidden commercial term",
+    "summary": "This shape must fail.",
+    "candidate_refs": [
+      "supplier-SYNTH-A",
+      "supplier-SYNTH-B"
+    ],
+    "recommendation": "Internal review only.",
+    "formal_price": 100
+  }
+}

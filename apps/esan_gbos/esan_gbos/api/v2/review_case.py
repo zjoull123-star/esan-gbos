@@ -14,6 +14,11 @@ from esan_gbos.api.v1.common import (
     require_roles,
     success,
 )
+from esan_gbos.domain.access_policy import (
+    REVIEW_CASE_ROLES,
+    can_access_review_case,
+    review_case_scope_filters,
+)
 from esan_gbos.domain.query import CursorError, decode_cursor, encode_cursor
 from esan_gbos.domain.review_dto import (
     ReviewDTOValidationError,
@@ -26,7 +31,7 @@ from esan_gbos.gbos.doctype.gbos_review_case.gbos_review_case import (
     build_subject_snapshot,
 )
 
-REVIEW_ROLES = frozenset({"Reviewer"})
+REVIEW_ROLES = REVIEW_CASE_ROLES
 
 
 def _parse_json(value: object, *, fallback: Any) -> Any:
@@ -35,9 +40,13 @@ def _parse_json(value: object, *, fallback: Any) -> Any:
     return frappe.parse_json(value) if isinstance(value, str) else value
 
 
-def _assigned_case(name: str, *, for_update: bool = False) -> Any:
+def _scoped_case(name: str, *, for_update: bool = False) -> Any:
     case = frappe.get_doc("GBOS Review Case", name, for_update=for_update)
-    if case.assigned_reviewer != frappe.session.user:
+    if not can_access_review_case(
+        roles=set(frappe.get_roles()),
+        actor_ref=frappe.session.user,
+        assigned_reviewer=str(case.assigned_reviewer),
+    ):
         raise frappe.PermissionError
     return case
 
@@ -131,7 +140,10 @@ def list(
     if not 1 <= length <= 50:
         raise BFFError("invalid_query", "page_size is outside the allowed range")
     filters = {
-        "assigned_reviewer": frappe.session.user,
+        **review_case_scope_filters(
+            roles=set(frappe.get_roles()),
+            actor_ref=frappe.session.user,
+        ),
         "review_status": "Pending",
         "business_status": "Pending",
         "case_payload_sha256": ["is", "set"],
@@ -181,7 +193,7 @@ def list(
         if has_more and rows
         else None
     )
-    cases = [_case_dto(_assigned_case(str(row["name"]))) for row in rows]
+    cases = [_case_dto(_scoped_case(str(row["name"]))) for row in rows]
     return success(
         {
             "cases": cases,
@@ -198,7 +210,7 @@ def list(
 @bff_endpoint("GET")
 def get(name: str) -> dict[str, Any]:
     require_roles(REVIEW_ROLES)
-    case = _assigned_case(name)
+    case = _scoped_case(name)
     decision = None
     if case.decision_record:
         decision = _decision_dto(frappe.get_doc("GBOS Review Decision", case.decision_record))
@@ -242,7 +254,7 @@ def decide(
         raise BFFError("invalid_dto", str(error)) from error
 
     def execute() -> dict[str, Any]:
-        case = _assigned_case(payload["name"], for_update=True)
+        case = _scoped_case(payload["name"], for_update=True)
         if case.business_status != "Pending" or case.review_status != "Pending":
             raise _conflict(
                 "case_not_pending",

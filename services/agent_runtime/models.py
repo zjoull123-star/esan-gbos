@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -25,6 +26,29 @@ class LeaseConflict(ValidationError):
 
 class TaskNotFound(ValidationError):
     """The site-scoped task does not exist."""
+
+
+_DIRECT_PII_PATTERN = re.compile(
+    r"(?:[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})|"
+    r"(?:\+\d[\d ()-]{7,}\d)|"
+    r"(?:\b\d{3}[\s()]\d[\d ()-]{5,}\d\b)|"
+    r"(?:\b1[3-9]\d{9}\b)",
+    re.IGNORECASE,
+)
+_REFERENCE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
+_LOCAL_PILOT_ROOT_KEYS = {
+    "schema_version",
+    "evidence_refs",
+    "fact_version_refs",
+    "subject",
+    "request",
+}
+_LOCAL_PILOT_REQUEST_KEYS = {
+    "requested_by",
+    "decision_ref",
+    "expected_action_type",
+    "candidate_refs",
+}
 
 
 def canonical_payload_digest(payload: Mapping[str, Any]) -> str:
@@ -76,6 +100,128 @@ class FailureClassification(StrEnum):
     INTERNAL = "internal"
 
 
+@dataclass(frozen=True, slots=True)
+class LocalPilotFactVersionRef:
+    fact_id: str
+    fact_version: int
+
+    def __post_init__(self) -> None:
+        _require_ref(self.fact_id, "fact_id")
+        if (
+            not isinstance(self.fact_version, int)
+            or isinstance(self.fact_version, bool)
+            or self.fact_version < 1
+        ):
+            raise ValidationError("fact_version must be a positive integer")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalPilotTaskPayload:
+    """Closed refs-only task input; resolved message content never enters the queue."""
+
+    evidence_refs: tuple[str, ...]
+    fact_version_refs: tuple[LocalPilotFactVersionRef, ...]
+    subject_revision: int
+    requested_by: str
+    decision_ref: str
+    expected_action_type: str
+    candidate_refs: tuple[str, ...] = ()
+    schema_version: str = "local-pilot-agent-task-v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "local-pilot-agent-task-v1":
+            raise ValidationError("unsupported local-pilot task payload schema")
+        if (
+            not isinstance(self.subject_revision, int)
+            or isinstance(self.subject_revision, bool)
+            or self.subject_revision < 0
+        ):
+            raise ValidationError("subject revision must be a non-negative integer")
+        _require_unique_refs(self.evidence_refs, "evidence_refs", required=True)
+        if not self.fact_version_refs or len(self.fact_version_refs) != len(
+            set(self.fact_version_refs)
+        ):
+            raise ValidationError("fact_version_refs must be non-empty and unique")
+        _require_ref(self.requested_by, "requested_by")
+        _require_ref(self.decision_ref, "decision_ref")
+        _require_ref(self.expected_action_type, "expected_action_type")
+        _require_unique_refs(self.candidate_refs, "candidate_refs", required=False)
+
+    def __repr__(self) -> str:
+        return "<LocalPilotTaskPayload redacted>"
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> LocalPilotTaskPayload:
+        detached = thaw_json(freeze_json(value))
+        if not isinstance(detached, dict) or set(detached) != _LOCAL_PILOT_ROOT_KEYS:
+            raise ValidationError("local-pilot task payload must use the closed refs-only schema")
+        if _contains_direct_pii(detached):
+            raise ValidationError("local-pilot task payload cannot contain direct PII")
+        subject = detached.get("subject")
+        request = detached.get("request")
+        fact_refs = detached.get("fact_version_refs")
+        evidence_refs = detached.get("evidence_refs")
+        if not isinstance(subject, dict) or set(subject) != {"revision"}:
+            raise ValidationError("subject metadata must contain only revision")
+        if not isinstance(request, dict) or set(request) != _LOCAL_PILOT_REQUEST_KEYS:
+            raise ValidationError("request metadata must use the closed refs-only schema")
+        if not isinstance(evidence_refs, list) or not all(
+            isinstance(item, str) for item in evidence_refs
+        ):
+            raise ValidationError("evidence_refs must be a list of references")
+        if not isinstance(fact_refs, list):
+            raise ValidationError("fact_version_refs must be a list")
+        parsed_fact_refs: list[LocalPilotFactVersionRef] = []
+        for item in fact_refs:
+            if not isinstance(item, dict) or set(item) != {"fact_id", "fact_version"}:
+                raise ValidationError("fact version metadata is invalid")
+            fact_id = item["fact_id"]
+            fact_version = item["fact_version"]
+            if not isinstance(fact_id, str) or not isinstance(fact_version, int):
+                raise ValidationError("fact version metadata is invalid")
+            parsed_fact_refs.append(LocalPilotFactVersionRef(fact_id, fact_version))
+        candidate_refs = request["candidate_refs"]
+        if not isinstance(candidate_refs, list) or not all(
+            isinstance(item, str) for item in candidate_refs
+        ):
+            raise ValidationError("candidate_refs must be a list of references")
+        requested_by = request["requested_by"]
+        decision_ref = request["decision_ref"]
+        expected_action_type = request["expected_action_type"]
+        subject_revision = subject["revision"]
+        if not all(
+            isinstance(item, str) for item in (requested_by, decision_ref, expected_action_type)
+        ) or not isinstance(subject_revision, int):
+            raise ValidationError("local-pilot request metadata is invalid")
+        return cls(
+            schema_version=str(detached["schema_version"]),
+            evidence_refs=tuple(evidence_refs),
+            fact_version_refs=tuple(parsed_fact_refs),
+            subject_revision=subject_revision,
+            requested_by=requested_by,
+            decision_ref=decision_ref,
+            expected_action_type=expected_action_type,
+            candidate_refs=tuple(candidate_refs),
+        )
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "evidence_refs": list(self.evidence_refs),
+            "fact_version_refs": [
+                {"fact_id": item.fact_id, "fact_version": item.fact_version}
+                for item in self.fact_version_refs
+            ],
+            "subject": {"revision": self.subject_revision},
+            "request": {
+                "requested_by": self.requested_by,
+                "decision_ref": self.decision_ref,
+                "expected_action_type": self.expected_action_type,
+                "candidate_refs": list(self.candidate_refs),
+            },
+        }
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AgentTaskSubmission:
     task_id: str
@@ -90,7 +236,7 @@ class AgentTaskSubmission:
     max_attempts: int
     causation_id: str
     correlation_id: str
-    payload: Mapping[str, Any]
+    payload: Mapping[str, Any] = field(repr=False)
     parent_task_id: str | None = None
     payload_digest: str = field(init=False)
 
@@ -173,6 +319,12 @@ class AgentTaskMetadata:
     updated_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class AgentTaskClaim:
+    metadata: AgentTaskMetadata
+    payload: LocalPilotTaskPayload = field(repr=False)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TimelineEventMetadata:
     task_id: str
@@ -196,3 +348,45 @@ class DeadLetterMetadata:
     dead_lettered_at: datetime
     causation_id: str
     correlation_id: str
+
+
+def _require_ref(value: str, name: str) -> None:
+    if _REFERENCE_PATTERN.fullmatch(value) is None:
+        raise ValidationError(f"{name} must be an opaque reference")
+    if _DIRECT_PII_PATTERN.search(value):
+        raise ValidationError(f"{name} cannot contain direct PII")
+
+
+def _require_unique_refs(
+    values: tuple[str, ...],
+    name: str,
+    *,
+    required: bool,
+) -> None:
+    if (required and not values) or len(values) != len(set(values)):
+        raise ValidationError(f"{name} must be {'non-empty and ' if required else ''}unique")
+    for value in values:
+        _require_ref(value, name)
+
+
+def _contains_direct_pii(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        forbidden_keys = {
+            "raw_context",
+            "message_body",
+            "message_text",
+            "email",
+            "phone",
+            "telephone",
+            "prompt",
+            "response",
+            "tokenized_context",
+        }
+        for key, nested in value.items():
+            normalized = re.sub(r"[^a-z0-9]+", "_", str(key).casefold()).strip("_")
+            if normalized in forbidden_keys or _contains_direct_pii(nested):
+                return True
+        return False
+    if isinstance(value, list | tuple):
+        return any(_contains_direct_pii(item) for item in value)
+    return isinstance(value, str) and _DIRECT_PII_PATTERN.search(value) is not None

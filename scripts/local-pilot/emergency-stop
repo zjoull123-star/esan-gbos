@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+mkdir -p -- "${RUNTIME_DIR}"
+chmod 700 "${RUNTIME_DIR}"
+printf '%s\n' "activated" > "${EMERGENCY_STOP_FILE}"
+chmod 600 "${EMERGENCY_STOP_FILE}"
+read_secret_dir
+read_config_dir
+
+# Preserve databases, the evidence CAS, monitoring, and the local UI for forensics.
+docker compose \
+  --project-name "${PROJECT_NAME}" \
+  -f "${COMPOSE_FILE}" \
+  --profile "*" \
+  stop \
+  cloudflared \
+  email-poller \
+  wecom-poller \
+  connector-worker \
+  model-projection-worker \
+  media-worker \
+  agent-worker \
+  materialization-worker \
+  webhook-ingress \
+  frappe-worker \
+  frappe-scheduler || true
+
+echo "Emergency stop latched: tunnel, pollers, webhook, model, and media workers stopped."

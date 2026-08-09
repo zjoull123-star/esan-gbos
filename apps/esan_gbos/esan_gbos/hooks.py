@@ -29,6 +29,7 @@ GBOS_ROLES = [
     "Product/R&D",
     "Reviewer",
     "Finance Readonly",
+    "Agent TrustedMaterializer",
 ]
 
 fixtures = [
@@ -49,6 +50,7 @@ _PARENT_DOCTYPES = [
     "GBOS Sourcing Event",
     "GBOS Work Item",
     "GBOS Review Case",
+    "GBOS Informal Observation",
 ]
 
 permission_query_conditions = {
@@ -68,11 +70,15 @@ permission_query_conditions = {
     "GBOS External Crosswalk": "esan_gbos.permissions.integration_permission_query",
     "GBOS Review Case": "esan_gbos.permissions.review_case_permission_query",
     "GBOS Work Item": "esan_gbos.permissions.work_item_permission_query",
+    "GBOS Informal Observation": ("esan_gbos.permissions.informal_observation_permission_query"),
     "CRM Organization": "esan_gbos.permissions.crm_organization_permission_query",
     "CRM Lead": "esan_gbos.permissions.crm_lead_permission_query",
     "CRM Deal": "esan_gbos.permissions.crm_deal_permission_query",
     "Contact": "esan_gbos.permissions.contact_permission_query",
 }
+permission_query_conditions["Integration Request"] = (
+    "esan_gbos.permissions.integration_request_permission_query"
+)
 
 has_permission = {
     doctype: "esan_gbos.permissions.has_gbos_permission"
@@ -83,6 +89,9 @@ has_permission.update(
         doctype: "esan_gbos.permissions.has_crm_permission"
         for doctype in ("CRM Organization", "CRM Lead", "CRM Deal", "Contact")
     }
+)
+has_permission["Integration Request"] = (
+    "esan_gbos.permissions.has_internal_materialization_permission"
 )
 
 _BLOCKED_ERP_DOCTYPES = [
@@ -111,6 +120,19 @@ doc_events = {
     }
     for doctype in _BLOCKED_ERP_DOCTYPES
 }
+
+doc_events["User"] = {
+    "before_validate": "esan_gbos.ceo_access.ensure_ceo_full_access",
+}
+
+for _draft_doctype in (
+    "GBOS Work Item",
+    "GBOS Review Case",
+    "GBOS Informal Observation",
+):
+    doc_events.setdefault(_draft_doctype, {})["validate"] = (
+        "esan_gbos.permissions.protect_ai_draft_command"
+    )
 
 has_permission.update(
     {

@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "proposal_id": "product-proposal-SYNTH-001",
+  "agent_kind": "product",
+  "action_type": "internal.work_item.propose",
+  "status": "proposed",
+  "subject_ref": "FEEDBACK-SYNTH-001",
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "confidence": 0.8,
+  "requires_human_review": true,
+  "payload": {
+    "title": "样品反馈内部处理",
+    "summary": "整理样品反馈，等待产品人员人工评估。",
+    "suggested_work_item": "创建内部样品反馈工作项。"
+  }
+}

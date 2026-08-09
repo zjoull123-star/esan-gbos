@@ -178,6 +178,7 @@ def test_postgres_heartbeat_is_owner_and_live_lease_guarded() -> None:
         "site-a",
         "task-1",
         worker_id="worker-1",
+        expected_attempt=1,
         now=NOW,
         lease_duration=timedelta(seconds=30),
     )
@@ -185,8 +186,27 @@ def test_postgres_heartbeat_is_owner_and_live_lease_guarded() -> None:
     sql = "\n".join(statement for statement, _ in connection.cursor_instance.executed)
     assert "lease_owner = %s" in sql
     assert "lease_expires_at > %s" in sql
+    assert "attempt = %s" in sql
     assert "status IN ('leased', 'running')" in sql
     assert task.lease_owner == "worker-1"
+
+
+def test_postgres_start_is_attempt_fenced_and_transitions_only_leased_tasks() -> None:
+    connection = RecordingConnection([metadata_row(status="running")])
+    repository = PostgresAgentTaskRepository(connection)
+
+    task = repository.start(
+        "site-a",
+        "task-1",
+        worker_id="worker-1",
+        expected_attempt=1,
+        now=NOW,
+    )
+
+    sql = "\n".join(statement for statement, _ in connection.cursor_instance.executed)
+    assert "attempt = %s" in sql
+    assert "status = 'leased'" in sql
+    assert task.status is TaskStatus.RUNNING
 
 
 def test_postgres_failure_uses_attempt_count_for_retry_or_dead_letter() -> None:
@@ -206,6 +226,7 @@ def test_postgres_failure_uses_attempt_count_for_retry_or_dead_letter() -> None:
         "site-a",
         "task-1",
         worker_id="worker-1",
+        expected_attempt=1,
         now=NOW,
         retry_at=NOW + timedelta(minutes=5),
         classification=FailureClassification.TOOL_FAILURE,
@@ -231,6 +252,7 @@ def test_postgres_failure_uses_attempt_count_for_retry_or_dead_letter() -> None:
         "site-a",
         "task-1",
         worker_id="worker-1",
+        expected_attempt=3,
         now=NOW,
         retry_at=NOW + timedelta(minutes=5),
         classification=FailureClassification.TOOL_FAILURE,
@@ -239,3 +261,36 @@ def test_postgres_failure_uses_attempt_count_for_retry_or_dead_letter() -> None:
     dead_sql = "\n".join(statement for statement, _ in dead_connection.cursor_instance.executed)
     assert "INSERT INTO agent_runtime.dead_letter" in dead_sql
     assert terminal.status is TaskStatus.DEAD_LETTER
+
+
+def test_postgres_claim_for_execution_is_single_transaction_running_and_payload_redacted() -> None:
+    payload = {
+        "schema_version": "local-pilot-agent-task-v1",
+        "evidence_refs": ["evidence-1"],
+        "fact_version_refs": [{"fact_id": "fact-1", "fact_version": 1}],
+        "subject": {"revision": 1},
+        "request": {
+            "requested_by": "sales-agent",
+            "decision_ref": "decision-1",
+            "expected_action_type": "internal.work_item.propose",
+            "candidate_refs": [],
+        },
+    }
+    connection = RecordingConnection([metadata_row(status="running") + (payload,)])
+    repository = PostgresAgentTaskRepository(connection)
+
+    claimed = repository.claim_for_execution(
+        "site-a",
+        worker_id="worker-1",
+        now=NOW,
+        lease_duration=timedelta(seconds=30),
+    )
+
+    sql = "\n".join(statement for statement, _ in connection.cursor_instance.executed)
+    assert connection.transactions == 1
+    assert "FOR UPDATE SKIP LOCKED" in sql
+    assert "status = 'running'" in sql
+    assert "task.payload" in sql
+    assert claimed is not None
+    assert claimed.metadata.status is TaskStatus.RUNNING
+    assert "evidence-1" not in repr(claimed)

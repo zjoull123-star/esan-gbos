@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "proposal_id": "product-proposal-SYNTH-INVALID",
+  "agent_kind": "product",
+  "action_type": "internal.work_item.propose",
+  "status": "proposed",
+  "subject_ref": "FEEDBACK-SYNTH-001",
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "confidence": 0.8,
+  "requires_human_review": true,
+  "payload": {
+    "title": "Forbidden delivery promise",
+    "summary": "This shape must fail.",
+    "suggested_work_item": "Internal review only.",
+    "delivery_date": "2026-08-20"
+  }
+}

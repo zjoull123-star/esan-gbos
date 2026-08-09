@@ -1,0 +1,12 @@
+{
+  "doctype": "DocType",
+  "name": "GBOS Informal Evidence Ref",
+  "module": "GBOS",
+  "istable": 1,
+  "editable_grid": 1,
+  "field_order": ["evidence_ref", "locator_ref"],
+  "fields": [
+    {"fieldname": "evidence_ref", "label": "Evidence Reference", "fieldtype": "Data", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "locator_ref", "label": "Locator Reference", "fieldtype": "Data", "reqd": 1, "in_list_view": 1}
+  ]
+}

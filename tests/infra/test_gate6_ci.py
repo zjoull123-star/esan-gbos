@@ -36,3 +36,24 @@ def test_ci_keeps_gate6_tools_inert_and_uploads_only_sanitized_control_logs() ->
     assert "deploy" not in gate6_job.lower()
     assert "production credentials" not in gate6_job.lower()
     assert "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f" in gate6_job
+
+
+def test_gate6_prepares_locked_python_and_dependencies_before_offline_commands() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    gate6_job = workflow.split("  gate6-controls:\n", 1)[1]
+
+    install_index = gate6_job.index("uv python install 3.14.2")
+    sync_index = gate6_job.index("uv sync --frozen")
+    first_offline_index = gate6_job.index("uv run --offline")
+
+    assert install_index < sync_index < first_offline_index
+
+
+def test_frappe_vue_playwright_fetches_full_history_for_gate4_closure() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    frappe_job = workflow.split("  frappe-vue-playwright:\n", 1)[1].split("\n  gitleaks:\n", 1)[0]
+    checkout_step = frappe_job.split(
+        "      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803", 1
+    )[1].split("\n      - ", 1)[0]
+
+    assert "fetch-depth: 0" in checkout_step

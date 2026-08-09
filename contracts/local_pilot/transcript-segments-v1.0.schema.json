@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/local-pilot/v1.0/transcript-segments.schema.json",
+  "title": "TranscriptSegments v1.0",
+  "description": "Reference-only segments emitted by the pinned offline local speech boundary.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "transcript_id",
+    "site_id",
+    "source_evidence_ref",
+    "model",
+    "language",
+    "segments",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "transcript_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+    },
+    "source_evidence_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^evidence://[A-Za-z0-9][A-Za-z0-9._~:/-]*$"
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "name",
+        "version",
+        "sha256"
+      ],
+      "properties": {
+        "provider": {
+          "const": "local_faster_whisper"
+        },
+        "name": {
+          "const": "large-v3-turbo"
+        },
+        "version": {
+          "const": "large-v3-turbo-ct2-local-v1"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "allOf": [
+            {
+              "not": {
+                "pattern": "^([a-f0-9])\\1{63}$"
+              }
+            },
+            {
+              "not": {
+                "pattern": "^([a-f0-9]{2})\\1{31}$"
+              }
+            },
+            {
+              "not": {
+                "pattern": "^([a-f0-9]{4})\\1{15}$"
+              }
+            },
+            {
+              "not": {
+                "pattern": "^([a-f0-9]{8})\\1{7}$"
+              }
+            },
+            {
+              "not": {
+                "pattern": "^([a-f0-9]{16})\\1{3}$"
+              }
+            },
+            {
+              "not": {
+                "pattern": "^([a-f0-9]{32})\\1$"
+              }
+            }
+          ],
+          "not": {
+            "enum": [
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            ]
+          }
+        }
+      }
+    },
+    "language": {
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(?:-[A-Z]{2})?$"
+    },
+    "segments": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "segment_id",
+          "start_ms",
+          "end_ms",
+          "speaker",
+          "confidence",
+          "text_ref",
+          "evidence_ref"
+        ],
+        "properties": {
+          "segment_id": {
+            "type": "string",
+            "pattern": "^segment_[0-9]{6}$"
+          },
+          "start_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7200000
+          },
+          "end_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7200000
+          },
+          "speaker": {
+            "type": "string",
+            "enum": [
+              "Speaker 1",
+              "Speaker 2",
+              "unknown"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "text_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^localtext://[A-Za-z0-9][A-Za-z0-9._~:/-]*$"
+          },
+          "evidence_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^evidence://[A-Za-z0-9][A-Za-z0-9._~:/-]*$"
+          }
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

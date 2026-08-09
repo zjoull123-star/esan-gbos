@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+MANIFEST="${DEFAULT_MANIFEST}"
+acknowledged=false
+while (( $# > 0 )); do
+  case "$1" in
+    --manifest)
+      [[ $# -ge 2 ]] || { echo "--manifest requires a path" >&2; exit 64; }
+      MANIFEST="$2"
+      shift
+      ;;
+    --acknowledge-synthetic)
+      acknowledged=true
+      ;;
+    *)
+      echo "Usage: scripts/local-pilot/start-synthetic --acknowledge-synthetic [--manifest PATH]" >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+if [[ "${acknowledged}" != "true" ]]; then
+  echo "Synthetic runtime requires --acknowledge-synthetic." >&2
+  exit 64
+fi
+if [[ -e "${EMERGENCY_STOP_FILE}" ]]; then
+  echo "Emergency-stop latch is active; explicit acknowledgement is required." >&2
+  exit 78
+fi
+
+"${SCRIPT_DIR}/preflight" \
+  --repo-root "${REPO_ROOT}" \
+  --manifest "${MANIFEST}" \
+  --synthetic \
+  --require-runtime-images
+
+GBOS_SECRET_DIR="$("${SCRIPT_DIR}/prepare-secrets" --manifest "${MANIFEST}")"
+export GBOS_SECRET_DIR
+mkdir -p -- "${RUNTIME_DIR}"
+chmod 700 "${RUNTIME_DIR}"
+printf '%s\n' "${GBOS_SECRET_DIR}" > "${SECRET_DIR_RECORD}"
+chmod 600 "${SECRET_DIR_RECORD}"
+
+started=false
+rollback() {
+  if [[ "${started}" != "true" ]]; then
+    cleanup_config_dir
+    cleanup_secret_dir
+  fi
+}
+trap rollback EXIT HUP INT TERM
+
+config_tmp_root="${TMPDIR:-/tmp}"
+config_tmp_root="${config_tmp_root%/}"
+GBOS_CONFIG_DIR="$(mktemp -d "${config_tmp_root}/gbos-local-pilot-config.XXXXXX")"
+export GBOS_CONFIG_DIR
+printf '%s\n' "${GBOS_CONFIG_DIR}" > "${CONFIG_DIR_RECORD}"
+chmod 600 "${CONFIG_DIR_RECORD}"
+"${SCRIPT_DIR}/render-config" \
+  --manifest "${MANIFEST}" \
+  --output-dir "${GBOS_CONFIG_DIR}" \
+  --synthetic-runtime
+
+GBOS_LOCAL_PILOT_MANIFEST="${GBOS_CONFIG_DIR}/local-pilot-manifest.json"
+export GBOS_LOCAL_PILOT_MANIFEST
+
+GBOS_CONNECTOR_KILL_SWITCH="true"
+GBOS_MODEL_KILL_SWITCH="true"
+GBOS_MODEL_PROJECTION_KILL_SWITCH="true"
+GBOS_DEEPSEEK_EGRESS_ENABLED="false"
+GBOS_MATERIALIZATION_KILL_SWITCH="false"
+GBOS_EXTERNAL_SEND_ENABLED="false"
+export \
+  GBOS_CONNECTOR_KILL_SWITCH \
+  GBOS_MODEL_KILL_SWITCH \
+  GBOS_MODEL_PROJECTION_KILL_SWITCH \
+  GBOS_DEEPSEEK_EGRESS_ENABLED \
+  GBOS_MATERIALIZATION_KILL_SWITCH \
+  GBOS_EXTERNAL_SEND_ENABLED
+
+profile_args=(--profile runtime)
+synthetic_services=(
+  context-api
+  agent-api
+  observer-api
+  frappe-worker
+  frappe-scheduler
+  pwa
+)
+compose "${profile_args[@]}" config --quiet
+compose --profile runtime up -d --wait \
+  postgres \
+  mariadb \
+  redis-cache \
+  redis-queue \
+  frappe-configurator \
+  frappe-site \
+  frappe-backend \
+  frappe-websocket
+compose --profile runtime run --rm migrations
+compose --profile runtime --profile materializer-bootstrap run --rm --no-deps frappe-materializer-bootstrap
+compose "${profile_args[@]}" up -d --wait "${synthetic_services[@]}"
+"${SCRIPT_DIR}/bootstrap-synthetic-user" --acknowledge-synthetic --manifest "${MANIFEST}"
+
+started=true
+trap - EXIT HUP INT TERM
+echo "Synthetic local core, test fixtures, and Frappe/PWA are running; channels and models remain disabled."

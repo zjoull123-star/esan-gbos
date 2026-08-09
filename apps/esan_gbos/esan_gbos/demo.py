@@ -178,6 +178,7 @@ def seed(
                     party_profile,
                     update_modified=False,
                 )
+        frappe.db.set_default("setup_complete", 1)
         frappe.db.commit()
     except Exception:
         frappe.db.rollback()

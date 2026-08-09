@@ -5,41 +5,72 @@ const SALES_ROLES = ["Sales Manager", "Sales User"] as const;
 const PURCHASE_ROLES = ["Purchase Manager", "Buyer"] as const;
 const PRODUCT_ROLES = ["Product/R&D"] as const;
 const REVIEW_ROLES = ["Reviewer"] as const;
+const INTEGRATION_ROLES = ["Integration Admin"] as const;
+const COMMUNICATION_ROLES = [...CEO_ROLES, ...SALES_ROLES] as const;
+const OVERVIEW_ROLES = [
+  ...CEO_ROLES,
+  ...SALES_ROLES,
+  ...PURCHASE_ROLES,
+  ...PRODUCT_ROLES,
+  ...REVIEW_ROLES,
+  ...INTEGRATION_ROLES,
+] as const;
 
 export const APP_ROUTES = [
   {
+    path: "/gbos",
+    name: "overview",
+    component: () => import("./views/OverviewView.vue"),
+    meta: { roles: OVERVIEW_ROLES },
+  },
+  {
     path: "/gbos/ceo",
     name: "ceo",
-    component: () => import("./views/WorkspaceView.vue"),
-    props: { workspace: "ceo" },
+    component: () => import("./views/CeoDashboardView.vue"),
     meta: { roles: CEO_ROLES },
   },
   {
     path: "/gbos/sales",
     name: "sales",
-    component: () => import("./views/WorkspaceView.vue"),
-    props: { workspace: "sales" },
-    meta: { roles: SALES_ROLES },
+    component: () => import("./views/SalesWorkspaceView.vue"),
+    meta: { roles: [...CEO_ROLES, ...SALES_ROLES] },
   },
   {
     path: "/gbos/purchase",
     name: "purchase",
-    component: () => import("./views/WorkspaceView.vue"),
-    props: { workspace: "purchase" },
-    meta: { roles: PURCHASE_ROLES },
+    component: () => import("./views/PurchaseWorkspaceView.vue"),
+    meta: { roles: [...CEO_ROLES, ...PURCHASE_ROLES] },
   },
   {
     path: "/gbos/product",
     name: "product",
-    component: () => import("./views/WorkspaceView.vue"),
-    props: { workspace: "product" },
-    meta: { roles: PRODUCT_ROLES },
+    component: () => import("./views/ProductWorkspaceView.vue"),
+    meta: { roles: [...CEO_ROLES, ...PRODUCT_ROLES] },
   },
   {
     path: "/gbos/review",
     name: "review",
     component: () => import("./views/ReviewQueueView.vue"),
-    meta: { roles: REVIEW_ROLES },
+    meta: { roles: [...CEO_ROLES, ...REVIEW_ROLES] },
+  },
+  {
+    path: "/gbos/integrations",
+    name: "integrations",
+    component: () => import("./views/IntegrationsView.vue"),
+    meta: { roles: [...CEO_ROLES, ...INTEGRATION_ROLES] },
+  },
+  {
+    path: "/gbos/communications",
+    name: "communications",
+    component: () => import("./views/CommunicationsView.vue"),
+    meta: { roles: COMMUNICATION_ROLES },
+  },
+  {
+    path: "/gbos/communications/:id",
+    name: "communication-detail",
+    component: () => import("./views/CommunicationDetailView.vue"),
+    props: true,
+    meta: { roles: COMMUNICATION_ROLES },
   },
   {
     path: "/gbos/review/:id",

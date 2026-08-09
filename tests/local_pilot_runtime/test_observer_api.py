@@ -1,0 +1,233 @@
+from __future__ import annotations
+
+import importlib
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from services.local_pilot_runtime import observer_api
+from services.local_pilot_runtime.runtime_support import SecretValue
+
+
+class _Connection:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _secret(path: Path, value: str) -> None:
+    path.write_text(value + "\n", encoding="utf-8")
+    os.chmod(path, 0o600)
+
+
+def _files(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+    secret_dir = tmp_path / "secrets"
+    secret_dir.mkdir()
+    postgres_secret = secret_dir / "postgres_password"
+    observer_secret = secret_dir / "observer_bearer"
+    cursor_secret = secret_dir / "cursor_hmac_key"
+    _secret(postgres_secret, "db-secret")
+    _secret(observer_secret, "observer-token")
+    _secret(cursor_secret, "c" * 32)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "mode": "local_pilot",
+                "site_id": "gbos.localhost",
+                "production_go": False,
+                "local_pilot_go": True,
+                "local_pilot_status": "ready",
+                "deepseek": {"enabled": False, "kill_switch": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def component(enabled: bool, kill_switch: bool) -> dict[str, object]:
+        return {
+            "enabled": enabled,
+            "kill_switch": kill_switch,
+            "provider_mode": "disabled",
+            "synthetic_e2e": False,
+        }
+
+    config_path = tmp_path / "runtime.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "site_id": "gbos.localhost",
+                "postgres": {
+                    "host": "127.0.0.1",
+                    "port": 55432,
+                    "database": "gbos_local_pilot",
+                    "user": "gbos_agent_app",
+                    "password_file": str(postgres_secret),
+                    "connect_timeout_seconds": 3,
+                },
+                "auth": {
+                    "agent_api_bearer_file": str(secret_dir / "missing_agent_bearer"),
+                    "context_api_bearer_file": str(secret_dir / "missing_context_bearer"),
+                    "context_client_bearer_file": str(secret_dir / "missing_client_bearer"),
+                    "context_auth_ref": "observer-auth-v1",
+                },
+                "context_endpoint": {
+                    "base_url": "http://127.0.0.1:8001",
+                    "unix_socket": None,
+                },
+                "listen": {
+                    "host": "127.0.0.1",
+                    "agent_api_port": 8002,
+                    "context_api_port": 8001,
+                },
+                "components": {
+                    "agent_api": component(False, True),
+                    "context_api": component(False, True),
+                    "agent_worker": component(False, True),
+                    "model_worker": component(False, True),
+                },
+                "worker": {
+                    "worker_id": "observer-api-local-1",
+                    "idle_delay_seconds": 0.1,
+                    "heartbeat_interval_seconds": 1.0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return manifest_path, config_path, observer_secret, cursor_secret
+
+
+def test_observer_runtime_composes_real_health_without_model_projection() -> None:
+    runtime = observer_api.build_postgres_runtime(
+        connection=_Connection(),
+        bearer_token=SecretValue("observer-token"),
+        auth_ref="observer-auth-v1",
+        cursor_secret=SecretValue("c" * 32),
+        bind_host="/run/gbos/sockets/observer.sock",
+        network_mode="unix_socket",
+    )
+
+    health = TestClient(runtime.app).get("/health")
+
+    assert health.status_code == 200
+    assert health.json() == {
+        "status": "ok",
+        "runtime_enabled": True,
+        "kill_switch": False,
+        "safe_reason_code": None,
+        "external_send": False,
+        "formal_business_commands": False,
+        "network_mode": "unix_socket",
+        "authenticated_internal_api": True,
+    }
+    assert runtime.projection_repository is None
+    assert runtime.projection_publisher is None
+    with pytest.raises(RuntimeError, match="disabled"):
+        runtime.outbox._publisher(object(), "event-1", "idem-1")
+
+
+def test_observer_main_starts_injected_server_and_closes_connection(tmp_path: Path) -> None:
+    manifest_path, config_path, observer_secret, cursor_secret = _files(tmp_path)
+    connection = _Connection()
+    seen: list[tuple[FastAPI, dict[str, object]]] = []
+
+    result = observer_api.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_LISTEN_UNIX_SOCKET": "/run/gbos/sockets/observer.sock",
+        },
+        observer_bearer_file=observer_secret,
+        observer_auth_ref="observer-auth-v1",
+        cursor_secret_file=cursor_secret,
+        connector=lambda **_: connection,
+        server_runner=lambda app, **kwargs: seen.append((app, kwargs)),
+    )
+
+    assert result == 0
+    assert len(seen) == 1
+    assert seen[0][1] == {
+        "host": "127.0.0.1",
+        "port": 8003,
+        "unix_socket": Path("/run/gbos/sockets/observer.sock"),
+        "network_mode": "unix_socket",
+    }
+    assert TestClient(seen[0][0]).get("/health").json()["status"] == "ok"
+    assert connection.closed is True
+
+
+def test_observer_main_defaults_fail_closed_before_postgres_and_do_not_print_secrets(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest_path, config_path, _, cursor_secret = _files(tmp_path)
+    connect_calls: list[dict[str, Any]] = []
+
+    result = observer_api.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        environ={"GBOS_LOCAL_RUNTIME_ENABLED": "true"},
+        cursor_secret_file=cursor_secret,
+        connector=lambda **kwargs: connect_calls.append(kwargs),
+        server_runner=lambda *_args, **_kwargs: None,
+    )
+
+    assert result == 78
+    assert connect_calls == []
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+    assert "observer-token" not in captured.out + captured.err
+
+
+def test_observer_main_rejects_unsafe_uds_before_postgres(tmp_path: Path) -> None:
+    manifest_path, config_path, observer_secret, cursor_secret = _files(tmp_path)
+    connect_calls: list[dict[str, Any]] = []
+
+    result = observer_api.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_LISTEN_UNIX_SOCKET": "/run/gbos/observer.sock",
+        },
+        observer_bearer_file=observer_secret,
+        observer_auth_ref="observer-auth-v1",
+        cursor_secret_file=cursor_secret,
+        connector=lambda **kwargs: connect_calls.append(kwargs),
+        server_runner=lambda *_args, **_kwargs: None,
+    )
+
+    assert result == 78
+    assert connect_calls == []
+
+
+def test_observer_default_app_is_import_safe_and_not_ready() -> None:
+    health = TestClient(observer_api.app).get("/health")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "stopped"
+    assert health.json()["runtime_enabled"] is False
+
+
+def test_observer_module_reload_does_not_touch_database_or_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*_: object, **__: object) -> None:
+        raise AssertionError("import attempted DB or network")
+
+    monkeypatch.setattr("socket.socket.connect", forbidden)
+    monkeypatch.setattr("psycopg.connect", forbidden)
+
+    importlib.reload(observer_api)

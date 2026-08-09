@@ -1,0 +1,276 @@
+{
+  "schema_version": "1.0",
+  "evidence_id": "local-pilot-responsive-interface-20260809",
+  "captured_at": "2026-08-08T20:12:31Z",
+  "commit_sha": "64dc48cb5d6efb62c662f638d8da5f5c12c3a7de",
+  "commit_scope": "historical source/runtime baseline retained for the compact evidence schema",
+  "validation_reference_commit": "2b775ddd7aab116d6da288ac0c51efc999333a3e",
+  "evidence_commit_predecessor": "2b775ddd7aab116d6da288ac0c51efc999333a3e",
+  "validation_reference_role": "responsive frontend, local image lock, and final regression predecessor before this evidence-only commit",
+  "environment": {
+    "host_scope": "current Mac local runtime",
+    "runtime_architecture": "linux/arm64 containers",
+    "data_mode": "synthetic only",
+    "business_external_systems_contacted": false,
+    "build_and_security_registry_network_used": true,
+    "secrets_retained_in_evidence": false
+  },
+  "security_scan": {
+    "sequence": [
+      {
+        "step": "initial_trivy_scan",
+        "finding": "cryptography 46.0.7",
+        "high_findings": 3,
+        "result": "remediation_required"
+      },
+      {
+        "step": "remediation",
+        "action": "upgrade and lock cryptography",
+        "version": "50.0.0",
+        "result": "applied"
+      },
+      {
+        "step": "trivy_rescan",
+        "scope": [
+          "uv dependencies",
+          "pnpm dependencies",
+          "npm dependencies",
+          "infra/dev/Containerfile.final",
+          "infra/local/Containerfile.runtime"
+        ],
+        "vulnerabilities": 0,
+        "secrets": 0,
+        "misconfigurations": 0,
+        "exit_code": 0
+      },
+      {
+        "step": "repository_secret_scan",
+        "command": "scripts/dev/secret-scan",
+        "exit_code": 0
+      }
+    ],
+    "production_authorization": false,
+    "carried_forward_from_previous_snapshot": true,
+    "dependency_and_container_scan_rerun": false,
+    "repository_secret_scan_current": {
+      "captured_at": "2026-08-08T20:12:31Z",
+      "exit_code": 0,
+      "result": "no_supported_patterns_detected"
+    }
+  },
+  "verdict": {
+    "formal": {
+      "composition_status": "not_composed",
+      "local_pilot_go": false,
+      "preflight_require_go": {
+        "command": "scripts/local-pilot/preflight --require-go",
+        "exit_code": 78,
+        "verdict": "no_go"
+      },
+      "production": "no_go",
+      "real_channels": "no_go",
+      "real_deepseek": "no_go",
+      "kingdee": "no_go",
+      "cloud_deployment": "no_go"
+    },
+    "synthetic_core": {
+      "verdict": "local_synthetic_observed",
+      "scope": "Frappe/PWA plus Context, Agent, and Observer only",
+      "channels_enabled": false,
+      "models_enabled": false,
+      "media_enabled": false,
+      "tunnel_enabled": false,
+      "formal_gate_changed": false
+    }
+  },
+  "runtime": {
+    "loopback_only": true,
+    "ports": {
+      "pwa": "127.0.0.1:58080",
+      "context": "127.0.0.1:58001",
+      "agent": "127.0.0.1:58002",
+      "observer": "127.0.0.1:58003",
+      "postgres": "127.0.0.1:55432",
+      "mariadb": "127.0.0.1:53306"
+    },
+    "networks": {
+      "local-internal": {
+        "driver": "bridge",
+        "internal": false,
+        "enable_ip_masquerade": false,
+        "deepseek_https_probe": {
+          "endpoint": "api.deepseek.com:443",
+          "containers": ["pwa", "context", "agent", "observer"],
+          "result": "blocked"
+        }
+      },
+      "webhook-tunnel": {
+        "internal": true
+      }
+    }
+  },
+  "frappe_site": {
+    "image_lock_digest": "sha256:fdbaf8af7da81958de22798e33d9bade3c7c09d57c59faa69d39b56ab4e99542",
+    "image_source_commit": "9e0a0aa698de01c2ba0e87775e203d09fddcf305",
+    "image_created_at": "2026-08-09T04:06:07.648513297+08:00",
+    "setup_complete": 1,
+    "versions": {
+      "frappe": "16.30.0",
+      "erpnext": "16.31.0",
+      "crm": "1.81.0",
+      "esan_gbos": "0.1.0"
+    }
+  },
+  "persistence_and_fixtures": {
+    "migrations": {
+      "checksum_consistent_runs": 2,
+      "second_run_behavior": "no_op"
+    },
+    "materializer_bootstrap": "skipped_idempotent",
+    "fixture_second_run": {
+      "all_records_skipped": true,
+      "counts": {
+        "User": 13,
+        "Team": 5,
+        "CRM Organization": 500,
+        "CRM Contact": 500,
+        "CRM Lead": 500,
+        "CRM Deal": 500,
+        "Party Profile": 500,
+        "Product Brief": 240,
+        "Sample Project": 240,
+        "Iteration": 240,
+        "Shipment": 240,
+        "Feedback": 240,
+        "Demand": 240,
+        "Sourcing": 240,
+        "Work Item": 280,
+        "Review Case": 280
+      }
+    }
+  },
+  "browser_validation": {
+    "synthetic_ceo": {
+      "tool": "Playwright",
+      "user": "synthetic.ceo@example.invalid",
+      "route": "/gbos/ceo",
+      "result": "success",
+      "visible_text": ["经营总览", "演示 / 合成数据"],
+      "viewports_px": [320, 375, 720, 768, 1024, 1440],
+      "horizontal_overflow": false,
+      "console_errors": 0,
+      "cache": {
+        "static_precache_entries": 51,
+        "api_cached": false
+      }
+    },
+    "frontend_harness": {
+      "tool": "Playwright",
+      "passed": 21,
+      "skipped": 0,
+      "failed": 0,
+      "assertions": {
+        "responsive_widths_px": [320, 375, 720, 768, 1024, 1440],
+        "api_cache": false,
+        "gbos_business_storage": false,
+        "offline_fail_closed": "pass"
+      }
+    },
+    "frappe_site": {
+      "tool": "Playwright",
+      "passed": 4,
+      "skipped": 17,
+      "failed": 0,
+      "skip_reason": "frontend_harness_only_cases",
+      "ceo_storage_state": {
+        "scope": "temporary_synthetic_test_only",
+        "retained_after_test": false
+      },
+      "assertions": {
+        "five_workbenches_axe": "pass",
+        "viewports_px": [375, 768, 1440],
+        "keyboard_order": "pass",
+        "ceo_synthetic_values_and_provenance": "pass",
+        "channels_disabled_empty_states": "pass"
+      }
+    },
+    "real_site_role_smoke": {
+      "tool": "Playwright programmatic browser",
+      "passed_role_cases": 7,
+      "failed_role_cases": 0,
+      "roles": [
+        "CEO",
+        "Sales User",
+        "Purchase Manager",
+        "Buyer",
+        "Product/R&D",
+        "Reviewer",
+        "Integration Admin"
+      ],
+      "ceo_first_level_menus": 7,
+      "ceo_detail_routes": ["Party 360", "Sample", "Review Case"],
+      "normal_role_denied_routes_verified": 6,
+      "navigation_scope": "pass",
+      "console_errors": 0,
+      "page_errors": 0,
+      "request_failures": 0,
+      "api_errors": 0,
+      "api_cached": false,
+      "gbos_business_storage": false,
+      "temporary_integration_role_removed": true,
+      "storage_state_files_removed": true
+    },
+    "console_errors": 0,
+    "console_warnings": "not_asserted_in_current_browser_run"
+  },
+  "verification_snapshot": {
+    "status": "captured_snapshot_not_final_signoff",
+    "final_local_validation": true,
+    "pytest": {
+      "passed": 2163,
+      "skipped": 37,
+      "failed": 0,
+      "warnings": 1
+    },
+    "python_static": {
+      "ruff": "pass_all",
+      "format": "pass_453_files",
+      "mypy": "pass",
+      "mypy_service_source_files": 117
+    },
+    "frontend": {
+      "lint": "pass",
+      "typecheck": "pass",
+      "vitest_passed": 172,
+      "build": "pass"
+    },
+    "playwright": {
+      "frontend_harness_passed": 21,
+      "frappe_site_passed": 4,
+      "frappe_site_skipped": 17,
+      "frappe_site_skip_reason": "frontend_harness_only_cases",
+      "real_site_role_smoke_passed": 7
+    },
+    "release_signoff": false
+  },
+  "recoverable_failure": {
+    "first_partial_site": "moved_recoverably",
+    "data_volume_path": ".failed-gbos.localhost-20260808T033521",
+    "deleted": false
+  },
+  "limitations": [
+    "This is a local synthetic evidence snapshot, not a completed 72-hour pilot.",
+    "The formal composition remains not_composed and formal preflight remains a required No-Go gate.",
+    "No real channel, DeepSeek, Kingdee, cloud deployment, production credential, or external send was used.",
+    "The final local verification counts above are captured at the validation reference commit; they are not release sign-off.",
+    "Thirty-seven opt-in PostgreSQL integration tests were skipped because their explicit environment flags were not enabled; they are not reported as passed.",
+    "The current certification did not rerun the earlier dependency/container security scan; its result is carried forward and is not current-HEAD scan evidence.",
+    "Synthetic fixture values and local browser success do not establish business outcomes or production availability."
+  ],
+  "redaction": {
+    "secret_values": "omitted",
+    "cookies": "omitted",
+    "keychain_values": "omitted",
+    "full_logs": "omitted"
+  }
+}

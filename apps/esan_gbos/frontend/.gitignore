@@ -3,3 +3,5 @@ dist/
 .playwright-cli/
 playwright-report/
 test-results/
+auto-imports.d.ts
+components.d.ts

@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/local-pilot/v1.0/ceo-proposal.schema.json",
+  "title": "CEOProposalOutput v1.0",
+  "description": "Closed, internal-only non-official executive observation draft.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "agent_kind",
+    "action_type",
+    "status",
+    "subject_ref",
+    "evidence_refs",
+    "confidence",
+    "requires_human_review",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "proposal_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "agent_kind": {
+      "const": "ceo"
+    },
+    "action_type": {
+      "const": "internal.ai_draft.propose"
+    },
+    "status": {
+      "const": "proposed"
+    },
+    "subject_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "requires_human_review": {
+      "const": true
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "summary",
+        "synthetic",
+        "display_label",
+        "source_mode",
+        "is_official_metric",
+        "is_official_forecast"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "synthetic": {
+          "const": true
+        },
+        "display_label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "source_mode": {
+          "const": "local_pilot"
+        },
+        "is_official_metric": {
+          "const": false
+        },
+        "is_official_forecast": {
+          "const": false
+        }
+      }
+    }
+  }
+}

@@ -1,4 +1,14 @@
 import type {
+  AiDraftDetailPayload,
+  AiDraftListPayload,
+  AiDraftListQuery,
+  AiDraftSubmitCommand,
+  CommunicationDetailPayload,
+  CommunicationListPayload,
+  CommunicationListQuery,
+  ConnectorCommand,
+  ConnectorListPayload,
+  ConnectorStatus,
   ContractError,
   ContractErrorCode,
   ReviewCaseDetailPayload,
@@ -10,10 +20,12 @@ import type {
   SourcingCreateCommand,
   SuccessEnvelope,
   MetricDashboardPayload,
+  ModelUsage,
+  V4SuccessEnvelope,
   WorkItemListQuery,
   WorkItemTransitionCommand,
 } from "./types";
-import { readGbosBootstrap } from "@/bootstrap";
+import { readGbosBootstrap } from "../bootstrap";
 import { parseMetricDashboard } from "./metrics";
 
 export const BFF_ENDPOINTS = {
@@ -37,6 +49,20 @@ export const BFF_V3_ENDPOINTS = {
   metricsDashboard: "/api/method/esan_gbos.api.v3.metrics.dashboard",
 } as const;
 
+export const BFF_V4_ENDPOINTS = {
+  integrationListStatus: "/api/method/esan_gbos.api.v4.integration.list_status",
+  integrationPause: "/api/method/esan_gbos.api.v4.integration.pause",
+  integrationResume: "/api/method/esan_gbos.api.v4.integration.resume",
+  integrationReplay: "/api/method/esan_gbos.api.v4.integration.replay",
+  communicationList: "/api/method/esan_gbos.api.v4.communication.list",
+  communicationGet: "/api/method/esan_gbos.api.v4.communication.get",
+  modelGetUsage: "/api/method/esan_gbos.api.v4.model.get_usage",
+  aiDraftList: "/api/method/esan_gbos.api.v4.ai_draft.list",
+  aiDraftGet: "/api/method/esan_gbos.api.v4.ai_draft.get",
+  aiDraftSubmitForReview:
+    "/api/method/esan_gbos.api.v4.ai_draft.submit_for_review",
+} as const;
+
 type ClientErrorCode =
   | ContractErrorCode
   | "csrf_missing"
@@ -48,6 +74,7 @@ type ClientErrorCode =
 const ERROR_COPY: Record<ClientErrorCode, string> = {
   authentication_required: "登录已失效，请重新登录后再试。",
   permission_denied: "当前角色无权执行此操作。",
+  csrf_failed: "安全会话校验失败，请刷新页面后重试。",
   method_not_allowed: "该操作不受支持。",
   invalid_dto: "提交内容不符合要求，请检查后重试。",
   invalid_query: "查询条件无效，请调整后重试。",
@@ -153,6 +180,25 @@ const normalizeEnvelope = <T>(payload: unknown, status: number): SuccessEnvelope
   return value as unknown as SuccessEnvelope<T>;
 };
 
+const normalizeV4Envelope = <T>(
+  payload: unknown,
+  status: number,
+): V4SuccessEnvelope<T> => {
+  const value = unwrapFrappePayload(payload);
+  if (!isRecord(value) || !("data" in value) || !isRecord(value.meta)) {
+    throw new BffError("invalid_response", { status });
+  }
+  const requestId =
+    typeof value.meta.request_id === "string" ? value.meta.request_id : undefined;
+  if (value.meta.schema_version !== "4.0") {
+    throw new BffError("schema_mismatch", { requestId, status });
+  }
+  if (!requestId) {
+    throw new BffError("invalid_response", { status });
+  }
+  return value as unknown as V4SuccessEnvelope<T>;
+};
+
 const errorFromPayload = (payload: unknown, status: number): BffError => {
   const value = unwrapFrappePayload(payload);
   const candidate = isRecord(value) && "error" in value ? value.error : undefined;
@@ -226,6 +272,7 @@ export const createBffClient = (dependencies: BffDependencies = {}) => {
   const fetcher = dependencies.fetcher ?? defaultFetcher;
   const isOnline = dependencies.isOnline ?? defaultOnline;
   const getCsrfToken = dependencies.getCsrfToken ?? defaultCsrfToken;
+  const pendingV4Commands = new Map<string, Promise<V4SuccessEnvelope<unknown>>>();
 
   const request = async <T>(url: string, init: RequestInit): Promise<SuccessEnvelope<T>> => {
     if (!isOnline()) {
@@ -261,6 +308,38 @@ export const createBffClient = (dependencies: BffDependencies = {}) => {
 
   const get = <T>(url: string) => request<T>(url, { method: "GET" });
 
+  const requestV4 = async <T>(
+    url: string,
+    init: RequestInit,
+  ): Promise<V4SuccessEnvelope<T>> => {
+    if (!isOnline()) {
+      throw new BffError("offline");
+    }
+    let response: Response;
+    try {
+      response = await fetcher(url, {
+        ...init,
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
+          ...init.headers,
+        },
+      });
+    } catch {
+      throw new BffError("network_error");
+    }
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw errorFromPayload(payload, response.status);
+    }
+    return normalizeV4Envelope<T>(payload, response.status);
+  };
+
+  const getV4 = <T>(url: string) => requestV4<T>(url, { method: "GET" });
+
   const post = <T>(url: string, command: Record<string, unknown>) => {
     validateCommandControl(
       command as unknown as { expected_revision: number; idempotency_key: string },
@@ -277,6 +356,37 @@ export const createBffClient = (dependencies: BffDependencies = {}) => {
       },
       body: toFormBody(command),
     });
+  };
+
+  const postV4 = <T>(url: string, command: Record<string, unknown>) => {
+    validateCommandControl(
+      command as unknown as { expected_revision: number; idempotency_key: string },
+    );
+    const csrfToken = getCsrfToken();
+    if (!csrfToken) {
+      return Promise.reject(new BffError("csrf_missing"));
+    }
+    const idempotencyKey = String(command.idempotency_key);
+    const pendingKey = `${url}:${idempotencyKey}`;
+    const existing = pendingV4Commands.get(pendingKey);
+    if (existing) {
+      return existing as Promise<V4SuccessEnvelope<T>>;
+    }
+    const requestPromise = requestV4<T>(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "X-Frappe-CSRF-Token": csrfToken,
+      },
+      body: toFormBody(command),
+    }).finally(() => {
+      pendingV4Commands.delete(pendingKey);
+    });
+    pendingV4Commands.set(
+      pendingKey,
+      requestPromise as Promise<V4SuccessEnvelope<unknown>>,
+    );
+    return requestPromise;
   };
 
   return {
@@ -337,6 +447,72 @@ export const createBffClient = (dependencies: BffDependencies = {}) => {
         data: dashboard,
       } satisfies SuccessEnvelope<MetricDashboardPayload>;
     },
+    listIntegrationStatus: (channel?: string) =>
+      getV4<ConnectorListPayload>(
+        addQuery(BFF_V4_ENDPOINTS.integrationListStatus, { channel }),
+      ),
+    pauseIntegration: (command: ConnectorCommand) =>
+      postV4<ConnectorStatus>(
+        BFF_V4_ENDPOINTS.integrationPause,
+        command as unknown as Record<string, unknown>,
+      ),
+    resumeIntegration: (command: ConnectorCommand) =>
+      postV4<ConnectorStatus>(
+        BFF_V4_ENDPOINTS.integrationResume,
+        command as unknown as Record<string, unknown>,
+      ),
+    replayIntegration: (command: ConnectorCommand) =>
+      postV4<ConnectorStatus>(
+        BFF_V4_ENDPOINTS.integrationReplay,
+        command as unknown as Record<string, unknown>,
+      ),
+    listCommunications: (query: CommunicationListQuery = {}) => {
+      if (query.pageSize !== undefined && (query.pageSize < 1 || query.pageSize > 50)) {
+        throw new BffError("validation_error", {
+          message: "page_size 必须在 1 到 50 之间。",
+        });
+      }
+      return getV4<CommunicationListPayload>(
+        addQuery(BFF_V4_ENDPOINTS.communicationList, {
+          channel: query.channel,
+          classification: query.classification,
+          review_status: query.reviewStatus,
+          cursor: query.cursor,
+          page_size: query.pageSize,
+        }),
+      );
+    },
+    getCommunication: (observationId: string) =>
+      getV4<CommunicationDetailPayload>(
+        addQuery(BFF_V4_ENDPOINTS.communicationGet, {
+          observation_id: observationId,
+        }),
+      ),
+    getModelUsage: (period?: string) =>
+      getV4<ModelUsage>(addQuery(BFF_V4_ENDPOINTS.modelGetUsage, { period })),
+    listAiDrafts: (query: AiDraftListQuery = {}) => {
+      if (query.pageSize !== undefined && (query.pageSize < 1 || query.pageSize > 50)) {
+        throw new BffError("validation_error", {
+          message: "page_size 必须在 1 到 50 之间。",
+        });
+      }
+      return getV4<AiDraftListPayload>(
+        addQuery(BFF_V4_ENDPOINTS.aiDraftList, {
+          status: query.status,
+          cursor: query.cursor,
+          page_size: query.pageSize,
+        }),
+      );
+    },
+    getAiDraft: (draftId: string) =>
+      getV4<AiDraftDetailPayload>(
+        addQuery(BFF_V4_ENDPOINTS.aiDraftGet, { draft_id: draftId }),
+      ),
+    submitAiDraftForReview: (command: AiDraftSubmitCommand) =>
+      postV4<AiDraftDetailPayload>(
+        BFF_V4_ENDPOINTS.aiDraftSubmitForReview,
+        command as unknown as Record<string, unknown>,
+      ),
   };
 };
 

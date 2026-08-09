@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+if [[ "${1:-}" != "--acknowledge-contained" || $# -ne 1 ]]; then
+  echo "Usage: scripts/local-pilot/clear-emergency-stop --acknowledge-contained" >&2
+  exit 64
+fi
+rm -f -- "${EMERGENCY_STOP_FILE}"
+echo "Emergency-stop latch cleared after explicit containment acknowledgement."

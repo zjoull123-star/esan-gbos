@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+read_secret_dir
+read_config_dir
+echo "COMPOSITION: 未组合，不可启动（blocked runtime entrypoints 或镜像身份尚未闭合）。"
+if [[ -e "${EMERGENCY_STOP_FILE}" ]]; then
+  echo "SAFETY: emergency-stop latch is ACTIVE."
+else
+  echo "SAFETY: emergency-stop latch is clear."
+fi
+compose --profile "*" ps

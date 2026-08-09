@@ -4,12 +4,12 @@
   "description": "ESAN 治理型业务操作系统",
   "lang": "zh-CN",
   "dir": "ltr",
-  "start_url": "/gbos/ceo",
+  "start_url": "/gbos",
   "scope": "/gbos/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#f3f0e8",
-  "theme_color": "#12372a",
+  "background_color": "#F6F8FB",
+  "theme_color": "#0B1220",
   "categories": ["business", "productivity"],
   "icons": [
     {

@@ -12,9 +12,24 @@ export interface SuccessEnvelope<T> {
   meta: SuccessMeta;
 }
 
+export interface V4SuccessMeta {
+  request_id: string;
+  schema_version: "4.0";
+  replayed?: boolean;
+  original_request_id?: string;
+  next_cursor?: string | null;
+  page_size?: number;
+}
+
+export interface V4SuccessEnvelope<T> {
+  data: T;
+  meta: V4SuccessMeta;
+}
+
 export type ContractErrorCode =
   | "authentication_required"
   | "permission_denied"
+  | "csrf_failed"
   | "method_not_allowed"
   | "invalid_dto"
   | "invalid_query"
@@ -240,4 +255,145 @@ export interface MetricDashboardPayload {
   synthetic: boolean;
   generated_at: string;
   metrics: GovernedMetric[];
+}
+
+export type ConnectorState = "enabled" | "paused" | "error" | "disabled";
+export type FreshnessState = "fresh" | "stale" | "unknown";
+
+export interface ConnectorStatus {
+  instance_id: string;
+  channel: string;
+  status: ConnectorState;
+  checkpoint_version: number;
+  backlog: number;
+  last_success_at: string | null;
+  safe_error_code: string | null;
+  freshness: FreshnessState;
+  revision: number;
+}
+
+export interface ConnectorListPayload {
+  connectors: ConnectorStatus[];
+}
+
+export interface ConnectorCommand {
+  instance_id: string;
+  expected_revision: number;
+  idempotency_key: string;
+}
+
+export interface CommunicationSummary {
+  observation_id: string;
+  channel: string;
+  occurred_at: string;
+  summary_zh: string;
+  original_language: string;
+  classification: string;
+  review_status: string;
+  team_ref: string | null;
+  party_ref: string | null;
+  evidence_count: number;
+}
+
+export interface EvidenceLocator {
+  ref: string;
+  locator: string;
+}
+
+export interface FactProposal {
+  status: string;
+  confidence: number;
+  type: string;
+  value_display: string;
+}
+
+export interface AssociationSuggestion {
+  type: string;
+  target_ref: string;
+  confidence: number;
+}
+
+export interface V4ModelMetadata {
+  name: "deepseek-v4-flash";
+  version: string;
+}
+
+export interface CommunicationDetail extends CommunicationSummary {
+  evidence: EvidenceLocator[];
+  fact_proposals: FactProposal[];
+  association_suggestions: AssociationSuggestion[];
+  model: V4ModelMetadata;
+  raw_access_allowed: boolean;
+  original_text?: string;
+}
+
+export interface CommunicationListPayload {
+  communications: CommunicationSummary[];
+  next_cursor: string | null;
+}
+
+export interface CommunicationDetailPayload {
+  communication: CommunicationDetail;
+}
+
+export interface CommunicationListQuery {
+  channel?: string;
+  classification?: string;
+  reviewStatus?: string;
+  cursor?: string;
+  pageSize?: number;
+}
+
+export interface UsageCost {
+  currency: "USD";
+  amount: number | null;
+  state: "known" | "partial" | "unknown";
+}
+
+export interface ModelUsage {
+  model: "deepseek-v4-flash";
+  period: string;
+  tokens: number | null;
+  token_state: "known" | "partial" | "unknown";
+  cost: UsageCost;
+  soft_limit_usd: number;
+  hard_limit_usd: number;
+  state: "normal" | "soft_limit" | "hard_limit" | "unknown";
+}
+
+export type AiDraftKind =
+  | "Work Item"
+  | "Review Case"
+  | "CEO Informal Observation";
+
+export interface AiDraft {
+  draft_id: string;
+  kind: AiDraftKind;
+  status: "AI Draft" | "Pending";
+  origin: "AI";
+  subject: string;
+  evidence: EvidenceLocator[];
+  model: V4ModelMetadata;
+  revision: number;
+}
+
+export interface AiDraftListPayload {
+  drafts: AiDraft[];
+  next_cursor: string | null;
+}
+
+export interface AiDraftDetailPayload {
+  draft: AiDraft;
+}
+
+export interface AiDraftListQuery {
+  status?: "AI Draft" | "Pending";
+  cursor?: string;
+  pageSize?: number;
+}
+
+export interface AiDraftSubmitCommand {
+  draft_id: string;
+  expected_revision: number;
+  idempotency_key: string;
 }

@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "mode": "local_pilot",
+  "site_id": "gbos.localhost",
+  "compliance_state": "approved",
+  "retention_days": 365,
+  "production_go": true,
+  "local_pilot_go": true,
+  "local_pilot_status": "running",
+  "capabilities": {
+    "kingdee": true,
+    "cloud_server": true,
+    "cloud_business_storage": true,
+    "external_send": true,
+    "formal_business_commands": true
+  },
+  "deepseek": {
+    "enabled": true,
+    "base_url": "https://third-party.invalid",
+    "model": "fallback-model",
+    "keychain_ref": null,
+    "kill_switch": false,
+    "thinking_default": "enabled",
+    "max_input_tokens": 1000000,
+    "max_output_tokens": 1000000,
+    "soft_limit_usd": 500,
+    "hard_limit_usd": 1000
+  },
+  "channels": {
+    "email": {
+      "enabled": true,
+      "activation_time": null,
+      "backfill_history": true,
+      "credential_ref": null
+    },
+    "wecom": {
+      "enabled": false,
+      "activation_time": null,
+      "backfill_history": false,
+      "credential_ref": null
+    },
+    "whatsapp": {
+      "enabled": true,
+      "activation_time": null,
+      "backfill_history": true,
+      "credential_ref": null,
+      "named_tunnel_ref": null
+    },
+    "media": {
+      "enabled": true,
+      "activation_time": null,
+      "backfill_history": true,
+      "local_only": false,
+      "ffmpeg_sha256": null,
+      "whisper_model_sha256": null
+    }
+  }
+}

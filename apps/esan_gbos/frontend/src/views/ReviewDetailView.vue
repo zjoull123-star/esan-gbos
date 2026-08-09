@@ -1,101 +1,109 @@
 <template>
-  <section class="view">
-    <header class="page-header">
-      <div>
-        <p class="eyebrow">
-          ESAN GBOS · Gate 4
-        </p>
-        <h1>审核案件</h1>
-        <p>核验证据与冻结快照后记录人工决定；系统不会在本页修改业务主体。</p>
-      </div>
-      <RouterLink class="button button--secondary" to="/gbos/review">
-        返回队列
-      </RouterLink>
-    </header>
+  <section class="review-detail-view">
+    <DetailCommandTemplate>
+      <template #header>
+        <PageHeader
+          eyebrow="ESAN GBOS · GATE 4"
+          title="审核案件"
+          description="核对冻结主体快照、版本、哈希、策略与证据引用后，只记录当前案件的人工决定。"
+        >
+          <template #actions>
+            <RouterLink class="review-back-link" to="/gbos/review">
+              返回队列
+            </RouterLink>
+          </template>
+        </PageHeader>
+      </template>
 
-    <StatePanel v-if="state === 'loading' || state === 'idle'" kind="loading" />
-    <StatePanel
-      v-else-if="state === 'offline'"
-      kind="offline"
-      :message="message"
-      @retry="load"
-    />
-    <StatePanel
-      v-else-if="state === 'permission'"
-      kind="permission"
-      :message="message"
-      @retry="load"
-    />
-    <StatePanel
-      v-else-if="state === 'error'"
-      kind="error"
-      :message="message"
-      :request-id="requestId"
-      @retry="load"
-    />
-    <template v-else-if="reviewCase">
-      <DemoBanner v-if="reviewCase.origin === 'Fixture'" />
-      <p v-if="decisionMessage" class="notice notice--success" role="status">
-        {{ decisionMessage }}
-      </p>
-      <p v-if="decisionError" class="notice notice--error" role="alert">
-        {{ decisionError }}
-      </p>
-
-      <div class="review-layout">
-        <article class="evidence-card">
-          <p class="eyebrow">
-            {{ statusLabel }}
-          </p>
-          <h2>{{ reviewCase.title }}</h2>
-          <dl class="status-list">
-            <div>
-              <dt>案件编号</dt>
-              <dd>{{ reviewCase.name }}</dd>
-            </div>
-            <div>
-              <dt>主体</dt>
-              <dd>{{ reviewCase.subject.doctype }} · {{ reviewCase.subject.name }}</dd>
-            </div>
-            <div>
-              <dt>案件 / 主体版本</dt>
-              <dd>{{ reviewCase.case_revision }} / {{ reviewCase.subject.revision }}</dd>
-            </div>
-            <div>
-              <dt>策略</dt>
-              <dd>{{ reviewCase.policy_reference }}</dd>
-            </div>
+      <template v-if="reviewCase" #facts>
+        <div class="review-facts">
+          <div class="review-facts__heading">
+            <p>{{ statusLabel }}</p>
+            <h2>{{ reviewCase.title }}</h2>
+          </div>
+          <dl class="review-fact-rows">
+            <div><dt>案件编号</dt><dd>{{ reviewCase.name }}</dd></div>
+            <div><dt>主体</dt><dd>{{ reviewCase.subject.doctype }} · {{ reviewCase.subject.name }}</dd></div>
+            <div><dt>案件版本</dt><dd>{{ reviewCase.case_revision }}</dd></div>
+            <div><dt>主体版本</dt><dd>{{ reviewCase.subject.revision }}</dd></div>
+            <div><dt>案件哈希</dt><dd><code>{{ reviewCase.case_payload_hash }}</code></dd></div>
+            <div><dt>主体哈希</dt><dd><code>{{ reviewCase.subject.payload_hash }}</code></dd></div>
+            <div><dt>策略</dt><dd>{{ reviewCase.policy_reference }}</dd></div>
           </dl>
-          <section>
-            <h3>冻结主体摘要</h3>
-            <p>
-              {{ snapshotTitle }}
-            </p>
-            <p>{{ snapshotSummary }}</p>
-          </section>
-          <section>
-            <h3>证据引用</h3>
-            <ul class="evidence-ref-list">
-              <li v-for="evidence in reviewCase.evidence" :key="evidence.reference">
-                <strong>{{ evidence.reference }}</strong>
-                <span>{{ evidence.evidence_type }}</span>
-              </li>
-            </ul>
-          </section>
-        </article>
+        </div>
+      </template>
 
+      <template #main>
+        <ResourceBoundary
+          :state="state"
+          :message="boundaryMessage"
+          :request-id="requestId"
+          :empty="!reviewCase"
+          @retry="load"
+        >
+          <div v-if="reviewCase" class="review-detail-stack">
+            <DemoBanner v-if="reviewCase.origin === 'Fixture'" />
+            <p v-if="decisionMessage" class="review-notice review-notice--success" role="status">
+              {{ decisionMessage }}
+            </p>
+            <p v-if="decisionError" class="review-notice review-notice--error" role="alert">
+              {{ decisionError }}
+            </p>
+
+            <article class="review-detail-card" aria-labelledby="snapshot-title">
+              <div class="review-detail-card__heading">
+                <p>READ-ONLY</p>
+                <h2 id="snapshot-title">
+                  完整冻结主体 Snapshot
+                </h2>
+              </div>
+              <p>以下内容是案件引用的冻结快照，本页不会改写该主体。</p>
+              <pre>{{ snapshotJson }}</pre>
+            </article>
+
+            <article class="review-detail-card" aria-labelledby="evidence-title">
+              <div class="review-detail-card__heading">
+                <p>REFERENCES ONLY</p>
+                <h2 id="evidence-title">
+                  证据引用
+                </h2>
+              </div>
+              <p v-if="reviewCase.evidence.length === 0">
+                暂无证据引用。
+              </p>
+              <ul v-else class="review-evidence-list">
+                <li v-for="evidence in reviewCase.evidence" :key="evidence.reference">
+                  <dl class="review-fact-rows">
+                    <div><dt>引用</dt><dd><strong>{{ evidence.reference }}</strong></dd></div>
+                    <div><dt>类型</dt><dd>{{ evidence.evidence_type }}</dd></div>
+                    <div v-if="evidence.revision !== undefined">
+                      <dt>版本</dt><dd>{{ evidence.revision }}</dd>
+                    </div>
+                    <div v-if="evidence.payload_hash">
+                      <dt>哈希</dt><dd><code>{{ evidence.payload_hash }}</code></dd>
+                    </div>
+                  </dl>
+                </li>
+              </ul>
+            </article>
+          </div>
+        </ResourceBoundary>
+      </template>
+
+      <template v-if="reviewCase" #command>
         <ReviewDecisionForm
           v-if="reviewCase.review_status === 'Pending'"
           :submitting="submitting"
           :reset-key="formResetKey"
           @decide="decide"
         />
-        <article v-else class="command-card">
+        <article v-else class="review-ended-card">
+          <p>CASE CLOSED</p>
           <h2>案件已结束</h2>
-          <p>{{ reviewCase.decision_note || "该案件已有人工决定。" }}</p>
+          <span>{{ reviewCase.decision_note || "该案件已有人工决定。" }}</span>
         </article>
-      </div>
-    </template>
+      </template>
+    </DetailCommandTemplate>
   </section>
 </template>
 
@@ -107,7 +115,9 @@ import { useBffClient } from "@/api/injection";
 import type { ReviewCaseDetailPayload } from "@/api/types";
 import DemoBanner from "@/components/DemoBanner.vue";
 import ReviewDecisionForm from "@/components/ReviewDecisionForm.vue";
-import StatePanel from "@/components/StatePanel.vue";
+import ResourceBoundary from "@/components/feedback/ResourceBoundary.vue";
+import DetailCommandTemplate from "@/components/layout/DetailCommandTemplate.vue";
+import PageHeader from "@/components/layout/PageHeader.vue";
 import { useOnlineResource } from "@/composables/useOnlineResource";
 
 const props = defineProps<{ id: string }>();
@@ -135,15 +145,17 @@ const statusLabel = computed(() => {
   } as const;
   return reviewCase.value ? labels[reviewCase.value.review_status] : "";
 });
-const snapshotTitle = computed(() => {
-  const value = reviewCase.value?.subject.snapshot.title;
-  return typeof value === "string" ? value : reviewCase.value?.subject.name ?? "";
-});
-const snapshotSummary = computed(() => {
-  const value = reviewCase.value?.subject.snapshot.summary_zh;
-  return typeof value === "string" ? value : "未提供可展示的中文摘要。";
-});
-const { state, message, requestId, load } = resource;
+const snapshotJson = computed(() =>
+  reviewCase.value
+    ? JSON.stringify(reviewCase.value.subject.snapshot, null, 2)
+    : "",
+);
+const boundaryMessage = computed(() =>
+  resource.state.value === "ready" && !reviewCase.value
+    ? "未找到可审核案件。"
+    : resource.message.value,
+);
+const { state, requestId, load } = resource;
 
 watch(
   () => props.id,
@@ -194,3 +206,170 @@ const decide = async (decision: "Approved" | "Rejected", note: string) => {
   }
 };
 </script>
+
+<style scoped>
+.review-detail-view,
+.review-detail-stack {
+  min-width: 0;
+}
+
+.review-back-link {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-text);
+  background: var(--gbos-surface);
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.review-facts,
+.review-detail-card,
+.review-ended-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-card);
+  background: var(--gbos-surface);
+  box-shadow: var(--gbos-shadow-card);
+}
+
+.review-facts__heading p,
+.review-facts__heading h2,
+.review-detail-card__heading p,
+.review-detail-card__heading h2,
+.review-detail-card > p,
+.review-ended-card p,
+.review-ended-card h2,
+.review-ended-card span,
+.review-notice {
+  margin: 0;
+}
+
+.review-facts__heading p,
+.review-detail-card__heading p,
+.review-ended-card p {
+  color: var(--gbos-accent-text);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.review-facts__heading h2,
+.review-detail-card__heading h2,
+.review-ended-card h2 {
+  margin-top: 3px;
+  color: var(--gbos-text);
+  font-size: 19px;
+  line-height: 1.35;
+}
+
+.review-fact-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.review-fact-rows > div {
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: var(--gbos-radius-control);
+  background: var(--gbos-canvas);
+}
+
+.review-fact-rows dt,
+.review-fact-rows dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.review-fact-rows dt {
+  color: var(--gbos-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.review-fact-rows dd {
+  margin-top: 4px;
+  color: var(--gbos-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.review-detail-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.review-detail-card > p,
+.review-ended-card span {
+  display: block;
+  margin-top: 8px;
+  color: var(--gbos-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.review-detail-card pre {
+  max-width: 100%;
+  margin: 12px 0 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-text);
+  background: var(--gbos-canvas);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.review-evidence-list {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-evidence-list li {
+  min-width: 0;
+  padding-top: 2px;
+  border-top: 1px solid var(--gbos-border);
+}
+
+.review-notice {
+  padding: 10px 12px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-text);
+  background: var(--gbos-canvas);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.review-notice--success {
+  border-color: var(--gbos-accent);
+}
+
+.review-notice--error {
+  border-color: var(--gbos-primary);
+}
+
+@media (max-width: 767px) {
+  .review-back-link {
+    min-height: 44px;
+  }
+
+  .review-fact-rows {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>

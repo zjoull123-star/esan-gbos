@@ -16,6 +16,7 @@ def test_demo_loader_is_explicit_fail_closed_and_idempotent() -> None:
         "gbos_fixture_seed",
         "set_name=",
         "frappe.db.exists",
+        'frappe.db.set_default("setup_complete", 1)',
         "frappe.db.commit",
     ):
         assert required in source

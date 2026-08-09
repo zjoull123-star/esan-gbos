@@ -13,20 +13,22 @@
       <p v-if="requestId" class="state-panel__request">
         请求编号：<code>{{ requestId }}</code>
       </p>
-      <button
+      <GbosButton
         v-if="kind !== 'loading'"
-        class="button button--secondary"
+        intent="secondary"
         type="button"
         @click="$emit('retry')"
       >
         {{ content.action }}
-      </button>
+      </GbosButton>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
+
+import GbosButton from "@/components/ui/GbosButton.vue";
 
 type StateKind = "loading" | "empty" | "permission" | "offline" | "error";
 
@@ -73,3 +75,64 @@ const copy = {
 
 const content = computed(() => copy[props.kind]);
 </script>
+
+<style scoped>
+.state-panel {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  padding: clamp(18px, 4vw, 28px);
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-card);
+  color: var(--gbos-text);
+  background: var(--gbos-surface);
+  box-shadow: var(--gbos-shadow-card);
+}
+
+.state-panel__icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--gbos-surface);
+  background: var(--gbos-primary);
+  font-weight: 800;
+}
+
+.state-panel--error .state-panel__icon {
+  background: rgb(190 24 93);
+}
+
+.state-panel h2,
+.state-panel p {
+  margin: 0;
+}
+
+.state-panel h2 {
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.state-panel p {
+  max-width: 54rem;
+  margin-top: 6px;
+  color: var(--gbos-muted);
+  line-height: 1.6;
+}
+
+.state-panel :deep(.gbos-button) {
+  margin-top: 14px;
+}
+
+.state-panel__request code {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 520px) {
+  .state-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>

@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.1",
+  "event_id": "01K20B8BV5C6P4YFAT8YQ3D4S5",
+  "site_id": "gbos.localhost",
+  "connector": "wecom",
+  "connector_instance_id": "sales-primary",
+  "channel": "chat",
+  "provider_event_id": "wecom-SYNTH-001",
+  "occurred_at": "2026-08-07T01:30:00Z",
+  "ingested_at": "2026-08-07T01:30:03Z",
+  "original_language": "zh-CN",
+  "participants": [
+    {
+      "role": "external",
+      "identity_ref": "identity-SYNTH-001",
+      "display_name": "Synthetic Contact"
+    }
+  ],
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "consent_basis": "pilot_deferred_review",
+  "data_classification": "Restricted",
+  "retention_class": "R1-operational",
+  "correlation_id": "corr-SYNTH-001"
+}

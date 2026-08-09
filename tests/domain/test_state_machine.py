@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from esan_gbos.domain.state_machine import (
     InvalidTransition,
+    validate_ai_draft_transition,
     validate_initial_status,
     validate_transition,
 )
@@ -92,4 +93,25 @@ def test_workflows_require_their_initial_state_on_create(
                     - {initial}
                 )
             ),
+        )
+
+
+def test_ai_draft_submission_is_the_only_draft_transition() -> None:
+    validate_ai_draft_transition(
+        origin="AI",
+        before="AI Draft",
+        after="Pending",
+    )
+
+    with pytest.raises(InvalidTransition, match="AI Draft"):
+        validate_ai_draft_transition(
+            origin="Manual",
+            before="AI Draft",
+            after="Pending",
+        )
+    with pytest.raises(InvalidTransition, match="AI Draft"):
+        validate_ai_draft_transition(
+            origin="AI",
+            before="Pending",
+            after="Approved",
         )

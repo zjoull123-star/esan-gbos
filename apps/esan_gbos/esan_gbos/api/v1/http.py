@@ -10,6 +10,8 @@ from esan_gbos.domain.errors import build_error_envelope
 _BFF_PATH_PREFIXES = (
     "/api/method/esan_gbos.api.v1.",
     "/api/method/esan_gbos.api.v2.",
+    "/api/method/esan_gbos.api.v3.",
+    "/api/method/esan_gbos.api.v4.",
 )
 
 
@@ -24,6 +26,7 @@ def normalize_bff_pre_dispatch_error(response: Any, request: Any) -> None:
 
     if not str(getattr(request, "path", "")).startswith(_BFF_PATH_PREFIXES):
         return
+    response.headers["Cache-Control"] = "no-store"
     response_state = getattr(frappe.local, "response", {})
     if response_state.get("exc_type") != "CSRFTokenError":
         return
@@ -37,4 +40,3 @@ def normalize_bff_pre_dispatch_error(response: Any, request: Any) -> None:
     response.set_data(frappe.as_json(payload))
     response.status_code = 400
     response.content_type = "application/json"
-    response.headers["Cache-Control"] = "no-store,no-cache,must-revalidate,max-age=0"

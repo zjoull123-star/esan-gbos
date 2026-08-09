@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "site_id": "gbos.localhost",
+  "connector": "wecom",
+  "connector_instance_id": "sales-primary",
+  "delivery_id": "delivery-SYNTH-001",
+  "exact_body_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "media_type": "application/json",
+  "received_at": "2026-08-07T01:30:00Z",
+  "processing_status": "received",
+  "attempt_count": 0,
+  "correlation_id": "corr-SYNTH-001",
+  "raw_body": "forbidden"
+}

@@ -176,6 +176,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           enable-cache: true
@@ -295,6 +297,10 @@ jobs:
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           enable-cache: true
+      - name: Prepare locked Python and dependency cache
+        run: |
+          uv python install 3.14.2
+          uv sync --frozen
       - name: Validate Gate 6 controls without external mutations
         run: |
           mkdir -p "${RUNNER_TEMP}/gate-logs"

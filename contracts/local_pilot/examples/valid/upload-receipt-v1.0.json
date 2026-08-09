@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "upload_01",
+  "site_id": "site-a",
+  "purpose": "observation_processing",
+  "request_id": "req-01",
+  "source_kind": "meeting",
+  "media_type": "audio/wav",
+  "byte_size": 12,
+  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "object_ref": "object://site-a/upload_01",
+  "evidence_ref": "evidence://site-a/upload_01",
+  "received_at": "2026-08-07T03:00:00Z",
+  "retention_days": 30,
+  "consent_basis": "pilot_deferred_review",
+  "immutable_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

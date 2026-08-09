@@ -1,0 +1,112 @@
+{
+  "runtime_image": "esan-gbos-local-pilot-runtime:2026-08-08",
+  "composition": {
+    "status": "not_composed",
+    "frappe_pwa": "blocked_local_image_unbuilt",
+    "runtime_containerfile": "infra/local/Containerfile.runtime",
+    "reason": "blocked service entrypoints and local image identities remain unverified",
+    "synthetic_bootstrap": {
+      "service": "frappe-synthetic-bootstrap",
+      "status": "declared_not_executed",
+      "password_file": "/run/secrets/frappe_demo_password",
+      "route_probe": "/gbos"
+    }
+  },
+  "evidence_storage": {
+    "truth": "filesystem CAS",
+    "volume": "local-pilot-evidence-cas",
+    "immutability": "content-addressed writes with collision rejection",
+    "minio_required": false
+  },
+  "durable_model_queue": false,
+  "services": {
+    "migrations": {
+      "path": "scripts/local-pilot/migrate",
+      "status": "executable"
+    },
+    "context-api": {
+      "path": "services/local_pilot_runtime/context_api.py",
+      "status": "executable"
+    },
+    "agent-api": {
+      "path": "services/local_pilot_runtime/agent_api.py",
+      "status": "executable"
+    },
+    "observer-api": {
+      "path": "services/local_pilot_runtime/observer_api.py",
+      "status": "executable"
+    },
+    "connector-worker": {
+      "path": "services/local_pilot_runtime/observer_worker.py",
+      "status": "executable"
+    },
+    "model-projection-worker": {
+      "path": "services/local_pilot_runtime/model_projection_worker.py",
+      "status": "blocked_user_lexicon_and_credentials",
+      "reason": "production code is composable but an attested current user lexicon and real credentials are absent",
+      "config": "/config/projection-connections.json",
+      "provider_topology": "direct_shared_provider_factory"
+    },
+    "agent-worker": {
+      "path": "services/local_pilot_runtime/agent_worker.py",
+      "status": "blocked",
+      "reason": "standalone main does not yet construct the shared DeepSeek provider factory",
+      "provider_topology": "direct_shared_provider_factory"
+    },
+    "materialization-worker": {
+      "path": "services/local_pilot_runtime/materialization_worker.py",
+      "status": "executable"
+    },
+    "frappe-materializer-bootstrap": {
+      "path": "apps/esan_gbos/esan_gbos/local_pilot.py",
+      "status": "executable"
+    },
+    "webhook-ingress": {
+      "path": "services/local_pilot_runtime/webhook.py",
+      "status": "executable",
+      "health": "no health route; depend only on process start"
+    },
+    "email-poller": {
+      "path": "services/local_pilot_runtime/pollers.py",
+      "status": "executable"
+    },
+    "wecom-poller": {
+      "path": "services/local_pilot_runtime/pollers.py",
+      "status": "blocked_official_sdk",
+      "reason": "standalone CLI exits 78 because no official WeCom SDK factory is injected"
+    },
+    "media-worker": {
+      "path": "services/local_pilot_runtime/media_worker.py",
+      "status": "blocked",
+      "reason": "standalone main has no environment-backed local runtime composition"
+    }
+  },
+  "required_always": {
+    "context-api": "services/local_pilot_runtime/context_api.py",
+    "agent-api": "services/local_pilot_runtime/agent_api.py",
+    "observer-api": "services/local_pilot_runtime/observer_api.py",
+    "materialization-worker": "services/local_pilot_runtime/materialization_worker.py",
+    "frappe-materializer-bootstrap": "apps/esan_gbos/esan_gbos/local_pilot.py"
+  },
+  "required_when_enabled": {
+    "email": {
+      "email-poller": "services/local_pilot_runtime/pollers.py",
+      "connector-worker": "services/local_pilot_runtime/observer_worker.py"
+    },
+    "wecom": {
+      "wecom-poller": "services/local_pilot_runtime/pollers.py",
+      "connector-worker": "services/local_pilot_runtime/observer_worker.py"
+    },
+    "whatsapp": {
+      "webhook-ingress": "services/local_pilot_runtime/webhook.py",
+      "connector-worker": "services/local_pilot_runtime/observer_worker.py"
+    },
+    "deepseek": {
+      "agent-worker": "services/local_pilot_runtime/agent_worker.py",
+      "model-projection-worker": "services/local_pilot_runtime/model_projection_worker.py"
+    },
+    "media": {
+      "media-worker": "services/local_pilot_runtime/media_worker.py"
+    }
+  }
+}

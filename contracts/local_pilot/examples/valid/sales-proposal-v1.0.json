@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "proposal_id": "sales-proposal-SYNTH-001",
+  "agent_kind": "sales",
+  "action_type": "internal.work_item.propose",
+  "status": "proposed",
+  "subject_ref": "DEAL-SYNTH-001",
+  "evidence_refs": [
+    "evidence-SYNTH-001"
+  ],
+  "confidence": 0.82,
+  "requires_human_review": true,
+  "payload": {
+    "title": "客户内部跟进",
+    "summary": "整理已观察到的客户需求，等待销售人工复核。",
+    "suggested_next_step": "创建内部跟进工作项。"
+  }
+}

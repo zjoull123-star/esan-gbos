@@ -1,22 +1,35 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import AbstractContextManager
 from datetime import datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from .models import (
+    AgentTaskClaim,
     AgentTaskMetadata,
     AgentTaskSubmission,
     DeadLetterMetadata,
     FailureClassification,
     IdempotencyConflict,
     LeaseConflict,
+    LocalPilotTaskPayload,
     TaskStatus,
     TimelineEventMetadata,
     ValidationError,
     thaw_json,
 )
+
+if TYPE_CHECKING:
+    from .agents import AgentExecutionResult
+    from .invocations import ModelInvocationRecord
+    from .materialization import (
+        FrappeDraftReceipt,
+        MaterializationClaim,
+        MaterializationHealth,
+    )
+    from .proposals import ActionProposalRecord
 
 _METADATA_COLUMNS = """
     task_id, site_id, processing_purpose, idempotency_key, payload_digest,
@@ -209,12 +222,137 @@ class PostgresAgentTaskRepository:
             )
             return task
 
+    def claim_for_execution(
+        self,
+        site_id: str,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> AgentTaskClaim | None:
+        _require_aware(now, "now")
+        if not site_id or not worker_id:
+            raise ValidationError("site_id and worker_id are required")
+        if lease_duration <= timedelta(0):
+            raise ValidationError("lease_duration must be positive")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            self._reap_expired(cursor, site_id=site_id, now=now)
+            cursor.execute(
+                f"""
+                WITH candidate AS (
+                    SELECT site_id, task_id
+                    FROM agent_runtime.agent_tasks
+                    WHERE site_id = %s
+                      AND attempt < max_attempts
+                      AND (
+                          (status IN ('queued', 'recheck') AND due_at <= %s)
+                          OR
+                          (
+                              status IN ('leased', 'running')
+                              AND lease_expires_at <= %s
+                          )
+                      )
+                    ORDER BY priority DESC, due_at ASC, created_at ASC, task_id ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE agent_runtime.agent_tasks AS task
+                SET status = 'running',
+                    attempt = task.attempt + 1,
+                    lease_owner = %s,
+                    lease_expires_at = %s,
+                    updated_at = %s
+                FROM candidate
+                WHERE task.site_id = candidate.site_id
+                  AND task.task_id = candidate.task_id
+                RETURNING {_qualified_metadata_columns("task")}, task.payload
+                """,
+                (
+                    site_id,
+                    now,
+                    now,
+                    worker_id,
+                    now + lease_duration,
+                    now,
+                ),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            task = _metadata_from_row(row[:22])
+            payload_value = row[22]
+            if isinstance(payload_value, str):
+                payload_value = json.loads(payload_value)
+            if not isinstance(payload_value, dict):
+                raise ValidationError("local-pilot task payload must be a JSON object")
+            payload = LocalPilotTaskPayload.from_mapping(payload_value)
+            self._append_timeline(
+                cursor,
+                task=task,
+                event_type="leased",
+                occurred_at=now,
+                actor_type="worker",
+                actor_ref=worker_id,
+            )
+            self._append_timeline(
+                cursor,
+                task=task,
+                event_type="running",
+                occurred_at=now,
+                actor_type="worker",
+                actor_ref=worker_id,
+            )
+            return AgentTaskClaim(metadata=task, payload=payload)
+
+    def start(
+        self,
+        site_id: str,
+        task_id: str,
+        *,
+        worker_id: str,
+        expected_attempt: int,
+        now: datetime,
+    ) -> AgentTaskMetadata:
+        _require_aware(now, "now")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                f"""
+                UPDATE agent_runtime.agent_tasks
+                SET status = 'running',
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND task_id = %s
+                  AND lease_owner = %s
+                  AND attempt = %s
+                  AND lease_expires_at > %s
+                  AND status = 'leased'
+                RETURNING {_METADATA_COLUMNS}
+                """,
+                (now, site_id, task_id, worker_id, expected_attempt, now),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LeaseConflict("worker does not own a live lease for the expected attempt")
+            task = _metadata_from_row(row)
+            self._append_timeline(
+                cursor,
+                task=task,
+                event_type="running",
+                occurred_at=now,
+                actor_type="worker",
+                actor_ref=worker_id,
+            )
+            return task
+
     def heartbeat(
         self,
         site_id: str,
         task_id: str,
         *,
         worker_id: str,
+        expected_attempt: int,
         now: datetime,
         lease_duration: timedelta,
     ) -> AgentTaskMetadata:
@@ -231,6 +369,7 @@ class PostgresAgentTaskRepository:
                 WHERE site_id = %s
                   AND task_id = %s
                   AND lease_owner = %s
+                  AND attempt = %s
                   AND lease_expires_at > %s
                   AND status IN ('leased', 'running')
                 RETURNING {_METADATA_COLUMNS}
@@ -241,12 +380,13 @@ class PostgresAgentTaskRepository:
                     site_id,
                     task_id,
                     worker_id,
+                    expected_attempt,
                     now,
                 ),
             )
             row = cursor.fetchone()
             if row is None:
-                raise LeaseConflict("worker does not own a live lease")
+                raise LeaseConflict("worker does not own a live lease for the expected attempt")
             return _metadata_from_row(row)
 
     def succeed(
@@ -255,6 +395,7 @@ class PostgresAgentTaskRepository:
         task_id: str,
         *,
         worker_id: str,
+        expected_attempt: int,
         now: datetime,
         output_artifact_refs: tuple[str, ...] = (),
     ) -> AgentTaskMetadata:
@@ -274,6 +415,7 @@ class PostgresAgentTaskRepository:
                 WHERE site_id = %s
                   AND task_id = %s
                   AND lease_owner = %s
+                  AND attempt = %s
                   AND lease_expires_at > %s
                   AND status IN ('leased', 'running')
                 RETURNING {_METADATA_COLUMNS}
@@ -284,12 +426,13 @@ class PostgresAgentTaskRepository:
                     site_id,
                     task_id,
                     worker_id,
+                    expected_attempt,
                     now,
                 ),
             )
             row = cursor.fetchone()
             if row is None:
-                raise LeaseConflict("worker does not own a live lease")
+                raise LeaseConflict("worker does not own a live lease for the expected attempt")
             task = _metadata_from_row(row)
             self._append_timeline(
                 cursor,
@@ -307,6 +450,7 @@ class PostgresAgentTaskRepository:
         task_id: str,
         *,
         worker_id: str,
+        expected_attempt: int,
         now: datetime,
         retry_at: datetime,
         classification: FailureClassification,
@@ -339,6 +483,7 @@ class PostgresAgentTaskRepository:
                 WHERE site_id = %s
                   AND task_id = %s
                   AND lease_owner = %s
+                  AND attempt = %s
                   AND lease_expires_at > %s
                   AND status IN ('leased', 'running')
                 RETURNING {_METADATA_COLUMNS}
@@ -351,12 +496,13 @@ class PostgresAgentTaskRepository:
                     site_id,
                     task_id,
                     worker_id,
+                    expected_attempt,
                     now,
                 ),
             )
             row = cursor.fetchone()
             if row is None:
-                raise LeaseConflict("worker does not own a live lease")
+                raise LeaseConflict("worker does not own a live lease for the expected attempt")
             task = _metadata_from_row(row)
             event_type = "recheck_scheduled"
             if task.status is TaskStatus.DEAD_LETTER:
@@ -391,6 +537,570 @@ class PostgresAgentTaskRepository:
                 actor_ref=worker_id,
             )
             return task
+
+    def complete_with_proposal(
+        self,
+        site_id: str,
+        task_id: str,
+        *,
+        worker_id: str,
+        expected_attempt: int,
+        now: datetime,
+        result: AgentExecutionResult,
+    ) -> AgentTaskMetadata:
+        from .invocations import _RECORD_COLUMNS
+        from .proposals import (
+            ActionProposalRecord,
+            MaterializationOutboxRecord,
+            proposal_document_json,
+        )
+
+        _require_aware(now, "now")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                f"""
+                SELECT {_METADATA_COLUMNS}
+                FROM agent_runtime.agent_tasks
+                WHERE site_id = %s AND task_id = %s
+                FOR UPDATE
+                """,
+                (site_id, task_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise ValidationError("task does not exist in this site")
+            task = _metadata_from_row(row)
+            if task.attempt != expected_attempt:
+                raise LeaseConflict("worker does not own a live lease for the expected attempt")
+            proposal = ActionProposalRecord.from_execution(task, result)
+            if task.status is TaskStatus.SUCCEEDED:
+                self._validate_completed_replay(
+                    cursor,
+                    task=task,
+                    proposal=proposal,
+                    records=result.invocations,
+                    record_columns=_RECORD_COLUMNS,
+                )
+                return task
+            if (
+                task.status is not TaskStatus.RUNNING
+                or task.lease_owner != worker_id
+                or task.attempt != expected_attempt
+                or task.lease_expires_at is None
+                or task.lease_expires_at <= now
+            ):
+                raise LeaseConflict(
+                    "worker does not own a live running lease for the expected attempt"
+                )
+            for record in result.invocations:
+                self._append_invocation(
+                    cursor,
+                    task=task,
+                    proposal=proposal,
+                    record=record,
+                    record_columns=_RECORD_COLUMNS,
+                )
+            cursor.execute(
+                """
+                INSERT INTO agent_runtime.action_proposals (
+                    site_id, proposal_id, idempotency_key, task_id, task_attempt,
+                    action_type, status, origin, review_status, subject_type,
+                    subject_ref, subject_revision, evidence_refs,
+                    fact_version_refs, invocation_ids, payload_digest,
+                    bundle_digest, document, created_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, 'proposed', 'AI', 'AI Draft',
+                    %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s,
+                    %s::jsonb, %s
+                )
+                """,
+                (
+                    proposal.site_id,
+                    proposal.proposal_id,
+                    proposal.idempotency_key,
+                    proposal.task_id,
+                    proposal.task_attempt,
+                    proposal.action_type,
+                    proposal.subject_type,
+                    proposal.subject_ref,
+                    proposal.subject_revision,
+                    json.dumps(proposal.evidence_refs),
+                    json.dumps(proposal.fact_version_refs),
+                    json.dumps(proposal.invocation_ids),
+                    proposal.payload_digest,
+                    proposal.bundle_digest,
+                    proposal_document_json(proposal),
+                    proposal.created_at,
+                ),
+            )
+            materialization = MaterializationOutboxRecord.from_proposal(
+                proposal,
+                created_at=now,
+            )
+            cursor.execute(
+                """
+                INSERT INTO agent_runtime.proposal_materialization_outbox (
+                    site_id, materialization_id, proposal_id, task_id,
+                    task_attempt, status, origin, review_status, created_at,
+                    next_attempt_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, 'pending', 'AI', 'AI Draft',
+                    %s, %s, %s
+                )
+                """,
+                (
+                    materialization.site_id,
+                    materialization.materialization_id,
+                    materialization.proposal_id,
+                    materialization.task_id,
+                    materialization.task_attempt,
+                    materialization.created_at,
+                    materialization.next_attempt_at,
+                    materialization.updated_at,
+                ),
+            )
+            cursor.execute(
+                f"""
+                UPDATE agent_runtime.agent_tasks
+                SET status = 'succeeded',
+                    output_artifact_refs = %s::jsonb,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND task_id = %s
+                  AND lease_owner = %s
+                  AND attempt = %s
+                  AND lease_expires_at > %s
+                  AND status = 'running'
+                RETURNING {_METADATA_COLUMNS}
+                """,
+                (
+                    json.dumps((proposal.proposal_id,)),
+                    now,
+                    site_id,
+                    task_id,
+                    worker_id,
+                    expected_attempt,
+                    now,
+                ),
+            )
+            completed_row = cursor.fetchone()
+            if completed_row is None:
+                raise LeaseConflict("worker lost the expected attempt before proposal completion")
+            completed = _metadata_from_row(completed_row)
+            self._append_timeline(
+                cursor,
+                task=completed,
+                event_type="succeeded",
+                occurred_at=now,
+                actor_type="worker",
+                actor_ref=worker_id,
+            )
+            return completed
+
+    def claim_materialization(
+        self,
+        site_id: str,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> MaterializationClaim | None:
+        from .materialization import MaterializationClaim
+        from .proposals import MaterializationEnvelope
+
+        _require_aware(now, "now")
+        if not site_id or not worker_id:
+            raise ValidationError("site_id and worker_id are required")
+        if lease_duration <= timedelta(0):
+            raise ValidationError("lease_duration must be positive")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                """
+                UPDATE agent_runtime.proposal_materialization_outbox
+                SET status = 'dead_letter',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    last_error_code = 'lease_expired_max_attempts',
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND status = 'running'
+                  AND lease_expires_at <= %s
+                  AND attempt >= max_attempts
+                """,
+                (now, site_id, now),
+            )
+            cursor.execute(
+                """
+                WITH candidate AS (
+                    SELECT site_id, materialization_id
+                    FROM agent_runtime.proposal_materialization_outbox
+                    WHERE site_id = %s
+                      AND attempt < max_attempts
+                      AND (
+                          (
+                              status IN ('pending', 'retry')
+                              AND next_attempt_at <= %s
+                          )
+                          OR
+                          (
+                              status = 'running'
+                              AND lease_expires_at <= %s
+                          )
+                      )
+                    ORDER BY next_attempt_at ASC, created_at ASC, materialization_id ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE agent_runtime.proposal_materialization_outbox AS outbox
+                SET status = 'running',
+                    attempt = outbox.attempt + 1,
+                    lease_owner = %s,
+                    lease_expires_at = %s,
+                    last_error_code = NULL,
+                    updated_at = %s
+                FROM candidate
+                WHERE outbox.site_id = candidate.site_id
+                  AND outbox.materialization_id = candidate.materialization_id
+                RETURNING outbox.materialization_id, outbox.proposal_id,
+                          outbox.attempt, outbox.max_attempts,
+                          outbox.lease_owner, outbox.lease_expires_at
+                """,
+                (
+                    site_id,
+                    now,
+                    now,
+                    worker_id,
+                    now + lease_duration,
+                    now,
+                ),
+            )
+            outbox_row = cursor.fetchone()
+            if outbox_row is None:
+                return None
+            cursor.execute(
+                """
+                SELECT proposal.action_type, proposal.origin, proposal.review_status,
+                       proposal.subject_type, proposal.subject_ref,
+                       proposal.subject_revision, proposal.evidence_refs,
+                       proposal.invocation_ids, proposal.document,
+                       task.task_id, task.processing_purpose
+                FROM agent_runtime.action_proposals AS proposal
+                JOIN agent_runtime.agent_tasks AS task
+                  ON task.site_id = proposal.site_id
+                 AND task.task_id = proposal.task_id
+                WHERE proposal.site_id = %s AND proposal.proposal_id = %s
+                """,
+                (site_id, str(outbox_row[1])),
+            )
+            proposal_row = cursor.fetchone()
+            if proposal_row is None:
+                raise ValidationError("materialization proposal bundle is unavailable")
+            evidence_refs = proposal_row[6]
+            if isinstance(evidence_refs, str):
+                evidence_refs = json.loads(evidence_refs)
+            invocation_ids = proposal_row[7]
+            if isinstance(invocation_ids, str):
+                invocation_ids = json.loads(invocation_ids)
+            if (
+                not isinstance(evidence_refs, list)
+                or not all(isinstance(value, str) for value in evidence_refs)
+                or not isinstance(invocation_ids, list)
+                or not all(isinstance(value, str) for value in invocation_ids)
+            ):
+                raise ValidationError("materialization proposal metadata is invalid")
+            model_name: str | None = None
+            model_version: str | None = None
+            if invocation_ids:
+                cursor.execute(
+                    """
+                    SELECT requested_model, COALESCE(observed_model, requested_model)
+                    FROM agent_runtime.model_invocations
+                    WHERE site_id = %s
+                      AND invocation_id IN (
+                          SELECT jsonb_array_elements_text(%s::jsonb)
+                      )
+                    ORDER BY invocation_id ASC
+                    """,
+                    (site_id, json.dumps(invocation_ids)),
+                )
+                model_rows = cursor.fetchall()
+                if len(model_rows) != len(invocation_ids):
+                    raise ValidationError("materialization model invocation metadata is incomplete")
+                identities = {(str(row[0]), str(row[1])) for row in model_rows}
+                if len(identities) != 1:
+                    raise ValidationError("materialization model invocation identity is ambiguous")
+                model_name, model_version = next(iter(identities))
+            document = proposal_row[8]
+            if isinstance(document, str):
+                document = json.loads(document)
+            if not isinstance(document, dict):
+                raise ValidationError("materialization proposal document is invalid")
+            policy_version = document.get("policy_version")
+            if policy_version is not None and not isinstance(policy_version, str):
+                raise ValidationError("materialization proposal policy version is invalid")
+            return MaterializationClaim(
+                materialization_id=str(outbox_row[0]),
+                proposal_id=str(outbox_row[1]),
+                site_id=site_id,
+                attempt=int(outbox_row[2]),
+                max_attempts=int(outbox_row[3]),
+                lease_owner=str(outbox_row[4]),
+                lease_expires_at=outbox_row[5],
+                envelope=MaterializationEnvelope(
+                    proposal_id=str(outbox_row[1]),
+                    task_id=str(proposal_row[9]),
+                    processing_purpose=str(proposal_row[10]),
+                    origin=str(proposal_row[1]),
+                    review_status=str(proposal_row[2]),
+                    action_type=str(proposal_row[0]),
+                    subject_type=str(proposal_row[3]),
+                    subject_ref=str(proposal_row[4]),
+                    subject_revision=int(proposal_row[5]),
+                    evidence_refs=tuple(evidence_refs),
+                    model_name=model_name,
+                    model_version=model_version,
+                    policy_version=policy_version,
+                    proposal=document,
+                ),
+            )
+
+    def acknowledge_materialization(
+        self,
+        site_id: str,
+        materialization_id: str,
+        *,
+        worker_id: str,
+        expected_attempt: int,
+        now: datetime,
+        receipt: FrappeDraftReceipt,
+    ) -> FrappeDraftReceipt:
+        from .materialization import FrappeDraftReceipt
+
+        _require_aware(now, "now")
+        if not isinstance(receipt, FrappeDraftReceipt):
+            raise ValidationError("invalid Frappe draft receipt")
+        if receipt.request_id != materialization_id:
+            raise IdempotencyConflict("receipt request does not match materialization")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                """
+                SELECT status, receipt_doctype, receipt_name, receipt_revision,
+                       receipt_request_id, receipt_digest
+                FROM agent_runtime.proposal_materialization_outbox
+                WHERE site_id = %s AND materialization_id = %s
+                FOR UPDATE
+                """,
+                (site_id, materialization_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise ValidationError("materialization does not exist in this site")
+            if row[0] == "succeeded":
+                existing = FrappeDraftReceipt(
+                    doctype=str(row[1]),
+                    name=str(row[2]),
+                    revision=int(row[3]),
+                    request_id=str(row[4]),
+                    request_digest=str(row[5]),
+                )
+                if existing != receipt:
+                    raise IdempotencyConflict("materialization receipt replay has a body conflict")
+                return existing
+            cursor.execute(
+                """
+                UPDATE agent_runtime.proposal_materialization_outbox
+                SET status = 'succeeded',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    last_error_code = NULL,
+                    receipt_doctype = %s,
+                    receipt_name = %s,
+                    receipt_revision = %s,
+                    receipt_request_id = %s,
+                    receipt_digest = %s,
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND materialization_id = %s
+                  AND status = 'running'
+                  AND lease_owner = %s
+                  AND attempt = %s
+                  AND lease_expires_at > %s
+                RETURNING materialization_id
+                """,
+                (
+                    receipt.doctype,
+                    receipt.name,
+                    receipt.revision,
+                    receipt.request_id,
+                    receipt.request_digest,
+                    now,
+                    site_id,
+                    materialization_id,
+                    worker_id,
+                    expected_attempt,
+                    now,
+                ),
+            )
+            if cursor.fetchone() is None:
+                raise LeaseConflict("worker lost the materialization lease")
+            return receipt
+
+    def heartbeat_materialization(
+        self,
+        site_id: str,
+        materialization_id: str,
+        *,
+        worker_id: str,
+        expected_attempt: int,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None:
+        _require_aware(now, "now")
+        if lease_duration <= timedelta(0):
+            raise ValidationError("lease_duration must be positive")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                """
+                WITH renewed AS (
+                    UPDATE agent_runtime.proposal_materialization_outbox
+                    SET lease_expires_at = %s + %s,
+                        updated_at = %s
+                    WHERE site_id = %s
+                      AND materialization_id = %s
+                      AND status = 'running'
+                      AND lease_owner = %s
+                      AND attempt = %s
+                      AND lease_expires_at > %s
+                      AND lease_expires_at < %s + %s
+                    RETURNING materialization_id
+                )
+                SELECT materialization_id FROM renewed
+                UNION ALL
+                SELECT materialization_id
+                FROM agent_runtime.proposal_materialization_outbox
+                WHERE site_id = %s
+                  AND materialization_id = %s
+                  AND status = 'running'
+                  AND lease_owner = %s
+                  AND attempt = %s
+                  AND lease_expires_at > %s
+                LIMIT 1
+                """,
+                (
+                    now,
+                    lease_duration,
+                    now,
+                    site_id,
+                    materialization_id,
+                    worker_id,
+                    expected_attempt,
+                    now,
+                    now,
+                    lease_duration,
+                    site_id,
+                    materialization_id,
+                    worker_id,
+                    expected_attempt,
+                    now,
+                ),
+            )
+            if cursor.fetchone() is None:
+                raise LeaseConflict("worker lost the materialization lease")
+
+    def fail_materialization(
+        self,
+        site_id: str,
+        materialization_id: str,
+        *,
+        worker_id: str,
+        expected_attempt: int,
+        now: datetime,
+        retry_at: datetime,
+        error_code: str,
+    ) -> Literal["retry", "dead_letter"]:
+        _require_aware(now, "now")
+        _require_aware(retry_at, "retry_at")
+        if retry_at <= now:
+            raise ValidationError("retry_at must be in the future")
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,79}", error_code) is None:
+            raise ValidationError("materialization error_code is invalid")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                """
+                UPDATE agent_runtime.proposal_materialization_outbox
+                SET status = CASE
+                        WHEN attempt >= max_attempts THEN 'dead_letter'
+                        ELSE 'retry'
+                    END,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    next_attempt_at = %s,
+                    last_error_code = %s,
+                    updated_at = %s
+                WHERE site_id = %s
+                  AND materialization_id = %s
+                  AND status = 'running'
+                  AND lease_owner = %s
+                  AND attempt = %s
+                  AND lease_expires_at > %s
+                RETURNING status
+                """,
+                (
+                    retry_at,
+                    error_code,
+                    now,
+                    site_id,
+                    materialization_id,
+                    worker_id,
+                    expected_attempt,
+                    now,
+                ),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LeaseConflict("worker lost the materialization lease")
+            status = str(row[0])
+            if status == "retry":
+                return "retry"
+            if status == "dead_letter":
+                return "dead_letter"
+            raise ValidationError("invalid materialization failure state")
+
+    def materialization_health(self, site_id: str) -> MaterializationHealth:
+        from .materialization import MaterializationHealth
+
+        if not site_id:
+            raise ValidationError("site_id is required")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, site_id)
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending'),
+                    COUNT(*) FILTER (WHERE status = 'running'),
+                    COUNT(*) FILTER (WHERE status = 'retry'),
+                    COUNT(*) FILTER (WHERE status = 'dead_letter')
+                FROM agent_runtime.proposal_materialization_outbox
+                WHERE site_id = %s
+                """,
+                (site_id,),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            raise ValidationError("materialization health query failed")
+        return MaterializationHealth(
+            pending=int(row[0]),
+            running=int(row[1]),
+            retry=int(row[2]),
+            dead_letter=int(row[3]),
+        )
 
     def get(self, site_id: str, task_id: str) -> AgentTaskMetadata | None:
         with self._connection.transaction(), self._connection.cursor() as cursor:
@@ -459,6 +1169,120 @@ class PostgresAgentTaskRepository:
                 causation_id=str(row[6]),
                 correlation_id=str(row[7]),
             )
+
+    @staticmethod
+    def _append_invocation(
+        cursor: Cursor,
+        *,
+        task: AgentTaskMetadata,
+        proposal: ActionProposalRecord,
+        record: ModelInvocationRecord,
+        record_columns: str,
+    ) -> None:
+        from .invocations import _record_from_row, _record_params
+
+        if (
+            record.site_id != task.site_id
+            or record.request_id != task.task_id
+            or record.references.evidence_refs != proposal.evidence_refs
+            or record.external_send_count != 0
+            or record.tool_call_count != 0
+        ):
+            raise ValidationError("model invocation is not bound to the task proposal")
+        cursor.execute(
+            f"""
+            INSERT INTO agent_runtime.model_invocations (
+                {record_columns}
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s, %s, %s,
+                %s, %s, %s, %s
+            )
+            ON CONFLICT (site_id, idempotency_key) DO NOTHING
+            RETURNING {record_columns}
+            """,
+            _record_params(record),
+        )
+        row = cursor.fetchone()
+        if row is not None:
+            return
+        cursor.execute(
+            f"""
+            SELECT {record_columns}
+            FROM agent_runtime.model_invocations
+            WHERE site_id = %s AND idempotency_key = %s
+            """,
+            (record.site_id, record.idempotency_key),
+        )
+        existing_row = cursor.fetchone()
+        if existing_row is None or _record_from_row(existing_row) != record:
+            raise IdempotencyConflict(
+                "model invocation idempotency key was reused with different metadata"
+            )
+
+    @staticmethod
+    def _validate_completed_replay(
+        cursor: Cursor,
+        *,
+        task: AgentTaskMetadata,
+        proposal: ActionProposalRecord,
+        records: tuple[ModelInvocationRecord, ...],
+        record_columns: str,
+    ) -> None:
+        from .invocations import _record_from_row
+
+        if task.attempt != proposal.task_attempt:
+            raise IdempotencyConflict("completed proposal attempt does not match task")
+        cursor.execute(
+            """
+            SELECT bundle_digest, invocation_ids, proposal_id
+            FROM agent_runtime.action_proposals
+            WHERE site_id = %s AND task_id = %s AND task_attempt = %s
+            """,
+            (task.site_id, task.task_id, task.attempt),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise IdempotencyConflict("completed task is missing its proposal bundle")
+        invocation_ids = row[1]
+        if isinstance(invocation_ids, str):
+            invocation_ids = json.loads(invocation_ids)
+        if (
+            str(row[0]) != proposal.bundle_digest
+            or tuple(invocation_ids) != proposal.invocation_ids
+            or str(row[2]) != proposal.proposal_id
+            or task.output_artifact_refs != (proposal.proposal_id,)
+        ):
+            raise IdempotencyConflict(
+                "completed task attempt was replayed with a different proposal bundle"
+            )
+        cursor.execute(
+            """
+            SELECT origin, review_status
+            FROM agent_runtime.proposal_materialization_outbox
+            WHERE site_id = %s AND proposal_id = %s
+            """,
+            (task.site_id, proposal.proposal_id),
+        )
+        if cursor.fetchone() != ("AI", "AI Draft"):
+            raise IdempotencyConflict(
+                "completed task is missing its materialization outbox identity"
+            )
+        for record in records:
+            cursor.execute(
+                f"""
+                SELECT {record_columns}
+                FROM agent_runtime.model_invocations
+                WHERE site_id = %s AND invocation_id = %s
+                """,
+                (record.site_id, record.invocation_id),
+            )
+            existing_row = cursor.fetchone()
+            if existing_row is None or _record_from_row(existing_row) != record:
+                raise IdempotencyConflict(
+                    "completed task attempt was replayed with different invocations"
+                )
 
     @staticmethod
     def _set_site(cursor: Cursor, site_id: str) -> None:

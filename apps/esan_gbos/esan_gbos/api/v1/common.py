@@ -42,11 +42,17 @@ def request_id() -> str:
     return value
 
 
-def success(data: Any, **meta: Any) -> dict[str, Any]:
+def success(
+    data: Any,
+    *,
+    schema_version: str = "1.0",
+    **meta: Any,
+) -> dict[str, Any]:
     return build_success_envelope(
         data=data,
         request_id=request_id(),
         meta=meta,
+        schema_version=schema_version,
     )
 
 
