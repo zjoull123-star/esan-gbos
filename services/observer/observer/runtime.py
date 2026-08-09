@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from .connectors.whatsapp_cloud import (
     DurableDeliveryConflict,
@@ -13,6 +13,9 @@ from .connectors.whatsapp_cloud import (
     DurableDeliveryReplay,
 )
 from .local_pilot_storage import DeliveryConflict, IngressExpired, NonceReplay
+
+if TYPE_CHECKING:
+    from .local_pilot_api import IdentityResolutionMetrics
 
 _SAFE_REASON = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,79}$")
 
@@ -128,6 +131,7 @@ class PostgresLocalPilotRuntime:
     outbox: Any
     projection_repository: Any | None
     projection_publisher: Any | None
+    identity_resolution_metrics: IdentityResolutionMetrics
     app: Any
     connection: Any
     storage: Any
@@ -163,11 +167,13 @@ def compose_postgres_local_pilot_runtime(
     model_tokenizer: Callable[[Any, str, str], Any] | None = None,
     intelligence_publisher: Any | None = None,
     restricted_model_policy: Literal["deny", "local_tokenized"] = "deny",
+    identity_resolution_metrics: IdentityResolutionMetrics | None = None,
 ) -> PostgresLocalPilotRuntime:
     """Wire the PostgreSQL repositories, worker and authenticated internal app."""
 
     from .context_outbox import ContextOutboxPublisherWorker
     from .control_service import LocalPilotControlService, PostgresControlRepository
+    from .identity_resolution_work import PostgresIdentityResolutionWorkRepository
     from .local_pilot_api import create_local_pilot_app
     from .model_projection import (
         ObservationProjectionPublisher,
@@ -188,6 +194,11 @@ def compose_postgres_local_pilot_runtime(
     reader = LocalPilotReadService(
         repository=communication_repository,
         cursor_secret=cursor_secret,
+    )
+    active_identity_resolution_metrics = (
+        PostgresIdentityResolutionWorkRepository(connection)
+        if identity_resolution_metrics is None
+        else identity_resolution_metrics
     )
     projection_repository = None
     projection_publisher = None
@@ -231,6 +242,7 @@ def compose_postgres_local_pilot_runtime(
         reader=reader,
         guard=guard,
         clock=clock,
+        identity_resolution_metrics=active_identity_resolution_metrics,
     )
     return PostgresLocalPilotRuntime(
         guard=guard,
@@ -241,6 +253,7 @@ def compose_postgres_local_pilot_runtime(
         outbox=outbox,
         projection_repository=projection_repository,
         projection_publisher=projection_publisher,
+        identity_resolution_metrics=active_identity_resolution_metrics,
         app=app,
         connection=connection,
         storage=storage,

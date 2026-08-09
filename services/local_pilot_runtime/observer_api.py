@@ -15,6 +15,9 @@ from services.agent_runtime.local_entrypoint import (
     load_local_manifest,
     require_component_enabled,
 )
+from services.observer.observer.identity_resolution_work import (
+    PostgresIdentityResolutionWorkRepository,
+)
 from services.observer.observer.local_pilot_api import LocalPilotAPIConfig
 from services.observer.observer.local_pilot_storage import PostgresLocalPilotStorage
 from services.observer.observer.runtime import (
@@ -73,6 +76,9 @@ def build_postgres_runtime(
         outbox_worker_id="observer-api-outbox-disabled",
         enabled=enabled,
         kill_switch=kill_switch,
+        identity_resolution_metrics=PostgresIdentityResolutionWorkRepository(
+            connection  # type: ignore[arg-type]
+        ),
     )
 
 

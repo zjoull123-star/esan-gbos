@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from observer.control_service import ConnectorControlResult, ConnectorStatus
+from observer.identity_resolution_work import IdentityResolutionWorkSnapshot
 from observer.local_pilot_api import LocalPilotAPIConfig, create_local_pilot_app
-from observer.models import ConnectorKey
+from observer.models import ConnectorKey, TenantScope
 from observer.read_service import (
+    CommunicationAccess,
     CommunicationDetail,
     CommunicationPage,
     CommunicationSummary,
@@ -53,12 +59,12 @@ class FakeControlService:
 
 class FakeReadService:
     def __init__(self) -> None:
-        self.access: object | None = None
+        self.access: CommunicationAccess | None = None
 
     def list_communications(
         self,
         _scope: object,
-        access: object,
+        access: CommunicationAccess,
         **_kwargs: object,
     ) -> CommunicationPage:
         self.access = access
@@ -67,7 +73,7 @@ class FakeReadService:
     def get_communication(
         self,
         _scope: object,
-        access: object,
+        access: CommunicationAccess,
         **_kwargs: object,
     ) -> CommunicationDetail:
         self.access = access
@@ -90,6 +96,56 @@ class FakeReadService:
             model={"name": "deepseek-v4-flash", "version": "2026-08-08"},
             original_text=None,
         )
+
+
+class FakeIdentityResolutionMetrics:
+    def __init__(
+        self,
+        snapshot: IdentityResolutionWorkSnapshot | Exception,
+    ) -> None:
+        self.value = snapshot
+        self.calls: list[tuple[TenantScope, datetime, timedelta]] = []
+
+    def snapshot(
+        self,
+        scope: TenantScope,
+        *,
+        now: datetime,
+        readiness_window: timedelta,
+    ) -> IdentityResolutionWorkSnapshot:
+        self.calls.append((scope, now, readiness_window))
+        if isinstance(self.value, Exception):
+            raise self.value
+        return self.value
+
+
+def _metrics_snapshot(
+    *,
+    ready: bool = True,
+    heartbeat: datetime | None = NOW - timedelta(seconds=4),
+    oldest_age: int | None = 17,
+) -> IdentityResolutionWorkSnapshot:
+    return IdentityResolutionWorkSnapshot(
+        ready=ready,
+        worker_last_heartbeat_at=heartbeat,
+        backlog_count=3,
+        oldest_backlog_age_seconds=oldest_age,
+        unresolved_count=2,
+        conflict_count=1,
+        request_outcomes={
+            "confirmed": 5,
+            "unresolved": 7,
+            "revoked": 2,
+            "conflict": 1,
+            "error": 4,
+        },
+        latency_buckets={
+            "le_100_ms": 2,
+            "le_500_ms": 3,
+            "le_2000_ms": 4,
+            "gt_2000_ms": 1,
+        },
+    )
 
 
 def _config(
@@ -127,17 +183,156 @@ def _headers(
 def _app(
     *,
     config: LocalPilotAPIConfig | None = None,
-) -> tuple[object, FakeControlService, FakeReadService]:
+    metrics: FakeIdentityResolutionMetrics | None = None,
+    clock: Callable[[], datetime] | None = None,
+    enabled: bool = True,
+) -> tuple[FastAPI, FakeControlService, FakeReadService]:
     control = FakeControlService()
     reader = FakeReadService()
     app = create_local_pilot_app(
         config=config or _config(),
         control=control,
         reader=reader,
-        guard=LocalPilotRuntimeGuard(enabled=True, kill_switch=False),
-        clock=lambda: NOW,
+        guard=LocalPilotRuntimeGuard(enabled=enabled, kill_switch=not enabled),
+        clock=clock or (lambda: NOW),
+        identity_resolution_metrics=metrics,
     )
     return app, control, reader
+
+
+def test_identity_resolution_metrics_are_authenticated_db_snapshot_prometheus_text() -> None:
+    metrics = FakeIdentityResolutionMetrics(_metrics_snapshot())
+    app, _control, _reader = _app(metrics=metrics)
+    client = TestClient(app)
+
+    unauthenticated = client.get("/internal/v1/metrics/identity-resolution")
+    response = client.get(
+        "/internal/v1/metrics/identity-resolution",
+        headers=_headers(purpose="identity_resolution_metrics", request_id="metrics-001"),
+    )
+
+    assert unauthenticated.status_code == 401
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-type"].startswith("text/plain")
+    assert metrics.calls == [
+        (
+            TenantScope("alpha.example", "observation_processing"),
+            NOW,
+            timedelta(seconds=30),
+        )
+    ]
+    assert response.text.splitlines() == [
+        "gbos_identity_resolver_ready 1",
+        "gbos_identity_resolver_heartbeat_age_seconds 4",
+        "gbos_identity_resolver_backlog 3",
+        "gbos_identity_resolver_oldest_work_age_seconds 17",
+        "gbos_identity_resolver_unresolved 2",
+        "gbos_identity_resolver_conflicts 1",
+        'gbos_identity_resolver_requests_total{outcome="confirmed"} 5',
+        'gbos_identity_resolver_requests_total{outcome="unresolved"} 7',
+        'gbos_identity_resolver_requests_total{outcome="revoked"} 2',
+        'gbos_identity_resolver_requests_total{outcome="conflict"} 1',
+        'gbos_identity_resolver_requests_total{outcome="error"} 4',
+        'gbos_identity_resolver_request_duration_seconds_bucket{le="0.1"} 2',
+        'gbos_identity_resolver_request_duration_seconds_bucket{le="0.5"} 5',
+        'gbos_identity_resolver_request_duration_seconds_bucket{le="2"} 9',
+        'gbos_identity_resolver_request_duration_seconds_bucket{le="+Inf"} 10',
+        "gbos_identity_resolver_request_duration_seconds_count 10",
+    ]
+
+
+def test_identity_metrics_use_only_fixed_low_cardinality_labels_and_no_scope_values() -> None:
+    metrics = FakeIdentityResolutionMetrics(_metrics_snapshot())
+    app, _control, _reader = _app(metrics=metrics)
+
+    response = TestClient(app).get(
+        "/internal/v1/metrics/identity-resolution",
+        headers=_headers(purpose="identity_resolution_metrics"),
+    )
+
+    assert response.status_code == 200
+    labels = re.findall(r"\{([^}]*)\}", response.text)
+    assert all(label.startswith('outcome="') or label.startswith('le="') for label in labels)
+    for forbidden in (
+        "alpha.example",
+        "team-sales",
+        "extid:v1:email:private-sentinel",
+        "member@example.invalid",
+        "account-owner-private",
+        "provider=",
+        "site=",
+        "team=",
+        "target=",
+        "account=",
+    ):
+        assert forbidden not in response.text
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    (
+        _metrics_snapshot(ready=True, heartbeat=NOW - timedelta(seconds=31)),
+        _metrics_snapshot(ready=True, heartbeat=None, oldest_age=None),
+    ),
+)
+def test_stale_or_absent_identity_heartbeat_is_not_ready_and_missing_ages_are_safe(
+    snapshot: IdentityResolutionWorkSnapshot,
+) -> None:
+    app, _control, _reader = _app(metrics=FakeIdentityResolutionMetrics(snapshot))
+
+    response = TestClient(app).get(
+        "/internal/v1/metrics/identity-resolution",
+        headers=_headers(purpose="identity_resolution_metrics"),
+    )
+
+    assert response.status_code == 200
+    assert "gbos_identity_resolver_ready 0\n" in response.text
+    if snapshot.worker_last_heartbeat_at is None:
+        assert "gbos_identity_resolver_heartbeat_age_seconds NaN\n" in response.text
+        assert "gbos_identity_resolver_oldest_work_age_seconds NaN\n" in response.text
+
+
+def test_identity_metrics_fail_closed_for_missing_dependency_purpose_clock_or_repo_error() -> None:
+    missing, _control, _reader = _app()
+    broken, _control, _reader = _app(
+        metrics=FakeIdentityResolutionMetrics(RuntimeError("private-db-error-sentinel"))
+    )
+    naive, _control, _reader = _app(
+        metrics=FakeIdentityResolutionMetrics(_metrics_snapshot()),
+        clock=lambda: datetime(2026, 8, 8, 9),
+    )
+    disabled, _control, _reader = _app(
+        metrics=FakeIdentityResolutionMetrics(_metrics_snapshot()),
+        enabled=False,
+    )
+    headers = _headers(purpose="identity_resolution_metrics")
+
+    missing_response = TestClient(missing).get(
+        "/internal/v1/metrics/identity-resolution", headers=headers
+    )
+    broken_response = TestClient(broken).get(
+        "/internal/v1/metrics/identity-resolution", headers=headers
+    )
+    naive_response = TestClient(naive).get(
+        "/internal/v1/metrics/identity-resolution", headers=headers
+    )
+    disabled_response = TestClient(disabled).get(
+        "/internal/v1/metrics/identity-resolution", headers=headers
+    )
+    wrong_purpose = TestClient(broken).get(
+        "/internal/v1/metrics/identity-resolution",
+        headers=_headers(purpose="communication_projection"),
+    )
+
+    assert missing_response.status_code == 503
+    assert broken_response.status_code == 503
+    assert naive_response.status_code == 503
+    assert disabled_response.status_code == 503
+    assert wrong_purpose.status_code == 403
+    assert "private-db-error-sentinel" not in (
+        missing_response.text + broken_response.text + naive_response.text
+    )
 
 
 def test_fastapi_bff_surface_matches_frappe_v4_and_is_no_store() -> None:
@@ -184,7 +379,7 @@ def test_bff_surface_rejects_missing_or_mismatched_governed_headers(
 def test_bff_command_resolves_unique_instance_and_matches_idempotency_header() -> None:
     app, control, _reader = _app()
     client = TestClient(app)
-    payload = {
+    payload: dict[str, Any] = {
         "instance_id": "sales-inbox",
         "expected_revision": 7,
         "idempotency_key": "pause-0001",
@@ -288,7 +483,7 @@ def test_bff_replay_accepts_only_the_frozen_eligible_delivery_scope() -> None:
         purpose="connector_control",
         **{"Idempotency-Key": "replay-0001"},
     )
-    payload = {
+    payload: dict[str, Any] = {
         "instance_id": "sales-inbox",
         "expected_revision": 7,
         "idempotency_key": "replay-0001",

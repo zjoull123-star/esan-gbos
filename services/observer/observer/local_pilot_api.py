@@ -5,7 +5,7 @@ import ipaddress
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
 from typing import Annotated, Literal, Protocol
 
@@ -20,7 +20,8 @@ from .control_service import (
     IdempotencyConflict,
     RevisionConflict,
 )
-from .models import ConnectorKey, TenantScope
+from .identity_resolution_work import IdentityResolutionWorkSnapshot
+from .models import ConnectorKey, TenantScope, _require_aware
 from .read_service import (
     CommunicationAccess,
     CommunicationDetail,
@@ -36,6 +37,11 @@ _REPLAY_REQUIRES = (
     "not_retention_expired",
     "same_site_and_instance",
 )
+_IDENTITY_METRICS_PURPOSE = "identity_resolution_metrics"
+_IDENTITY_READINESS_WINDOW = timedelta(seconds=30)
+_PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4"
+_OUTCOME_LABELS = ("confirmed", "unresolved", "revoked", "conflict", "error")
+_LATENCY_BUCKETS = ("le_100_ms", "le_500_ms", "le_2000_ms", "gt_2000_ms")
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -137,6 +143,16 @@ class ReadService(Protocol):
     ) -> CommunicationDetail: ...
 
 
+class IdentityResolutionMetrics(Protocol):
+    def snapshot(
+        self,
+        scope: TenantScope,
+        *,
+        now: datetime,
+        readiness_window: timedelta,
+    ) -> IdentityResolutionWorkSnapshot: ...
+
+
 class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -184,10 +200,10 @@ def create_local_pilot_app(
     reader: ReadService,
     guard: LocalPilotRuntimeGuard,
     clock: Clock,
+    identity_resolution_metrics: IdentityResolutionMetrics | None = None,
 ) -> FastAPI:
     """Create the authenticated Frappe v4 downstream surface without starting I/O."""
 
-    del clock
     application = FastAPI(
         title="ESAN GBOS Observer Local Pilot",
         version="1.0",
@@ -260,6 +276,32 @@ def create_local_pilot_app(
             "network_mode": config.network_mode,
             "authenticated_internal_api": True,
         }
+
+    @application.get("/internal/v1/metrics/identity-resolution")
+    def identity_resolution_metric_text(request: Request) -> Response:
+        guard.require_running()
+        scope, _request_id = _governed_scope(
+            request,
+            expected_purpose=_IDENTITY_METRICS_PURPOSE,
+        )
+        if identity_resolution_metrics is None:
+            return _metrics_unavailable()
+        try:
+            now = clock()
+            _require_aware(now, "metrics clock")
+            normalized_now = now.astimezone(UTC)
+            snapshot = identity_resolution_metrics.snapshot(
+                scope,
+                now=normalized_now,
+                readiness_window=_IDENTITY_READINESS_WINDOW,
+            )
+            rendered = _render_identity_resolution_metrics(snapshot, now=normalized_now)
+        except Exception:
+            return _metrics_unavailable()
+        return Response(
+            content=rendered,
+            media_type=_PROMETHEUS_CONTENT_TYPE,
+        )
 
     @application.post("/internal/v1/bff/connectors/list")
     def bff_connector_list(
@@ -508,6 +550,91 @@ def _bff_envelope(
         "data": data,
         "meta": meta,
     }
+
+
+def _render_identity_resolution_metrics(
+    snapshot: IdentityResolutionWorkSnapshot,
+    *,
+    now: datetime,
+) -> str:
+    if not isinstance(snapshot, IdentityResolutionWorkSnapshot):
+        raise ValueError("invalid identity resolution metric snapshot")
+    _require_aware(now, "metrics clock")
+    heartbeat_age = _age_seconds(snapshot.worker_last_heartbeat_at, now=now)
+    ready = snapshot.ready and _heartbeat_is_current(
+        snapshot.worker_last_heartbeat_at,
+        now=now,
+    )
+    oldest_age = _optional_count(snapshot.oldest_backlog_age_seconds)
+    outcomes = snapshot.request_outcomes
+    latency = snapshot.latency_buckets
+    if set(outcomes) != set(_OUTCOME_LABELS) or set(latency) != set(_LATENCY_BUCKETS):
+        raise ValueError("invalid identity resolution metric dimensions")
+    outcome_values = {name: _count(outcomes[name]) for name in _OUTCOME_LABELS}
+    latency_values = {name: _count(latency[name]) for name in _LATENCY_BUCKETS}
+    le_100 = latency_values["le_100_ms"]
+    le_500 = le_100 + latency_values["le_500_ms"]
+    le_2000 = le_500 + latency_values["le_2000_ms"]
+    total = le_2000 + latency_values["gt_2000_ms"]
+    lines = [
+        f"gbos_identity_resolver_ready {1 if ready else 0}",
+        f"gbos_identity_resolver_heartbeat_age_seconds {_number(heartbeat_age)}",
+        f"gbos_identity_resolver_backlog {_count(snapshot.backlog_count)}",
+        f"gbos_identity_resolver_oldest_work_age_seconds {_number(oldest_age)}",
+        f"gbos_identity_resolver_unresolved {_count(snapshot.unresolved_count)}",
+        f"gbos_identity_resolver_conflicts {_count(snapshot.conflict_count)}",
+    ]
+    lines.extend(
+        f'gbos_identity_resolver_requests_total{{outcome="{name}"}} {outcome_values[name]}'
+        for name in _OUTCOME_LABELS
+    )
+    lines.extend(
+        (
+            f'gbos_identity_resolver_request_duration_seconds_bucket{{le="0.1"}} {le_100}',
+            f'gbos_identity_resolver_request_duration_seconds_bucket{{le="0.5"}} {le_500}',
+            f'gbos_identity_resolver_request_duration_seconds_bucket{{le="2"}} {le_2000}',
+            f'gbos_identity_resolver_request_duration_seconds_bucket{{le="+Inf"}} {total}',
+            f"gbos_identity_resolver_request_duration_seconds_count {total}",
+        )
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _age_seconds(value: datetime | None, *, now: datetime) -> int | None:
+    if value is None:
+        return None
+    _require_aware(value, "worker heartbeat")
+    return max(0, int((now - value.astimezone(UTC)).total_seconds()))
+
+
+def _heartbeat_is_current(value: datetime | None, *, now: datetime) -> bool:
+    if value is None:
+        return False
+    _require_aware(value, "worker heartbeat")
+    normalized = value.astimezone(UTC)
+    return now - _IDENTITY_READINESS_WINDOW <= normalized <= now
+
+
+def _optional_count(value: int | None) -> int | None:
+    return None if value is None else _count(value)
+
+
+def _count(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("invalid identity resolution metric counter")
+    return value
+
+
+def _number(value: int | None) -> str:
+    return "NaN" if value is None else str(value)
+
+
+def _metrics_unavailable() -> Response:
+    return Response(
+        status_code=503,
+        content="",
+        media_type=_PROMETHEUS_CONTENT_TYPE,
+    )
 
 
 def _safe_secret(value: str, field_name: str) -> None:

@@ -12,6 +12,9 @@ from fastapi.testclient import TestClient
 
 from services.local_pilot_runtime import observer_api
 from services.local_pilot_runtime.runtime_support import SecretValue
+from services.observer.observer.identity_resolution_work import (
+    PostgresIdentityResolutionWorkRepository,
+)
 
 
 class _Connection:
@@ -132,6 +135,11 @@ def test_observer_runtime_composes_real_health_without_model_projection() -> Non
     }
     assert runtime.projection_repository is None
     assert runtime.projection_publisher is None
+    assert isinstance(
+        runtime.identity_resolution_metrics,
+        PostgresIdentityResolutionWorkRepository,
+    )
+    assert runtime.identity_resolution_metrics._connection is runtime.connection
     with pytest.raises(RuntimeError, match="disabled"):
         runtime.outbox._publisher(object(), "event-1", "idem-1")
 
