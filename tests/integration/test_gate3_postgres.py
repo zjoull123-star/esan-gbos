@@ -29,6 +29,10 @@ from services.observer.observer.identity_resolution import (
     ParticipantIdentityResolution,
     PostgresIdentityResolutionRepository,
 )
+from services.observer.observer.identity_resolution_work import (
+    IdentityResolutionLeaseConflict,
+    PostgresIdentityResolutionWorkRepository,
+)
 from services.observer.observer.local_pilot_ingestion import DurableDeliveryInbox
 from services.observer.observer.local_pilot_storage import (
     ConnectorRoutingConflict,
@@ -88,6 +92,10 @@ CONTEXT_HOST = os.getenv("GBOS_GATE3_CONTEXT_HOST")
 CONTEXT_PORT = os.getenv("GBOS_GATE3_CONTEXT_PORT")
 CONTEXT_DATABASE = os.getenv("GBOS_GATE3_CONTEXT_DATABASE")
 CONTEXT_PASSWORD = os.getenv("GBOS_GATE3_CONTEXT_PASSWORD")
+ROOT = Path(__file__).parents[2]
+IDENTITY_WORK_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "010_local_pilot_identity_resolution_worker.sql"
+)
 
 pytestmark = [pytest.mark.postgres_integration]
 if not RUN_INTEGRATION:
@@ -131,7 +139,7 @@ def _container_sql(
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 10
+    assert _migration_ledger_count() == 11
     result = _container_sql(
         """
         SELECT count(*)
@@ -152,13 +160,14 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
               'inbound_delivery_events', 'connector_checkpoints',
               'persistent_nonces', 'processing_jobs',
               'context_publication_outbox', 'local_pilot_quarantine',
-              'local_pilot_dead_letter', 'participant_identity_resolutions'
+              'local_pilot_dead_letter', 'participant_identity_resolutions',
+              'identity_resolution_work', 'identity_resolution_worker_metrics'
           )
           AND c.relrowsecurity
           AND c.relforcerowsecurity
         """
     )
-    assert int(result.stdout.strip()) == 31
+    assert int(result.stdout.strip()) == 33
 
 
 def _migration_ledger_count() -> int:
@@ -176,11 +185,173 @@ def _migration_ledger_count() -> int:
               'observer/007_local_pilot_connector_routing.sql',
               'observer/008_local_pilot_projection_fencing.sql',
               'observer/009_local_pilot_identity_resolution.sql',
+              'observer/010_local_pilot_identity_resolution_worker.sql',
               'context/001_gate3_context.sql'
         )
         """
     )
     return int(result.stdout.strip())
+
+
+def test_gate3_identity_work_is_rls_fenced_restart_safe_and_aggregated() -> None:
+    if not all((CONTEXT_HOST, CONTEXT_PORT, CONTEXT_DATABASE, CONTEXT_PASSWORD)):
+        pytest.fail("Gate 3 Observer app-role connection components are required")
+
+    migration_sql = IDENTITY_WORK_MIGRATION.read_text(encoding="utf-8")
+    _container_sql(migration_sql)
+    _container_sql(migration_sql)
+
+    def connect():
+        return connect_postgres_components(
+            host=str(CONTEXT_HOST),
+            port=int(str(CONTEXT_PORT)),
+            database=str(CONTEXT_DATABASE),
+            user="gbos_observer_app",
+            password=str(CONTEXT_PASSWORD),
+        )
+
+    suffix = uuid.uuid4().hex[:12]
+    now = datetime.now(UTC).replace(microsecond=0)
+    scope = ObserverTenantScope(f"identity-work-{suffix}", "observation_processing")
+    other_scope = ObserverTenantScope(
+        f"identity-work-other-{suffix}",
+        "observation_processing",
+    )
+    identity_ref = f"extid:v1:email:user-{suffix}"
+    connection = connect()
+    restart = None
+    try:
+        repository = PostgresIdentityResolutionWorkRepository(connection)
+        queued = repository.enqueue(
+            scope,
+            identity_provider="email",
+            identity_ref=identity_ref,
+            team_ref="team-sales",
+            now=now,
+            max_attempts=3,
+        )
+        replay = repository.enqueue(
+            scope,
+            identity_provider="email",
+            identity_ref=identity_ref,
+            team_ref="team-sales",
+            now=now + timedelta(seconds=1),
+            max_attempts=9,
+        )
+        assert replay.work_id == queued.work_id
+        assert replay.max_attempts == 3
+        assert replay.last_seen_at == now + timedelta(seconds=1)
+
+        other = repository.enqueue(
+            other_scope,
+            identity_provider="email",
+            identity_ref=identity_ref,
+            team_ref="team-sales",
+            now=now,
+            max_attempts=3,
+        )
+        assert other.work_id != queued.work_id
+        assert repository.get(other_scope, queued.work_id) is None
+        with connection.transaction(), connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (scope.site_id,))
+            cursor.execute(
+                "SELECT work_id FROM observer.identity_resolution_work "
+                "WHERE site_id = %s AND work_id = %s",
+                (other_scope.site_id, other.work_id),
+            )
+            assert cursor.fetchone() is None
+
+        first_claim = repository.claim(
+            scope,
+            worker_id="worker-a",
+            now=now + timedelta(seconds=2),
+            lease_duration=timedelta(seconds=5),
+        )
+        assert first_claim is not None
+        repository.heartbeat(
+            scope,
+            first_claim.work_id,
+            worker_id="worker-a",
+            fence_token=first_claim.fence_token,
+            now=now + timedelta(seconds=3),
+            lease_duration=timedelta(seconds=5),
+        )
+
+        restart = connect()
+        restarted = PostgresIdentityResolutionWorkRepository(restart)
+        reclaimed = restarted.claim(
+            scope,
+            worker_id="worker-b",
+            now=now + timedelta(seconds=9),
+            lease_duration=timedelta(seconds=5),
+        )
+        assert reclaimed is not None
+        assert reclaimed.work_id == queued.work_id
+        assert reclaimed.lease_generation == first_claim.lease_generation + 1
+        with pytest.raises(IdentityResolutionLeaseConflict):
+            repository.heartbeat(
+                scope,
+                first_claim.work_id,
+                worker_id="worker-a",
+                fence_token=first_claim.fence_token,
+                now=now + timedelta(seconds=10),
+                lease_duration=timedelta(seconds=5),
+            )
+        unresolved = restarted.record_outcome(
+            scope,
+            reclaimed.work_id,
+            worker_id="worker-b",
+            fence_token=reclaimed.fence_token,
+            now=now + timedelta(seconds=10),
+            outcome="unresolved",
+            latency=timedelta(milliseconds=75),
+            recheck_at=now + timedelta(hours=1),
+        )
+        assert unresolved.status == "unresolved"
+
+        conflict_item = restarted.enqueue(
+            scope,
+            identity_provider="email",
+            identity_ref=f"extid:v1:email:conflict-{suffix}",
+            team_ref="team-sales",
+            now=now + timedelta(seconds=11),
+            max_attempts=3,
+        )
+        conflict_claim = restarted.claim(
+            scope,
+            worker_id="worker-b",
+            now=now + timedelta(seconds=11),
+            lease_duration=timedelta(seconds=5),
+        )
+        assert conflict_claim is not None and conflict_claim.work_id == conflict_item.work_id
+        restarted.record_outcome(
+            scope,
+            conflict_claim.work_id,
+            worker_id="worker-b",
+            fence_token=conflict_claim.fence_token,
+            now=now + timedelta(seconds=12),
+            outcome="conflict",
+            latency=timedelta(milliseconds=700),
+        )
+        restarted.record_worker_heartbeat(scope, now=now + timedelta(seconds=13))
+        snapshot = restarted.snapshot(
+            scope,
+            now=now + timedelta(seconds=14),
+            readiness_window=timedelta(seconds=30),
+        )
+        assert snapshot.ready is True
+        assert snapshot.backlog_count == 0
+        assert snapshot.unresolved_count == 1
+        assert snapshot.conflict_count == 1
+        assert snapshot.request_outcomes["unresolved"] == 1
+        assert snapshot.request_outcomes["conflict"] == 1
+        assert snapshot.latency_buckets["le_100_ms"] == 1
+        assert snapshot.latency_buckets["le_2000_ms"] == 1
+        assert not hasattr(snapshot, "identity_ref")
+    finally:
+        if restart is not None:
+            restart.close()
+        connection.close()
 
 
 def test_gate3_identity_projection_fences_replay_revocation_and_confirmed_reads() -> None:
