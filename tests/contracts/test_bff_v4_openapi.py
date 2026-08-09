@@ -17,6 +17,13 @@ OPERATIONS = {
     "/api/method/esan_gbos.api.v4.ai_draft.list": "get",
     "/api/method/esan_gbos.api.v4.ai_draft.get": "get",
     "/api/method/esan_gbos.api.v4.ai_draft.submit_for_review": "post",
+    "/api/method/esan_gbos.api.v4.identity.list_states": "get",
+    "/api/method/esan_gbos.api.v4.identity.get_state": "get",
+    "/api/method/esan_gbos.api.v4.identity.list_candidates": "get",
+    "/api/method/esan_gbos.api.v4.identity.list_pending_reviews": "get",
+    "/api/method/esan_gbos.api.v4.identity.get_pending_review": "get",
+    "/api/method/esan_gbos.api.v4.identity.submit_for_review": "post",
+    "/api/method/esan_gbos.api.v4.identity.revoke": "post",
 }
 
 
@@ -193,3 +200,101 @@ def test_v4_never_exposes_secret_raw_model_or_automatic_formal_command_fields() 
         "approvedcommand",
     ):
         assert forbidden not in text
+
+
+def test_v4_identity_surface_has_exactly_two_commands_and_no_direct_decision_or_write_api() -> None:
+    value = contract()
+    identity_paths = {
+        path: operation for path, operation in value["paths"].items() if ".identity." in path
+    }
+    post_paths = {path for path, operation in identity_paths.items() if "post" in operation}
+
+    assert post_paths == {
+        "/api/method/esan_gbos.api.v4.identity.submit_for_review",
+        "/api/method/esan_gbos.api.v4.identity.revoke",
+    }
+    lowered = " ".join(identity_paths).lower()
+    for forbidden in ("approve", "confirm", "merge", "send", "write"):
+        assert forbidden not in lowered
+
+
+def test_v4_identity_contract_freezes_closed_states_candidates_reviews_and_commands() -> None:
+    schemas = contract()["components"]["schemas"]
+
+    state = schemas["IdentityState"]
+    assert state["additionalProperties"] is False
+    assert state["properties"]["status"]["enum"] == [
+        "unresolved",
+        "proposed",
+        "pending",
+        "confirmed",
+        "revoked",
+    ]
+    assert "external_subject" not in state["properties"]
+    assert "target_ref" not in state["properties"]
+    assert state["properties"]["target_type"]["enum"] == ["User", "Party"]
+
+    candidate = schemas["IdentityCandidate"]
+    assert candidate["additionalProperties"] is False
+    assert set(candidate["required"]) == {"candidate_type", "candidate_ref", "display_label"}
+    assert candidate["properties"]["candidate_type"]["enum"] == ["User", "Party", "Contact"]
+    reviewer = schemas["IdentityReviewer"]
+    assert reviewer["additionalProperties"] is False
+    assert set(reviewer["required"]) == {"reviewer_ref", "display_label"}
+    candidate_payload = schemas["IdentityCandidateListPayload"]
+    assert "eligible_reviewers" in candidate_payload["required"]
+    assert candidate_payload["properties"]["eligible_reviewers"]["items"]["$ref"].endswith(
+        "/IdentityReviewer"
+    )
+
+    review = schemas["IdentityPendingReview"]
+    assert review["additionalProperties"] is False
+    assert {"evidence_refs", "target", "mapping_revision", "policy_version"} <= set(
+        review["required"]
+    )
+    assert "external_subject" not in review["properties"]
+
+    submit = schemas["IdentitySubmitForReviewCommand"]
+    assert submit["additionalProperties"] is False
+    assert submit["properties"]["expected_state"]["const"] == "unresolved"
+    assert {"expected_revision", "idempotency_key", "assigned_reviewer"} <= set(submit["required"])
+
+    revoke = schemas["IdentityRevokeCommand"]
+    assert revoke["additionalProperties"] is False
+    assert {"expected_revision", "idempotency_key", "mapping_ref", "identity_ref"} <= set(
+        revoke["required"]
+    )
+
+
+def test_v4_identity_operations_freeze_roles_scope_csrf_no_store_and_safe_errors() -> None:
+    value = contract()
+    paths = value["paths"]
+    submit = paths["/api/method/esan_gbos.api.v4.identity.submit_for_review"]["post"]
+    revoke = paths["/api/method/esan_gbos.api.v4.identity.revoke"]["post"]
+
+    assert submit["x-gbos-roles"] == [
+        "Sales User",
+        "Sales Manager",
+        "Integration Admin",
+        "GBOS Admin",
+    ]
+    assert revoke["x-gbos-roles"] == ["Integration Admin", "GBOS Admin"]
+    for operation in (submit, revoke):
+        assert operation["x-gbos-cache"] == "no-store"
+        assert operation["x-gbos-scope"] == "communication_and_same_team"
+        assert operation["x-gbos-audit"] == "request_id_and_idempotency"
+        assert {"FrappeSession", "FrappeCsrf"} <= set(operation["security"][0])
+
+    errors = set(
+        value["components"]["schemas"]["ErrorEnvelope"]["properties"]["error"]["properties"][
+            "code"
+        ]["enum"]
+    )
+    assert {
+        "identity_mismatch",
+        "suggestion_mismatch",
+        "candidate_ineligible",
+        "reviewer_ineligible",
+        "revision_conflict",
+        "idempotency_conflict",
+    } <= errors

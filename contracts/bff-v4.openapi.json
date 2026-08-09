@@ -196,6 +196,139 @@
           "default": {"$ref": "#/components/responses/Error"}
         }
       }
+    },
+    "/api/method/esan_gbos.api.v4.identity.list_states": {
+      "get": {
+        "operationId": "identity.list_states",
+        "x-gbos-cache": "no-store",
+        "x-gbos-scope": "communication_and_same_team",
+        "x-gbos-roles": ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin", "CEO"],
+        "security": [{"FrappeSession": []}],
+        "parameters": [
+          {"name": "observation_id", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 48}}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/IdentityStateListSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.identity.get_state": {
+      "get": {
+        "operationId": "identity.get_state",
+        "x-gbos-cache": "no-store",
+        "x-gbos-scope": "communication_and_same_team",
+        "x-gbos-roles": ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin", "CEO"],
+        "security": [{"FrappeSession": []}],
+        "parameters": [
+          {"name": "observation_id", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 48}},
+          {"name": "identity_ref", "in": "query", "required": true, "schema": {"type": "string", "pattern": "^extid:v1:[a-z_]+:[A-Za-z0-9._~-]+$", "maxLength": 160}}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/IdentityStateDetailSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.identity.list_candidates": {
+      "get": {
+        "operationId": "identity.list_candidates",
+        "x-gbos-cache": "no-store",
+        "x-gbos-scope": "communication_and_same_team",
+        "x-gbos-roles": ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin"],
+        "security": [{"FrappeSession": []}],
+        "parameters": [
+          {"name": "observation_id", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 48}},
+          {"name": "identity_ref", "in": "query", "required": true, "schema": {"type": "string", "maxLength": 160}},
+          {"name": "candidate_type", "in": "query", "required": true, "schema": {"type": "string", "enum": ["User", "Party", "Contact"]}},
+          {"name": "search", "in": "query", "schema": {"type": "string", "maxLength": 100}},
+          {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 1000}},
+          {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50}}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/IdentityCandidateListSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.identity.list_pending_reviews": {
+      "get": {
+        "operationId": "identity.list_pending_reviews",
+        "x-gbos-cache": "no-store",
+        "x-gbos-scope": "assigned_reviewer_or_gbos_admin",
+        "x-gbos-roles": ["Reviewer", "GBOS Admin"],
+        "security": [{"FrappeSession": []}],
+        "parameters": [
+          {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 1000}},
+          {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50}}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/IdentityReviewListSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.identity.get_pending_review": {
+      "get": {
+        "operationId": "identity.get_pending_review",
+        "x-gbos-cache": "no-store",
+        "x-gbos-scope": "assigned_reviewer_or_gbos_admin",
+        "x-gbos-roles": ["Reviewer", "GBOS Admin"],
+        "security": [{"FrappeSession": []}],
+        "parameters": [
+          {"name": "review_case_ref", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 140}}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/IdentityReviewDetailSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.identity.submit_for_review": {
+      "post": {
+        "operationId": "identity.submit_for_review",
+        "x-gbos-cache": "no-store",
+        "x-gbos-scope": "communication_and_same_team",
+        "x-gbos-audit": "request_id_and_idempotency",
+        "x-gbos-transition": "unresolved -> AI Draft -> Pending",
+        "x-gbos-roles": ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin"],
+        "security": [{"FrappeSession": [], "FrappeCsrf": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {"$ref": "#/components/schemas/IdentitySubmitForReviewCommand"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/IdentityCommandSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v4.identity.revoke": {
+      "post": {
+        "operationId": "identity.revoke",
+        "x-gbos-cache": "no-store",
+        "x-gbos-scope": "communication_and_same_team",
+        "x-gbos-audit": "request_id_and_idempotency",
+        "x-gbos-transition": "Approved Active -> Approved Revoked",
+        "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
+        "security": [{"FrappeSession": [], "FrappeCsrf": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {"$ref": "#/components/schemas/IdentityRevokeCommand"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/IdentityCommandSuccess"},
+          "default": {"$ref": "#/components/responses/Error"}
+        }
+      }
     }
   },
   "components": {
@@ -239,6 +372,10 @@
                   "invalid_cursor",
                   "not_found",
                   "scope_mismatch",
+                  "identity_mismatch",
+                  "suggestion_mismatch",
+                  "candidate_ineligible",
+                  "reviewer_ineligible",
                   "revision_conflict",
                   "invalid_transition",
                   "idempotency_conflict",
@@ -347,11 +484,24 @@
       "AssociationSuggestion": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["type", "target_ref", "confidence"],
+        "required": ["type", "confidence", "suggestion_key"],
         "properties": {
           "type": {"type": "string"},
-          "target_ref": {"type": "string"},
-          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "suggestion_key": {"type": "string", "pattern": "^suggestion:v1:[a-f0-9]{64}$"}
+        }
+      },
+      "ParticipantIdentity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["identity_ref", "provider", "status"],
+        "properties": {
+          "identity_ref": {"type": "string", "pattern": "^extid:v1:[a-z_]+:[A-Za-z0-9._~-]+$", "maxLength": 160},
+          "provider": {"type": "string", "enum": ["email", "wecom", "whatsapp", "phone", "manual_import"]},
+          "status": {"type": "string", "enum": ["unresolved", "confirmed", "revoked"]},
+          "mapping_ref": {"type": "string"},
+          "mapping_revision": {"type": "integer", "minimum": 1},
+          "target_type": {"type": "string", "enum": ["User", "Party"]}
         }
       },
       "ModelMetadata": {
@@ -373,6 +523,8 @@
               "evidence",
               "fact_proposals",
               "association_suggestions",
+              "participant_identities",
+              "connector_account_user_ref",
               "model",
               "raw_access_allowed"
             ],
@@ -380,6 +532,8 @@
               "evidence": {"type": "array", "items": {"$ref": "#/components/schemas/EvidenceLocator"}},
               "fact_proposals": {"type": "array", "items": {"$ref": "#/components/schemas/FactProposal"}},
               "association_suggestions": {"type": "array", "items": {"$ref": "#/components/schemas/AssociationSuggestion"}},
+              "participant_identities": {"type": "array", "maxItems": 100, "items": {"$ref": "#/components/schemas/ParticipantIdentity"}},
+              "connector_account_user_ref": {"type": ["string", "null"]},
               "model": {"$ref": "#/components/schemas/ModelMetadata"},
               "raw_access_allowed": {"type": "boolean"},
               "original_text": {
@@ -440,6 +594,102 @@
           "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 256}
         }
       },
+      "IdentityState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["identity_ref", "provider", "status"],
+        "properties": {
+          "identity_ref": {"type": "string", "maxLength": 160},
+          "provider": {"type": "string", "enum": ["email", "wecom", "whatsapp", "phone", "manual_import"]},
+          "status": {"type": "string", "enum": ["unresolved", "proposed", "pending", "confirmed", "revoked"]},
+          "mapping_ref": {"type": "string"},
+          "mapping_revision": {"type": "integer", "minimum": 1},
+          "target_type": {"type": "string", "enum": ["User", "Party"]},
+          "display_label": {"type": "string"}
+        }
+      },
+      "ConnectorAccountOwner": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["display_label"],
+        "properties": {"display_label": {"type": "string"}}
+      },
+      "IdentityCandidate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_type", "candidate_ref", "display_label"],
+        "properties": {
+          "candidate_type": {"type": "string", "enum": ["User", "Party", "Contact"]},
+          "candidate_ref": {"type": "string"},
+          "display_label": {"type": "string"}
+        }
+      },
+      "IdentityReviewer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reviewer_ref", "display_label"],
+        "properties": {
+          "reviewer_ref": {"type": "string"},
+          "display_label": {"type": "string"}
+        }
+      },
+      "IdentityPendingReview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["review_case_ref", "review_case_revision", "status", "assigned_reviewer", "team_ref", "mapping_ref", "mapping_revision", "target", "evidence_refs", "policy_version"],
+        "properties": {
+          "review_case_ref": {"type": "string"},
+          "review_case_revision": {"type": "integer", "minimum": 1},
+          "status": {"const": "pending"},
+          "assigned_reviewer": {"type": "string"},
+          "team_ref": {"type": "string"},
+          "mapping_ref": {"type": "string"},
+          "mapping_revision": {"type": "integer", "minimum": 1},
+          "target": {"$ref": "#/components/schemas/IdentityCandidate"},
+          "evidence_refs": {"type": "array", "maxItems": 100, "items": {"type": "string"}},
+          "policy_version": {"type": "string"}
+        }
+      },
+      "IdentitySubmitForReviewCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["observation_id", "identity_ref", "suggestion_key", "selected_candidate_type", "selected_candidate_ref", "assigned_reviewer", "expected_state", "expected_revision", "idempotency_key"],
+        "properties": {
+          "observation_id": {"type": "string", "minLength": 1, "maxLength": 48},
+          "identity_ref": {"type": "string", "maxLength": 160},
+          "suggestion_key": {"type": "string", "pattern": "^suggestion:v1:[a-f0-9]{64}$"},
+          "selected_candidate_type": {"type": "string", "enum": ["User", "Party", "Contact"]},
+          "selected_candidate_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+          "assigned_reviewer": {"type": "string", "minLength": 1, "maxLength": 140},
+          "expected_state": {"const": "unresolved"},
+          "expected_revision": {"type": "integer", "const": 0},
+          "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 256}
+        }
+      },
+      "IdentityRevokeCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["observation_id", "identity_ref", "mapping_ref", "expected_revision", "idempotency_key"],
+        "properties": {
+          "observation_id": {"type": "string", "minLength": 1, "maxLength": 48},
+          "identity_ref": {"type": "string", "maxLength": 160},
+          "mapping_ref": {"type": "string", "minLength": 1, "maxLength": 140},
+          "expected_revision": {"type": "integer", "minimum": 1},
+          "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 256}
+        }
+      },
+      "IdentityCommandResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "mapping_ref", "mapping_revision"],
+        "properties": {
+          "status": {"type": "string", "enum": ["pending", "revoked"]},
+          "mapping_ref": {"type": "string"},
+          "mapping_revision": {"type": "integer", "minimum": 1},
+          "review_case_ref": {"type": "string"},
+          "review_case_revision": {"type": "integer", "minimum": 1}
+        }
+      },
       "ConnectorListPayload": {
         "type": "object",
         "additionalProperties": false,
@@ -475,6 +725,49 @@
         "additionalProperties": false,
         "required": ["draft"],
         "properties": {"draft": {"$ref": "#/components/schemas/AiDraft"}}
+      },
+      "IdentityStateListPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["identities", "connector_account_owner"],
+        "properties": {
+          "identities": {"type": "array", "maxItems": 100, "items": {"$ref": "#/components/schemas/IdentityState"}},
+          "connector_account_owner": {"oneOf": [{"$ref": "#/components/schemas/ConnectorAccountOwner"}, {"type": "null"}]}
+        }
+      },
+      "IdentityStateDetailPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["identity", "connector_account_owner"],
+        "properties": {
+          "identity": {"$ref": "#/components/schemas/IdentityState"},
+          "connector_account_owner": {"oneOf": [{"$ref": "#/components/schemas/ConnectorAccountOwner"}, {"type": "null"}]}
+        }
+      },
+      "IdentityCandidateListPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidates", "eligible_reviewers", "has_more"],
+        "properties": {
+          "candidates": {"type": "array", "items": {"$ref": "#/components/schemas/IdentityCandidate"}},
+          "eligible_reviewers": {"type": "array", "items": {"$ref": "#/components/schemas/IdentityReviewer"}},
+          "has_more": {"type": "boolean"}
+        }
+      },
+      "IdentityReviewListPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reviews", "has_more"],
+        "properties": {
+          "reviews": {"type": "array", "items": {"$ref": "#/components/schemas/IdentityPendingReview"}},
+          "has_more": {"type": "boolean"}
+        }
+      },
+      "IdentityReviewDetailPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["review"],
+        "properties": {"review": {"$ref": "#/components/schemas/IdentityPendingReview"}}
       },
       "ConnectorListEnvelope": {"$ref": "#/components/schemas/EnvelopeConnectorListPayload"},
       "EnvelopeConnectorListPayload": {
@@ -519,13 +812,55 @@
         "required": ["data", "meta"],
         "properties": {"data": {"$ref": "#/components/schemas/AiDraftDetailPayload"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
       },
+      "EnvelopeIdentityStateList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/IdentityStateListPayload"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "EnvelopeIdentityStateDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/IdentityStateDetailPayload"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "EnvelopeIdentityCandidateList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/IdentityCandidateListPayload"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "EnvelopeIdentityReviewList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/IdentityReviewListPayload"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "EnvelopeIdentityReviewDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/IdentityReviewDetailPayload"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
+      "EnvelopeIdentityCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "meta"],
+        "properties": {"data": {"$ref": "#/components/schemas/IdentityCommandResult"}, "meta": {"$ref": "#/components/schemas/SuccessMeta"}}
+      },
       "FrappeConnectorListWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeConnectorListPayload"}}},
       "FrappeConnectorStatusWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeConnectorStatus"}}},
       "FrappeCommunicationListWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeCommunicationList"}}},
       "FrappeCommunicationDetailWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeCommunicationDetail"}}},
       "FrappeModelUsageWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeModelUsage"}}},
       "FrappeAiDraftListWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeAiDraftList"}}},
-      "FrappeAiDraftDetailWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeAiDraftDetail"}}}
+      "FrappeAiDraftDetailWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeAiDraftDetail"}}},
+      "FrappeIdentityStateListWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeIdentityStateList"}}},
+      "FrappeIdentityStateDetailWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeIdentityStateDetail"}}},
+      "FrappeIdentityCandidateListWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeIdentityCandidateList"}}},
+      "FrappeIdentityReviewListWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeIdentityReviewList"}}},
+      "FrappeIdentityReviewDetailWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeIdentityReviewDetail"}}},
+      "FrappeIdentityCommandWire": {"type": "object", "required": ["message"], "properties": {"message": {"$ref": "#/components/schemas/EnvelopeIdentityCommand"}}}
     },
     "responses": {
       "ConnectorListSuccess": {"description": "Connector status list", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeConnectorListWire"}}}},
@@ -535,6 +870,12 @@
       "ModelUsageSuccess": {"description": "Exact model usage", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeModelUsageWire"}}}},
       "AiDraftListSuccess": {"description": "AI drafts", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeAiDraftListWire"}}}},
       "AiDraftDetailSuccess": {"description": "AI draft detail", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeAiDraftDetailWire"}}}},
+      "IdentityStateListSuccess": {"description": "Scoped participant identity states", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeIdentityStateListWire"}}}},
+      "IdentityStateDetailSuccess": {"description": "Scoped participant identity state", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeIdentityStateDetailWire"}}}},
+      "IdentityCandidateListSuccess": {"description": "Same-team identity candidates", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeIdentityCandidateListWire"}}}},
+      "IdentityReviewListSuccess": {"description": "Assigned pending identity reviews", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeIdentityReviewListWire"}}}},
+      "IdentityReviewDetailSuccess": {"description": "Assigned pending identity review", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeIdentityReviewDetailWire"}}}},
+      "IdentityCommandSuccess": {"description": "Governed identity command receipt", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeIdentityCommandWire"}}}},
       "Error": {"description": "Stable GBOS error envelope", "headers": {"Cache-Control": {"schema": {"const": "no-store"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FrappeErrorWire"}}}}
     }
   }

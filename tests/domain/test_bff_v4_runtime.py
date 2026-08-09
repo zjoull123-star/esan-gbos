@@ -410,6 +410,8 @@ def test_restricted_communication_never_maps_original_text() -> None:
             "evidence": [{"ref": "EVD-001", "locator": "context://EVD-001"}],
             "fact_proposals": [],
             "association_suggestions": [],
+            "participant_identities": [],
+            "connector_account_user_ref": None,
             "model": {"name": "deepseek-v4-flash", "version": "2026-08-01"},
             "raw_access_allowed": True,
             "original_text": "restricted source body",
@@ -419,6 +421,95 @@ def test_restricted_communication_never_maps_original_text() -> None:
     assert value["raw_access_allowed"] is False
     assert "original_text" not in value
     assert "restricted source body" not in repr(value)
+
+
+def test_communication_detail_maps_closed_identity_metadata_without_protected_targets() -> None:
+    opaque_identity = "extid:v1:email:opaque-participant"
+    suggestion_key = f"suggestion:v1:{'a' * 64}"
+    value = map_communication_detail(
+        {
+            "observation_id": "OBS-002",
+            "channel": "email",
+            "occurred_at": "2026-08-08T01:00:00+00:00",
+            "summary_zh": "客户询问交期。",
+            "original_language": "zh",
+            "classification": "Internal",
+            "review_status": "Pending",
+            "team_ref": "TEM-001",
+            "party_ref": None,
+            "evidence_count": 1,
+            "evidence": [{"ref": "EVD-001", "locator": "context://EVD-001"}],
+            "fact_proposals": [],
+            "association_suggestions": [
+                {
+                    "type": "party",
+                    "target_ref": "PROTECTED-MODEL-TARGET",
+                    "confidence": 0.88,
+                    "suggestion_key": suggestion_key,
+                }
+            ],
+            "participant_identities": [
+                {
+                    "identity_ref": opaque_identity,
+                    "provider": "email",
+                    "status": "confirmed",
+                    "mapping_ref": "EID-001",
+                    "mapping_revision": 3,
+                    "target_type": "Party",
+                }
+            ],
+            "connector_account_user_ref": "owner@example.invalid",
+            "model": {"name": "deepseek-v4-flash", "version": "2026-08-01"},
+            "raw_access_allowed": False,
+        }
+    )
+
+    assert value["participant_identities"] == [
+        {
+            "identity_ref": opaque_identity,
+            "provider": "email",
+            "status": "confirmed",
+            "mapping_ref": "EID-001",
+            "mapping_revision": 3,
+            "target_type": "Party",
+        }
+    ]
+    assert value["association_suggestions"] == [
+        {"type": "party", "confidence": 0.88, "suggestion_key": suggestion_key}
+    ]
+    assert value["connector_account_user_ref"] == "owner@example.invalid"
+    assert "PROTECTED-MODEL-TARGET" not in repr(value)
+
+
+def test_communication_detail_rejects_raw_provider_subject_in_identity_ref() -> None:
+    with pytest.raises(V4DTOValidationError, match="identity reference"):
+        map_communication_detail(
+            {
+                "observation_id": "OBS-003",
+                "channel": "email",
+                "occurred_at": "2026-08-08T01:00:00+00:00",
+                "summary_zh": "客户询问交期。",
+                "original_language": "zh",
+                "classification": "Internal",
+                "review_status": "Pending",
+                "team_ref": "TEM-001",
+                "party_ref": None,
+                "evidence_count": 0,
+                "evidence": [],
+                "fact_proposals": [],
+                "association_suggestions": [],
+                "participant_identities": [
+                    {
+                        "identity_ref": "extid:v1:email:raw-person@example.invalid",
+                        "provider": "email",
+                        "status": "unresolved",
+                    }
+                ],
+                "connector_account_user_ref": None,
+                "model": {"name": "deepseek-v4-flash", "version": "2026-08-01"},
+                "raw_access_allowed": False,
+            }
+        )
 
 
 def test_model_usage_maps_only_the_frozen_budget_units() -> None:

@@ -30,6 +30,11 @@ _COMMUNICATION_SUMMARY_FIELDS = (
     "evidence_count",
 )
 _USAGE_STATES = frozenset({"known", "partial", "unknown"})
+_OPAQUE_IDENTITY_REF = re.compile(
+    r"^extid:v1:(email|wecom|whatsapp|phone|manual_import):"
+    r"([A-Za-z0-9][A-Za-z0-9._~-]{0,127})$"
+)
+_PHONE_LIKE_IDENTITY = re.compile(r"[0-9][0-9-]{7,}[0-9]")
 
 
 def _closed(
@@ -230,17 +235,95 @@ def _map_associations(payload: object) -> list[dict[str, Any]]:
     for index, item in enumerate(payload):
         if not isinstance(item, Mapping):
             raise V4DTOValidationError(f"association_suggestions[{index}] must be an object")
-        _closed(item, required={"type", "target_ref", "confidence"})
+        _closed(
+            item,
+            required={"type", "target_ref", "confidence", "suggestion_key"},
+        )
         confidence = _number(item["confidence"], f"association_suggestions[{index}].confidence")
         if confidence > 1:
             raise V4DTOValidationError("association confidence must be <= 1")
+        suggestion_key = _text(
+            item["suggestion_key"],
+            f"association_suggestions[{index}].suggestion_key",
+            maximum=78,
+        )
+        if re.fullmatch(r"suggestion:v1:[a-f0-9]{64}", suggestion_key) is None:
+            raise V4DTOValidationError("association suggestion key is invalid")
+        # target_ref is model provenance used only by the BFF submission path.  Validate it
+        # as part of the closed Observer response, but never project it to a browser client.
+        _text(item["target_ref"], f"association_suggestions[{index}].target_ref")
         result.append(
             {
                 "type": _text(item["type"], "type"),
-                "target_ref": _text(item["target_ref"], "target_ref"),
                 "confidence": confidence,
+                "suggestion_key": suggestion_key,
             }
         )
+    return result
+
+
+def _map_participant_identities(payload: object) -> list[dict[str, Any]]:
+    if not isinstance(payload, list) or len(payload) > 100:
+        raise V4DTOValidationError("participant_identities must be a bounded list")
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(payload):
+        if not isinstance(item, Mapping):
+            raise V4DTOValidationError(f"participant_identities[{index}] must be an object")
+        base = {"identity_ref", "provider", "status"}
+        mapping = {"mapping_ref", "mapping_revision", "target_type"}
+        _closed(item, required=base, optional=mapping)
+        identity_ref = _text(item["identity_ref"], f"participant_identities[{index}].identity_ref")
+        provider = _enum(
+            item["provider"],
+            f"participant_identities[{index}].provider",
+            {"email", "wecom", "whatsapp", "phone", "manual_import"},
+        )
+        match = _OPAQUE_IDENTITY_REF.fullmatch(identity_ref)
+        if (
+            match is None
+            or match.group(1) != provider
+            or _PHONE_LIKE_IDENTITY.fullmatch(match.group(2)) is not None
+            or identity_ref in seen
+        ):
+            raise V4DTOValidationError("participant identity reference is invalid")
+        seen.add(identity_ref)
+        status = _enum(
+            item["status"],
+            f"participant_identities[{index}].status",
+            {"unresolved", "confirmed", "revoked"},
+        )
+        has_mapping = any(field in item for field in mapping)
+        if has_mapping != all(field in item for field in mapping):
+            raise V4DTOValidationError("participant identity mapping metadata is incomplete")
+        value: dict[str, Any] = {
+            "identity_ref": identity_ref,
+            "provider": provider,
+            "status": status,
+        }
+        if has_mapping:
+            value.update(
+                {
+                    "mapping_ref": _text(
+                        item["mapping_ref"],
+                        f"participant_identities[{index}].mapping_ref",
+                    ),
+                    "mapping_revision": _integer(
+                        item["mapping_revision"],
+                        f"participant_identities[{index}].mapping_revision",
+                        minimum=1,
+                    ),
+                    "target_type": _enum(
+                        item["target_type"],
+                        f"participant_identities[{index}].target_type",
+                        {"User", "Party"},
+                    ),
+                }
+            )
+        return_status_has_mapping = status in {"confirmed", "revoked"}
+        if return_status_has_mapping != has_mapping:
+            raise V4DTOValidationError("participant identity status and mapping metadata disagree")
+        result.append(value)
     return result
 
 
@@ -249,6 +332,8 @@ def map_communication_detail(payload: dict[str, Any]) -> dict[str, Any]:
         "evidence",
         "fact_proposals",
         "association_suggestions",
+        "participant_identities",
+        "connector_account_user_ref",
         "model",
         "raw_access_allowed",
     }
@@ -267,6 +352,11 @@ def map_communication_detail(payload: dict[str, Any]) -> dict[str, Any]:
         "evidence": _map_evidence(payload["evidence"]),
         "fact_proposals": _map_fact_proposals(payload["fact_proposals"]),
         "association_suggestions": _map_associations(payload["association_suggestions"]),
+        "participant_identities": _map_participant_identities(payload["participant_identities"]),
+        "connector_account_user_ref": _optional_text(
+            payload["connector_account_user_ref"],
+            "connector_account_user_ref",
+        ),
         "model": _map_model_metadata(payload["model"]),
         "raw_access_allowed": raw_allowed,
     }

@@ -106,6 +106,20 @@ def list(
 @bff_endpoint("GET")
 def get(observation_id: str) -> dict[str, Any]:
     require_roles(COMMUNICATION_ROLES)
+    value = _scoped_observer_detail(observation_id)
+    try:
+        communication = map_communication_detail(value)
+    except (TypeError, V4DTOValidationError) as error:
+        raise BFFError(
+            "internal_error",
+            "Observer communication detail is invalid",
+            status=503,
+        ) from error
+    return v4_success({"communication": communication})
+
+
+def _scoped_observer_detail(observation_id: str) -> dict[str, Any]:
+    """Fetch one closed detail after proving the current user's Observer scope."""
     if not isinstance(observation_id, str) or not observation_id.strip():
         raise BFFError("invalid_query", "observation_id is required")
     data = call_local(
@@ -121,12 +135,4 @@ def get(observation_id: str) -> dict[str, Any]:
     value = data.get("communication")
     if not isinstance(value, dict):
         raise BFFError("not_found", "Communication was not found", status=404)
-    try:
-        communication = map_communication_detail(value)
-    except V4DTOValidationError as error:
-        raise BFFError(
-            "internal_error",
-            "Observer communication detail is invalid",
-            status=503,
-        ) from error
-    return v4_success({"communication": communication})
+    return value
