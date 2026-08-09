@@ -4,6 +4,8 @@ import base64
 import hashlib
 import hmac
 import json
+import math
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Protocol
@@ -11,6 +13,14 @@ from typing import Any, Protocol
 from .identity_resolution import IdentityResolutionRepository
 from .models import TenantScope, _require_aware
 from .storage import Connection
+
+_IDENTITY_REF = re.compile(
+    r"^extid:v1:(email|wecom|whatsapp|phone|manual_import):"
+    r"([A-Za-z0-9][A-Za-z0-9._~-]{0,127})$"
+)
+_PHONE_LIKE_IDENTITY_TAIL = re.compile(r"^[0-9][0-9 ()-]{7,}[0-9]$")
+_MAPPING_REF = re.compile(r"^EID-[0-9A-HJKMNP-TV-Z]{26}$")
+_SUGGESTION_TYPE = re.compile(r"^[a-z][a-z0-9_.-]{0,79}$")
 
 
 class InvalidCursor(ValueError):
@@ -124,7 +134,66 @@ class CommunicationSummary:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
+class ParticipantIdentityView:
+    identity_ref: str
+    provider: str
+    status: str
+    mapping_ref: str | None = None
+    mapping_revision: int | None = None
+    target_type: str | None = None
+
+    def __post_init__(self) -> None:
+        parsed = _parse_external_subject_ref(self.identity_ref)
+        if parsed is None or parsed[0] != self.provider:
+            raise ValueError("invalid participant identity view")
+        if self.status not in {"unresolved", "confirmed", "revoked"}:
+            raise ValueError("invalid participant identity status")
+        projection_fields = (
+            self.mapping_ref,
+            self.mapping_revision,
+            self.target_type,
+        )
+        if self.status == "unresolved":
+            if any(value is not None for value in projection_fields):
+                raise ValueError("unresolved participant identity has projection metadata")
+        elif (
+            not isinstance(self.mapping_ref, str)
+            or _MAPPING_REF.fullmatch(self.mapping_ref) is None
+            or isinstance(self.mapping_revision, bool)
+            or not isinstance(self.mapping_revision, int)
+            or not 1 <= self.mapping_revision <= 2_147_483_647
+            or self.target_type not in {"User", "Party"}
+        ):
+            raise ValueError("invalid participant identity projection metadata")
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(identity_ref=<redacted>, "
+            f"provider={self.provider!r}, status={self.status!r}, "
+            f"mapping_ref={self.mapping_ref!r}, "
+            f"mapping_revision={self.mapping_revision!r}, "
+            f"target_type={self.target_type!r})"
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        value: dict[str, object] = {
+            "identity_ref": self.identity_ref,
+            "provider": self.provider,
+            "status": self.status,
+        }
+        if self.mapping_ref is not None:
+            value.update(
+                {
+                    "mapping_ref": self.mapping_ref,
+                    "mapping_revision": self.mapping_revision,
+                    "target_type": self.target_type,
+                }
+            )
+        return value
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class CommunicationDetail:
     summary: CommunicationSummary
     evidence: tuple[dict[str, str], ...]
@@ -132,6 +201,8 @@ class CommunicationDetail:
     association_suggestions: tuple[dict[str, object], ...]
     model: dict[str, str]
     original_text: str | None
+    participant_identities: tuple[ParticipantIdentityView, ...] = ()
+    connector_account_user_ref: str | None = None
     raw_access_allowed: bool = False
 
     def __post_init__(self) -> None:
@@ -142,13 +213,51 @@ class CommunicationDetail:
             or not self.model.get("version")
         ):
             raise ValueError("invalid communication model metadata")
+        if (
+            not isinstance(self.participant_identities, tuple)
+            or not all(
+                isinstance(item, ParticipantIdentityView) for item in self.participant_identities
+            )
+            or len({item.identity_ref for item in self.participant_identities})
+            != len(self.participant_identities)
+        ):
+            raise ValueError("invalid participant identity views")
+        if self.connector_account_user_ref is not None and not _bounded_protected_ref(
+            self.connector_account_user_ref
+        ):
+            raise ValueError("invalid connector account user reference")
+        _association_suggestions_with_keys(
+            self.summary.observation_id,
+            self.association_suggestions,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(summary={self.summary!r}, "
+            f"evidence_count={len(self.evidence)}, "
+            f"fact_proposal_count={len(self.fact_proposals)}, "
+            f"association_suggestion_count={len(self.association_suggestions)}, "
+            "participant_identities=<redacted>, "
+            "connector_account_user_ref=<redacted>, "
+            f"model={self.model!r}, original_text=<redacted>, "
+            f"raw_access_allowed={self.raw_access_allowed!r})"
+        )
 
     def as_dict(self) -> dict[str, object]:
         return {
             **self.summary.as_dict(),
             "evidence": list(self.evidence),
             "fact_proposals": list(self.fact_proposals),
-            "association_suggestions": list(self.association_suggestions),
+            "association_suggestions": list(
+                _association_suggestions_with_keys(
+                    self.summary.observation_id,
+                    self.association_suggestions,
+                )
+            ),
+            "participant_identities": [
+                identity.as_dict() for identity in self.participant_identities
+            ],
+            "connector_account_user_ref": self.connector_account_user_ref,
             "model": self.model,
             "raw_access_allowed": self.raw_access_allowed,
             **({"original_text": self.original_text} if self.original_text is not None else {}),
@@ -227,7 +336,9 @@ class PostgresCommunicationRepository:
             separators=(",", ":"),
         )
         association_suggestions = json.dumps(
-            detail.association_suggestions,
+            tuple(
+                _association_suggestion_payload(value) for value in detail.association_suggestions
+            ),
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -383,7 +494,15 @@ class PostgresCommunicationRepository:
                        projection.fact_proposals,
                        projection.association_suggestions,
                        projection.model_name,
-                       projection.model_version
+                       projection.model_version,
+                       (
+                         SELECT connector.account_user_ref
+                         FROM observer.connector_instances AS connector
+                         WHERE connector.site_id = event.site_id
+                           AND connector.connector = event.connector
+                           AND connector.connector_instance_id =
+                               event.connector_instance_id
+                       )
                 FROM observer.observation_events AS event
                 JOIN observer.communication_projections AS projection
                   ON projection.site_id = event.site_id
@@ -413,6 +532,46 @@ class PostgresCommunicationRepository:
                 (scope.site_id, observation_id),
             )
             evidence_rows = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT DISTINCT
+                       participant.identity_ref,
+                       split_part(participant.identity_ref, ':', 3),
+                       COALESCE(latest.status, 'unresolved'),
+                       latest.mapping_ref,
+                       latest.mapping_revision,
+                       latest.target_type
+                FROM observer.participants AS participant
+                LEFT JOIN LATERAL (
+                  SELECT resolution.status,
+                         resolution.mapping_ref,
+                         resolution.mapping_revision,
+                         resolution.target_type
+                  FROM observer.participant_identity_resolutions AS resolution
+                  WHERE resolution.site_id = participant.site_id
+                    AND resolution.identity_provider = split_part(
+                        participant.identity_ref, ':', 3
+                    )
+                    AND resolution.external_subject_ref = participant.identity_ref
+                    AND resolution.team_ref = CAST(%s AS text)
+                  ORDER BY resolution.mapping_revision DESC
+                  LIMIT 1
+                ) AS latest ON true
+                WHERE participant.site_id = %s
+                  AND participant.event_id = %s
+                  AND participant.identity_ref ~ (
+                      '^extid:v1:(email|wecom|whatsapp|phone|manual_import):'
+                      || '[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$'
+                  )
+                  AND participant.identity_ref !~ (
+                      '^extid:v1:(email|wecom|whatsapp|phone|manual_import):'
+                      || '[0-9][0-9 ()-]{7,}[0-9]$'
+                  )
+                ORDER BY participant.identity_ref ASC
+                """,
+                (row[7], scope.site_id, observation_id),
+            )
+            participant_identity_rows = cursor.fetchall()
         summary = _summary_from_row(row[:11])
         original_text = None
         if (
@@ -432,6 +591,11 @@ class PostgresCommunicationRepository:
             association_suggestions=tuple(_json_list(row[12], "association suggestions")),
             model={"name": str(row[13]), "version": str(row[14])},
             original_text=original_text,
+            participant_identities=tuple(
+                _participant_identity_from_row(identity_row)
+                for identity_row in participant_identity_rows
+            ),
+            connector_account_user_ref=(None if row[15] is None else str(row[15])),
         )
 
 
@@ -542,6 +706,7 @@ class InMemoryCommunicationRepository:
             record.detail,
             summary=summary,
             original_text=(record.detail.original_text if include_original else None),
+            participant_identities=self._project_participant_identities(record),
         )
 
     def _project_summary(
@@ -575,6 +740,44 @@ class InMemoryCommunicationRepository:
             party_ref=party_ref,
             actor_refs=frozenset(actor_refs),
         )
+
+    def _project_participant_identities(
+        self,
+        record: _InMemoryCommunicationRecord,
+    ) -> tuple[ParticipantIdentityView, ...]:
+        identities: list[ParticipantIdentityView] = []
+        seen: set[str] = set()
+        for participant_ref in sorted(record.participant_refs):
+            parsed = _parse_external_subject_ref(participant_ref)
+            if parsed is None or participant_ref in seen:
+                continue
+            seen.add(participant_ref)
+            provider, subject_ref = parsed
+            resolution = self._identity_repository.latest(
+                record.scope,
+                provider,
+                subject_ref,
+            )
+            if resolution is None or resolution.team_ref != record.detail.summary.team_ref:
+                identities.append(
+                    ParticipantIdentityView(
+                        identity_ref=participant_ref,
+                        provider=provider,
+                        status="unresolved",
+                    )
+                )
+                continue
+            identities.append(
+                ParticipantIdentityView(
+                    identity_ref=participant_ref,
+                    provider=provider,
+                    status=resolution.status,
+                    mapping_ref=resolution.mapping_ref,
+                    mapping_revision=resolution.mapping_revision,
+                    target_type=resolution.target_type,
+                )
+            )
+        return tuple(identities)
 
 
 class LocalPilotReadService:
@@ -676,6 +879,10 @@ class LocalPilotReadService:
         return replace(
             detail,
             original_text=(detail.original_text if include_raw and raw_allowed else None),
+            association_suggestions=_association_suggestions_with_keys(
+                detail.summary.observation_id,
+                detail.association_suggestions,
+            ),
             raw_access_allowed=raw_allowed,
         )
 
@@ -857,13 +1064,84 @@ def _confirmed_access_params(access: CommunicationAccess) -> list[Any]:
 
 
 def _parse_external_subject_ref(value: str) -> tuple[str, str] | None:
-    parts = value.split(":", 3)
-    if len(parts) != 4 or parts[0:2] != ["extid", "v1"]:
+    match = _IDENTITY_REF.fullmatch(value)
+    if match is None or _PHONE_LIKE_IDENTITY_TAIL.fullmatch(match.group(2)):
         return None
-    provider = parts[2]
-    if not provider or not parts[3]:
-        return None
-    return provider, value
+    return match.group(1), value
+
+
+def _participant_identity_from_row(row: tuple[Any, ...]) -> ParticipantIdentityView:
+    if len(row) != 6:
+        raise RuntimeError("invalid persisted participant identity view")
+    return ParticipantIdentityView(
+        identity_ref=str(row[0]),
+        provider=str(row[1]),
+        status=str(row[2]),
+        mapping_ref=None if row[3] is None else str(row[3]),
+        mapping_revision=None if row[4] is None else int(row[4]),
+        target_type=None if row[5] is None else str(row[5]),
+    )
+
+
+def _association_suggestions_with_keys(
+    observation_id: str,
+    suggestions: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    if not isinstance(suggestions, tuple) or len(suggestions) > 100:
+        raise ValueError("invalid association suggestions")
+    keyed: list[dict[str, object]] = []
+    for suggestion in suggestions:
+        payload = _association_suggestion_payload(suggestion)
+        material = json.dumps(
+            {"observation_id": observation_id, "suggestion": payload},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        keyed.append(
+            {
+                **payload,
+                "suggestion_key": f"suggestion:v1:{hashlib.sha256(material).hexdigest()}",
+            }
+        )
+    return tuple(keyed)
+
+
+def _association_suggestion_payload(
+    suggestion: dict[str, object],
+) -> dict[str, object]:
+    if not isinstance(suggestion, dict) or not set(suggestion).issubset(
+        {"type", "target_ref", "confidence", "suggestion_key"}
+    ):
+        raise ValueError("invalid association suggestion")
+    if not {"type", "target_ref", "confidence"}.issubset(suggestion):
+        raise ValueError("invalid association suggestion")
+    suggestion_type = suggestion["type"]
+    target_ref = suggestion["target_ref"]
+    confidence = suggestion["confidence"]
+    if (
+        not isinstance(suggestion_type, str)
+        or _SUGGESTION_TYPE.fullmatch(suggestion_type) is None
+        or not _bounded_protected_ref(target_ref)
+        or isinstance(confidence, bool)
+        or not isinstance(confidence, int | float)
+        or not math.isfinite(confidence)
+        or not 0 <= confidence <= 1
+    ):
+        raise ValueError("invalid association suggestion")
+    return {
+        "type": suggestion_type,
+        "target_ref": target_ref,
+        "confidence": float(confidence),
+    }
+
+
+def _bounded_protected_ref(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= 256
+        and value == value.strip()
+        and not any(ord(character) < 32 or ord(character) == 127 for character in value)
+    )
 
 
 def _set_site(cursor: Any, scope: TenantScope) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -8,6 +9,7 @@ from observer.models import TenantScope
 from observer.read_service import (
     CommunicationAccess,
     CommunicationDetail,
+    CommunicationNotFound,
     CommunicationPage,
     CommunicationSummary,
     InvalidCursor,
@@ -32,6 +34,46 @@ SUMMARY = CommunicationSummary(
     evidence_count=1,
 )
 MODEL = {"name": "deepseek-v4-flash", "version": "2026-08-08"}
+
+
+class _SqlCursor:
+    def __init__(self, connection: _SqlConnection) -> None:
+        self.connection = connection
+        self.response: object = None
+
+    def __enter__(self) -> _SqlCursor:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def execute(self, sql: str, params: tuple[object, ...] | None = None) -> None:
+        normalized = " ".join(sql.split())
+        self.connection.executed.append((normalized, params))
+        if "set_config" not in normalized:
+            self.response = self.connection.responses.pop(0)
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        if isinstance(self.response, tuple):
+            return self.response
+        return None
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        if isinstance(self.response, list):
+            return self.response
+        return []
+
+
+class _SqlConnection:
+    def __init__(self, responses: list[object]) -> None:
+        self.responses = responses
+        self.executed: list[tuple[str, tuple[object, ...] | None]] = []
+
+    def transaction(self) -> nullcontext[None]:
+        return nullcontext()
+
+    def cursor(self) -> _SqlCursor:
+        return _SqlCursor(self)
 
 
 class FakeReadRepository:
@@ -189,6 +231,38 @@ def _in_memory_reader(*resolutions: object) -> LocalPilotReadService:
     return LocalPilotReadService(repository=repository, cursor_secret=b"x" * 32)
 
 
+def _in_memory_detail_reader(
+    *resolutions: object,
+    association_suggestions: tuple[dict[str, object], ...] = (),
+    connector_account_user_ref: str | None = None,
+    participant_refs: tuple[str, ...] = (
+        "extid:v1:email:user-opaque",
+        "extid:v1:email:party-opaque",
+    ),
+) -> LocalPilotReadService:
+    from observer.identity_resolution import InMemoryIdentityResolutionRepository
+    from observer.read_service import InMemoryCommunicationRepository
+
+    identity_repository = InMemoryIdentityResolutionRepository()
+    for resolution in resolutions:
+        identity_repository.record(SCOPE, resolution)
+    repository = InMemoryCommunicationRepository(identity_repository=identity_repository)
+    repository.put(
+        SCOPE,
+        CommunicationDetail(
+            summary=replace(SUMMARY, party_ref="legacy-party", actor_refs=frozenset()),
+            evidence=(),
+            fact_proposals=(),
+            association_suggestions=association_suggestions,
+            model=MODEL,
+            original_text=None,
+            connector_account_user_ref=connector_account_user_ref,
+        ),
+        participant_refs=participant_refs,
+    )
+    return LocalPilotReadService(repository=repository, cursor_secret=b"x" * 32)
+
+
 def test_confirmed_user_projection_grants_self_access_but_raw_participant_never_does() -> None:
     actor = "protected-user@example.invalid"
     outside_team = CommunicationAccess(
@@ -319,3 +393,213 @@ def test_in_memory_filters_access_before_limit_so_unauthorized_rows_do_not_starv
     )
 
     assert [item.observation_id for item in page.communications] == ["authorized-older"]
+
+
+def test_detail_exposes_closed_unresolved_identity_views_without_raw_participants() -> None:
+    reader = _in_memory_detail_reader(
+        participant_refs=(
+            "extid:v1:email:user-opaque",
+            "raw-person@example.invalid",
+        )
+    )
+
+    detail = reader.get_communication(
+        SCOPE,
+        CommunicationAccess(team_refs=frozenset({"team-sales"})),
+        observation_id="event-001",
+    )
+
+    assert [identity.as_dict() for identity in detail.participant_identities] == [
+        {
+            "identity_ref": "extid:v1:email:user-opaque",
+            "provider": "email",
+            "status": "unresolved",
+        }
+    ]
+    rendered = detail.as_dict()
+    assert "raw-person@example.invalid" not in repr(rendered)
+    assert "target_ref" not in rendered["participant_identities"][0]
+
+
+def test_detail_identity_views_show_confirmed_and_revoked_metadata_without_targets() -> None:
+    protected_user = "protected-user@example.invalid"
+    protected_party = "PARTY-PROTECTED-001"
+    confirmed_user = _identity_resolution(
+        subject="extid:v1:email:user-opaque",
+        target_type="User",
+        target_ref=protected_user,
+    )
+    confirmed_party = _identity_resolution(
+        subject="extid:v1:email:party-opaque",
+        target_type="Party",
+        target_ref=protected_party,
+    )
+    revoked_party = replace(
+        confirmed_party,
+        mapping_revision=2,
+        status="revoked",
+        resolved_at=NOW + timedelta(minutes=2),
+        recorded_at=NOW + timedelta(minutes=2, seconds=1),
+    )
+    reader = _in_memory_detail_reader(confirmed_user, confirmed_party, revoked_party)
+
+    detail = reader.get_communication(
+        SCOPE,
+        CommunicationAccess(team_refs=frozenset({"team-sales"})),
+        observation_id="event-001",
+    )
+    identities = {item.identity_ref: item.as_dict() for item in detail.participant_identities}
+
+    assert identities["extid:v1:email:user-opaque"] == {
+        "identity_ref": "extid:v1:email:user-opaque",
+        "provider": "email",
+        "status": "confirmed",
+        "mapping_ref": confirmed_user.mapping_ref,
+        "mapping_revision": 1,
+        "target_type": "User",
+    }
+    assert identities["extid:v1:email:party-opaque"]["status"] == "revoked"
+    assert identities["extid:v1:email:party-opaque"]["mapping_revision"] == 2
+    rendered = repr(detail.as_dict())
+    assert protected_user not in rendered
+    assert protected_party not in rendered
+    assert protected_user not in repr(detail)
+
+
+def test_connector_account_owner_is_separate_from_participant_identity_views() -> None:
+    owner = "USER-OWNER-001"
+    reader = _in_memory_detail_reader(connector_account_user_ref=owner)
+
+    detail = reader.get_communication(
+        SCOPE,
+        CommunicationAccess(team_refs=frozenset({"team-sales"})),
+        observation_id="event-001",
+    )
+    rendered = detail.as_dict()
+
+    assert rendered["connector_account_user_ref"] == owner
+    assert all(identity["identity_ref"] != owner for identity in rendered["participant_identities"])
+    assert owner not in repr(detail)
+
+
+def test_association_suggestion_key_is_stable_closed_and_bound_to_observation() -> None:
+    suggestion = {
+        "type": "party",
+        "target_ref": "PARTY-001",
+        "confidence": 0.88,
+    }
+    reader = _in_memory_detail_reader(association_suggestions=(suggestion,))
+    access = CommunicationAccess(team_refs=frozenset({"team-sales"}))
+
+    first = reader.get_communication(SCOPE, access, observation_id="event-001")
+    replay = reader.get_communication(SCOPE, access, observation_id="event-001")
+    first_suggestion = first.association_suggestions[0]
+
+    assert first_suggestion == replay.association_suggestions[0]
+    assert set(first_suggestion) == {
+        "type",
+        "target_ref",
+        "confidence",
+        "suggestion_key",
+    }
+    assert first_suggestion["type"] == suggestion["type"]
+    assert first_suggestion["target_ref"] == suggestion["target_ref"]
+    assert first_suggestion["confidence"] == suggestion["confidence"]
+    assert str(first_suggestion["suggestion_key"]).startswith("suggestion:v1:")
+
+    other_observation = replace(
+        first,
+        summary=replace(first.summary, observation_id="event-002"),
+        association_suggestions=(suggestion,),
+    ).as_dict()["association_suggestions"][0]
+    assert other_observation["suggestion_key"] != first_suggestion["suggestion_key"]
+
+    with pytest.raises(ValueError, match="association suggestion"):
+        replace(
+            first,
+            association_suggestions=({**suggestion, "arbitrary": "forbidden"},),
+        ).as_dict()
+
+
+def test_cross_team_identity_stays_unresolved_and_cross_site_detail_is_absent() -> None:
+    cross_team = _identity_resolution(
+        subject="extid:v1:email:user-opaque",
+        target_type="User",
+        target_ref="protected-user@example.invalid",
+        team_ref="team-other",
+    )
+    reader = _in_memory_detail_reader(cross_team)
+    access = CommunicationAccess(team_refs=frozenset({"team-sales"}))
+
+    detail = reader.get_communication(SCOPE, access, observation_id="event-001")
+    assert detail.participant_identities[0].status == "unresolved"
+    assert detail.participant_identities[0].mapping_ref is None
+    with pytest.raises(CommunicationNotFound):
+        reader.get_communication(
+            TenantScope("other.example", "observation_processing"),
+            access,
+            observation_id="event-001",
+        )
+
+
+def test_postgres_detail_projects_closed_identity_and_separate_connector_owner() -> None:
+    mapping_ref = "EID-01K" + "A" * 23
+    connection = _SqlConnection(
+        [
+            (
+                "event-001",
+                "email",
+                NOW,
+                "客户询问交期",
+                "zh-CN",
+                "Restricted",
+                "AI Draft",
+                "team-sales",
+                None,
+                0,
+                ["protected-user@example.invalid"],
+                [],
+                [],
+                "deepseek-v4-flash",
+                "2026-08-08",
+                "USER-OWNER-001",
+            ),
+            [],
+            [
+                (
+                    "extid:v1:email:user-opaque",
+                    "email",
+                    "confirmed",
+                    mapping_ref,
+                    3,
+                    "User",
+                )
+            ],
+        ]
+    )
+    repository = PostgresCommunicationRepository(connection=connection)
+
+    detail = repository.get_communication(
+        SCOPE,
+        "event-001",
+        access=CommunicationAccess(team_refs=frozenset({"team-sales"})),
+        raw_policy="omit",
+    )
+
+    assert detail is not None
+    assert detail.connector_account_user_ref == "USER-OWNER-001"
+    assert detail.participant_identities[0].as_dict() == {
+        "identity_ref": "extid:v1:email:user-opaque",
+        "provider": "email",
+        "status": "confirmed",
+        "mapping_ref": mapping_ref,
+        "mapping_revision": 3,
+        "target_type": "User",
+    }
+    detail_sql = connection.executed[1][0]
+    identity_sql, identity_params = connection.executed[3]
+    assert "connector.account_user_ref" in detail_sql
+    assert "resolution.team_ref = CAST(%s AS text)" in identity_sql
+    assert "resolution.target_ref" not in identity_sql
+    assert "participant.display_name" not in identity_sql
+    assert identity_params == ("team-sales", SCOPE.site_id, "event-001")

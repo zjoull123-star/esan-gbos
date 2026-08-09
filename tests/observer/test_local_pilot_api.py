@@ -270,10 +270,14 @@ def test_bff_communication_get_matches_closed_frappe_detail_shape() -> None:
         "evidence",
         "fact_proposals",
         "association_suggestions",
+        "participant_identities",
+        "connector_account_user_ref",
         "model",
         "raw_access_allowed",
     }
     assert detail["raw_access_allowed"] is False
+    assert detail["participant_identities"] == []
+    assert detail["connector_account_user_ref"] is None
     assert "original_text" not in detail
 
 
