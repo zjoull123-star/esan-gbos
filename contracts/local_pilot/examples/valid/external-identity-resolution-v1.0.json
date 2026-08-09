@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "site_id": "gbos.localhost",
+  "identity_provider": "email",
+  "external_subject_ref": "extid:v1:email:opaque-token",
+  "mapping_ref": "EID-01K2M4N6P8Q0R2S4T6V8W0XYZA",
+  "mapping_revision": 1,
+  "team_ref": "TEAM-SALES",
+  "target_type": "User",
+  "target_ref": "sales@example.invalid",
+  "status": "confirmed",
+  "resolved_at": "2026-08-09T00:00:00Z"
+}

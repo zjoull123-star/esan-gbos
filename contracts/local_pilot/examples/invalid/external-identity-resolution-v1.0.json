@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "site_id": "gbos.localhost",
+  "identity_provider": "email",
+  "external_subject_ref": "alice@example.com",
+  "mapping_ref": "EID-not-a-valid-ulid",
+  "mapping_revision": 0,
+  "team_ref": "TEAM-SALES",
+  "target_type": "User",
+  "target_ref": "sales@example.invalid",
+  "status": "confirmed",
+  "resolved_at": "2026-08-09T00:00:00Z"
+}

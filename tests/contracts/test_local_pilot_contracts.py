@@ -27,6 +27,7 @@ SCHEMAS = {
     "product-proposal-v1.0.schema.json",
     "ceo-proposal-v1.0.schema.json",
     "communication-intelligence-v1.0.schema.json",
+    "external-identity-resolution-v1.0.schema.json",
 }
 EXAMPLE_SCHEMAS = SCHEMAS - {"communication-intelligence-v1.0.schema.json"}
 
@@ -126,6 +127,49 @@ def test_communication_intelligence_is_closed_and_keeps_rich_evidence_binding() 
             ],
         },
     ):
+        with pytest.raises(ValidationError):
+            validator.validate(invalid)
+
+
+def test_external_identity_resolution_is_closed_and_keeps_subjects_opaque() -> None:
+    validator = _validator("external-identity-resolution-v1.0.schema.json")
+    valid = {
+        "schema_version": "1.0",
+        "site_id": "gbos.localhost",
+        "identity_provider": "email",
+        "external_subject_ref": "extid:v1:email:opaque-token",
+        "mapping_ref": "EID-01K2M4N6P8Q0R2S4T6V8W0XYZA",
+        "mapping_revision": 1,
+        "team_ref": "TEAM-SALES",
+        "target_type": "User",
+        # Frappe User.name may itself be an email-shaped authoritative ref.
+        "target_ref": "sales@example.invalid",
+        "status": "confirmed",
+        "resolved_at": "2026-08-09T00:00:00Z",
+    }
+
+    validator.validate(valid)
+
+    invalid_records = (
+        {**valid, "external_subject_ref": "alice@example.com"},
+        {**valid, "external_subject_ref": "extid:v1:email:+8613800138000"},
+        {**valid, "external_subject_ref": "extid:v1:wecom:opaque-token"},
+        {**valid, "identity_provider": "carrier_pigeon"},
+        {**valid, "target_type": "Channel"},
+        {**valid, "status": "pending"},
+        {**valid, "unexpected": "must remain closed"},
+        {**valid, "mapping_ref": "EID-not-a-valid-ulid"},
+        {**valid, "mapping_revision": 0},
+        {**valid, "mapping_revision": -1},
+        {**valid, "mapping_revision": 1.5},
+        {key: value for key, value in valid.items() if key != "team_ref"},
+        {**valid, "site_id": "s" * 141},
+        {**valid, "external_subject_ref": "extid:v1:email:" + "a" * 129},
+        {**valid, "mapping_ref": "EID-" + "A" * 27},
+        {**valid, "team_ref": "T" * 257},
+        {**valid, "target_ref": "u" * 257},
+    )
+    for invalid in invalid_records:
         with pytest.raises(ValidationError):
             validator.validate(invalid)
 

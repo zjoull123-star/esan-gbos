@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/local-pilot/v1.0/external-identity-resolution.schema.json",
+  "title": "ExternalIdentityResolution v1.0",
+  "description": "Closed, minimum projection of an approved or revoked external identity mapping. The subject reference is an opaque provider-scoped token; target_ref is a permission-protected Frappe authority reference.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "site_id",
+    "identity_provider",
+    "external_subject_ref",
+    "mapping_ref",
+    "mapping_revision",
+    "team_ref",
+    "target_type",
+    "target_ref",
+    "status",
+    "resolved_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+    },
+    "identity_provider": {
+      "type": "string",
+      "enum": [
+        "email",
+        "wecom",
+        "whatsapp",
+        "phone",
+        "manual_import"
+      ]
+    },
+    "external_subject_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^extid:v1:(?:email|wecom|whatsapp|phone|manual_import):[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$",
+      "not": {
+        "anyOf": [
+          {
+            "pattern": "^extid:v1:(?:email|wecom|whatsapp|phone|manual_import):[^:]*@[^:]*$"
+          },
+          {
+            "pattern": "^extid:v1:(?:email|wecom|whatsapp|phone|manual_import):\\+?[0-9][0-9 ()-]{7,}[0-9]$"
+          }
+        ]
+      }
+    },
+    "mapping_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^EID-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "mapping_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "team_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "target_type": {
+      "type": "string",
+      "enum": [
+        "User",
+        "Party"
+      ]
+    },
+    "target_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000\\r\\n]+$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "revoked"
+      ]
+    },
+    "resolved_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "identity_provider": {
+            "const": "email"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "external_subject_ref": {
+            "pattern": "^extid:v1:email:"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "identity_provider": {
+            "const": "wecom"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "external_subject_ref": {
+            "pattern": "^extid:v1:wecom:"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "identity_provider": {
+            "const": "whatsapp"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "external_subject_ref": {
+            "pattern": "^extid:v1:whatsapp:"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "identity_provider": {
+            "const": "phone"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "external_subject_ref": {
+            "pattern": "^extid:v1:phone:"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "identity_provider": {
+            "const": "manual_import"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "external_subject_ref": {
+            "pattern": "^extid:v1:manual_import:"
+          }
+        }
+      }
+    }
+  ]
+}
