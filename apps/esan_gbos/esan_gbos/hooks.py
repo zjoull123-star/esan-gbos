@@ -30,6 +30,7 @@ GBOS_ROLES = [
     "Reviewer",
     "Finance Readonly",
     "Agent TrustedMaterializer",
+    "Observer Identity Resolver",
 ]
 
 fixtures = [

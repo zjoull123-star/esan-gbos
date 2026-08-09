@@ -8,6 +8,7 @@ from typing import Literal
 import frappe
 
 from esan_gbos.domain.permissions import (
+    IDENTITY_RESOLVER_ROLE,
     INTERNAL_MATERIALIZATION_DRAFT_DOCTYPES,
     INTERNAL_MATERIALIZATION_SUBJECT_DOCTYPES,
     INTERNAL_MATERIALIZER_ROLE,
@@ -48,6 +49,10 @@ def _is_global_reader(user: str) -> bool:
 
 def _is_internal_materializer(user: str) -> bool:
     return INTERNAL_MATERIALIZER_ROLE in _roles(user)
+
+
+def _is_identity_resolver(user: str) -> bool:
+    return IDENTITY_RESOLVER_ROLE in _roles(user)
 
 
 def _internal_materialization_mode(user: str) -> Literal["resolve", "apply"] | None:
@@ -117,6 +122,8 @@ def _member_subquery(user: str) -> str:
 
 def team_permission_query(user: str | None = None) -> str:
     actor = user or frappe.session.user
+    if _is_identity_resolver(actor):
+        return "1=0"
     if _is_internal_materializer(actor):
         return "1=0"
     if _is_global_reader(actor):
@@ -126,6 +133,8 @@ def team_permission_query(user: str | None = None) -> str:
 
 def team_scoped_permission_query(user: str | None = None) -> str:
     actor = user or frappe.session.user
+    if _is_identity_resolver(actor):
+        return "1=0"
     if _is_internal_materializer(actor):
         return "1=0"
     if _is_global_reader(actor):
@@ -135,6 +144,8 @@ def team_scoped_permission_query(user: str | None = None) -> str:
 
 def integration_permission_query(user: str | None = None) -> str:
     actor = user or frappe.session.user
+    if _is_identity_resolver(actor):
+        return "1=0"
     if _is_internal_materializer(actor):
         return "1=0"
     roles = _roles(actor)
@@ -145,11 +156,13 @@ def integration_permission_query(user: str | None = None) -> str:
 
 def integration_request_permission_query(user: str | None = None) -> str:
     actor = user or frappe.session.user
-    return "1=0" if _is_internal_materializer(actor) else ""
+    return "1=0" if _is_internal_materializer(actor) or _is_identity_resolver(actor) else ""
 
 
 def review_case_permission_query(user: str | None = None) -> str:
     actor = user or frappe.session.user
+    if _is_identity_resolver(actor):
+        return "1=0"
     if _is_internal_materializer(actor):
         return "1=0"
     if _is_global_reader(actor):
@@ -165,6 +178,8 @@ def review_case_permission_query(user: str | None = None) -> str:
 
 def work_item_permission_query(user: str | None = None) -> str:
     actor = user or frappe.session.user
+    if _is_identity_resolver(actor):
+        return "1=0"
     if _is_internal_materializer(actor):
         return "1=0"
     if _is_global_reader(actor):
@@ -186,6 +201,8 @@ def work_item_permission_query(user: str | None = None) -> str:
 
 def informal_observation_permission_query(user: str | None = None) -> str:
     actor = user or frappe.session.user
+    if _is_identity_resolver(actor):
+        return "1=0"
     if _is_internal_materializer(actor):
         return "1=0"
     if _is_global_reader(actor):
@@ -207,6 +224,8 @@ def informal_observation_permission_query(user: str | None = None) -> str:
 
 def _crm_permission_query(doctype: str, user: str | None = None) -> str:
     actor = user or frappe.session.user
+    if _is_identity_resolver(actor):
+        return "1=0"
     if _is_internal_materializer(actor):
         return "1=0"
     if _is_global_reader(actor):
@@ -286,6 +305,8 @@ def has_gbos_permission(
     action = permission_type or ptype or "read"
     roles = _roles(actor)
     doctype = str(getattr(doc, "doctype", ""))
+    if _is_identity_resolver(actor):
+        return False
     internal_permission = _internal_gbos_permission(
         user=actor,
         doctype=doctype,
@@ -349,6 +370,8 @@ def has_internal_materialization_permission(
     """Keep Integration Request access closed outside the authenticated endpoint scope."""
     del kwargs
     actor = user or frappe.session.user
+    if _is_identity_resolver(actor):
+        return False
     if not _is_internal_materializer(actor):
         return True
     if str(getattr(doc, "doctype", "")) != "Integration Request":
@@ -367,7 +390,7 @@ def has_crm_permission(
 ) -> bool:
     del kwargs
     actor = user or frappe.session.user
-    if _is_internal_materializer(actor):
+    if _is_internal_materializer(actor) or _is_identity_resolver(actor):
         return False
     return can_access_crm_record(
         roles=_roles(actor),

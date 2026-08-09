@@ -167,6 +167,7 @@ def test_internal_materializer_role_install_fixture_and_hooks_are_consistent() -
 
     assert hook_roles == install_roles == set(fixture_roles)
     assert fixture_roles["Agent TrustedMaterializer"]["desk_access"] == 0
+    assert fixture_roles["Observer Identity Resolver"]["desk_access"] == 0
     assert "GBOS Informal Observation" in set(_literal_assignment(install_path, "PARENT_DOCTYPES"))
     assert _literal_assignment(
         install_path,
@@ -179,6 +180,17 @@ def test_internal_materializer_role_install_fixture_and_hooks_are_consistent() -
     assert "esan_gbos.permissions.integration_request_permission_query" in hooks_source
     install_source = install_path.read_text(encoding="utf-8")
     assert install_source.count("ensure_internal_materialization_audit_permissions()") == 3
+
+
+def test_observer_identity_resolver_is_install_managed_and_has_no_desk_or_docperm_rights() -> None:
+    install_path = PACKAGE_ROOT / "install.py"
+    install_source = install_path.read_text(encoding="utf-8")
+    install_roles = set(_literal_assignment(install_path, "GBOS_ROLES"))
+
+    assert "Observer Identity Resolver" in install_roles
+    assert "IDENTITY_RESOLVER_ROLE" in install_source
+    assert "role_name not in {INTERNAL_MATERIALIZER_ROLE, IDENTITY_RESOLVER_ROLE}" in install_source
+    assert "role in {INTERNAL_MATERIALIZER_ROLE, IDENTITY_RESOLVER_ROLE}" in install_source
 
 
 def test_internal_materializer_doctype_permissions_are_exactly_the_coarse_minimum() -> None:

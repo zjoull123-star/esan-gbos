@@ -4,6 +4,7 @@ import frappe
 
 from esan_gbos.ceo_access import backfill_ceo_full_access
 from esan_gbos.domain.permissions import (
+    IDENTITY_RESOLVER_ROLE,
     INTERNAL_MATERIALIZER_ROLE,
     role_has_crm_doctype_permission,
     role_has_doctype_permission,
@@ -22,6 +23,7 @@ GBOS_ROLES = (
     "Reviewer",
     "Finance Readonly",
     "Agent TrustedMaterializer",
+    "Observer Identity Resolver",
 )
 
 PARENT_DOCTYPES = (
@@ -66,7 +68,7 @@ def after_migrate() -> None:
 
 def ensure_roles() -> None:
     for role_name in GBOS_ROLES:
-        desk_access = int(role_name != INTERNAL_MATERIALIZER_ROLE)
+        desk_access = int(role_name not in {INTERNAL_MATERIALIZER_ROLE, IDENTITY_RESOLVER_ROLE})
         if frappe.db.exists("Role", role_name):
             if int(frappe.db.get_value("Role", role_name, "desk_access") or 0) != desk_access:
                 frappe.db.set_value("Role", role_name, "desk_access", desk_access)
@@ -86,7 +88,7 @@ def _permission_values(doctype: str, role: str) -> dict[str, int | str]:
     can_write = role_has_doctype_permission(role, doctype, "write")
     can_create = role_has_doctype_permission(role, doctype, "create")
     can_delete = role_has_doctype_permission(role, doctype, "delete")
-    internal_service = role == INTERNAL_MATERIALIZER_ROLE
+    internal_service = role in {INTERNAL_MATERIALIZER_ROLE, IDENTITY_RESOLVER_ROLE}
     return {
         "read": int(can_read),
         "write": int(can_write),

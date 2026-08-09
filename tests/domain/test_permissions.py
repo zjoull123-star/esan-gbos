@@ -131,6 +131,31 @@ def test_internal_materializer_coarse_permissions_are_closed_and_non_exporting()
             assert not role_has_doctype_permission(role, doctype, forbidden)
 
 
+def test_observer_identity_resolver_has_no_general_doctype_permissions() -> None:
+    for doctype in (
+        "GBOS Team",
+        "GBOS External Identity",
+        "GBOS Party Profile",
+        "GBOS Review Case",
+    ):
+        for permission_type in (
+            "read",
+            "write",
+            "create",
+            "delete",
+            "report",
+            "export",
+            "print",
+            "email",
+            "share",
+        ):
+            assert not role_has_doctype_permission(
+                "Observer Identity Resolver",
+                doctype,
+                permission_type,
+            )
+
+
 def test_buyer_is_limited_to_procurement_and_authorized_demand_summary() -> None:
     assert can_access_record(
         roles={"Buyer"},
