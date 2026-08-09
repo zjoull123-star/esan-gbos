@@ -54,6 +54,17 @@ _SUBJECT_FIELDS = {
         "business_status",
         "review_status",
     ),
+    "GBOS External Identity": (
+        "team",
+        "identity_provider",
+        "external_subject",
+        "identity_type",
+        "user",
+        "party_profile",
+        "origin",
+        "business_status",
+        "review_status",
+    ),
     "GBOS Party Profile": (
         "party_name",
         "team",
@@ -279,9 +290,40 @@ class GBOSReviewCase(GBOSDocument):
         before = self.get_doc_before_save()
         if not before or self.business_status == before.business_status:
             return
-        if self.business_status in {"Approved", "Rejected"}:
+        if self.business_status in {"Approved", "Rejected", "Superseded"}:
             self.review_status = self.business_status
             self.set("decided_at", self.get("decided_at") or now_datetime())
+
+    def on_update(self) -> None:
+        before = self.get_doc_before_save()
+        if (
+            not before
+            or self.business_status == before.business_status
+            or self.subject_doctype != "GBOS External Identity"
+        ):
+            return
+        if not self.flags.gbos_review_command:
+            raise frappe.PermissionError
+
+        from esan_gbos.gbos.doctype.gbos_external_identity.gbos_external_identity import (
+            review_state_for_decision,
+        )
+
+        try:
+            review_status, business_status = review_state_for_decision(self.business_status)
+        except ValueError:
+            raise frappe.PermissionError from None
+        subject = frappe.get_doc(self.subject_doctype, self.subject_name, for_update=True)
+        if (
+            int(subject.get("revision") or 0) != int(self.subject_revision or 0)
+            or subject.get("review_status") != "Pending"
+        ):
+            frappe.throw("external identity review pin is stale", title="Revision conflict")
+        subject.flags.gbos_identity_review_decision = True
+        subject.review_status = review_status
+        subject.business_status = business_status
+        subject.last_request_id = self.last_request_id
+        subject.save(ignore_permissions=True)
 
     def on_trash(self) -> None:
         raise frappe.PermissionError

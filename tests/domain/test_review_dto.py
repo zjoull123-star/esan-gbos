@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import pytest
 from esan_gbos.domain.review_dto import (
+    REVIEW_SUBJECT_DOCTYPES,
     ReviewDTOValidationError,
     canonical_payload_hash,
     validate_decision_payload,
     validate_evidence_references,
     validate_subject_pin,
 )
+
+
+def test_external_identity_is_a_pinned_review_subject() -> None:
+    assert "GBOS External Identity" in REVIEW_SUBJECT_DOCTYPES
 
 
 def _decision_payload() -> dict[str, object]:

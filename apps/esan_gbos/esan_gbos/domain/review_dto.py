@@ -8,6 +8,7 @@ from typing import Any
 REVIEW_SUBJECT_DOCTYPES = frozenset(
     {
         "GBOS Demand Signal",
+        "GBOS External Identity",
         "GBOS Party Profile",
         "GBOS Product Brief",
         "GBOS Sample Feedback",
