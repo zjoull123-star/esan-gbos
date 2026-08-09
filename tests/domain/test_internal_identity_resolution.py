@@ -197,6 +197,54 @@ def test_confirmed_resolution_returns_only_the_frozen_contract_fields(
     assert fake.db.sql_calls
 
 
+def test_revoked_resolution_returns_only_the_frozen_contract_fields(
+    resolution_api: tuple[Any, _Frappe],
+) -> None:
+    api, fake = resolution_api
+    fake.db.rows[("email", SUBJECT)] = [
+        _approved_row(
+            business_status="Revoked",
+            resolved_at="2026-08-10T01:02:03+08:00",
+        )
+    ]
+
+    response = api.resolve(_payload())
+
+    assert fake.local.response.get("http_status_code") is None
+    assert response == {
+        "resolutions": [
+            {
+                "schema_version": "1.0",
+                "site_id": "gbos.localhost",
+                "identity_provider": "email",
+                "external_subject_ref": SUBJECT,
+                "mapping_ref": "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "mapping_revision": 4,
+                "team_ref": "TEM-01",
+                "target_type": "User",
+                "target_ref": "member@example.invalid",
+                "status": "revoked",
+                "resolved_at": "2026-08-10T01:02:03+08:00",
+            }
+        ]
+    }
+    assert set(response["resolutions"][0]) == {
+        "schema_version",
+        "site_id",
+        "identity_provider",
+        "external_subject_ref",
+        "mapping_ref",
+        "mapping_revision",
+        "team_ref",
+        "target_type",
+        "target_ref",
+        "status",
+        "resolved_at",
+    }
+    assert "+8613800138000" not in repr(response)
+    assert "Sensitive Name" not in repr(response)
+
+
 @pytest.mark.parametrize(
     ("review_status", "business_status"),
     (
@@ -204,7 +252,7 @@ def test_confirmed_resolution_returns_only_the_frozen_contract_fields(
         ("Pending", "Active"),
         ("Rejected", "Active"),
         ("Superseded", "Archived"),
-        ("Approved", "Revoked"),
+        ("Approved", "Archived"),
     ),
 )
 def test_non_authoritative_rows_never_resolve(
@@ -246,6 +294,29 @@ def test_team_and_revision_pins_fail_closed(
     assert response == {"error": {"code": code}}
 
 
+@pytest.mark.parametrize(
+    ("mutation", "status", "code"),
+    (
+        ({"expected_team_ref": "TEM-OTHER"}, 403, "team_scope_mismatch"),
+        ({"expected_mapping_revision": 5}, 409, "mapping_revision_conflict"),
+    ),
+)
+def test_revoked_resolution_honors_team_and_revision_pins(
+    resolution_api: tuple[Any, _Frappe],
+    mutation: dict[str, Any],
+    status: int,
+    code: str,
+) -> None:
+    api, fake = resolution_api
+    fake.db.rows[("email", SUBJECT)] = [_approved_row(business_status="Revoked")]
+    lookup = {**_payload()["lookups"][0], **mutation}
+
+    response = api.resolve(_payload(lookups=[lookup]))
+
+    assert fake.local.response["http_status_code"] == status
+    assert response == {"error": {"code": code}}
+
+
 def test_zero_or_multiple_approved_rows_fail_closed(
     resolution_api: tuple[Any, _Frappe],
 ) -> None:
@@ -261,6 +332,48 @@ def test_zero_or_multiple_approved_rows_fail_closed(
     assert missing == {"error": {"code": "mapping_not_resolved"}}
     assert conflicting == {"error": {"code": "mapping_conflict"}}
     assert fake.local.response["http_status_code"] == 409
+
+
+@pytest.mark.parametrize(
+    "rows",
+    (
+        [_approved_row(business_status="Revoked"), _approved_row(business_status="Revoked")],
+        [_approved_row(), _approved_row(business_status="Revoked")],
+    ),
+)
+def test_duplicate_or_conflicting_authoritative_rows_fail_closed(
+    resolution_api: tuple[Any, _Frappe],
+    rows: list[dict[str, Any]],
+) -> None:
+    api, fake = resolution_api
+    fake.db.rows[("email", SUBJECT)] = rows
+
+    response = api.resolve(_payload())
+
+    assert fake.local.response["http_status_code"] == 409
+    assert response == {"error": {"code": "mapping_conflict"}}
+
+
+@pytest.mark.parametrize(
+    "unsafe_timestamp",
+    (
+        "not-a-date",
+        "2026-08-10T01:02:03",
+        "2026-08-10T01:02:03Z\nprivate-data",
+    ),
+)
+def test_resolution_rejects_timestamps_outside_the_closed_datetime_contract(
+    resolution_api: tuple[Any, _Frappe],
+    unsafe_timestamp: str,
+) -> None:
+    api, fake = resolution_api
+    fake.db.rows[("email", SUBJECT)] = [_approved_row(resolved_at=unsafe_timestamp)]
+
+    response = api.resolve(_payload())
+
+    assert fake.local.response["http_status_code"] == 409
+    assert response == {"error": {"code": "mapping_conflict"}}
+    assert unsafe_timestamp not in repr(response)
 
 
 @pytest.mark.parametrize(

@@ -27,6 +27,10 @@ _TEXT = re.compile(r"[^\x00-\x1f\x7f]+")
 _SITE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,139}")
 _TEAM = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}")
 _MAPPING_REF = re.compile(r"EID-[0-9A-HJKMNP-TV-Z]{26}")
+_TIMESTAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})"
+)
 _REQUEST_FIELDS = frozenset({"site_id", "processing_purpose", "request_id", "auth_ref", "lookups"})
 _LOOKUP_REQUIRED = frozenset({"identity_provider", "external_subject_ref", "expected_team_ref"})
 _LOOKUP_OPTIONAL = frozenset({"expected_mapping_revision"})
@@ -183,7 +187,8 @@ def _resolve_lookup(site_id: str, lookup: dict[str, Any]) -> dict[str, Any]:
     authoritative = [
         row
         for row in rows
-        if row.get("review_status") == "Approved" and row.get("business_status") == "Active"
+        if row.get("review_status") == "Approved"
+        and row.get("business_status") in {"Active", "Revoked"}
     ]
     if not authoritative:
         raise _APIError("mapping_not_resolved", 404)
@@ -220,7 +225,7 @@ def _resolve_lookup(site_id: str, lookup: dict[str, Any]) -> dict[str, Any]:
         "team_ref": team_ref,
         "target_type": target_type,
         "target_ref": target_ref,
-        "status": "confirmed",
+        "status": "confirmed" if row.get("business_status") == "Active" else "revoked",
         "resolved_at": _timestamp(row.get("resolved_at")),
     }
 
@@ -318,7 +323,13 @@ def _timestamp(value: object) -> str:
     if isinstance(value, datetime):
         serialized = value.isoformat()
         return f"{serialized}Z" if value.tzinfo is None else serialized
-    if not isinstance(value, str) or not value or _TEXT.fullmatch(value) is None:
+    if not isinstance(value, str) or _TIMESTAMP.fullmatch(value) is None:
+        raise _APIError("mapping_conflict", 409)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise _APIError("mapping_conflict", 409) from None
+    if parsed.tzinfo is None:
         raise _APIError("mapping_conflict", 409)
     return value
 

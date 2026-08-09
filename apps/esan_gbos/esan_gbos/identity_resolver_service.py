@@ -5,7 +5,9 @@ from __future__ import annotations
 import hmac
 import os
 import re
+import stat
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import frappe
@@ -20,6 +22,21 @@ _PURPOSES = ["identity_resolution"]
 _PRODUCTION_VALUES = frozenset({"1", "true", "yes"})
 _SITE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,138}[a-z0-9])?")
 _CREDENTIAL = re.compile(r"[A-Za-z0-9_-]{15,128}")
+_SECRET_DIRECTORY = Path("/run/secrets")
+_SAFE_SECRET_FILENAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?")
+_MAX_CREDENTIAL_FILE_BYTES = 4096
+_LEGACY_CREDENTIAL_ENVIRONMENT = frozenset(
+    {
+        "GBOS_IDENTITY_RESOLVER_API_KEY",
+        "GBOS_IDENTITY_RESOLVER_API_SECRET",
+    }
+)
+_LEGACY_CREDENTIAL_CONFIG = frozenset(
+    {
+        "gbos_identity_resolver_api_key",
+        "gbos_identity_resolver_api_secret",
+    }
+)
 
 
 class IdentityResolverProvisioningError(RuntimeError):
@@ -49,12 +66,19 @@ def _provision(confirm_local_pilot: Any) -> dict[str, str]:
         raise IdentityResolverProvisioningError("local-pilot confirmation required")
     if os.environ.get("GBOS_PRODUCTION_ENABLED", "").strip().casefold() in _PRODUCTION_VALUES:
         raise IdentityResolverProvisioningError("production environment is not allowed")
+    _reject_legacy_credentials()
 
     site_id = _active_site()
     _validate_identity_config(site_id)
     _validate_service_role()
-    api_key = _credential("GBOS_IDENTITY_RESOLVER_API_KEY")
-    api_secret = _credential("GBOS_IDENTITY_RESOLVER_API_SECRET")
+    api_key = _credential(
+        environment_variable="GBOS_IDENTITY_RESOLVER_API_KEY_FILE",
+        config_key="gbos_identity_resolver_api_key_file",
+    )
+    api_secret = _credential(
+        environment_variable="GBOS_IDENTITY_RESOLVER_API_SECRET_FILE",
+        config_key="gbos_identity_resolver_api_secret_file",
+    )
 
     if frappe.db.exists("User", _USER):
         user = frappe.get_doc("User", _USER)
@@ -123,11 +147,92 @@ def _validate_service_role() -> None:
         raise IdentityResolverProvisioningError("service role is invalid")
 
 
-def _credential(variable: str) -> str:
-    value = os.environ.get(variable)
-    if value is None or _CREDENTIAL.fullmatch(value) is None:
-        raise IdentityResolverProvisioningError("identity resolver credential is invalid")
-    return value
+def _reject_legacy_credentials() -> None:
+    if any(variable in os.environ for variable in _LEGACY_CREDENTIAL_ENVIRONMENT) or any(
+        frappe.conf.get(key) is not None for key in _LEGACY_CREDENTIAL_CONFIG
+    ):
+        raise IdentityResolverProvisioningError("legacy credential environment is not allowed")
+
+
+def _credential(*, environment_variable: str, config_key: str) -> str:
+    environment_path = os.environ.get(environment_variable)
+    config_path = frappe.conf.get(config_key)
+    if environment_path is not None and config_path is not None:
+        raise IdentityResolverProvisioningError("credential file is invalid")
+    selected = environment_path if environment_path is not None else config_path
+    if not isinstance(selected, str):
+        raise IdentityResolverProvisioningError("credential file is invalid")
+    return _read_credential_file(selected)
+
+
+def _read_credential_file(value: str) -> str:
+    path = Path(value)
+    if (
+        not path.is_absolute()
+        or path.parent != _SECRET_DIRECTORY
+        or _SAFE_SECRET_FILENAME.fullmatch(path.name) is None
+    ):
+        raise IdentityResolverProvisioningError("credential file is invalid")
+
+    try:
+        before = path.lstat()
+        if not _safe_credential_file(before):
+            raise IdentityResolverProvisioningError("credential file is invalid")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            opened = os.fstat(descriptor)
+            if not _same_safe_credential_file(before, opened):
+                raise IdentityResolverProvisioningError("credential file is invalid")
+            raw = bytearray()
+            while len(raw) <= _MAX_CREDENTIAL_FILE_BYTES:
+                chunk = os.read(
+                    descriptor,
+                    _MAX_CREDENTIAL_FILE_BYTES + 1 - len(raw),
+                )
+                if not chunk:
+                    break
+                raw.extend(chunk)
+            after = os.fstat(descriptor)
+            if not _same_safe_credential_file(opened, after) or len(raw) != after.st_size:
+                raise IdentityResolverProvisioningError("credential file is invalid")
+        finally:
+            os.close(descriptor)
+    except IdentityResolverProvisioningError:
+        raise
+    except OSError:
+        raise IdentityResolverProvisioningError("credential file is invalid") from None
+
+    if not 0 < len(raw) <= _MAX_CREDENTIAL_FILE_BYTES:
+        raise IdentityResolverProvisioningError("credential file is invalid")
+    try:
+        credential = bytes(raw).decode("utf-8")
+    except UnicodeDecodeError:
+        raise IdentityResolverProvisioningError("credential file is invalid") from None
+    if credential.endswith("\n"):
+        credential = credential[:-1]
+    if _CREDENTIAL.fullmatch(credential) is None:
+        raise IdentityResolverProvisioningError("credential file is invalid")
+    return credential
+
+
+def _safe_credential_file(details: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(details.st_mode)
+        and stat.S_IMODE(details.st_mode) in {0o400, 0o600}
+        and 0 < details.st_size <= _MAX_CREDENTIAL_FILE_BYTES
+    )
+
+
+def _same_safe_credential_file(
+    expected: os.stat_result,
+    observed: os.stat_result,
+) -> bool:
+    return _safe_credential_file(observed) and (
+        expected.st_dev,
+        expected.st_ino,
+        expected.st_size,
+    ) == (observed.st_dev, observed.st_ino, observed.st_size)
 
 
 def _is_exact_user(user: Any, *, api_key: str, api_secret: str) -> bool:
