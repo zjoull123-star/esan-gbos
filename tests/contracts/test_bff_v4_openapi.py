@@ -151,6 +151,8 @@ def test_v4_freezes_channel_communication_usage_and_ai_draft_shapes() -> None:
         "model",
         "raw_access_allowed",
     } <= set(detail_extension["required"])
+    assert "connector_account_user_ref" not in detail_extension["required"]
+    assert "connector_account_user_ref" not in detail_extension["properties"]
 
     usage = schemas["ModelUsage"]
     assert usage["properties"]["model"]["const"] == "deepseek-v4-flash"

@@ -477,7 +477,8 @@ def test_communication_detail_maps_closed_identity_metadata_without_protected_ta
     assert value["association_suggestions"] == [
         {"type": "party", "confidence": 0.88, "suggestion_key": suggestion_key}
     ]
-    assert value["connector_account_user_ref"] == "owner@example.invalid"
+    assert "connector_account_user_ref" not in value
+    assert "owner@example.invalid" not in repr(value)
     assert "PROTECTED-MODEL-TARGET" not in repr(value)
 
 
@@ -506,6 +507,31 @@ def test_communication_detail_rejects_raw_provider_subject_in_identity_ref() -> 
                     }
                 ],
                 "connector_account_user_ref": None,
+                "model": {"name": "deepseek-v4-flash", "version": "2026-08-01"},
+                "raw_access_allowed": False,
+            }
+        )
+
+
+def test_communication_detail_validates_but_never_projects_connector_owner_ref() -> None:
+    with pytest.raises(V4DTOValidationError, match="connector_account_user_ref"):
+        map_communication_detail(
+            {
+                "observation_id": "OBS-004",
+                "channel": "email",
+                "occurred_at": "2026-08-08T01:00:00+00:00",
+                "summary_zh": "客户询问交期。",
+                "original_language": "zh",
+                "classification": "Internal",
+                "review_status": "Pending",
+                "team_ref": "TEM-001",
+                "party_ref": None,
+                "evidence_count": 0,
+                "evidence": [],
+                "fact_proposals": [],
+                "association_suggestions": [],
+                "participant_identities": [],
+                "connector_account_user_ref": {"raw": "owner@example.invalid"},
                 "model": {"name": "deepseek-v4-flash", "version": "2026-08-01"},
                 "raw_access_allowed": False,
             }

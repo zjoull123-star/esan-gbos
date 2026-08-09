@@ -524,7 +524,6 @@
               "fact_proposals",
               "association_suggestions",
               "participant_identities",
-              "connector_account_user_ref",
               "model",
               "raw_access_allowed"
             ],
@@ -533,7 +532,6 @@
               "fact_proposals": {"type": "array", "items": {"$ref": "#/components/schemas/FactProposal"}},
               "association_suggestions": {"type": "array", "items": {"$ref": "#/components/schemas/AssociationSuggestion"}},
               "participant_identities": {"type": "array", "maxItems": 100, "items": {"$ref": "#/components/schemas/ParticipantIdentity"}},
-              "connector_account_user_ref": {"type": ["string", "null"]},
               "model": {"$ref": "#/components/schemas/ModelMetadata"},
               "raw_access_allowed": {"type": "boolean"},
               "original_text": {

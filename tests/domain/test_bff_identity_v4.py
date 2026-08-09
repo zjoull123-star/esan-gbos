@@ -760,3 +760,48 @@ def test_pending_review_queries_are_assigned_and_redact_external_subject_and_sna
     with pytest.raises(TestBFFError) as denied:
         identity.get_pending_review("REV-OTHER")
     assert denied.value.code == "not_found"
+
+
+@pytest.mark.parametrize(
+    ("review_status", "business_status"),
+    [("Approved", "Active"), ("Pending", "Revoked")],
+)
+def test_pending_review_detail_rejects_stale_or_decided_mapping(
+    identity_module: tuple[Any, FakeFrappe, SimpleNamespace],
+    review_status: str,
+    business_status: str,
+) -> None:
+    identity, fake, _state = identity_module
+    fake.session.user = "reviewer@example.invalid"
+    fake.tables["GBOS External Identity"] = [
+        _mapping(
+            IDENTITY_PARTY,
+            name="EID-01",
+            review_status=review_status,
+            business_status=business_status,
+            revision=2,
+        )
+    ]
+    fake.tables["GBOS Review Case"] = [
+        {
+            "name": "REV-01",
+            "title": "Identity association review",
+            "team": "TEM-01",
+            "assigned_reviewer": "reviewer@example.invalid",
+            "subject_doctype": "GBOS External Identity",
+            "subject_name": "EID-01",
+            "subject_revision": 2,
+            "evidence_refs": json.dumps(["EVD-01"]),
+            "policy_version": "identity-resolution-v1",
+            "business_status": "Pending",
+            "review_status": "Pending",
+            "revision": 1,
+            "modified": "2026-08-10T01:00:00+00:00",
+        }
+    ]
+
+    with pytest.raises(TestBFFError) as raised:
+        identity.get_pending_review("REV-01")
+
+    assert raised.value.code == "internal_error"
+    assert IDENTITY_PARTY not in str(raised.value)

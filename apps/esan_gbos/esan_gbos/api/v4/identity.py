@@ -461,6 +461,8 @@ def _review_dto(case: object) -> dict[str, Any]:
         or str(_value(mapping, "team") or "") != team
         or str(_value(mapping, "name") or "") != mapping_name
         or int(_value(mapping, "revision") or 0) != int(_value(case, "subject_revision") or 0)
+        or _value(mapping, "review_status") != "Pending"
+        or _value(mapping, "business_status") != "Active"
     ):
         raise BFFError("internal_error", "Identity review pin is invalid", status=503)
     return {

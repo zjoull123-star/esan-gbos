@@ -345,6 +345,10 @@ def map_communication_detail(payload: dict[str, Any]) -> dict[str, Any]:
     summary = map_communication_summary(
         {field: payload[field] for field in _COMMUNICATION_SUMMARY_FIELDS}
     )
+    _optional_text(
+        payload["connector_account_user_ref"],
+        "connector_account_user_ref",
+    )
     restricted = payload["classification"] == "Restricted"
     raw_allowed = payload["raw_access_allowed"] is True and not restricted
     result: dict[str, Any] = {
@@ -353,10 +357,6 @@ def map_communication_detail(payload: dict[str, Any]) -> dict[str, Any]:
         "fact_proposals": _map_fact_proposals(payload["fact_proposals"]),
         "association_suggestions": _map_associations(payload["association_suggestions"]),
         "participant_identities": _map_participant_identities(payload["participant_identities"]),
-        "connector_account_user_ref": _optional_text(
-            payload["connector_account_user_ref"],
-            "connector_account_user_ref",
-        ),
         "model": _map_model_metadata(payload["model"]),
         "raw_access_allowed": raw_allowed,
     }
