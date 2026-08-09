@@ -8,6 +8,9 @@ README = ROOT / "README.md"
 PERMISSION_MATRIX = ROOT / "docs" / "permission-matrix.md"
 EXTERNAL_DEPS = ROOT / "docs" / "external-deps.md"
 HANDOFF = ROOT / "docs" / "HANDOFF.md"
+IDENTITY_PLAN = (
+    ROOT / "docs" / "superpowers" / "plans" / "2026-08-09-gbos-user-identity-resolution.md"
+)
 DOCTYPE_ROOT = ROOT / "apps" / "esan_gbos" / "esan_gbos" / "gbos" / "doctype"
 CEO_ACCESS = ROOT / "apps" / "esan_gbos" / "esan_gbos" / "ceo_access.py"
 MANIFEST = ROOT / "infra" / "local" / "local-pilot-manifest.json"
@@ -130,3 +133,27 @@ def test_owned_handoff_docs_do_not_reintroduce_stale_runtime_claims() -> None:
     )
     for statement in forbidden:
         assert statement.lower() not in owned_docs.lower(), statement
+
+
+def test_identity_handoff_keeps_the_four_user_relations_separate_and_truthful() -> None:
+    handoff = _read(HANDOFF)
+    plan = _read(IDENTITY_PLAN)
+
+    for relation in (
+        "Observation.team_ref ↔ GBOS Team Member.user",
+        "Connector Instance.account_user_ref",
+        "Participant.identity_ref",
+        "Deal owner / owner_user / assigned_to",
+    ):
+        assert relation in handoff
+        assert relation in plan
+
+    for document in (handoff, plan):
+        assert "禁止相互推导" in document
+        assert "c98f6a5" in document
+        assert "Task 13" in document
+        assert "未执行" in document
+        assert "真实 Frappe" in document
+        assert "Prometheus" in document
+        assert "72 小时" in document
+        assert "local_pilot_go=false" in document

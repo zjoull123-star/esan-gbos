@@ -19,6 +19,42 @@
 
 ## 当前代码事实
 
+### 观察身份与系统用户关系
+
+身份解析实现基线是 `c98f6a5`。这条链路只建立经过治理、可撤回的关联，四种关系
+始终独立，**禁止相互推导**：
+
+| 关系 | 权威字段 | 用途 |
+| --- | --- | --- |
+| 团队数据访问 | `Observation.team_ref ↔ GBOS Team Member.user` | 决定用户能否按团队读取观察记录 |
+| 渠道账号负责人 | `Connector Instance.account_user_ref` | 标记内部谁负责该邮箱/企微/WhatsApp 连接器 |
+| 沟通参与人 | `Participant.identity_ref` | 保存经 site、purpose、provider 隔离的匿名外部身份 |
+| 业务负责人 | `Deal owner / owner_user / assigned_to` | 表达 CRM 业务归属和跟进责任 |
+
+`Participant.identity_ref` 首先进入未解析状态。AI 只能建议同团队 User、Party 或
+Contact 候选；正式关联必须经过 `GBOS External Identity` AI Draft、Review Case 和
+人工审核。已确认 User 投影可在团队规则之外提供严格的本人访问，但只在解析仍为
+confirmed、后台解析任务新鲜且事件团队匹配时有效；撤回、过期、冲突或跨团队投影
+均不授权。Party 投影只丰富显示，不改写不可变观察事件。
+
+当前离线身份解析切片已实现并验证：稳定 HMAC 身份、Frappe 权威映射、人工审核、
+Observer 投影、持久任务队列、BFF/PWA、内部 worker、指标契约，以及一次性
+PostgreSQL 17 中迁移两遍和 14 项 Gate 3 集成测试。离线 E2E 是基于公开组件 seam
+的进程内链路，不是已启动真实 IMAP、Frappe 站点和浏览器的物理全链路。
+
+### 身份解析实施状态
+
+- Task 1–3：已完成基线修复、真相交接和闭合契约。
+- Task 4–5：实现了 Frappe 权威与最小权限 resolver；本轮未执行真实 Frappe
+  bench/site 原生测试，因此该运行边界仍未验证。
+- Task 6–11：已完成 Observer 稳定身份、投影、审核、BFF 与 PWA 流程。
+- Task 12：离线 fake-transport/component E2E、内部 worker、静态 Prometheus
+  抓取契约和告警已实现；Prometheus 镜像、`promtool` 和 live scrape 本轮未运行。
+- Task 13：真实 Email + DeepSeek 影子 canary **未执行**；没有载入真实凭据、没有
+  真实模型调用，也没有观测模型返回身份。
+- 72 小时常驻试点未执行；正式 `local_pilot_go=false`，Kingdee、云、生产和外发
+  继续 No-Go。
+
 ### Frappe DocType inventory
 
 当前 `esan_gbos` app 有 **15 parent + 3 child DocTypes**。15 个 parent 包含

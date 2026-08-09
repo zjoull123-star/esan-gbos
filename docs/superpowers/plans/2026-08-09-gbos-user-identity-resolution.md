@@ -12,6 +12,35 @@
 
 ---
 
+## Implementation status snapshot — 2026-08-10
+
+The offline implementation baseline is `c98f6a5`. This status section records what
+was actually implemented and verified; it does not rewrite the task checklist below
+or authorize the real canary.
+
+The four user relationships remain separate and **禁止相互推导**:
+
+- Team data access: `Observation.team_ref ↔ GBOS Team Member.user`.
+- Connector account owner: `Connector Instance.account_user_ref`.
+- Communication participant: `Participant.identity_ref`.
+- CRM business assignment: `Deal owner / owner_user / assigned_to`.
+
+| Scope | Current status | Remaining evidence |
+| --- | --- | --- |
+| Task 1–3 | Implemented and verified | None for the offline contract/baseline scope |
+| Task 4–5 | Frappe authority and least-privilege resolver implemented | 真实 Frappe bench/site native run 未执行 |
+| Task 6–8 | Stable identity, projection, self-access and party enrichment implemented | PostgreSQL 17 disposable matrix passed 14/14 after migrations were applied twice |
+| Task 9–11 | Review materialization, BFF and responsive PWA implemented | Real-site workflow remains outside this snapshot |
+| Task 12 | Offline component E2E, worker, metrics contract and alerts implemented | Prometheus image, `promtool` and live scrape 未执行 |
+| Task 13 | **未执行** | Real Email credentials/activation, DeepSeek key/balance, live model identity and 72 小时 pilot |
+
+The current verdict is only `offline identity resolution technical Go`. The checked-in
+formal state remains `local_pilot_go=false`; real Email, real DeepSeek, 真实 Frappe
+runtime, live Prometheus scrape, 72 小时常驻、Kingdee、cloud、production and external
+send remain No-Go or not run.
+
+---
+
 ## Frozen boundaries
 
 - Canonical path is `/Users/ericesan/Documents/GBOS`; do not use the trailing-space directory.

@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0",
+  "evidence_id": "identity-resolution-offline-closure-20260810",
+  "captured_at": "2026-08-09T19:18:23Z",
+  "validation_reference_commit": "c98f6a51c9f4efa6d05c40e640d19bd23edbaefc",
+  "implementation_baseline_commit": "c98f6a51c9f4efa6d05c40e640d19bd23edbaefc",
+  "validation_reference_role": "offline identity-resolution implementation baseline before this documentation and evidence update",
+  "branch": "feat/user-identity-resolution-20260810",
+  "status": "offline_identity_resolution_technical_go",
+  "identity_relations": {
+    "team_access": "Observation.team_ref <-> GBOS Team Member.user",
+    "connector_account_owner": "Connector Instance.account_user_ref",
+    "communication_participant": "Participant.identity_ref",
+    "business_assignment": "Deal owner / owner_user / assigned_to",
+    "cross_relation_inference_allowed": false
+  },
+  "implemented_scope": [
+    "provider-scoped opaque participant identity",
+    "Frappe authoritative external identity mapping",
+    "AI Draft to pinned Review Case to human decision",
+    "confirmed and revoked Observer projection",
+    "fenced durable identity resolution work queue",
+    "team-first and fresh-confirmed self access",
+    "governed BFF and responsive PWA review flow",
+    "internal-only resolver worker and fixed-label metrics contract",
+    "offline public-seam component lifecycle"
+  ],
+  "verification": {
+    "backend": {
+      "passed": 2486,
+      "skipped": 39,
+      "failed": 0,
+      "warnings": 1
+    },
+    "postgres_gate3": {
+      "passed": 14,
+      "skipped": 0,
+      "failed": 0,
+      "warnings": 1,
+      "migrations_applied_twice": true,
+      "temporary_environment_removed": true
+    },
+    "frontend_unit": {
+      "passed": 187,
+      "failed": 0
+    },
+    "frontend_playwright": {
+      "passed": 22,
+      "failed": 0
+    },
+    "python_static": {
+      "ruff_check": "pass",
+      "ruff_format_files": 480,
+      "mypy_service_files": 121,
+      "compileall": "pass",
+      "secret_scan": "pass"
+    }
+  },
+  "formal_state": {
+    "production_go": false,
+    "local_pilot_go": false,
+    "composition_status": "not_composed",
+    "external_send": false
+  },
+  "go_no_go": {
+    "offline_identity_resolution": "go",
+    "formal_local_pilot": "no_go",
+    "real_email": "no_go",
+    "real_deepseek": "no_go",
+    "observed_model_identity": "unknown",
+    "native_frappe_site": "not_run",
+    "prometheus_live_scrape": "not_run",
+    "seventy_two_hour_pilot": "not_run",
+    "kingdee": "no_go",
+    "cloud": "no_go",
+    "production": "no_go",
+    "external_send": "no_go"
+  },
+  "external_activity": {
+    "real_email_connections": 0,
+    "real_model_api_calls": 0,
+    "observed_model_responses": 0,
+    "external_messages": 0,
+    "kingdee_calls": 0,
+    "cloud_deployments": 0,
+    "production_writes": 0,
+    "credentials_loaded": 0
+  },
+  "limitations": [
+    "The offline E2E uses public component seams in one process; it is not a physical durable-inbox, PostgreSQL, Frappe-site and browser chain.",
+    "Native Frappe bench/site identity tests were not run in this snapshot.",
+    "The pinned Prometheus image was unavailable locally, so promtool and live scrape were not run.",
+    "No real IMAP account, DeepSeek key, model response, trusted phrase lexicon or channel credential was used.",
+    "The 72-hour shadow pilot and fault drills remain pending."
+  ],
+  "historical_evidence": {
+    "modified": false,
+    "policy": "new package only; existing Gate and local-pilot evidence remains unchanged"
+  }
+}
