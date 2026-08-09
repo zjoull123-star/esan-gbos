@@ -19,6 +19,115 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _write_executable(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def _prepare_runtime_image_repo(tmp_path: Path) -> tuple[Path, Path]:
+    repo = tmp_path / "repo"
+    scripts = repo / "scripts" / "local-pilot"
+    infra = repo / "infra" / "local"
+    scripts.mkdir(parents=True)
+    infra.mkdir(parents=True)
+    shutil.copy2(SCRIPTS / "build-runtime-image", scripts / "build-runtime-image")
+    shutil.copy2(SCRIPTS / "lib.sh", scripts / "lib.sh")
+    shutil.copy2(ROOT / "infra" / "local" / "Containerfile.runtime", infra)
+    (repo / "services").mkdir()
+    (repo / "services" / "runtime.py").write_text("RUNTIME = True\n", encoding="utf-8")
+    (repo / "contracts").mkdir()
+    (repo / "contracts" / "runtime.json").write_text("{}\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text("[project]\nname = 'runtime-test'\n", encoding="utf-8")
+    (repo / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (infra / "runtime-entrypoints.json").write_text(
+        json.dumps({"runtime_image": "gbos-runtime:test"}),
+        encoding="utf-8",
+    )
+    (infra / "images.lock.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {
+                        "service": "python-runtime-base",
+                        "reference": "python:test@sha256:" + "1" * 64,
+                    },
+                    {
+                        "service": "uv-builder",
+                        "reference": "uv:test@sha256:" + "2" * 64,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    command_log = tmp_path / "docker-commands.jsonl"
+    docker = tmp_path / "docker"
+    _write_executable(
+        docker,
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import os\n"
+        "import pathlib\n"
+        "import sys\n\n"
+        "log = pathlib.Path(os.environ['DOCKER_COMMAND_LOG'])\n"
+        "with log.open('a', encoding='utf-8') as handle:\n"
+        "    handle.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "state = log.with_suffix('.state.json')\n"
+        "args = sys.argv[1:]\n"
+        "if args and args[0] == 'build':\n"
+        "    values = {}\n"
+        "    for index, value in enumerate(args):\n"
+        "        if value == '--build-arg':\n"
+        "            key, item = args[index + 1].split('=', 1)\n"
+        "            values[key] = item\n"
+        "    state.write_text(json.dumps(values), encoding='utf-8')\n"
+        "elif args[:2] == ['image', 'inspect']:\n"
+        "    values = json.loads(state.read_text(encoding='utf-8'))\n"
+        "    template = args[args.index('--format') + 1]\n"
+        "    override = os.environ.get('RUNTIME_TEST_LABEL_OVERRIDE')\n"
+        "    if 'org.opencontainers.image.revision' in template:\n"
+        "        print(override or values['RUNTIME_SOURCE_COMMIT'])\n"
+        "    elif 'com.esan.gbos.runtime-source-sha256' in template:\n"
+        "        print(override or values['RUNTIME_SOURCE_SHA256'])\n"
+        "    else:\n"
+        "        raise SystemExit(2)\n",
+    )
+    _write_executable(
+        scripts / "record-images",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "printf '%s\\n' record-images >> \"${DOCKER_COMMAND_LOG}\"\n",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Runtime Tests"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "runtime fixture"], cwd=repo, check=True)
+    return repo, command_log
+
+
+def _run_runtime_image_build(
+    repo: Path,
+    command_log: Path,
+    *,
+    label_override: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    environment["PATH"] = os.pathsep.join((str(command_log.parent), os.defpath))
+    environment["DOCKER_COMMAND_LOG"] = str(command_log)
+    if label_override is not None:
+        environment["RUNTIME_TEST_LABEL_OVERRIDE"] = label_override
+    return subprocess.run(
+        [str(repo / "scripts" / "local-pilot" / "build-runtime-image"), "--confirm-network-build"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+
 def _run_preflight(
     *args: str,
     skip_image_check: bool = True,
@@ -138,6 +247,87 @@ def test_operational_scripts_are_executable_and_shell_safe() -> None:
         if content.startswith("#!/usr/bin/env bash"):
             assert "set -euo pipefail" in content
     assert "未组合，不可启动" in _read(SCRIPTS / "status")
+
+
+def test_runtime_image_build_rejects_dirty_runtime_sources_before_docker(
+    tmp_path: Path,
+) -> None:
+    repo, command_log = _prepare_runtime_image_repo(tmp_path)
+    (repo / "services" / "runtime.py").write_text("RUNTIME = False\n", encoding="utf-8")
+
+    result = _run_runtime_image_build(repo, command_log)
+
+    assert result.returncode == 65
+    assert "runtime image inputs must be tracked and clean" in result.stderr
+    assert not command_log.exists()
+
+
+def test_runtime_image_build_labels_exact_clean_source_before_recording(
+    tmp_path: Path,
+) -> None:
+    repo, command_log = _prepare_runtime_image_repo(tmp_path)
+    expected_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    first = _run_runtime_image_build(repo, command_log)
+
+    assert first.returncode == 0, first.stderr
+    entries = command_log.read_text(encoding="utf-8").splitlines()
+    commands = [json.loads(entry) for entry in entries[:-1]]
+    build = next(command for command in commands if command[0] == "build")
+    build_args = [build[index + 1] for index, item in enumerate(build) if item == "--build-arg"]
+    assert f"RUNTIME_SOURCE_COMMIT={expected_commit}" in build_args
+    source_digest = next(
+        item.split("=", 1)[1] for item in build_args if item.startswith("RUNTIME_SOURCE_SHA256=")
+    )
+    assert re.fullmatch(r"[0-9a-f]{64}", source_digest)
+    revision_inspect = next(
+        index
+        for index, command in enumerate(commands)
+        if command[:2] == ["image", "inspect"]
+        and "org.opencontainers.image.revision" in command[command.index("--format") + 1]
+    )
+    digest_inspect = next(
+        index
+        for index, command in enumerate(commands)
+        if command[:2] == ["image", "inspect"]
+        and "com.esan.gbos.runtime-source-sha256" in command[command.index("--format") + 1]
+    )
+    assert revision_inspect < len(commands)
+    assert digest_inspect < len(commands)
+    assert entries[-1] == "record-images"
+
+    lock = repo / "infra" / "local" / "images.lock.json"
+    lock.write_text(lock.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    command_log.unlink()
+    second = _run_runtime_image_build(repo, command_log)
+
+    assert second.returncode == 0, second.stderr
+    second_commands = [
+        json.loads(entry) for entry in command_log.read_text(encoding="utf-8").splitlines()[:-1]
+    ]
+    second_build = next(command for command in second_commands if command[0] == "build")
+    second_build_args = [
+        second_build[index + 1] for index, item in enumerate(second_build) if item == "--build-arg"
+    ]
+    assert f"RUNTIME_SOURCE_SHA256={source_digest}" in second_build_args
+
+
+def test_runtime_image_build_refuses_mismatched_label_before_recording(
+    tmp_path: Path,
+) -> None:
+    repo, command_log = _prepare_runtime_image_repo(tmp_path)
+
+    result = _run_runtime_image_build(repo, command_log, label_override="mismatch")
+
+    assert result.returncode == 65
+    assert "revision label does not match repository HEAD" in result.stderr
+    assert "record-images" not in command_log.read_text(encoding="utf-8")
 
 
 def test_synthetic_user_bootstrap_is_explicit_image_gated_and_never_starts_stack() -> None:

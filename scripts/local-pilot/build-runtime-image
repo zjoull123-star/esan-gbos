@@ -39,6 +39,55 @@ PY
 PYTHON_BASE_IMAGE="$(locked_reference python-runtime-base)"
 UV_IMAGE="$(locked_reference uv-builder)"
 
+RUNTIME_SOURCE_PATHS=(
+  contracts
+  services
+  pyproject.toml
+  uv.lock
+  infra/local/Containerfile.runtime
+  scripts/local-pilot/build-runtime-image
+)
+RUNTIME_SOURCE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD)"
+if [[ ! "${RUNTIME_SOURCE_COMMIT}" =~ ^[a-f0-9]{40}$ ]]; then
+  echo "Runtime image precondition failed: repository HEAD is not an exact commit." >&2
+  exit 65
+fi
+if ! git -C "${REPO_ROOT}" ls-files --error-unmatch -- \
+  "${RUNTIME_SOURCE_PATHS[@]}" >/dev/null; then
+  echo "Runtime image precondition failed: runtime image inputs must be tracked and clean." >&2
+  exit 65
+fi
+if ! git -C "${REPO_ROOT}" diff --quiet -- "${RUNTIME_SOURCE_PATHS[@]}" ||
+  ! git -C "${REPO_ROOT}" diff --cached --quiet -- "${RUNTIME_SOURCE_PATHS[@]}" ||
+  [[ -n "$(
+    git -C "${REPO_ROOT}" ls-files --others --exclude-standard -- \
+      "${RUNTIME_SOURCE_PATHS[@]}"
+  )" ]]; then
+  echo "Runtime image precondition failed: runtime image inputs must be tracked and clean." >&2
+  exit 65
+fi
+
+RUNTIME_SOURCE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gbos-runtime-source.XXXXXX")"
+trap 'rm -rf -- "${RUNTIME_SOURCE_ROOT}"' EXIT
+git -C "${REPO_ROOT}" archive "${RUNTIME_SOURCE_COMMIT}" \
+  "${RUNTIME_SOURCE_PATHS[@]}" | tar -x -C "${RUNTIME_SOURCE_ROOT}"
+RUNTIME_SOURCE_SHA256="$(
+  python3 - "${RUNTIME_SOURCE_ROOT}" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+digest = hashlib.sha256()
+for path in sorted(item for item in root.rglob("*") if item.is_file()):
+    digest.update(path.relative_to(root).as_posix().encode())
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+print(digest.hexdigest())
+PY
+)"
+
 # BuildKit may consume pinned bases without installing them in the local image
 # store. Install both exact references so record-images can verify their IDs
 # and RepoDigests rather than inventing evidence from the Containerfile.
@@ -49,8 +98,31 @@ docker build \
   --pull \
   --platform linux/arm64 \
   --file "${REPO_ROOT}/infra/local/Containerfile.runtime" \
+  --build-arg "PYTHON_BASE_IMAGE=${PYTHON_BASE_IMAGE}" \
+  --build-arg "UV_IMAGE=${UV_IMAGE}" \
+  --build-arg "RUNTIME_SOURCE_COMMIT=${RUNTIME_SOURCE_COMMIT}" \
+  --build-arg "RUNTIME_SOURCE_SHA256=${RUNTIME_SOURCE_SHA256}" \
   --tag "${RUNTIME_IMAGE}" \
   "${REPO_ROOT}"
+
+ACTUAL_SOURCE_COMMIT="$(
+  docker image inspect \
+    --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    "${RUNTIME_IMAGE}"
+)"
+if [[ "${ACTUAL_SOURCE_COMMIT}" != "${RUNTIME_SOURCE_COMMIT}" ]]; then
+  echo "Runtime image verification failed: revision label does not match repository HEAD." >&2
+  exit 65
+fi
+ACTUAL_SOURCE_SHA256="$(
+  docker image inspect \
+    --format '{{ index .Config.Labels "com.esan.gbos.runtime-source-sha256" }}' \
+    "${RUNTIME_IMAGE}"
+)"
+if [[ "${ACTUAL_SOURCE_SHA256}" != "${RUNTIME_SOURCE_SHA256}" ]]; then
+  echo "Runtime image verification failed: source digest label does not match build inputs." >&2
+  exit 65
+fi
 
 "${SCRIPT_DIR}/record-images" \
   --lock-file "${REPO_ROOT}/infra/local/images.lock.json" \

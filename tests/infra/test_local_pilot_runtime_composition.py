@@ -81,6 +81,32 @@ def test_runtime_build_installs_pinned_base_images_before_recording_them() -> No
     assert build.index(image_build) < build.index(image_record)
 
 
+def test_runtime_image_carries_verified_exact_source_identity() -> None:
+    containerfile = _read(INFRA / "Containerfile.runtime")
+    build = _read(SCRIPTS / "build-runtime-image")
+
+    assert "ARG RUNTIME_SOURCE_COMMIT" in containerfile
+    assert "ARG RUNTIME_SOURCE_SHA256" in containerfile
+    assert 'LABEL org.opencontainers.image.revision="${RUNTIME_SOURCE_COMMIT}"' in containerfile
+    assert 'LABEL com.esan.gbos.runtime-source-sha256="${RUNTIME_SOURCE_SHA256}"' in containerfile
+    assert "RUNTIME_SOURCE_PATHS=(" in build
+    assert "services" in build
+    assert "contracts" in build
+    assert "pyproject.toml" in build
+    assert "uv.lock" in build
+    assert "infra/local/Containerfile.runtime" in build
+    assert "scripts/local-pilot/build-runtime-image" in build
+    source_paths = build.split("RUNTIME_SOURCE_PATHS=(", 1)[1].split(")", 1)[0]
+    assert "images.lock.json" not in source_paths
+    assert '--build-arg "RUNTIME_SOURCE_COMMIT=${RUNTIME_SOURCE_COMMIT}"' in build
+    assert '--build-arg "RUNTIME_SOURCE_SHA256=${RUNTIME_SOURCE_SHA256}"' in build
+    revision_verify = build.index("org.opencontainers.image.revision")
+    digest_verify = build.index("com.esan.gbos.runtime-source-sha256")
+    record = build.index('"${SCRIPT_DIR}/record-images"')
+    assert revision_verify < record
+    assert digest_verify < record
+
+
 def test_one_shot_migration_is_checksum_ordered_repeatable_and_least_privilege() -> None:
     migration = _read(SCRIPTS / "migrate")
     compose = _read(INFRA / "compose.yml")
