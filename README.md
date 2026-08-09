@@ -6,10 +6,20 @@ Contact、Lead 和 Deal；金蝶仍是订单、库存与财务权威系统。
 
 ## 当前交付边界
 
-本仓库已完成 Gate 0–6 的本地、合成数据技术实现：
+本仓库记录 Gate 0–6 的本地、合成数据技术实现；正式 local pilot 仍为
+No-Go。当前主线/feature handoff 的来源基线是 `8c40731`，feature branch
+`feat/user-identity-resolution-20260810` 是其 descendant；可审计的当前状态见
+[当前交接真相](docs/HANDOFF.md)。
+
+- 当前主线 evidence 只描述当前源码、配置、锁定清单和测试边界；
+  `docs/evidence/` 下的 Gate 快照是历史证据，校验和保持不变，不能替代当前
+  runtime 或 live proof。
+
+本仓库的本地、合成数据技术边界包括：
 
 - 冻结的 Frappe v16、ERPNext v16、Frappe CRM v1 兼容基线；
-- `esan_gbos` Frappe App、13 个父 DocType 与 2 个 Child DocType；
+- `esan_gbos` Frappe App、15 个父 DocType 与 3 个 Child DocType（15 个父项含
+  Gate 4 审计 `GBOS Review Decision`）；
 - 销售 → 产品需求 → 样品 → 反馈 → 需求 → 询源 → 工作项/审核闭环；
 - 版本化 BFF、团队级权限、revision、幂等与服务端状态机；
 - 观察事件、不可变证据、事实提案与最小 Context Service；
@@ -22,10 +32,16 @@ Contact、Lead 和 Deal；金蝶仍是订单、库存与财务权威系统。
 - SLO/告警、备份恢复、DR/事件响应 runbook 与隐私治理契约；
 - 中文响应式 PWA、确定性合成 fixtures、本地 Compose、CI、安全与 Gate 证据。
 
-以下能力保持关闭或不存在：真实金蝶连接及任何金蝶写入、生产渠道采集、
-真实 AI 模型调用、自动外发、自动报价、正式订单创建、腾讯云部署和生产
-发布。Observer profile 承载 Gate 3–6 的 PostgreSQL 本地验证，但仍不是
-核心 CRM/PWA 的启动依赖。
+DeepSeek gateway 已实现并完成配置边界（endpoint 为
+`https://api.deepseek.com`、model 为 `deepseek-v4-flash`），但当前没有观察到
+真实调用或响应中的 model identity；相关测试使用 deterministic/mock boundary。
+
+以下能力保持关闭、不代表已验证或不存在：真实金蝶连接及任何金蝶写入、生产
+渠道采集、真实 AI 模型调用、自动外发、自动报价、正式订单创建、腾讯云部署和
+生产发布。正式 local pilot 仍保持 `local_pilot_go=false` 与
+`composition.status=not_composed`（No-Go）；real channels、real model、Kingdee、
+cloud 和 production 均未验证。Observer profile 承载 Gate 3–6 的 PostgreSQL
+本地验证，但仍不是核心 CRM/PWA 的启动依赖。
 
 Gate 5 的 CEO 页面读取受治理 Metrics API，但当前来源仍是确定性合成数据；
 界面明确显示“演示 / 合成数据”，不得解读为实时经营结果。

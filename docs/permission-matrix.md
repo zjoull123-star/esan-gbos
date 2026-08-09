@@ -7,6 +7,26 @@
 Gate 5 前只能使用明确标记的合成 mock；Gate 5 后也只能通过 Metrics API
 或白名单只读投影访问，不能直连原始数据库。
 
+## CEO auto-elevation（当前实现）
+
+带有 `CEO` 角色的 Frappe `User` 在 `before_validate` 中自动补齐一个封闭的
+全权角色 bundle，并强制 `user_type=System User`。准确 bundle 只有以下五个
+角色；已有的其他角色不会被删除，非 CEO 用户不会被提升：
+
+```text
+CEO_FULL_ACCESS_ROLES = (
+    `CEO`,
+    `GBOS Admin`,
+    `Integration Admin`,
+    `Reviewer`,
+    `System Manager`,
+)
+```
+
+`after_install` 与 `after_migrate` 都会运行同一幂等 backfill，覆盖已存在的
+CEO 用户。该身份提升不改变 Restricted 原文策略，也不等于 real runtime、
+正式 local pilot 或 production 已获批准。
+
 Legend: **允许** = 仅在列出的条件下；**审批** = 可提交申请但必须由
 指定 Reviewer/Approver 执行；**拒绝** = 不提供工具/接口；**紧急** =
 仅 break-glass，需 ticket、时限和完整审计。
