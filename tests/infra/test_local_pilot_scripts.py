@@ -21,17 +21,62 @@ def _read(path: Path) -> str:
 def _run_preflight(
     *args: str,
     skip_image_check: bool = True,
+    docker_inspect_stub: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = [str(SCRIPTS / "preflight"), "--repo-root", str(ROOT), *args]
     if skip_image_check:
         command.append("--skip-runtime-image-check")
+    environment = os.environ.copy()
+    if docker_inspect_stub is not None:
+        environment["PATH"] = os.pathsep.join(
+            (str(docker_inspect_stub.parent), environment.get("PATH", os.defpath))
+        )
     return subprocess.run(
         command,
         cwd=ROOT,
         check=False,
         capture_output=True,
         text=True,
+        env=environment,
     )
+
+
+def _write_docker_inspect_stub(tmp_path: Path, image_lock: dict[str, object]) -> Path:
+    images = image_lock.get("images")
+    assert isinstance(images, list)
+    inspected_images: dict[str, dict[str, object]] = {}
+    for item in images:
+        assert isinstance(item, dict)
+        reference = item.get("reference")
+        platform = item.get("platform")
+        assert isinstance(reference, str)
+        assert isinstance(platform, str) and "/" in platform
+        operating_system, architecture = platform.split("/", 1)
+        inspect_digest = item.get("local_inspect_digest")
+        repo_digest = item.get("local_repo_digest")
+        inspected_images[reference] = {
+            "Id": inspect_digest if isinstance(inspect_digest, str) else "sha256:" + "0" * 64,
+            "RepoDigests": [repo_digest] if isinstance(repo_digest, str) else [],
+            "Os": operating_system,
+            "Architecture": architecture,
+        }
+
+    stub = tmp_path / "docker"
+    stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import sys\n\n"
+        f"images = {json.dumps(inspected_images, sort_keys=True)}\n\n"
+        "if sys.argv[1:3] != ['image', 'inspect'] or len(sys.argv) != 4:\n"
+        "    raise SystemExit(2)\n"
+        "image = images.get(sys.argv[3])\n"
+        "if image is None:\n"
+        "    raise SystemExit(1)\n"
+        "print(json.dumps([image]))\n",
+        encoding="utf-8",
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return stub
 
 
 def test_operational_scripts_are_executable_and_shell_safe() -> None:
@@ -307,6 +352,7 @@ def test_preflight_requires_digest_for_enabled_tunnel_image(tmp_path: Path) -> N
 
 def test_preflight_rejects_stale_local_inspect_id(tmp_path: Path) -> None:
     lock = json.loads(_read(IMAGE_LOCK))
+    docker_inspect_stub = _write_docker_inspect_stub(tmp_path, lock)
     postgres = next(item for item in lock["images"] if item["service"] == "postgres")
     postgres["local_inspect_digest"] = "sha256:" + "2" * 64
     candidate = tmp_path / "images.lock.json"
@@ -316,6 +362,7 @@ def test_preflight_rejects_stale_local_inspect_id(tmp_path: Path) -> None:
         "--image-lock",
         str(candidate),
         skip_image_check=False,
+        docker_inspect_stub=docker_inspect_stub,
     )
 
     assert result.returncode != 0
@@ -324,6 +371,7 @@ def test_preflight_rejects_stale_local_inspect_id(tmp_path: Path) -> None:
 
 def test_preflight_rejects_local_repo_digest_mismatch(tmp_path: Path) -> None:
     lock = json.loads(_read(IMAGE_LOCK))
+    docker_inspect_stub = _write_docker_inspect_stub(tmp_path, lock)
     postgres = next(item for item in lock["images"] if item["service"] == "postgres")
     postgres["local_repo_digest"] = "pgvector/pgvector@sha256:" + "3" * 64
     candidate = tmp_path / "images.lock.json"
@@ -333,6 +381,7 @@ def test_preflight_rejects_local_repo_digest_mismatch(tmp_path: Path) -> None:
         "--image-lock",
         str(candidate),
         skip_image_check=False,
+        docker_inspect_stub=docker_inspect_stub,
     )
 
     assert result.returncode != 0
