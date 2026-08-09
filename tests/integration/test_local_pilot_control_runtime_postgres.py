@@ -15,6 +15,7 @@ from services.observer.observer.control_service import (
 from services.observer.observer.local_pilot_storage import PostgresLocalPilotStorage
 from services.observer.observer.model_projection import (
     CommunicationIntelligenceResponse,
+    LoadedEvidenceText,
     LocalTokenizationResult,
     ObservationModelRequest,
     ObservationProjectionPublisher,
@@ -406,7 +407,10 @@ def test_postgres_control_communication_and_polling_survive_repository_restart()
             projection_repository = PostgresObservationProjectionRepository(
                 connection=active_connection,
                 projection_store=projection_store,
-                raw_loader=lambda _scope, _ref: "raw customer message",
+                raw_loader=lambda _scope, evidence: LoadedEvidenceText(
+                    evidence_ref=evidence.evidence_ref,
+                    text="raw customer message",
+                ),
             )
             publisher = ObservationProjectionPublisher(
                 repository=projection_repository,
