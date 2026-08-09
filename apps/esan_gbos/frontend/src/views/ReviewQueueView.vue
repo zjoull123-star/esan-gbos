@@ -186,6 +186,13 @@
                     <span>{{ identityReview.target.candidate_type }}</span>
                   </div>
                   <IdentityReviewFacts :review="identityReview" />
+                  <RouterLink
+                    class="review-detail-link"
+                    :data-identity-review-decision="identityReview.review_case_ref"
+                    :to="`/gbos/review/${encodeURIComponent(identityReview.review_case_ref)}`"
+                  >
+                    进入治理审核
+                  </RouterLink>
                   <button
                     class="review-detail-link"
                     type="button"

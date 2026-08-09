@@ -275,6 +275,32 @@ const identityStatuses = new Set([
   "revoked",
 ]);
 const identityCandidateTypes = new Set(["User", "Party", "Contact"]);
+const identityRefPattern =
+  /^extid:v1:(email|wecom|whatsapp|phone|manual_import):([A-Za-z0-9._~-]+)$/u;
+
+const isBoundedText = (
+  value: unknown,
+  minLength: number,
+  maxLength: number,
+): value is string =>
+  typeof value === "string" &&
+  value.length >= minLength &&
+  value.length <= maxLength &&
+  value.trim().length >= minLength;
+
+const identityRefProvider = (value: unknown): IdentityProvider | undefined => {
+  if (!isBoundedText(value, 1, 160)) {
+    return undefined;
+  }
+  const match = identityRefPattern.exec(value as string);
+  return match?.[1] as IdentityProvider | undefined;
+};
+
+const requireIdentityRef = (value: unknown) => {
+  if (!identityRefProvider(value)) {
+    throw new BffError("validation_error", { message: "身份引用不符合接口约束。" });
+  }
+};
 
 const hasClosedKeys = (
   value: Record<string, unknown>,
@@ -305,7 +331,7 @@ const parseConnectorAccountOwner = (
   if (
     !isRecord(value) ||
     !hasClosedKeys(value, ["display_label"]) ||
-    typeof value.display_label !== "string"
+    !isBoundedText(value.display_label, 1, 256)
   ) {
     return invalidIdentityResponse(requestId);
   }
@@ -321,18 +347,18 @@ const parseIdentityState = (value: unknown, requestId?: string): IdentityState =
       "target_type",
       "display_label",
     ]) ||
-    typeof value.identity_ref !== "string" ||
-    value.identity_ref.length > 160 ||
+    !identityRefProvider(value.identity_ref) ||
     typeof value.provider !== "string" ||
     !identityProviders.has(value.provider as IdentityProvider) ||
+    identityRefProvider(value.identity_ref) !== value.provider ||
     typeof value.status !== "string" ||
     !identityStatuses.has(value.status) ||
-    (value.mapping_ref !== undefined && typeof value.mapping_ref !== "string") ||
+    (value.mapping_ref !== undefined && !isBoundedText(value.mapping_ref, 1, 140)) ||
     (value.mapping_revision !== undefined && !isPositiveInteger(value.mapping_revision)) ||
     (value.target_type !== undefined &&
       value.target_type !== "User" &&
       value.target_type !== "Party") ||
-    (value.display_label !== undefined && typeof value.display_label !== "string")
+    (value.display_label !== undefined && !isBoundedText(value.display_label, 1, 256))
   ) {
     return invalidIdentityResponse(requestId);
   }
@@ -348,8 +374,8 @@ const parseIdentityCandidate = (
     !hasClosedKeys(value, ["candidate_type", "candidate_ref", "display_label"]) ||
     typeof value.candidate_type !== "string" ||
     !identityCandidateTypes.has(value.candidate_type) ||
-    typeof value.candidate_ref !== "string" ||
-    typeof value.display_label !== "string"
+    !isBoundedText(value.candidate_ref, 1, 256) ||
+    !isBoundedText(value.display_label, 1, 256)
   ) {
     return invalidIdentityResponse(requestId);
   }
@@ -360,8 +386,8 @@ const parseIdentityReviewer = (value: unknown, requestId?: string) => {
   if (
     !isRecord(value) ||
     !hasClosedKeys(value, ["reviewer_ref", "display_label"]) ||
-    typeof value.reviewer_ref !== "string" ||
-    typeof value.display_label !== "string"
+    !isBoundedText(value.reviewer_ref, 1, 140) ||
+    !isBoundedText(value.display_label, 1, 256)
   ) {
     return invalidIdentityResponse(requestId);
   }
@@ -387,17 +413,17 @@ const parseIdentityPendingReview = (
   if (
     !isRecord(value) ||
     !hasClosedKeys(value, required) ||
-    typeof value.review_case_ref !== "string" ||
+    !isBoundedText(value.review_case_ref, 1, 140) ||
     !isPositiveInteger(value.review_case_revision) ||
     value.status !== "pending" ||
-    typeof value.assigned_reviewer !== "string" ||
-    typeof value.team_ref !== "string" ||
-    typeof value.mapping_ref !== "string" ||
+    !isBoundedText(value.assigned_reviewer, 1, 140) ||
+    !isBoundedText(value.team_ref, 1, 140) ||
+    !isBoundedText(value.mapping_ref, 1, 140) ||
     !isPositiveInteger(value.mapping_revision) ||
     !Array.isArray(value.evidence_refs) ||
     value.evidence_refs.length > 100 ||
-    !value.evidence_refs.every((reference) => typeof reference === "string") ||
-    typeof value.policy_version !== "string"
+    !value.evidence_refs.every((reference) => isBoundedText(reference, 1, 256)) ||
+    !isBoundedText(value.policy_version, 1, 128)
   ) {
     return invalidIdentityResponse(requestId);
   }
@@ -521,9 +547,10 @@ const parseIdentityCommand = (
       "review_case_revision",
     ]) ||
     (value.status !== "pending" && value.status !== "revoked") ||
-    typeof value.mapping_ref !== "string" ||
+    !isBoundedText(value.mapping_ref, 1, 140) ||
     !isPositiveInteger(value.mapping_revision) ||
-    (value.review_case_ref !== undefined && typeof value.review_case_ref !== "string") ||
+    (value.review_case_ref !== undefined &&
+      !isBoundedText(value.review_case_ref, 1, 140)) ||
     (value.review_case_revision !== undefined &&
       !isPositiveInteger(value.review_case_revision))
   ) {
@@ -538,7 +565,12 @@ const requireBoundedString = (
   minLength: number,
   maxLength: number,
 ) => {
-  if (typeof value !== "string" || value.length < minLength || value.length > maxLength) {
+  if (
+    typeof value !== "string" ||
+    value.length < minLength ||
+    value.length > maxLength ||
+    value.trim().length < minLength
+  ) {
     throw new BffError("validation_error", {
       message: `${label} 不符合接口约束。`,
     });
@@ -582,7 +614,7 @@ const validateIdentitySubmit = (command: IdentitySubmitForReviewCommand) => {
     "idempotency_key",
   ]);
   requireBoundedString(command.observation_id, "观察编号", 1, 48);
-  requireBoundedString(command.identity_ref, "身份引用", 0, 160);
+  requireIdentityRef(command.identity_ref);
   requireBoundedString(command.selected_candidate_ref, "候选对象", 1, 256);
   requireBoundedString(command.assigned_reviewer, "审核人", 1, 140);
   if (!/^suggestion:v1:[a-f0-9]{64}$/u.test(command.suggestion_key)) {
@@ -607,7 +639,7 @@ const validateIdentityRevoke = (command: IdentityRevokeCommand) => {
     "idempotency_key",
   ]);
   requireBoundedString(command.observation_id, "观察编号", 1, 48);
-  requireBoundedString(command.identity_ref, "身份引用", 0, 160);
+  requireIdentityRef(command.identity_ref);
   requireBoundedString(command.mapping_ref, "映射引用", 1, 140);
   if (!Number.isInteger(command.expected_revision) || command.expected_revision < 1) {
     throw new BffError("validation_error", { message: "映射版本必须为正整数。" });
@@ -882,10 +914,7 @@ export const createBffClient = (dependencies: BffDependencies = {}) => {
     },
     getIdentityState: async (observationId: string, identityRef: string) => {
       requireBoundedString(observationId, "观察编号", 1, 48);
-      requireBoundedString(identityRef, "身份引用", 1, 160);
-      if (!/^extid:v1:[a-z_]+:[A-Za-z0-9._~-]+$/u.test(identityRef)) {
-        throw new BffError("validation_error", { message: "身份引用不符合接口约束。" });
-      }
+      requireIdentityRef(identityRef);
       const response = await getV4<unknown>(
         addQuery(BFF_V4_ENDPOINTS.identityGetState, {
           observation_id: observationId,
@@ -896,7 +925,7 @@ export const createBffClient = (dependencies: BffDependencies = {}) => {
     },
     listIdentityCandidates: async (query: IdentityCandidateListQuery) => {
       requireBoundedString(query.observationId, "观察编号", 1, 48);
-      requireBoundedString(query.identityRef, "身份引用", 0, 160);
+      requireIdentityRef(query.identityRef);
       if (!identityCandidateTypes.has(query.candidateType)) {
         throw new BffError("validation_error", { message: "候选类型不符合接口约束。" });
       }

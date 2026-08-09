@@ -147,6 +147,44 @@
                 <small v-if="identity.target_type">已审核对象类型：{{ identity.target_type }}</small>
               </li>
             </ul>
+            <div
+              v-if="canSubmitIdentity && unresolvedIdentityOptions.length > 0 && suggestions.length > 0"
+              class="identity-source-selectors"
+            >
+              <label>
+                待解析消息参与者
+                <select v-model.number="selectedParticipantIndex" name="participant_identity">
+                  <option :value="-1" disabled>
+                    请选择消息参与者
+                  </option>
+                  <option
+                    v-for="(option, index) in unresolvedIdentityOptions"
+                    :key="index"
+                    :value="index"
+                  >
+                    消息参与者 {{ option.ordinal }} · {{ providerLabel(option.identity.provider) }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                关联建议
+                <select v-model.number="selectedSuggestionIndex" name="association_suggestion">
+                  <option :value="-1" disabled>
+                    请选择关联建议
+                  </option>
+                  <option
+                    v-for="(suggestion, index) in suggestions"
+                    :key="index"
+                    :value="index"
+                  >
+                    建议 {{ index + 1 }} · {{ suggestion.type }} · {{ formatConfidence(suggestion.confidence) }}
+                  </option>
+                </select>
+              </label>
+              <p v-if="!activeIdentity || !activeSuggestion" class="identity-relation-note">
+                多个参与者或建议存在时，必须明确选择后才能读取候选对象。
+              </p>
+            </div>
             <p v-if="submitMessage" class="identity-success" role="status">
               {{ submitMessage }}
             </p>
@@ -240,10 +278,16 @@
                 {{ submittingIdentity ? "提交中…" : "提交审核" }}
               </button>
             </form>
-            <p v-else-if="activeIdentity && !activeSuggestion" class="identity-relation-note">
+            <p
+              v-else-if="unresolvedIdentityOptions.length > 0 && suggestions.length === 0"
+              class="identity-relation-note"
+            >
               当前没有可用于送审的关联建议。
             </p>
-            <p v-else-if="activeIdentity && !canSubmitIdentity" class="identity-relation-note">
+            <p
+              v-else-if="unresolvedIdentityOptions.length > 0 && !canSubmitIdentity"
+              class="identity-relation-note"
+            >
               当前角色只能查看身份状态，不能发起身份关联审核。
             </p>
           </article>
@@ -302,6 +346,8 @@ const candidateError = ref("");
 const candidatePayload = ref<Awaited<ReturnType<typeof client.listIdentityCandidates>>["data"]>();
 const selectedCandidateIndex = ref(-1);
 const selectedReviewerIndex = ref(-1);
+const selectedParticipantIndex = ref(-1);
+const selectedSuggestionIndex = ref(-1);
 const submittingIdentity = ref(false);
 const submitMessage = ref("");
 const submitError = ref("");
@@ -313,10 +359,16 @@ const canSubmitIdentity = computed(() =>
     ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin"].includes(role),
   ),
 );
-const activeIdentity = computed(() =>
-  identities.value.find((identity) => identity.status === "unresolved"),
+const unresolvedIdentityOptions = computed(() =>
+  identities.value.flatMap((identity, index) =>
+    identity.status === "unresolved" ? [{ identity, ordinal: index + 1 }] : [],
+  ),
 );
-const activeSuggestion = computed(() => communication.value?.association_suggestions[0]);
+const suggestions = computed(() => communication.value?.association_suggestions ?? []);
+const activeIdentity = computed(
+  () => unresolvedIdentityOptions.value[selectedParticipantIndex.value]?.identity,
+);
+const activeSuggestion = computed(() => suggestions.value[selectedSuggestionIndex.value]);
 const candidates = computed(() => candidatePayload.value?.candidates ?? []);
 const eligibleReviewers = computed(() => candidatePayload.value?.eligible_reviewers ?? []);
 const candidateHasMore = computed(() => candidatePayload.value?.has_more ?? false);
@@ -447,6 +499,19 @@ const submitIdentity = async () => {
 };
 
 watch(
+  () => unresolvedIdentityOptions.value.map((option) => option.identity.identity_ref).join("|"),
+  () => {
+    selectedParticipantIndex.value =
+      unresolvedIdentityOptions.value.length === 1 ? 0 : -1;
+  },
+);
+watch(
+  () => suggestions.value.map((suggestion) => suggestion.suggestion_key).join("|"),
+  () => {
+    selectedSuggestionIndex.value = suggestions.value.length === 1 ? 0 : -1;
+  },
+);
+watch(
   () => [activeIdentity.value?.identity_ref, activeSuggestion.value?.suggestion_key] as const,
   () => {
     candidatePage.value = 1;
@@ -475,6 +540,8 @@ watch(
     appliedCandidateSearch.value = "";
     selectedCandidateIndex.value = -1;
     selectedReviewerIndex.value = -1;
+    selectedParticipantIndex.value = -1;
+    selectedSuggestionIndex.value = -1;
     resetSubmissionKey();
     void load();
     void identityResource.load();
@@ -569,7 +636,8 @@ watch(
 .communication-original-toggle,
 .identity-review-form button,
 .identity-review-form select,
-.identity-review-form input {
+.identity-review-form input,
+.identity-source-selectors select {
   min-height: 44px;
   border: 1px solid var(--gbos-border);
   border-radius: var(--gbos-radius-control);
@@ -590,6 +658,7 @@ watch(
 .identity-review-form button:focus-visible,
 .identity-review-form select:focus-visible,
 .identity-review-form input:focus-visible,
+.identity-source-selectors select:focus-visible,
 .identity-choice input:focus-visible {
   outline: 3px solid var(--gbos-accent);
   outline-offset: 2px;
@@ -695,7 +764,8 @@ watch(
 }
 
 .identity-state-list,
-.identity-review-form {
+.identity-review-form,
+.identity-source-selectors {
   display: grid;
   min-width: 0;
   gap: 12px;
@@ -733,6 +803,31 @@ watch(
 .identity-review-form {
   padding-top: 12px;
   border-top: 1px solid var(--gbos-border);
+}
+
+.identity-source-selectors {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  padding-top: 12px;
+  border-top: 1px solid var(--gbos-border);
+}
+
+.identity-source-selectors > label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--gbos-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.identity-source-selectors select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.identity-source-selectors .identity-relation-note {
+  grid-column: 1 / -1;
 }
 
 .identity-review-form > label,

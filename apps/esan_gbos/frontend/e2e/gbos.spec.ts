@@ -1111,7 +1111,7 @@ test("身份解析只显示安全标签并通过服务端审核筛选", async ({
   await navigateHarnessRoute(page, "/gbos/communications/OBS-E2E-1");
 
   await expect(page.getByText("渠道账号负责人", { exact: true })).toBeVisible();
-  await expect(page.getByText(/消息参与者 1/u)).toBeVisible();
+  await expect(page.getByText("消息参与者 1", { exact: true })).toBeVisible();
   await expect(page.getByText(/Email · 未解析/u)).toBeVisible();
   await expect(page.getByRole("radio", { name: /海湾香氛客户/u })).toBeVisible();
   await expect(page.getByLabel("合格审核人")).toContainText("合格审核人");
@@ -1134,6 +1134,9 @@ test("身份解析只显示安全标签并通过服务端审核筛选", async ({
   await expect(page.getByText("EVID-IDENTITY-E2E", { exact: true })).toBeVisible();
   await expect(page.getByText("identity-resolution-v1", { exact: true })).toBeVisible();
   await expect(page.getByText("PROTECTED-PARTY-E2E", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "进入治理审核" }),
+  ).toHaveAttribute("href", "/gbos/review/IDENTITY-REVIEW-E2E");
   await page.getByRole("button", { name: "查看固定详情" }).click();
   await expect(page.getByRole("heading", { name: "身份解析固定详情" })).toBeVisible();
   expect(await axeViolations(page)).toEqual([]);
@@ -1145,6 +1148,17 @@ test("身份解析只显示安全标签并通过服务端审核筛选", async ({
     expect(diagnostics.body).toBeLessThanOrEqual(diagnostics.viewport);
     expect(diagnostics.offscreenButtons).toEqual([]);
   }
+  await page.setViewportSize({ width: 768, height: 900 });
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "200%";
+  });
+  const zoomedDiagnostics = await responsiveDiagnostics(page);
+  expect(zoomedDiagnostics.html).toBeLessThanOrEqual(zoomedDiagnostics.viewport);
+  expect(zoomedDiagnostics.body).toBeLessThanOrEqual(zoomedDiagnostics.viewport);
+  expect(zoomedDiagnostics.offscreenButtons).toEqual([]);
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "";
+  });
 });
 
 test("离线关闭且 fixture API 响应不进入持久存储", async (

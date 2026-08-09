@@ -171,8 +171,15 @@ describe("Gate 4 人工审核界面", () => {
       }
       return Promise.resolve(okV4({ drafts: [], next_cursor: null }));
     });
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/gbos/review/:id", component: { template: "<div />" } }],
+    });
+    await router.push("/gbos/review/placeholder");
+    await router.isReady();
     const wrapper = mount(ReviewQueueView, {
       global: {
+        plugins: [router],
         provide: {
           [BFF_CLIENT_KEY as symbol]: createBffClient({
             fetcher,
@@ -193,6 +200,12 @@ describe("Gate 4 人工审核界面", () => {
     expect(wrapper.text()).toContain("REVIEWER-1");
     expect(wrapper.text()).not.toContain("PROTECTED-TARGET-MUST-NOT-RENDER");
     expect(wrapper.text()).not.toContain("subject_snapshot");
+    expect(
+      wrapper.get("a[data-identity-review-decision='IDENTITY-REV-1']").attributes("href"),
+    ).toBe("/gbos/review/IDENTITY-REV-1");
+    expect(
+      wrapper.get("a[data-identity-review-decision='IDENTITY-REV-1']").text(),
+    ).toContain("进入治理审核");
     expect(
       fetcher.mock.calls.some(([input]) =>
         String(input).includes(BFF_V4_ENDPOINTS.identityListPendingReviews),
@@ -616,5 +629,8 @@ describe("Gate 4 人工审核界面", () => {
     expect(wrapper.text()).not.toContain("PROTECTED-TARGET-MUST-NOT-RENDER");
     expect(wrapper.text()).not.toContain("MODEL-TARGET-MUST-NOT-RENDER");
     expect(wrapper.text()).not.toContain("PROTECTED-MAPPING-REF");
+    expect(wrapper.findComponent(ReviewDecisionForm).exists()).toBe(true);
+    expect(wrapper.get('button[data-decision="Approved"]').text()).toContain("批准案件");
+    expect(wrapper.get('button[data-decision="Rejected"]').text()).toContain("拒绝案件");
   });
 });
