@@ -25,6 +25,7 @@ WorkStatus = Literal[
     "dead_letter",
 ]
 ResolutionOutcome = Literal["unresolved", "confirmed", "revoked", "conflict"]
+LastResolutionStatus = Literal["unresolved", "confirmed", "revoked"]
 
 _PURPOSE = "observation_processing"
 _PROVIDERS = frozenset({"email", "wecom", "whatsapp", "phone", "manual_import"})
@@ -70,6 +71,8 @@ _WORK_COLUMNS = ", ".join(
         "lease_expires_at",
         "lease_generation",
         "last_error_code",
+        "last_resolution_status",
+        "last_resolution_success_at",
         "first_seen_at",
         "last_seen_at",
         "created_at",
@@ -97,6 +100,8 @@ class IdentityResolutionWorkItem:
     lease_expires_at: datetime | None
     lease_generation: int
     last_error_code: str | None
+    last_resolution_status: LastResolutionStatus | None
+    last_resolution_success_at: datetime | None
     first_seen_at: datetime
     last_seen_at: datetime
     created_at: datetime
@@ -132,6 +137,19 @@ class IdentityResolutionWorkItem:
             raise ValueError("invalid unleased identity work")
         if self.last_error_code is not None and self.last_error_code not in _ERROR_CODES:
             raise ValueError("invalid identity resolution error code")
+        if (self.last_resolution_status is None) != (self.last_resolution_success_at is None):
+            raise ValueError("invalid identity work last resolution pair")
+        if self.last_resolution_status is not None:
+            if self.last_resolution_status not in {"unresolved", "confirmed", "revoked"}:
+                raise ValueError("invalid identity work last resolution status")
+            if self.last_resolution_success_at is None:
+                raise ValueError("invalid identity work last resolution pair")
+            _require_aware(
+                self.last_resolution_success_at,
+                "last_resolution_success_at",
+            )
+            if self.last_resolution_success_at > self.updated_at:
+                raise ValueError("invalid identity work last resolution timestamp")
         if not self.first_seen_at <= self.last_seen_at:
             raise ValueError("invalid identity work observation timestamps")
 
@@ -145,6 +163,8 @@ class IdentityResolutionWorkItem:
             f"lease_expires_at={self.lease_expires_at!r}, "
             f"lease_generation={self.lease_generation}, "
             f"last_error_code={self.last_error_code!r}, "
+            f"last_resolution_status={self.last_resolution_status!r}, "
+            f"last_resolution_success_at={self.last_resolution_success_at!r}, "
             f"first_seen_at={self.first_seen_at!r}, last_seen_at={self.last_seen_at!r}, "
             f"created_at={self.created_at!r}, updated_at={self.updated_at!r})"
         )
@@ -300,6 +320,8 @@ class InMemoryIdentityResolutionWorkRepository:
             lease_expires_at=None,
             lease_generation=0,
             last_error_code=None,
+            last_resolution_status=None,
+            last_resolution_success_at=None,
             first_seen_at=now,
             last_seen_at=now,
             created_at=now,
@@ -406,6 +428,10 @@ class InMemoryIdentityResolutionWorkRepository:
             lease_owner=None,
             lease_expires_at=None,
             last_error_code=None,
+            last_resolution_status=(
+                current.last_resolution_status if terminal else _successful_outcome(outcome)
+            ),
+            last_resolution_success_at=(current.last_resolution_success_at if terminal else now),
             updated_at=now,
         )
         self._items[(scope.site_id, work_id)] = updated
@@ -732,9 +758,22 @@ class PostgresIdentityResolutionWorkRepository:
                     "status = %s, attempt_count = CASE WHEN %s "
                     "THEN attempt_count ELSE 0 END, next_attempt_at = %s, "
                     "lease_owner = NULL, lease_expires_at = NULL, "
-                    "last_error_code = NULL, updated_at = %s"
+                    "last_error_code = NULL, "
+                    "last_resolution_status = CASE WHEN %s = 'conflict' "
+                    "THEN last_resolution_status ELSE %s END, "
+                    "last_resolution_success_at = CASE WHEN %s = 'conflict' "
+                    "THEN last_resolution_success_at ELSE %s END, updated_at = %s"
                 ),
-                assignment_params=(outcome, terminal, next_attempt_at, now),
+                assignment_params=(
+                    outcome,
+                    terminal,
+                    next_attempt_at,
+                    outcome,
+                    outcome,
+                    outcome,
+                    now,
+                    now,
+                ),
             )
             cursor.execute(
                 f"""
@@ -977,7 +1016,7 @@ def _required_item(row: tuple[Any, ...] | None) -> IdentityResolutionWorkItem:
 
 
 def _item_from_row(row: tuple[Any, ...]) -> IdentityResolutionWorkItem:
-    if len(row) != 17:
+    if len(row) != 19:
         raise RuntimeError("identity resolution work returned an invalid row")
     return IdentityResolutionWorkItem(
         site_id=str(row[0]),
@@ -993,10 +1032,12 @@ def _item_from_row(row: tuple[Any, ...]) -> IdentityResolutionWorkItem:
         lease_expires_at=row[10],
         lease_generation=int(row[11]),
         last_error_code=None if row[12] is None else str(row[12]),
-        first_seen_at=row[13],
-        last_seen_at=row[14],
-        created_at=row[15],
-        updated_at=row[16],
+        last_resolution_status=(None if row[13] is None else str(row[13])),  # type: ignore[arg-type]
+        last_resolution_success_at=row[14],
+        first_seen_at=row[15],
+        last_seen_at=row[16],
+        created_at=row[17],
+        updated_at=row[18],
     )
 
 
@@ -1193,6 +1234,12 @@ def _required_recheck(value: datetime | None) -> datetime:
     if value is None:
         raise RuntimeError("identity resolution recheck was not validated")
     return value
+
+
+def _successful_outcome(outcome: ResolutionOutcome) -> LastResolutionStatus:
+    if outcome == "conflict":
+        raise RuntimeError("conflict is not a successful identity resolution outcome")
+    return outcome
 
 
 def _latency_bucket(latency: timedelta) -> str:

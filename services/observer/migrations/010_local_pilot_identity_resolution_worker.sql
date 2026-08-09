@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS observer.identity_resolution_work (
                 'resolver_unavailable', 'team_mismatch'
             )
         ),
+    last_resolution_status text,
+    last_resolution_success_at timestamptz,
     first_seen_at timestamptz NOT NULL,
     last_seen_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL,
@@ -70,6 +72,18 @@ CREATE TABLE IF NOT EXISTS observer.identity_resolution_work (
     CHECK (attempt_count <= max_attempts),
     CHECK (last_seen_at >= first_seen_at),
     CHECK (created_at <= updated_at),
+    CONSTRAINT identity_resolution_work_last_resolution_pair_ck
+        CHECK (
+            (
+                last_resolution_status IS NULL
+                AND last_resolution_success_at IS NULL
+            )
+            OR (
+                last_resolution_status IN ('unresolved', 'confirmed', 'revoked')
+                AND last_resolution_success_at IS NOT NULL
+                AND last_resolution_success_at <= updated_at
+            )
+        ),
     CHECK (
         (
             status = 'leased'
@@ -83,6 +97,41 @@ CREATE TABLE IF NOT EXISTS observer.identity_resolution_work (
         )
     )
 );
+
+ALTER TABLE observer.identity_resolution_work
+    ADD COLUMN IF NOT EXISTS last_resolution_status text;
+ALTER TABLE observer.identity_resolution_work
+    ADD COLUMN IF NOT EXISTS last_resolution_success_at timestamptz;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'identity_resolution_work_last_resolution_pair_ck'
+          AND conrelid = 'observer.identity_resolution_work'::regclass
+    ) THEN
+        ALTER TABLE observer.identity_resolution_work
+            ADD CONSTRAINT identity_resolution_work_last_resolution_pair_ck
+            CHECK (
+                (
+                    last_resolution_status IS NULL
+                    AND last_resolution_success_at IS NULL
+                )
+                OR (
+                    last_resolution_status IN (
+                        'unresolved', 'confirmed', 'revoked'
+                    )
+                    AND last_resolution_success_at IS NOT NULL
+                    AND last_resolution_success_at <= updated_at
+                )
+            ) NOT VALID;
+    END IF;
+END
+$$;
+
+ALTER TABLE observer.identity_resolution_work
+    VALIDATE CONSTRAINT identity_resolution_work_last_resolution_pair_ck;
 
 CREATE INDEX IF NOT EXISTS identity_resolution_work_claim_idx
     ON observer.identity_resolution_work (
@@ -142,6 +191,23 @@ BEGIN
     IF OLD.status IN ('conflict', 'dead_letter')
        AND NEW.status IS DISTINCT FROM OLD.status THEN
         RAISE EXCEPTION 'terminal identity resolution work cannot be reopened'
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    IF (
+        NEW.last_resolution_status,
+        NEW.last_resolution_success_at
+    ) IS DISTINCT FROM (
+        OLD.last_resolution_status,
+        OLD.last_resolution_success_at
+    ) AND NOT (
+        OLD.status = 'leased'
+        AND NEW.status IN ('unresolved', 'confirmed', 'revoked')
+        AND NEW.last_resolution_status = NEW.status
+        AND NEW.last_resolution_success_at = NEW.updated_at
+        AND NEW.lease_owner IS NULL
+        AND NEW.lease_expires_at IS NULL
+    ) THEN
+        RAISE EXCEPTION 'identity resolution success history transition rejected'
             USING ERRCODE = 'integrity_constraint_violation';
     END IF;
     RETURN NEW;

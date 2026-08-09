@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,13 @@ def test_migration_defines_closed_rls_queue_and_identity_free_metrics() -> None:
     assert "for update skip locked" in repository_source
     assert "prevent_identity_resolution_work_scope_mutation" in sql
     assert "unique (site_id, identity_provider, identity_ref, team_ref)" in sql
+    assert "last_resolution_status text" in sql
+    assert "last_resolution_success_at timestamptz" in sql
+    assert "add column if not exists last_resolution_status text" in sql
+    assert "add column if not exists last_resolution_success_at timestamptz" in sql
+    assert "last_resolution_status is null" in sql
+    assert "last_resolution_success_at is null" in sql
+    assert "last_resolution_success_at <= updated_at" in sql
     assert "to gbos_observer_app" in sql
     assert "revoke all on observer.identity_resolution_work from public" in sql
     assert "revoke all on observer.identity_resolution_worker_metrics from public" in sql
@@ -79,6 +87,8 @@ def test_enqueue_is_site_scoped_idempotent_and_updates_only_last_seen() -> None:
     assert replay.first_seen_at == NOW
     assert replay.last_seen_at == NOW + timedelta(minutes=2)
     assert replay.max_attempts == 3
+    assert replay.last_resolution_status is None
+    assert replay.last_resolution_success_at is None
     assert repository.get(SCOPE, original.work_id) == replay
     assert repository.get(OTHER_SCOPE, original.work_id) is None
     assert IDENTITY_REF not in repr(replay)
@@ -292,6 +302,8 @@ def test_success_outcomes_schedule_freshness_rechecks(outcome: str) -> None:
     assert resolved.status == outcome
     assert resolved.attempt_count == 0
     assert resolved.next_attempt_at == NOW + timedelta(hours=6)
+    assert resolved.last_resolution_status == outcome
+    assert resolved.last_resolution_success_at == NOW + timedelta(seconds=1)
     assert (
         repository.claim(
             SCOPE,
@@ -308,6 +320,109 @@ def test_success_outcomes_schedule_freshness_rechecks(outcome: str) -> None:
         lease_duration=timedelta(minutes=1),
     )
     assert recheck is not None and recheck.attempt_count == 1
+    assert recheck.last_resolution_status == outcome
+    assert recheck.last_resolution_success_at == NOW + timedelta(seconds=1)
+
+
+def test_transient_retry_preserves_confirmed_success_until_a_new_outcome_replaces_it() -> None:
+    module = _module()
+    repository = module.InMemoryIdentityResolutionWorkRepository()
+    queued = _enqueue(repository)
+    initial_claim = repository.claim(
+        SCOPE,
+        worker_id="worker-1",
+        now=NOW,
+        lease_duration=timedelta(minutes=1),
+    )
+    assert initial_claim is not None
+    confirmed = repository.record_outcome(
+        SCOPE,
+        queued.work_id,
+        worker_id="worker-1",
+        fence_token=initial_claim.fence_token,
+        now=NOW + timedelta(seconds=1),
+        outcome="confirmed",
+        latency=timedelta(milliseconds=50),
+        recheck_at=NOW + timedelta(hours=1),
+    )
+
+    replay = _enqueue(repository, now=NOW + timedelta(minutes=30))
+    assert replay.last_resolution_status == "confirmed"
+    assert replay.last_resolution_success_at == confirmed.last_resolution_success_at
+    recheck = repository.claim(
+        SCOPE,
+        worker_id="worker-2",
+        now=NOW + timedelta(hours=1),
+        lease_duration=timedelta(minutes=1),
+    )
+    assert recheck is not None
+    assert recheck.last_resolution_status == "confirmed"
+    heartbeat = repository.heartbeat(
+        SCOPE,
+        queued.work_id,
+        worker_id="worker-2",
+        fence_token=recheck.fence_token,
+        now=NOW + timedelta(hours=1, milliseconds=500),
+        lease_duration=timedelta(minutes=1),
+    )
+    assert heartbeat.last_resolution_status == "confirmed"
+    assert heartbeat.last_resolution_success_at == confirmed.last_resolution_success_at
+    retried = repository.mark_failed(
+        SCOPE,
+        queued.work_id,
+        worker_id="worker-2",
+        fence_token=recheck.fence_token,
+        now=NOW + timedelta(hours=1, seconds=1),
+        retry_at=NOW + timedelta(hours=1, minutes=1),
+        error_code="resolver_unavailable",
+    )
+    assert retried.last_resolution_status == "confirmed"
+    assert retried.last_resolution_success_at == confirmed.last_resolution_success_at
+
+    replacement_claim = repository.claim(
+        SCOPE,
+        worker_id="worker-3",
+        now=NOW + timedelta(hours=1, minutes=1),
+        lease_duration=timedelta(minutes=1),
+    )
+    assert replacement_claim is not None
+    unresolved = repository.record_outcome(
+        SCOPE,
+        queued.work_id,
+        worker_id="worker-3",
+        fence_token=replacement_claim.fence_token,
+        now=NOW + timedelta(hours=1, minutes=1, seconds=1),
+        outcome="unresolved",
+        latency=timedelta(milliseconds=60),
+        recheck_at=NOW + timedelta(hours=2),
+    )
+    assert unresolved.last_resolution_status == "unresolved"
+    assert unresolved.last_resolution_success_at == NOW + timedelta(hours=1, minutes=1, seconds=1)
+
+
+def test_conflict_never_fabricates_a_successful_resolution() -> None:
+    module = _module()
+    repository = module.InMemoryIdentityResolutionWorkRepository()
+    queued = _enqueue(repository)
+    claim = repository.claim(
+        SCOPE,
+        worker_id="worker-1",
+        now=NOW,
+        lease_duration=timedelta(minutes=1),
+    )
+    assert claim is not None
+    conflict = repository.record_outcome(
+        SCOPE,
+        queued.work_id,
+        worker_id="worker-1",
+        fence_token=claim.fence_token,
+        now=NOW + timedelta(seconds=1),
+        outcome="conflict",
+        latency=timedelta(milliseconds=50),
+    )
+
+    assert conflict.last_resolution_status is None
+    assert conflict.last_resolution_success_at is None
 
 
 def test_snapshot_is_low_cardinality_and_contains_no_identity_labels() -> None:
@@ -426,6 +541,8 @@ def _work_row(**overrides: object) -> tuple[Any, ...]:
         "lease_expires_at": None,
         "lease_generation": 0,
         "last_error_code": None,
+        "last_resolution_status": None,
+        "last_resolution_success_at": None,
         "first_seen_at": NOW,
         "last_seen_at": NOW,
         "created_at": NOW,
@@ -505,5 +622,13 @@ def test_work_item_validation_rejects_raw_or_mutable_identity_fields() -> None:
     item = _enqueue(repository)
     assert not hasattr(item, "target_ref")
     assert not hasattr(item, "message_body")
+    with pytest.raises(ValueError, match="last resolution"):
+        replace(item, last_resolution_status="confirmed")
+    with pytest.raises(ValueError, match="last resolution"):
+        replace(
+            item,
+            last_resolution_status="confirmed",
+            last_resolution_success_at=item.updated_at + timedelta(seconds=1),
+        )
     with pytest.raises((AttributeError, TypeError)):
         item.site_id = OTHER_SCOPE.site_id  # type: ignore[misc]

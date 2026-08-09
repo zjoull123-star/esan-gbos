@@ -241,6 +241,8 @@ def test_gate3_identity_work_is_rls_fenced_restart_safe_and_aggregated() -> None
         assert replay.work_id == queued.work_id
         assert replay.max_attempts == 3
         assert replay.last_seen_at == now + timedelta(seconds=1)
+        assert replay.last_resolution_status is None
+        assert replay.last_resolution_success_at is None
 
         other = repository.enqueue(
             other_scope,
@@ -308,6 +310,8 @@ def test_gate3_identity_work_is_rls_fenced_restart_safe_and_aggregated() -> None
             recheck_at=now + timedelta(hours=1),
         )
         assert unresolved.status == "unresolved"
+        assert unresolved.last_resolution_status == "unresolved"
+        assert unresolved.last_resolution_success_at == now + timedelta(seconds=10)
 
         conflict_item = restarted.enqueue(
             scope,
@@ -324,7 +328,7 @@ def test_gate3_identity_work_is_rls_fenced_restart_safe_and_aggregated() -> None
             lease_duration=timedelta(seconds=5),
         )
         assert conflict_claim is not None and conflict_claim.work_id == conflict_item.work_id
-        restarted.record_outcome(
+        conflict = restarted.record_outcome(
             scope,
             conflict_claim.work_id,
             worker_id="worker-b",
@@ -333,10 +337,88 @@ def test_gate3_identity_work_is_rls_fenced_restart_safe_and_aggregated() -> None
             outcome="conflict",
             latency=timedelta(milliseconds=700),
         )
-        restarted.record_worker_heartbeat(scope, now=now + timedelta(seconds=13))
+        assert conflict.last_resolution_status is None
+        assert conflict.last_resolution_success_at is None
+
+        confirmed_item = restarted.enqueue(
+            scope,
+            identity_provider="email",
+            identity_ref=f"extid:v1:email:confirmed-{suffix}",
+            team_ref="team-sales",
+            now=now + timedelta(seconds=13),
+            max_attempts=3,
+        )
+        confirmed_claim = restarted.claim(
+            scope,
+            worker_id="worker-b",
+            now=now + timedelta(seconds=13),
+            lease_duration=timedelta(seconds=5),
+        )
+        assert confirmed_claim is not None
+        confirmed = restarted.record_outcome(
+            scope,
+            confirmed_item.work_id,
+            worker_id="worker-b",
+            fence_token=confirmed_claim.fence_token,
+            now=now + timedelta(seconds=14),
+            outcome="confirmed",
+            latency=timedelta(milliseconds=90),
+            recheck_at=now + timedelta(seconds=20),
+        )
+        assert confirmed.last_resolution_status == "confirmed"
+        assert confirmed.last_resolution_success_at == now + timedelta(seconds=14)
+        retry_claim = restarted.claim(
+            scope,
+            worker_id="worker-b",
+            now=now + timedelta(seconds=20),
+            lease_duration=timedelta(seconds=5),
+        )
+        assert retry_claim is not None
+        heartbeat = restarted.heartbeat(
+            scope,
+            confirmed_item.work_id,
+            worker_id="worker-b",
+            fence_token=retry_claim.fence_token,
+            now=now + timedelta(seconds=20, milliseconds=500),
+            lease_duration=timedelta(seconds=5),
+        )
+        assert heartbeat.last_resolution_status == "confirmed"
+        assert heartbeat.last_resolution_success_at == now + timedelta(seconds=14)
+        retried = restarted.mark_failed(
+            scope,
+            confirmed_item.work_id,
+            worker_id="worker-b",
+            fence_token=retry_claim.fence_token,
+            now=now + timedelta(seconds=21),
+            retry_at=now + timedelta(seconds=22),
+            error_code="resolver_unavailable",
+        )
+        assert retried.last_resolution_status == "confirmed"
+        assert retried.last_resolution_success_at == now + timedelta(seconds=14)
+        replacement_claim = restarted.claim(
+            scope,
+            worker_id="worker-b",
+            now=now + timedelta(seconds=22),
+            lease_duration=timedelta(seconds=5),
+        )
+        assert replacement_claim is not None
+        revoked = restarted.record_outcome(
+            scope,
+            confirmed_item.work_id,
+            worker_id="worker-b",
+            fence_token=replacement_claim.fence_token,
+            now=now + timedelta(seconds=23),
+            outcome="revoked",
+            latency=timedelta(milliseconds=110),
+            recheck_at=now + timedelta(hours=1),
+        )
+        assert revoked.last_resolution_status == "revoked"
+        assert revoked.last_resolution_success_at == now + timedelta(seconds=23)
+
+        restarted.record_worker_heartbeat(scope, now=now + timedelta(seconds=24))
         snapshot = restarted.snapshot(
             scope,
-            now=now + timedelta(seconds=14),
+            now=now + timedelta(seconds=25),
             readiness_window=timedelta(seconds=30),
         )
         assert snapshot.ready is True
@@ -345,7 +427,11 @@ def test_gate3_identity_work_is_rls_fenced_restart_safe_and_aggregated() -> None
         assert snapshot.conflict_count == 1
         assert snapshot.request_outcomes["unresolved"] == 1
         assert snapshot.request_outcomes["conflict"] == 1
-        assert snapshot.latency_buckets["le_100_ms"] == 1
+        assert snapshot.request_outcomes["confirmed"] == 1
+        assert snapshot.request_outcomes["revoked"] == 1
+        assert snapshot.request_outcomes["error"] == 1
+        assert snapshot.latency_buckets["le_100_ms"] == 2
+        assert snapshot.latency_buckets["le_500_ms"] == 1
         assert snapshot.latency_buckets["le_2000_ms"] == 1
         assert not hasattr(snapshot, "identity_ref")
     finally:
