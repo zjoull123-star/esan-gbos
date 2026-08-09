@@ -96,6 +96,13 @@ def test_identity_resolution_evidence_records_fresh_verification_and_no_go() -> 
         "external_send": "no_go",
     }
     assert all(value == 0 for value in evidence["external_activity"].values())
+    limitations = "\n".join(evidence["limitations"]).casefold()
+    for diagnostic in (
+        "css stylesheet parse",
+        "inlinedynamicimports",
+        "no_color",
+    ):
+        assert diagnostic in limitations
 
 
 def test_identity_resolution_evidence_checksum_covers_only_compact_files() -> None:

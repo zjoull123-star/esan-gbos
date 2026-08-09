@@ -37,7 +37,10 @@
   重复 work/projection/draft/review、跨团队和原始身份访问失败关闭。该测试是进程内
   public-seam component E2E，不是物理全链路。
 
-唯一警告是既有 FastAPI TestClient 使用 httpx 的 Starlette deprecation warning。
+后端 pytest 计数中的唯一 warning 是既有 FastAPI TestClient 使用 httpx 的
+Starlette deprecation warning。前端仍有不影响通过结果的工具诊断：Vitest/jsdom
+输出 CSS stylesheet parse 提示，PWA 构建输出 `inlineDynamicImports` 弃用提示，
+Playwright web server 输出 `NO_COLOR` 与 `FORCE_COLOR` 环境提示。
 
 ## 未验证与 No-Go
 

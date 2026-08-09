@@ -91,6 +91,9 @@
     "Native Frappe bench/site identity tests were not run in this snapshot.",
     "The pinned Prometheus image was unavailable locally, so promtool and live scrape were not run.",
     "No real IMAP account, DeepSeek key, model response, trusted phrase lexicon or channel credential was used.",
+    "Vitest/jsdom emitted CSS stylesheet parse diagnostics while all 187 unit tests passed.",
+    "The PWA build emitted the inlineDynamicImports deprecation diagnostic while the production build passed.",
+    "The Playwright web server emitted the NO_COLOR and FORCE_COLOR environment diagnostic while all 22 cases passed.",
     "The 72-hour shadow pilot and fault drills remain pending."
   ],
   "historical_evidence": {
