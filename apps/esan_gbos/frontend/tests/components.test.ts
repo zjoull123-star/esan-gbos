@@ -12,7 +12,7 @@ import Timeline from "@/components/data/Timeline.vue";
 import { isFixturePayload } from "@/presentation";
 
 describe("沟通观察页面组合边界", () => {
-  it("列表和详情复用共享模板及公共按钮，详情不声明任何命令按钮", () => {
+  it("列表和详情复用共享模板，详情只提供受控原文和身份送审动作", () => {
     const listSource = readFileSync(
       resolve("src/views/CommunicationsView.vue"),
       "utf8",
@@ -31,7 +31,11 @@ describe("沟通观察页面组合边界", () => {
     expect(detailSource).toMatch(/import DetailCommandTemplate from/);
     expect(detailSource).toMatch(/import EvidencePanel from/);
     expect(detailSource).toMatch(/import ResourceBoundary from/);
-    expect(detailSource).not.toMatch(/<button\b/);
+    expect(detailSource).toContain('data-action="reveal-original"');
+    expect(detailSource).toContain("提交审核");
+    expect(detailSource).not.toMatch(/>\s*(确认身份|直接确认|批准身份)\s*</u);
+    expect(detailSource).not.toContain("target_ref");
+    expect(detailSource).not.toContain("external_subject");
   });
 
   it("移动列表无需横向表格且两个页面不依赖 legacy theme class", () => {
@@ -72,6 +76,8 @@ describe("沟通观察页面组合边界", () => {
     expect(detailSource).not.toMatch(/var\(--(?!gbos-)/);
     expect(detailSource).toContain('class="communication-back-link"');
     expect(detailSource).toMatch(/\.communication-back-link\s*{/);
+    expect(detailSource).toMatch(/min-height:\s*44px/);
+    expect(detailSource).toMatch(/overflow-wrap:\s*anywhere/);
   });
 });
 

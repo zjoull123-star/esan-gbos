@@ -36,6 +36,10 @@ export type ContractErrorCode =
   | "invalid_cursor"
   | "not_found"
   | "scope_mismatch"
+  | "identity_mismatch"
+  | "suggestion_mismatch"
+  | "candidate_ineligible"
+  | "reviewer_ineligible"
   | "revision_conflict"
   | "invalid_transition"
   | "idempotency_conflict"
@@ -309,8 +313,136 @@ export interface FactProposal {
 
 export interface AssociationSuggestion {
   type: string;
-  target_ref: string;
   confidence: number;
+  suggestion_key: string;
+}
+
+export type IdentityProvider =
+  | "email"
+  | "wecom"
+  | "whatsapp"
+  | "phone"
+  | "manual_import";
+export type IdentityStatus =
+  | "unresolved"
+  | "proposed"
+  | "pending"
+  | "confirmed"
+  | "revoked";
+export type IdentityCandidateType = "User" | "Party" | "Contact";
+
+export interface ParticipantIdentity {
+  identity_ref: string;
+  provider: IdentityProvider;
+  status: "unresolved" | "confirmed" | "revoked";
+  mapping_ref?: string;
+  mapping_revision?: number;
+  target_type?: "User" | "Party";
+}
+
+export interface IdentityState {
+  identity_ref: string;
+  provider: IdentityProvider;
+  status: IdentityStatus;
+  mapping_ref?: string;
+  mapping_revision?: number;
+  target_type?: "User" | "Party";
+  display_label?: string;
+}
+
+export interface ConnectorAccountOwner {
+  display_label: string;
+}
+
+export interface IdentityCandidate {
+  candidate_type: IdentityCandidateType;
+  candidate_ref: string;
+  display_label: string;
+}
+
+export interface IdentityReviewer {
+  reviewer_ref: string;
+  display_label: string;
+}
+
+export interface IdentityStateListPayload {
+  identities: IdentityState[];
+  connector_account_owner: ConnectorAccountOwner | null;
+}
+
+export interface IdentityStateDetailPayload {
+  identity: IdentityState;
+  connector_account_owner: ConnectorAccountOwner | null;
+}
+
+export interface IdentityCandidateListPayload {
+  candidates: IdentityCandidate[];
+  eligible_reviewers: IdentityReviewer[];
+  has_more: boolean;
+}
+
+export interface IdentityCandidateListQuery {
+  observationId: string;
+  identityRef: string;
+  candidateType: IdentityCandidateType;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface IdentityPendingReview {
+  review_case_ref: string;
+  review_case_revision: number;
+  status: "pending";
+  assigned_reviewer: string;
+  team_ref: string;
+  mapping_ref: string;
+  mapping_revision: number;
+  target: IdentityCandidate;
+  evidence_refs: string[];
+  policy_version: string;
+}
+
+export interface IdentityReviewListPayload {
+  reviews: IdentityPendingReview[];
+  has_more: boolean;
+}
+
+export interface IdentityReviewDetailPayload {
+  review: IdentityPendingReview;
+}
+
+export interface IdentityReviewListQuery {
+  page?: number;
+  pageSize?: number;
+}
+
+export interface IdentitySubmitForReviewCommand {
+  observation_id: string;
+  identity_ref: string;
+  suggestion_key: string;
+  selected_candidate_type: IdentityCandidateType;
+  selected_candidate_ref: string;
+  assigned_reviewer: string;
+  expected_state: "unresolved";
+  expected_revision: 0;
+  idempotency_key: string;
+}
+
+export interface IdentityRevokeCommand {
+  observation_id: string;
+  identity_ref: string;
+  mapping_ref: string;
+  expected_revision: number;
+  idempotency_key: string;
+}
+
+export interface IdentityCommandResult {
+  status: "pending" | "revoked";
+  mapping_ref: string;
+  mapping_revision: number;
+  review_case_ref?: string;
+  review_case_revision?: number;
 }
 
 export interface V4ModelMetadata {
@@ -322,6 +454,7 @@ export interface CommunicationDetail extends CommunicationSummary {
   evidence: EvidenceLocator[];
   fact_proposals: FactProposal[];
   association_suggestions: AssociationSuggestion[];
+  participant_identities: ParticipantIdentity[];
   model: V4ModelMetadata;
   raw_access_allowed: boolean;
   original_text?: string;

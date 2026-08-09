@@ -395,7 +395,18 @@ const syntheticCommunicationDetailEnvelope = v4Envelope({
       },
     ],
     association_suggestions: [
-      { type: "Party", target_ref: "PARTY-E2E", confidence: 0.9 },
+      {
+        type: "Party",
+        confidence: 0.9,
+        suggestion_key: `suggestion:v1:${"a".repeat(64)}`,
+      },
+    ],
+    participant_identities: [
+      {
+        identity_ref: "extid:v1:email:opaque-e2e-participant",
+        provider: "email",
+        status: "unresolved",
+      },
     ],
     model: { name: "deepseek-v4-flash", version: "2026-08-01" },
     raw_access_allowed: false,
@@ -405,6 +416,63 @@ const syntheticCommunicationDetailEnvelope = v4Envelope({
 const syntheticAiDraftEnvelope = v4Envelope({
   drafts: [],
   next_cursor: null,
+});
+
+const syntheticIdentityStateEnvelope = v4Envelope({
+  identities: [
+    {
+      identity_ref: "extid:v1:email:opaque-e2e-participant",
+      provider: "email",
+      status: "unresolved",
+    },
+  ],
+  connector_account_owner: { display_label: "渠道账号负责人" },
+});
+
+const syntheticIdentityCandidateEnvelope = v4Envelope({
+  candidates: [
+    {
+      candidate_type: "Party",
+      candidate_ref: "PROTECTED-PARTY-E2E",
+      display_label: "海湾香氛客户",
+    },
+  ],
+  eligible_reviewers: [
+    { reviewer_ref: "REVIEWER-E2E", display_label: "合格审核人" },
+  ],
+  has_more: false,
+});
+
+const syntheticIdentityReview = {
+  review_case_ref: "IDENTITY-REVIEW-E2E",
+  review_case_revision: 3,
+  status: "pending",
+  assigned_reviewer: "REVIEWER-E2E",
+  team_ref: "TEAM-E2E",
+  mapping_ref: "MAPPING-E2E",
+  mapping_revision: 2,
+  target: {
+    candidate_type: "Party",
+    candidate_ref: "PROTECTED-PARTY-E2E",
+    display_label: "海湾香氛客户",
+  },
+  evidence_refs: ["EVID-IDENTITY-E2E"],
+  policy_version: "identity-resolution-v1",
+};
+
+const syntheticIdentityReviewListEnvelope = v4Envelope({
+  reviews: [syntheticIdentityReview],
+  has_more: false,
+});
+const syntheticIdentityReviewDetailEnvelope = v4Envelope({
+  review: syntheticIdentityReview,
+});
+const syntheticIdentityCommandEnvelope = v4Envelope({
+  status: "pending",
+  mapping_ref: "MAPPING-E2E",
+  mapping_revision: 2,
+  review_case_ref: "IDENTITY-REVIEW-E2E",
+  review_case_revision: 3,
 });
 
 const v1Envelope = <T>(data: T) => ({
@@ -499,6 +567,29 @@ const harnessFixtures = new Map<string, unknown>([
   [`GET ${BFF_V4_ENDPOINTS.aiDraftList}`, syntheticAiDraftEnvelope],
   [`GET ${BFF_V4_ENDPOINTS.aiDraftGet}`, syntheticAiDraftDetailEnvelope],
   [`POST ${BFF_V4_ENDPOINTS.aiDraftSubmitForReview}`, syntheticAiDraftDetailEnvelope],
+  [`GET ${BFF_V4_ENDPOINTS.identityListStates}`, syntheticIdentityStateEnvelope],
+  [
+    `GET ${BFF_V4_ENDPOINTS.identityGetState}`,
+    v4Envelope({
+      identity: syntheticIdentityStateEnvelope.message.data.identities[0],
+      connector_account_owner:
+        syntheticIdentityStateEnvelope.message.data.connector_account_owner,
+    }),
+  ],
+  [`GET ${BFF_V4_ENDPOINTS.identityListCandidates}`, syntheticIdentityCandidateEnvelope],
+  [
+    `GET ${BFF_V4_ENDPOINTS.identityListPendingReviews}`,
+    syntheticIdentityReviewListEnvelope,
+  ],
+  [
+    `GET ${BFF_V4_ENDPOINTS.identityGetPendingReview}`,
+    syntheticIdentityReviewDetailEnvelope,
+  ],
+  [`POST ${BFF_V4_ENDPOINTS.identitySubmitForReview}`, syntheticIdentityCommandEnvelope],
+  [
+    `POST ${BFF_V4_ENDPOINTS.identityRevoke}`,
+    v4Envelope({ status: "revoked", mapping_ref: "MAPPING-E2E", mapping_revision: 3 }),
+  ],
 ]);
 
 const isHarness = (testInfo: TestInfo) =>
@@ -993,6 +1084,66 @@ test("集成与沟通切片通过 axe、Restricted 和三视口检查", async ({
     }));
     expect(dimensions.html).toBeLessThanOrEqual(dimensions.viewport);
     expect(dimensions.body).toBeLessThanOrEqual(dimensions.viewport);
+  }
+});
+
+test("身份解析只显示安全标签并通过服务端审核筛选", async ({ page }, testInfo) => {
+  test.skip(!isHarness(testInfo), "身份解析交互使用前端严格 harness");
+  await setHarnessSession(page, ["GBOS Admin"]);
+  const identityPosts: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === BFF_V4_ENDPOINTS.identitySubmitForReview
+    ) {
+      identityPosts.push(request.postData() ?? "");
+    }
+  });
+  await page.route(`**${BFF_V4_ENDPOINTS.identitySubmitForReview}`, async (route) => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(syntheticIdentityCommandEnvelope),
+    });
+  });
+  await page.goto(harnessEntry);
+  await navigateHarnessRoute(page, "/gbos/communications/OBS-E2E-1");
+
+  await expect(page.getByText("渠道账号负责人", { exact: true })).toBeVisible();
+  await expect(page.getByText(/消息参与者 1/u)).toBeVisible();
+  await expect(page.getByText(/Email · 未解析/u)).toBeVisible();
+  await expect(page.getByRole("radio", { name: /海湾香氛客户/u })).toBeVisible();
+  await expect(page.getByLabel("合格审核人")).toContainText("合格审核人");
+  await expect(page.getByText(/opaque-e2e-participant/u)).toHaveCount(0);
+  await expect(page.getByText("PROTECTED-PARTY-E2E", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /确认身份|直接确认/u })).toHaveCount(0);
+
+  await page.getByRole("radio", { name: /海湾香氛客户/u }).check();
+  await page.getByLabel("合格审核人").selectOption({ label: "合格审核人" });
+  const submit = page.getByRole("button", { name: "提交审核" });
+  await submit.dblclick();
+  await expect(page.getByText(/已提交人工审核/u)).toBeVisible();
+  expect(identityPosts).toHaveLength(1);
+  expect(identityPosts[0]).toContain("expected_revision=0");
+  expect(identityPosts[0]).toContain("idempotency_key=");
+
+  await navigateHarnessRoute(page, "/gbos/review");
+  await page.getByLabel("审核类型", { exact: true }).selectOption("identity");
+  await expect(page.getByRole("heading", { name: "Identity Resolution" })).toBeVisible();
+  await expect(page.getByText("EVID-IDENTITY-E2E", { exact: true })).toBeVisible();
+  await expect(page.getByText("identity-resolution-v1", { exact: true })).toBeVisible();
+  await expect(page.getByText("PROTECTED-PARTY-E2E", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "查看固定详情" }).click();
+  await expect(page.getByRole("heading", { name: "身份解析固定详情" })).toBeVisible();
+  expect(await axeViolations(page)).toEqual([]);
+
+  for (const width of [320, 375, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    const diagnostics = await responsiveDiagnostics(page);
+    expect(diagnostics.html).toBeLessThanOrEqual(diagnostics.viewport);
+    expect(diagnostics.body).toBeLessThanOrEqual(diagnostics.viewport);
+    expect(diagnostics.offscreenButtons).toEqual([]);
   }
 });
 

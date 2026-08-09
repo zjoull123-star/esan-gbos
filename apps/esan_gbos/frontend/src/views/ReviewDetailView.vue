@@ -23,7 +23,12 @@
           </div>
           <dl class="review-fact-rows">
             <div><dt>案件编号</dt><dd>{{ reviewCase.name }}</dd></div>
-            <div><dt>主体</dt><dd>{{ reviewCase.subject.doctype }} · {{ reviewCase.subject.name }}</dd></div>
+            <div>
+              <dt>主体</dt>
+              <dd>
+                {{ isIdentityReview ? "身份解析受保护主体" : `${reviewCase.subject.doctype} · ${reviewCase.subject.name}` }}
+              </dd>
+            </div>
             <div><dt>案件版本</dt><dd>{{ reviewCase.case_revision }}</dd></div>
             <div><dt>主体版本</dt><dd>{{ reviewCase.subject.revision }}</dd></div>
             <div><dt>案件哈希</dt><dd><code>{{ reviewCase.case_payload_hash }}</code></dd></div>
@@ -50,7 +55,23 @@
               {{ decisionError }}
             </p>
 
-            <article class="review-detail-card" aria-labelledby="snapshot-title">
+            <article
+              v-if="isIdentityReview"
+              class="review-detail-card identity-safe-panel"
+              aria-labelledby="identity-safe-title"
+            >
+              <div class="review-detail-card__heading">
+                <p>PROTECTED IDENTITY</p>
+                <h2 id="identity-safe-title">
+                  身份解析案件
+                </h2>
+              </div>
+              <p>
+                受保护的身份主体快照不会在此页显示。请返回审核队列并选择 Identity Resolution 身份解析筛选，读取服务端提供的安全目标、固定证据与版本信息。
+              </p>
+            </article>
+
+            <article v-else class="review-detail-card" aria-labelledby="snapshot-title">
               <div class="review-detail-card__heading">
                 <p>READ-ONLY</p>
                 <h2 id="snapshot-title">
@@ -135,6 +156,9 @@ const resource = useOnlineResource(async () => {
 });
 const reviewCase = computed(
   () => decidedPayload.value?.case ?? resource.data.value?.case,
+);
+const isIdentityReview = computed(
+  () => reviewCase.value?.subject.doctype === "GBOS External Identity",
 );
 const statusLabel = computed(() => {
   const labels = {

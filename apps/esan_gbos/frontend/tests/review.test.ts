@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   BFF_V2_ENDPOINTS,
+  BFF_V4_ENDPOINTS,
   createBffClient,
   type Fetcher,
 } from "@/api/bff";
@@ -24,6 +25,17 @@ const ok = (data: unknown, requestId = "req-review") =>
       message: {
         data,
         meta: { request_id: requestId, schema_version: "1.0" },
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  );
+
+const okV4 = (data: unknown, requestId = "req-identity-review") =>
+  new Response(
+    JSON.stringify({
+      message: {
+        data,
+        meta: { request_id: requestId, schema_version: "4.0" },
       },
     }),
     { status: 200, headers: { "Content-Type": "application/json" } },
@@ -118,6 +130,87 @@ describe("Gate 4 Review BFF client", () => {
 });
 
 describe("Gate 4 人工审核界面", () => {
+  it("身份解析筛选使用服务端专用列表与详情，并只展示安全目标和固定证据", async () => {
+    const host = globalThis as typeof globalThis & {
+      frappe?: {
+        session: { user: string };
+        boot: { user: { roles: string[] } };
+      };
+    };
+    host.frappe = {
+      session: { user: "reviewer@example.invalid" },
+      boot: { user: { roles: ["Reviewer"] } },
+    };
+    refreshSession();
+    const review = {
+      review_case_ref: "IDENTITY-REV-1",
+      review_case_revision: 4,
+      status: "pending",
+      assigned_reviewer: "REVIEWER-1",
+      team_ref: "TEAM-SALES",
+      mapping_ref: "MAP-1",
+      mapping_revision: 2,
+      target: {
+        candidate_type: "Party",
+        candidate_ref: "PROTECTED-TARGET-MUST-NOT-RENDER",
+        display_label: "海湾香氛客户",
+      },
+      evidence_refs: ["EVID-IDENTITY-1"],
+      policy_version: "identity-resolution-v1",
+    };
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes(BFF_V4_ENDPOINTS.identityListPendingReviews)) {
+        return Promise.resolve(okV4({ reviews: [review], has_more: false }));
+      }
+      if (url.includes(BFF_V4_ENDPOINTS.identityGetPendingReview)) {
+        return Promise.resolve(okV4({ review }));
+      }
+      if (url.includes(BFF_V2_ENDPOINTS.reviewList)) {
+        return Promise.resolve(ok({ cases: [], total: 0, next_cursor: null }));
+      }
+      return Promise.resolve(okV4({ drafts: [], next_cursor: null }));
+    });
+    const wrapper = mount(ReviewQueueView, {
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    await wrapper.get("select[name='review_kind']").setValue("identity");
+    await flushPromises();
+    expect(wrapper.text()).toContain("Identity Resolution");
+    expect(wrapper.text()).toContain("海湾香氛客户");
+    expect(wrapper.text()).toContain("Party");
+    expect(wrapper.text()).toContain("EVID-IDENTITY-1");
+    expect(wrapper.text()).toContain("identity-resolution-v1");
+    expect(wrapper.text()).toContain("REVIEWER-1");
+    expect(wrapper.text()).not.toContain("PROTECTED-TARGET-MUST-NOT-RENDER");
+    expect(wrapper.text()).not.toContain("subject_snapshot");
+    expect(
+      fetcher.mock.calls.some(([input]) =>
+        String(input).includes(BFF_V4_ENDPOINTS.identityListPendingReviews),
+      ),
+    ).toBe(true);
+
+    await wrapper.get("button[data-identity-detail='IDENTITY-REV-1']").trigger("click");
+    await flushPromises();
+    expect(
+      fetcher.mock.calls.some(([input]) =>
+        String(input).includes(BFF_V4_ENDPOINTS.identityGetPendingReview),
+      ),
+    ).toBe(true);
+
+    delete host.frappe;
+    refreshSession();
+  });
+
   it("审核队列读取专用 Review API 并只显示待审案件", async () => {
     const fetcher = vi.fn<Fetcher>().mockResolvedValue(
       ok({
@@ -484,5 +577,44 @@ describe("Gate 4 人工审核界面", () => {
     expect(wrapper.text()).not.toContain("raw_message");
     expect(localSet).not.toHaveBeenCalled();
     localSet.mockRestore();
+  });
+
+  it("External Identity 案件不转储受保护主体快照，通用案件仍保留现有快照视图", async () => {
+    const identityFixture = {
+      case: {
+        ...detailFixture.case,
+        title: "Identity Resolution",
+        subject: {
+          ...detailFixture.case.subject,
+          doctype: "GBOS External Identity",
+          name: "PROTECTED-MAPPING-REF",
+          snapshot: {
+            external_subject: "RAW-SUBJECT-MUST-NOT-RENDER",
+            target_ref: "PROTECTED-TARGET-MUST-NOT-RENDER",
+            model_target: "MODEL-TARGET-MUST-NOT-RENDER",
+          },
+        },
+      },
+      decision: null,
+    };
+    const wrapper = mount(ReviewDetailView, {
+      props: { id: "IDENTITY-REV-1" },
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher: vi.fn<Fetcher>().mockResolvedValue(ok(identityFixture)),
+            isOnline: () => true,
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("身份解析案件");
+    expect(wrapper.text()).toContain("身份解析筛选");
+    expect(wrapper.text()).not.toContain("RAW-SUBJECT-MUST-NOT-RENDER");
+    expect(wrapper.text()).not.toContain("PROTECTED-TARGET-MUST-NOT-RENDER");
+    expect(wrapper.text()).not.toContain("MODEL-TARGET-MUST-NOT-RENDER");
+    expect(wrapper.text()).not.toContain("PROTECTED-MAPPING-REF");
   });
 });

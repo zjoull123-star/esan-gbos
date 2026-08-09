@@ -31,6 +31,14 @@
             <div><dt>审核状态</dt><dd>{{ communication.review_status }}</dd></div>
             <div><dt>团队</dt><dd>{{ communication.team_ref || "未关联" }}</dd></div>
             <div><dt>业务方</dt><dd>{{ communication.party_ref || "未关联" }}</dd></div>
+            <div>
+              <dt>渠道账号所属用户</dt>
+              <dd>{{ connectorOwnerLabel }}</dd>
+            </div>
+            <div>
+              <dt>业务负责人</dt>
+              <dd>本页不推断，请以业务对象或工作项为准</dd>
+            </div>
           </dl>
         </div>
       </template>
@@ -47,9 +55,19 @@
             <EvidencePanel
               :title="`${communication.channel} · ${communication.classification}`"
               :summary-zh="communication.summary_zh"
-              :original-text="communication.raw_access_allowed ? communication.original_text : undefined"
+              :original-text="originalRevealed ? communication.original_text : undefined"
               :original-language="communication.original_language"
             />
+            <button
+              v-if="communication.raw_access_allowed && communication.original_text"
+              class="communication-original-toggle"
+              data-action="reveal-original"
+              type="button"
+              :aria-expanded="originalRevealed"
+              @click="originalRevealed = !originalRevealed"
+            >
+              {{ originalRevealed ? "隐藏受保护原文" : "显示受保护原文" }}
+            </button>
             <p
               v-if="!communication.raw_access_allowed"
               class="communication-restricted-notice"
@@ -99,12 +117,135 @@
               暂无关联建议。
             </p>
             <ul v-else class="communication-proposal-list">
-              <li v-for="suggestion in communication.association_suggestions" :key="`${suggestion.type}:${suggestion.target_ref}`">
+              <li v-for="suggestion in communication.association_suggestions" :key="suggestion.suggestion_key">
                 <strong>{{ suggestion.type }}</strong>
-                <span>{{ suggestion.target_ref }}</span>
                 <small>Proposal · 置信度 {{ formatConfidence(suggestion.confidence) }}</small>
               </li>
             </ul>
+          </article>
+          <article class="communication-proposal-card" aria-labelledby="identity-title">
+            <h2 id="identity-title">
+              消息参与者身份
+            </h2>
+            <p class="identity-relation-note">
+              消息参与者与渠道账号所属用户、业务负责人是三种独立关系，本页不会互相推断。
+            </p>
+            <p v-if="identityState === 'loading'" role="status">
+              正在读取身份状态…
+            </p>
+            <p v-else-if="identityError" class="identity-error" role="alert">
+              {{ identityError }}
+            </p>
+            <p v-else-if="identities.length === 0">
+              暂无可展示的消息参与者身份。
+            </p>
+            <ul v-else class="identity-state-list" aria-label="消息参与者身份状态">
+              <li v-for="(identity, index) in identities" :key="identity.identity_ref">
+                <strong>消息参与者 {{ index + 1 }}</strong>
+                <span>{{ providerLabel(identity.provider) }} · {{ identityStatusLabel(identity.status) }}</span>
+                <span v-if="identity.display_label">{{ identity.display_label }}</span>
+                <small v-if="identity.target_type">已审核对象类型：{{ identity.target_type }}</small>
+              </li>
+            </ul>
+            <p v-if="submitMessage" class="identity-success" role="status">
+              {{ submitMessage }}
+            </p>
+            <p v-if="submitError" class="identity-error" role="alert">
+              {{ submitError }}
+            </p>
+
+            <form
+              v-if="canSubmitIdentity && activeIdentity && activeSuggestion"
+              class="identity-review-form"
+              aria-label="身份关联送审"
+              @submit.prevent="submitIdentity"
+            >
+              <p class="identity-relation-note">
+                只能从服务端返回的同团队候选对象和合格审核人中选择；提交后进入人工审核，不会直接确认身份。
+              </p>
+              <label>
+                候选类型
+                <select v-model="candidateType" name="candidate_type" @change="resetCandidateSearch">
+                  <option value="User">系统用户</option>
+                  <option value="Party">客户主体</option>
+                  <option value="Contact">联系人</option>
+                </select>
+              </label>
+              <div class="identity-search-row">
+                <label>
+                  搜索同团队候选对象
+                  <input v-model="candidateSearch" name="candidate_search" maxlength="100">
+                </label>
+                <button type="button" data-action="search-candidates" @click="applyCandidateSearch">
+                  搜索
+                </button>
+              </div>
+              <fieldset>
+                <legend>选择候选对象</legend>
+                <p v-if="candidateLoading" role="status">
+                  正在读取候选对象…
+                </p>
+                <p v-else-if="candidateError" class="identity-error" role="alert">
+                  {{ candidateError }}
+                </p>
+                <p v-else-if="candidates.length === 0">
+                  当前筛选没有同团队候选对象。
+                </p>
+                <label
+                  v-for="(candidate, index) in candidates"
+                  :key="`${candidate.candidate_type}:${index}`"
+                  class="identity-choice"
+                >
+                  <input v-model="selectedCandidateIndex" type="radio" name="candidate" :value="index">
+                  <span>{{ candidate.display_label }} · {{ candidate.candidate_type }}</span>
+                </label>
+              </fieldset>
+              <div v-if="candidatePage > 1 || candidateHasMore" class="identity-pagination">
+                <button
+                  v-if="candidatePage > 1"
+                  type="button"
+                  data-candidate-page="previous"
+                  @click="previousCandidatePage"
+                >
+                  上一页
+                </button>
+                <button
+                  v-if="candidateHasMore"
+                  type="button"
+                  data-candidate-page="next"
+                  @click="nextCandidatePage"
+                >
+                  下一页
+                </button>
+              </div>
+              <label>
+                合格审核人
+                <select v-model="selectedReviewerIndex" name="assigned_reviewer">
+                  <option :value="-1" disabled>请选择审核人</option>
+                  <option
+                    v-for="(reviewer, index) in eligibleReviewers"
+                    :key="index"
+                    :value="index"
+                  >
+                    {{ reviewer.display_label }}
+                  </option>
+                </select>
+              </label>
+              <button
+                class="identity-submit"
+                data-action="submit-identity-review"
+                type="submit"
+                :disabled="!selectedCandidate || !selectedReviewer || submittingIdentity"
+              >
+                {{ submittingIdentity ? "提交中…" : "提交审核" }}
+              </button>
+            </form>
+            <p v-else-if="activeIdentity && !activeSuggestion" class="identity-relation-note">
+              当前没有可用于送审的关联建议。
+            </p>
+            <p v-else-if="activeIdentity && !canSubmitIdentity" class="identity-relation-note">
+              当前角色只能查看身份状态，不能发起身份关联审核。
+            </p>
           </article>
           <article class="communication-proposal-card">
             <h2>模型版本</h2>
@@ -117,14 +258,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
+import { BffError, createIdempotencyKey } from "@/api/bff";
 import { useBffClient } from "@/api/injection";
+import type { IdentityCandidateType } from "@/api/types";
 import EvidencePanel from "@/components/data/EvidencePanel.vue";
 import ResourceBoundary from "@/components/feedback/ResourceBoundary.vue";
 import DetailCommandTemplate from "@/components/layout/DetailCommandTemplate.vue";
 import PageHeader from "@/components/layout/PageHeader.vue";
 import { useOnlineResource } from "@/composables/useOnlineResource";
+import { sessionState } from "@/session";
 
 const props = defineProps<{ id: string }>();
 const client = useBffClient();
@@ -132,14 +276,209 @@ const resource = useOnlineResource(async () => {
   const response = await client.getCommunication(props.id);
   return response.data;
 });
+const identityResource = useOnlineResource(async () => {
+  const response = await client.listIdentityStates(props.id);
+  return response.data;
+});
 const communication = computed(() => resource.data.value?.communication);
 const { state, message, requestId, load } = resource;
+const identityState = identityResource.state;
+const identities = computed(() => identityResource.data.value?.identities ?? []);
+const connectorOwnerLabel = computed(
+  () => identityResource.data.value?.connector_account_owner?.display_label ?? "未配置",
+);
+const identityError = computed(() =>
+  identityState.value === "permission"
+    ? "当前角色无权读取身份状态。"
+    : identityResource.message.value,
+);
+const originalRevealed = ref(false);
+const candidateType = ref<IdentityCandidateType>("Party");
+const candidateSearch = ref("");
+const appliedCandidateSearch = ref("");
+const candidatePage = ref(1);
+const candidateLoading = ref(false);
+const candidateError = ref("");
+const candidatePayload = ref<Awaited<ReturnType<typeof client.listIdentityCandidates>>["data"]>();
+const selectedCandidateIndex = ref(-1);
+const selectedReviewerIndex = ref(-1);
+const submittingIdentity = ref(false);
+const submitMessage = ref("");
+const submitError = ref("");
+const submissionKey = ref("");
+let candidateGeneration = 0;
+
+const canSubmitIdentity = computed(() =>
+  sessionState.roles.some((role) =>
+    ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin"].includes(role),
+  ),
+);
+const activeIdentity = computed(() =>
+  identities.value.find((identity) => identity.status === "unresolved"),
+);
+const activeSuggestion = computed(() => communication.value?.association_suggestions[0]);
+const candidates = computed(() => candidatePayload.value?.candidates ?? []);
+const eligibleReviewers = computed(() => candidatePayload.value?.eligible_reviewers ?? []);
+const candidateHasMore = computed(() => candidatePayload.value?.has_more ?? false);
+const selectedCandidate = computed(() => candidates.value[selectedCandidateIndex.value]);
+const selectedReviewer = computed(
+  () => eligibleReviewers.value[selectedReviewerIndex.value],
+);
 const formatConfidence = (value: number) =>
   `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+const identityStatusLabel = (status: string) =>
+  ({
+    unresolved: "未解析",
+    proposed: "已建议",
+    pending: "待审核",
+    confirmed: "已确认",
+    revoked: "已撤回",
+  })[status] ?? "未知状态";
+const providerLabel = (provider: string) =>
+  ({ email: "Email", wecom: "企业微信", whatsapp: "WhatsApp", phone: "电话", manual_import: "人工导入" })[
+    provider
+  ] ?? "未知渠道";
+
+const resetSubmissionKey = () => {
+  submissionKey.value = "";
+  submitMessage.value = "";
+  submitError.value = "";
+};
+
+const loadCandidates = async () => {
+  const identity = activeIdentity.value;
+  const currentGeneration = ++candidateGeneration;
+  candidatePayload.value = undefined;
+  selectedCandidateIndex.value = -1;
+  selectedReviewerIndex.value = -1;
+  candidateError.value = "";
+  if (!identity || !activeSuggestion.value || !canSubmitIdentity.value) {
+    candidateLoading.value = false;
+    return;
+  }
+  candidateLoading.value = true;
+  try {
+    const response = await client.listIdentityCandidates({
+      observationId: props.id,
+      identityRef: identity.identity_ref,
+      candidateType: candidateType.value,
+      search: appliedCandidateSearch.value || undefined,
+      page: candidatePage.value,
+      pageSize: 20,
+    });
+    if (currentGeneration === candidateGeneration) {
+      candidatePayload.value = response.data;
+    }
+  } catch (error) {
+    if (currentGeneration === candidateGeneration) {
+      candidateError.value =
+        error instanceof BffError ? error.displayMessage : "暂时无法读取候选对象。";
+    }
+  } finally {
+    if (currentGeneration === candidateGeneration) {
+      candidateLoading.value = false;
+    }
+  }
+};
+
+const resetCandidateSearch = () => {
+  candidatePage.value = 1;
+  appliedCandidateSearch.value = candidateSearch.value.trim();
+  resetSubmissionKey();
+  void loadCandidates();
+};
+const applyCandidateSearch = () => resetCandidateSearch();
+const previousCandidatePage = () => {
+  if (candidatePage.value > 1) {
+    candidatePage.value -= 1;
+    resetSubmissionKey();
+    void loadCandidates();
+  }
+};
+const nextCandidatePage = () => {
+  if (candidateHasMore.value) {
+    candidatePage.value += 1;
+    resetSubmissionKey();
+    void loadCandidates();
+  }
+};
+
+const submitIdentity = async () => {
+  const identity = activeIdentity.value;
+  const suggestion = activeSuggestion.value;
+  const candidate = selectedCandidate.value;
+  const reviewer = selectedReviewer.value;
+  if (!identity || !suggestion || !candidate || !reviewer || submittingIdentity.value) {
+    return;
+  }
+  submittingIdentity.value = true;
+  submitMessage.value = "";
+  submitError.value = "";
+  submissionKey.value ||= createIdempotencyKey();
+  try {
+    await client.submitIdentityForReview({
+      observation_id: props.id,
+      identity_ref: identity.identity_ref,
+      suggestion_key: suggestion.suggestion_key,
+      selected_candidate_type: candidate.candidate_type,
+      selected_candidate_ref: candidate.candidate_ref,
+      assigned_reviewer: reviewer.reviewer_ref,
+      expected_state: "unresolved",
+      expected_revision: 0,
+      idempotency_key: submissionKey.value,
+    });
+    submitMessage.value = "已提交人工审核，不会直接确认身份。";
+    await identityResource.load();
+  } catch (error) {
+    submitError.value =
+      error instanceof BffError ? error.displayMessage : "暂时无法提交身份审核。";
+    if (
+      error instanceof BffError &&
+      (error.status === 409 ||
+        error.code === "revision_conflict" ||
+        error.code === "idempotency_conflict")
+    ) {
+      await identityResource.load();
+      await loadCandidates();
+    }
+  } finally {
+    submittingIdentity.value = false;
+  }
+};
+
+watch(
+  () => [activeIdentity.value?.identity_ref, activeSuggestion.value?.suggestion_key] as const,
+  () => {
+    candidatePage.value = 1;
+    if (!submittingIdentity.value) {
+      submissionKey.value = "";
+    }
+    void loadCandidates();
+  },
+);
+watch([selectedCandidateIndex, selectedReviewerIndex], () => {
+  if (!submittingIdentity.value) {
+    resetSubmissionKey();
+  }
+});
 
 watch(
   () => props.id,
-  () => void load(),
+  () => {
+    originalRevealed.value = false;
+    candidateGeneration += 1;
+    candidatePayload.value = undefined;
+    candidateError.value = "";
+    candidateLoading.value = false;
+    candidatePage.value = 1;
+    candidateSearch.value = "";
+    appliedCandidateSearch.value = "";
+    selectedCandidateIndex.value = -1;
+    selectedReviewerIndex.value = -1;
+    resetSubmissionKey();
+    void load();
+    void identityResource.load();
+  },
 );
 </script>
 
@@ -225,6 +564,35 @@ watch(
 
 .communication-informal-notice {
   margin-bottom: 12px;
+}
+
+.communication-original-toggle,
+.identity-review-form button,
+.identity-review-form select,
+.identity-review-form input {
+  min-height: 44px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-text);
+  background: var(--gbos-surface);
+  font: inherit;
+}
+
+.communication-original-toggle,
+.identity-review-form button {
+  width: fit-content;
+  padding: 9px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.communication-original-toggle:focus-visible,
+.identity-review-form button:focus-visible,
+.identity-review-form select:focus-visible,
+.identity-review-form input:focus-visible,
+.identity-choice input:focus-visible {
+  outline: 3px solid var(--gbos-accent);
+  outline-offset: 2px;
 }
 
 .evidence-reference-panel {
@@ -326,6 +694,139 @@ watch(
   color: var(--gbos-muted);
 }
 
+.identity-state-list,
+.identity-review-form {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+}
+
+.identity-state-list {
+  list-style: none;
+}
+
+.identity-state-list li {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 10px;
+  border-radius: var(--gbos-radius-control);
+  background: var(--gbos-canvas);
+}
+
+.identity-state-list li > *,
+.identity-review-form label,
+.identity-relation-note,
+.identity-error,
+.identity-success {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.identity-state-list small,
+.identity-relation-note {
+  color: var(--gbos-muted);
+}
+
+.identity-review-form {
+  padding-top: 12px;
+  border-top: 1px solid var(--gbos-border);
+}
+
+.identity-review-form > label,
+.identity-search-row label {
+  display: grid;
+  gap: 6px;
+  color: var(--gbos-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.identity-review-form select,
+.identity-review-form input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.identity-search-row,
+.identity-pagination {
+  display: flex;
+  min-width: 0;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.identity-search-row label {
+  flex: 1 1 220px;
+}
+
+.identity-review-form fieldset {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+}
+
+.identity-review-form legend {
+  padding: 0 4px;
+  font-weight: 700;
+}
+
+.identity-choice {
+  display: flex;
+  min-height: 44px;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 7px;
+  border-radius: var(--gbos-radius-control);
+  background: var(--gbos-canvas);
+}
+
+.identity-choice input {
+  width: 20px;
+  min-height: 20px;
+  flex: 0 0 20px;
+}
+
+.identity-choice span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.identity-submit {
+  color: var(--gbos-primary) !important;
+}
+
+.identity-review-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.identity-error,
+.identity-success {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  background: var(--gbos-canvas);
+}
+
+.identity-error {
+  border-color: var(--gbos-primary);
+}
+
+.identity-success {
+  border-color: var(--gbos-accent);
+}
+
 .proposal-boundary {
   margin: 0;
   padding: 12px;
@@ -341,6 +842,11 @@ watch(
   .communication-back-link {
     width: 100%;
     min-height: 44px;
+  }
+
+  .communication-original-toggle,
+  .identity-review-form button {
+    width: 100%;
   }
 
   .communication-facts__list {

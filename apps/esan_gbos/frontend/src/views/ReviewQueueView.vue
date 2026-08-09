@@ -17,7 +17,20 @@
 
       <template #list>
         <div class="review-resource-stack">
+          <form class="review-kind-filter" aria-label="审核类型筛选" @submit.prevent>
+            <label for="review-kind">审核类型</label>
+            <select id="review-kind" v-model="reviewKind" name="review_kind">
+              <option value="general">
+                通用审核与 AI 草稿
+              </option>
+              <option value="identity">
+                Identity Resolution
+              </option>
+            </select>
+            <p>Identity Resolution 使用服务端专用队列与分页，不在本地筛选通用案件。</p>
+          </form>
           <section
+            v-if="reviewKind === 'general'"
             class="review-resource-section"
             data-review-resource="drafts"
             aria-labelledby="ai-drafts-title"
@@ -85,6 +98,7 @@
           </section>
 
           <section
+            v-if="reviewKind === 'general'"
             class="review-resource-section"
             data-review-resource="cases"
             aria-labelledby="review-cases-title"
@@ -131,10 +145,99 @@
               </ul>
             </ResourceBoundary>
           </section>
+
+          <section
+            v-else
+            class="review-resource-section"
+            data-review-resource="identity"
+            aria-labelledby="identity-reviews-title"
+          >
+            <div class="review-section-heading">
+              <div>
+                <p>SERVER-SCOPED REVIEW CASES</p>
+                <h2 id="identity-reviews-title">
+                  Identity Resolution
+                </h2>
+              </div>
+              <span>仅显示服务端分配给当前审核人的身份解析案件</span>
+            </div>
+            <p v-if="!canReadIdentityReviews" class="review-boundary-note" role="note">
+              当前角色没有身份解析审核队列权限；页面不会尝试扩大服务端范围。
+            </p>
+            <ResourceBoundary
+              v-else
+              :state="identityState"
+              :message="identityBoundaryMessage"
+              :request-id="identityRequestId"
+              :empty="identityReviews.length === 0"
+              @retry="identityResource.load"
+            >
+              <ul class="review-card-list" aria-label="身份解析待审核案件">
+                <li
+                  v-for="identityReview in identityReviews"
+                  :key="identityReview.review_case_ref"
+                  class="review-card"
+                >
+                  <div class="review-card__heading">
+                    <div>
+                      <p>待审核</p>
+                      <h3>{{ identityReview.target.display_label }}</h3>
+                    </div>
+                    <span>{{ identityReview.target.candidate_type }}</span>
+                  </div>
+                  <IdentityReviewFacts :review="identityReview" />
+                  <button
+                    class="review-detail-link"
+                    type="button"
+                    :data-identity-detail="identityReview.review_case_ref"
+                    :disabled="identityDetailLoading"
+                    @click="loadIdentityDetail(identityReview.review_case_ref)"
+                  >
+                    {{ identityDetailRef === identityReview.review_case_ref && identityDetailLoading ? "读取中…" : "查看固定详情" }}
+                  </button>
+                  <p
+                    v-if="identityDetailError && identityDetailRef === identityReview.review_case_ref"
+                    class="review-notice review-notice--error"
+                    role="alert"
+                  >
+                    {{ identityDetailError }}
+                  </p>
+                  <article
+                    v-if="identityDetail?.review_case_ref === identityReview.review_case_ref"
+                    class="identity-review-detail"
+                    aria-label="身份解析固定详情"
+                  >
+                    <h4>身份解析固定详情</h4>
+                    <IdentityReviewFacts :review="identityDetail" />
+                  </article>
+                </li>
+              </ul>
+              <div v-if="identityPage > 1 || identityHasMore" class="review-pagination">
+                <GbosButton
+                  v-if="identityPage > 1"
+                  data-identity-pagination="previous"
+                  intent="secondary"
+                  type="button"
+                  @click="previousIdentityPage"
+                >
+                  上一页
+                </GbosButton>
+                <GbosButton
+                  v-if="identityHasMore"
+                  data-identity-pagination="next"
+                  intent="secondary"
+                  type="button"
+                  @click="nextIdentityPage"
+                >
+                  下一页
+                </GbosButton>
+              </div>
+            </ResourceBoundary>
+          </section>
         </div>
       </template>
 
-      <template v-if="caseCursor || nextCaseCursor" #pagination>
+      <template v-if="reviewKind === 'general' && (caseCursor || nextCaseCursor)" #pagination>
         <div class="review-pagination">
           <GbosButton
             v-if="caseCursor"
@@ -170,11 +273,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, type DeepReadonly } from "vue";
+import { computed, defineComponent, h, ref, watch, type DeepReadonly, type PropType } from "vue";
 
 import { BffError, createIdempotencyKey } from "@/api/bff";
 import { useBffClient } from "@/api/injection";
-import type { AiDraft } from "@/api/types";
+import type { AiDraft, IdentityPendingReview } from "@/api/types";
 import DemoBanner from "@/components/DemoBanner.vue";
 import ResourceBoundary from "@/components/feedback/ResourceBoundary.vue";
 import OperationalListTemplate from "@/components/layout/OperationalListTemplate.vue";
@@ -185,6 +288,7 @@ import { useOnlineResource } from "@/composables/useOnlineResource";
 import { sessionState } from "@/session";
 
 const client = useBffClient();
+const reviewKind = ref<"general" | "identity">("general");
 const caseCursor = ref<string>();
 const submittedDrafts = ref<AiDraft[]>([]);
 const submittingDrafts = ref(new Set<string>());
@@ -192,6 +296,48 @@ const draftMessage = ref("");
 const draftError = ref("");
 const draftConfirmOpen = ref(false);
 const pendingDraft = ref<AiDraft>();
+const identityPage = ref(1);
+const identityDetail = ref<IdentityPendingReview>();
+const identityDetailRef = ref("");
+const identityDetailLoading = ref(false);
+const identityDetailError = ref("");
+let identityDetailGeneration = 0;
+
+const canReadIdentityReviews = computed(
+  () =>
+    sessionState.roles.includes("Reviewer") ||
+    sessionState.roles.includes("GBOS Admin"),
+);
+
+const IdentityReviewFacts = defineComponent({
+  name: "IdentityReviewFacts",
+  props: {
+    review: {
+      type: Object as PropType<DeepReadonly<IdentityPendingReview>>,
+      required: true,
+    },
+  },
+  setup(props) {
+    const row = (label: string, value: string | number) =>
+      h("div", [h("dt", label), h("dd", String(value))]);
+    return () =>
+      h("dl", { class: "review-label-rows" }, [
+        row("目标类型", props.review.target.candidate_type),
+        row("安全目标", props.review.target.display_label),
+        row("审核版本", props.review.review_case_revision),
+        row("映射版本", props.review.mapping_revision),
+        row("分配审核人引用", props.review.assigned_reviewer),
+        row("团队", props.review.team_ref),
+        row("策略版本", props.review.policy_version),
+        row(
+          "固定证据引用",
+          props.review.evidence_refs.length
+            ? props.review.evidence_refs.join("、")
+            : "暂无",
+        ),
+      ]);
+  },
+});
 
 const caseResource = useOnlineResource(async () => {
   const response = await client.listReviewCases({
@@ -210,6 +356,21 @@ const draftResource = useOnlineResource(async () => {
     return { drafts: [], next_cursor: null };
   }
   const response = await client.listAiDrafts({ pageSize: 20 });
+  return response.data;
+});
+
+const identityResource = useOnlineResource(async () => {
+  identityDetailGeneration += 1;
+  identityDetail.value = undefined;
+  identityDetailRef.value = "";
+  identityDetailError.value = "";
+  if (reviewKind.value !== "identity" || !canReadIdentityReviews.value) {
+    return { reviews: [], has_more: false };
+  }
+  const response = await client.listPendingIdentityReviews({
+    page: identityPage.value,
+    pageSize: 20,
+  });
   return response.data;
 });
 
@@ -249,6 +410,15 @@ const draftBoundaryMessage = computed(() =>
     ? "当前没有可送审的 AI 草稿。"
     : draftResource.message.value,
 );
+const identityState = identityResource.state;
+const identityRequestId = identityResource.requestId;
+const identityReviews = computed(() => identityResource.data.value?.reviews ?? []);
+const identityHasMore = computed(() => identityResource.data.value?.has_more ?? false);
+const identityBoundaryMessage = computed(() =>
+  identityState.value === "ready" && identityReviews.value.length === 0
+    ? "当前没有分配给你的身份解析待审核案件。"
+    : identityResource.message.value,
+);
 const draftConfirmMessage = computed(() =>
   pendingDraft.value
     ? `确认将“${pendingDraft.value.subject}”从 AI Draft 送入 Pending？此操作不会直接修改业务主体。`
@@ -258,7 +428,11 @@ const draftConfirmMessage = computed(() =>
 const refreshAll = () => {
   draftMessage.value = "";
   draftError.value = "";
-  void Promise.all([caseResource.load(), draftResource.load()]);
+  if (reviewKind.value === "identity") {
+    void identityResource.load();
+  } else {
+    void Promise.all([caseResource.load(), draftResource.load()]);
+  }
 };
 const nextPage = () => {
   if (!nextCaseCursor.value) {
@@ -271,6 +445,51 @@ const returnHome = () => {
   caseCursor.value = undefined;
   void caseResource.load();
 };
+const previousIdentityPage = () => {
+  if (identityPage.value > 1) {
+    identityPage.value -= 1;
+    void identityResource.load();
+  }
+};
+const nextIdentityPage = () => {
+  if (identityHasMore.value) {
+    identityPage.value += 1;
+    void identityResource.load();
+  }
+};
+
+const loadIdentityDetail = async (reviewCaseRef: string) => {
+  if (identityDetailLoading.value) {
+    return;
+  }
+  const generation = ++identityDetailGeneration;
+  identityDetailRef.value = reviewCaseRef;
+  identityDetail.value = undefined;
+  identityDetailError.value = "";
+  identityDetailLoading.value = true;
+  try {
+    const response = await client.getPendingIdentityReview(reviewCaseRef);
+    if (generation === identityDetailGeneration) {
+      identityDetail.value = response.data.review;
+    }
+  } catch (error) {
+    if (generation === identityDetailGeneration) {
+      identityDetailError.value =
+        error instanceof BffError ? error.displayMessage : "暂时无法读取身份审核详情。";
+    }
+  } finally {
+    if (generation === identityDetailGeneration) {
+      identityDetailLoading.value = false;
+    }
+  }
+};
+
+watch(reviewKind, (kind) => {
+  identityPage.value = 1;
+  if (kind === "identity") {
+    void identityResource.load();
+  }
+});
 
 const requestDraftSubmit = (draft: DeepReadonly<AiDraft>) => {
   if (draft.status !== "AI Draft" || submittingDrafts.value.has(draft.draft_id)) {
@@ -338,6 +557,42 @@ const submitDraft = async (draft: AiDraft) => {
 .review-resource-stack {
   display: grid;
   gap: 16px;
+}
+
+.review-kind-filter {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-card);
+  background: var(--gbos-surface);
+}
+
+.review-kind-filter label {
+  color: var(--gbos-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.review-kind-filter select {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-text);
+  background: var(--gbos-surface);
+  font: inherit;
+}
+
+.review-kind-filter p {
+  margin: 0;
+  color: var(--gbos-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .review-resource-section {
@@ -456,7 +711,7 @@ const submitDraft = async (draft: AiDraft) => {
 .review-detail-link {
   display: inline-flex;
   width: fit-content;
-  min-height: 36px;
+  min-height: 44px;
   align-items: center;
   padding: 8px 12px;
   border: 1px solid var(--gbos-border);
@@ -466,6 +721,33 @@ const submitDraft = async (draft: AiDraft) => {
   font-size: 14px;
   font-weight: 700;
   text-decoration: none;
+}
+
+button.review-detail-link {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+button.review-detail-link:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.identity-review-detail {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  background: var(--gbos-surface);
+}
+
+.identity-review-detail h4 {
+  margin: 0;
+  color: var(--gbos-text);
+  font-size: 15px;
+  overflow-wrap: anywhere;
 }
 
 .review-boundary-note,

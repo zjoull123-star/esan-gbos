@@ -68,7 +68,7 @@ const gbosButtonStub = {
 };
 
 describe("BFF v4 typed client", () => {
-  it("冻结十个 exact URL", () => {
+  it("冻结包含身份解析在内的 exact URL", () => {
     expect(BFF_V4_ENDPOINTS).toEqual({
       integrationListStatus: "/api/method/esan_gbos.api.v4.integration.list_status",
       integrationPause: "/api/method/esan_gbos.api.v4.integration.pause",
@@ -81,6 +81,172 @@ describe("BFF v4 typed client", () => {
       aiDraftGet: "/api/method/esan_gbos.api.v4.ai_draft.get",
       aiDraftSubmitForReview:
         "/api/method/esan_gbos.api.v4.ai_draft.submit_for_review",
+      identityListStates: "/api/method/esan_gbos.api.v4.identity.list_states",
+      identityGetState: "/api/method/esan_gbos.api.v4.identity.get_state",
+      identityListCandidates: "/api/method/esan_gbos.api.v4.identity.list_candidates",
+      identityListPendingReviews:
+        "/api/method/esan_gbos.api.v4.identity.list_pending_reviews",
+      identityGetPendingReview:
+        "/api/method/esan_gbos.api.v4.identity.get_pending_review",
+      identitySubmitForReview:
+        "/api/method/esan_gbos.api.v4.identity.submit_for_review",
+      identityRevoke: "/api/method/esan_gbos.api.v4.identity.revoke",
+    });
+  });
+
+  it("身份解析只使用五个 GET 与两个 POST，并封闭校验查询、revision 与幂等字段", async () => {
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      const path = new URL(String(input), "https://gbos.invalid").pathname;
+      if (path === BFF_V4_ENDPOINTS.identityListStates) {
+        return Promise.resolve(okV4({ identities: [], connector_account_owner: null }));
+      }
+      if (path === BFF_V4_ENDPOINTS.identityGetState) {
+        return Promise.resolve(
+          okV4({
+            identity: {
+              identity_ref: "extid:v1:email:opaque-participant",
+              provider: "email",
+              status: "unresolved",
+            },
+            connector_account_owner: null,
+          }),
+        );
+      }
+      if (path === BFF_V4_ENDPOINTS.identityListCandidates) {
+        return Promise.resolve(
+          okV4({ candidates: [], eligible_reviewers: [], has_more: false }),
+        );
+      }
+      if (path === BFF_V4_ENDPOINTS.identityListPendingReviews) {
+        return Promise.resolve(okV4({ reviews: [], has_more: false }));
+      }
+      if (path === BFF_V4_ENDPOINTS.identityGetPendingReview) {
+        return Promise.resolve(
+          okV4({
+            review: {
+              review_case_ref: "REV-1",
+              review_case_revision: 1,
+              status: "pending",
+              assigned_reviewer: "REVIEWER-1",
+              team_ref: "TEAM-1",
+              mapping_ref: "MAP-1",
+              mapping_revision: 1,
+              target: {
+                candidate_type: "Party",
+                candidate_ref: "PARTY-1",
+                display_label: "安全客户标签",
+              },
+              evidence_refs: [],
+              policy_version: "identity-resolution-v1",
+            },
+          }),
+        );
+      }
+      return Promise.resolve(
+        okV4({ status: path.endsWith("revoke") ? "revoked" : "pending", mapping_ref: "MAP-1", mapping_revision: 1 }),
+      );
+    });
+    const client = createBffClient({
+      fetcher,
+      isOnline: () => true,
+      getCsrfToken: () => "csrf-identity",
+    });
+    const identityRef = "extid:v1:email:opaque-participant";
+
+    await client.listIdentityStates("OBS-1");
+    await client.getIdentityState("OBS-1", identityRef);
+    await client.listIdentityCandidates({
+      observationId: "OBS-1",
+      identityRef,
+      candidateType: "Party",
+      search: "海湾",
+      page: 2,
+      pageSize: 20,
+    });
+    await client.listPendingIdentityReviews({ page: 2, pageSize: 20 });
+    await client.getPendingIdentityReview("REV-1");
+    const submit = {
+      observation_id: "OBS-1",
+      identity_ref: identityRef,
+      suggestion_key: `suggestion:v1:${"a".repeat(64)}`,
+      selected_candidate_type: "Party" as const,
+      selected_candidate_ref: "PARTY-1",
+      assigned_reviewer: "REVIEWER-1",
+      expected_state: "unresolved" as const,
+      expected_revision: 0 as const,
+      idempotency_key: "identity-submit-1",
+    };
+    await Promise.all([
+      client.submitIdentityForReview(submit),
+      client.submitIdentityForReview(submit),
+    ]);
+    await client.revokeIdentity({
+      observation_id: "OBS-1",
+      identity_ref: identityRef,
+      mapping_ref: "MAP-1",
+      expected_revision: 3,
+      idempotency_key: "identity-revoke-1",
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(7);
+    expect(
+      fetcher.mock.calls.map(([input, init]) => [
+        new URL(String(input), "https://gbos.invalid").pathname,
+        init?.method,
+      ]),
+    ).toEqual([
+      [BFF_V4_ENDPOINTS.identityListStates, "GET"],
+      [BFF_V4_ENDPOINTS.identityGetState, "GET"],
+      [BFF_V4_ENDPOINTS.identityListCandidates, "GET"],
+      [BFF_V4_ENDPOINTS.identityListPendingReviews, "GET"],
+      [BFF_V4_ENDPOINTS.identityGetPendingReview, "GET"],
+      [BFF_V4_ENDPOINTS.identitySubmitForReview, "POST"],
+      [BFF_V4_ENDPOINTS.identityRevoke, "POST"],
+    ]);
+    const candidateUrl = new URL(
+      String(fetcher.mock.calls[2]?.[0]),
+      "https://gbos.invalid",
+    );
+    expect(Object.fromEntries(candidateUrl.searchParams)).toEqual({
+      observation_id: "OBS-1",
+      identity_ref: identityRef,
+      candidate_type: "Party",
+      search: "海湾",
+      page: "2",
+      page_size: "20",
+    });
+    const submitBody = Object.fromEntries(
+      new URLSearchParams(String(fetcher.mock.calls[5]?.[1]?.body)),
+    );
+    expect(submitBody).toEqual({
+      observation_id: submit.observation_id,
+      identity_ref: submit.identity_ref,
+      suggestion_key: submit.suggestion_key,
+      selected_candidate_type: submit.selected_candidate_type,
+      selected_candidate_ref: submit.selected_candidate_ref,
+      assigned_reviewer: submit.assigned_reviewer,
+      expected_state: submit.expected_state,
+      expected_revision: "0",
+      idempotency_key: submit.idempotency_key,
+    });
+    expect(fetcher.mock.calls[5]?.[1]).toMatchObject({
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+  });
+
+  it("身份响应遇到额外字段时失败关闭", async () => {
+    const fetcher = vi.fn<Fetcher>().mockResolvedValue(
+      okV4({
+        identities: [],
+        connector_account_owner: null,
+        external_subject: "RAW-SUBJECT-MUST-NOT-PASS",
+      }),
+    );
+    const client = createBffClient({ fetcher, isOnline: () => true });
+
+    await expect(client.listIdentityStates("OBS-1")).rejects.toMatchObject({
+      code: "invalid_response",
     });
   });
 
@@ -657,7 +823,18 @@ describe("v4 roles and pages", () => {
             },
           ],
           association_suggestions: [
-            { type: "Possible Party", target_ref: "PARTY-1", confidence: 0.61 },
+            {
+              type: "Possible Party",
+              confidence: 0.61,
+              suggestion_key: `suggestion:v1:${"a".repeat(64)}`,
+            },
+          ],
+          participant_identities: [
+            {
+              identity_ref: "extid:v1:email:opaque-participant",
+              provider: "email",
+              status: "unresolved",
+            },
           ],
           model: { name: "deepseek-v4-flash", version: "2026-08-01" },
           raw_access_allowed: false,
@@ -694,7 +871,159 @@ describe("v4 roles and pages", () => {
     );
     expect(wrapper.find("blockquote").exists()).toBe(false);
     expect(wrapper.text()).not.toContain("RESTRICTED-SOURCE-MUST-NOT-LEAK");
-    expect(wrapper.findAll("button")).toHaveLength(0);
+    expect(wrapper.text()).not.toContain("opaque-participant");
+    expect(wrapper.text()).not.toContain("PARTY-1");
+    expect(wrapper.text()).not.toContain("suggestion:v1:");
+    expect(wrapper.find("blockquote").exists()).toBe(false);
+  });
+
+  it("身份状态使用安全中文标签，送审锁定重复点击并在 409 后刷新", async () => {
+    const host = globalThis as typeof globalThis & {
+      frappe?: {
+        session: { user: string };
+        boot: { user: { roles: string[] } };
+      };
+    };
+    host.frappe = {
+      session: { user: "admin@example.invalid" },
+      boot: { user: { roles: ["GBOS Admin"] } },
+    };
+    refreshSession();
+    const identityRef = "extid:v1:email:opaque-form-participant";
+    let stateReads = 0;
+    let candidateReads = 0;
+    let submitCalls = 0;
+    let resolveSubmit: ((response: Response) => void) | undefined;
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      const path = new URL(String(input), "https://gbos.invalid").pathname;
+      if (path === BFF_V4_ENDPOINTS.communicationGet) {
+        return Promise.resolve(
+          okV4({
+            communication: {
+              observation_id: "OBS-IDENTITY-1",
+              channel: "Email",
+              occurred_at: "2026-08-10T02:00:00Z",
+              summary_zh: "客户询问样品。",
+              original_language: "en",
+              classification: "Customer Request",
+              review_status: "Unreviewed",
+              team_ref: "TEAM-1",
+              party_ref: null,
+              evidence_count: 1,
+              evidence: [{ ref: "EVID-1", locator: "message:1" }],
+              fact_proposals: [],
+              association_suggestions: [
+                {
+                  type: "Party",
+                  confidence: 0.8,
+                  suggestion_key: `suggestion:v1:${"b".repeat(64)}`,
+                },
+              ],
+              participant_identities: [
+                { identity_ref: identityRef, provider: "email", status: "unresolved" },
+              ],
+              model: { name: "deepseek-v4-flash", version: "2026-08-01" },
+              raw_access_allowed: false,
+            },
+          }),
+        );
+      }
+      if (path === BFF_V4_ENDPOINTS.identityListStates) {
+        stateReads += 1;
+        const statuses = stateReads === 1
+          ? ["unresolved", "proposed", "pending", "confirmed", "revoked"]
+          : ["pending"];
+        return Promise.resolve(
+          okV4({
+            identities: statuses.map((status, index) => ({
+              identity_ref: index === 0 ? identityRef : `extid:v1:email:opaque-${index}`,
+              provider: "email",
+              status,
+              ...(status === "confirmed"
+                ? { display_label: "已确认客户", target_type: "Party", mapping_revision: 2 }
+                : {}),
+            })),
+            connector_account_owner: { display_label: "渠道账号负责人" },
+          }),
+        );
+      }
+      if (path === BFF_V4_ENDPOINTS.identityListCandidates) {
+        candidateReads += 1;
+        return Promise.resolve(
+          okV4({
+            candidates: [
+              {
+                candidate_type: "Party",
+                candidate_ref: "PROTECTED-CANDIDATE",
+                display_label: "安全客户标签",
+              },
+            ],
+            eligible_reviewers: [
+              { reviewer_ref: "REVIEWER-1", display_label: "审核人甲" },
+            ],
+            has_more: false,
+          }),
+        );
+      }
+      submitCalls += 1;
+      return new Promise<Response>((resolve) => {
+        resolveSubmit = resolve;
+      });
+    });
+    const wrapper = mount(CommunicationDetailView, {
+      props: { id: "OBS-IDENTITY-1" },
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+            getCsrfToken: () => "csrf-identity",
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    for (const label of ["未解析", "已建议", "待审核", "已确认", "已撤回"]) {
+      expect(wrapper.text()).toContain(label);
+    }
+    expect(wrapper.text()).toContain("渠道账号负责人");
+    expect(wrapper.text()).toContain("安全客户标签");
+    expect(wrapper.text()).not.toContain(identityRef);
+    expect(wrapper.text()).not.toContain("PROTECTED-CANDIDATE");
+    expect(wrapper.text()).not.toContain("suggestion:v1:");
+    expect(wrapper.find("button[data-action='confirm-identity']").exists()).toBe(false);
+
+    await wrapper.get("input[name='candidate']").setValue();
+    await wrapper.get("select[name='assigned_reviewer']").setValue("0");
+    const form = wrapper.get("form[aria-label='身份关联送审']");
+    await form.trigger("submit");
+    await form.trigger("submit");
+    expect(submitCalls).toBe(1);
+
+    resolveSubmit?.(
+      new Response(
+        JSON.stringify({
+          message: {
+            error: {
+              code: "revision_conflict",
+              message: "身份状态已更新，请重新核对。",
+              request_id: "req-identity-stale",
+              details: {},
+            },
+          },
+        }),
+        { status: 409, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    await flushPromises();
+    expect(wrapper.text()).toContain("身份状态已更新，请重新核对");
+    expect(stateReads).toBe(2);
+    expect(candidateReads).toBeGreaterThanOrEqual(1);
+    expect(submitCalls).toBe(1);
+
+    delete host.frappe;
+    refreshSession();
   });
 
   it("获授权详情保留阿拉伯语原文的 RTL 方向且不提供业务动作", async () => {
@@ -715,6 +1044,7 @@ describe("v4 roles and pages", () => {
           evidence: [{ ref: "EVID-AR-1", locator: "message:88" }],
           fact_proposals: [],
           association_suggestions: [],
+          participant_identities: [],
           model: { name: "deepseek-v4-flash", version: "2026-08-01" },
           raw_access_allowed: true,
           original_text: original,
@@ -734,6 +1064,10 @@ describe("v4 roles and pages", () => {
     });
     await flushPromises();
 
+    expect(wrapper.text()).not.toContain(original);
+    const reveal = wrapper.get("button[data-action='reveal-original']");
+    expect(reveal.text()).toContain("显示受保护原文");
+    await reveal.trigger("click");
     expect(wrapper.text().indexOf("客户需要柑橘香调样品")).toBeLessThan(
       wrapper.text().indexOf(original),
     );
@@ -742,7 +1076,83 @@ describe("v4 roles and pages", () => {
       dir: "rtl",
     });
     expect(wrapper.get("blockquote").text()).toBe(original);
-    expect(wrapper.findAll("button")).toHaveLength(0);
+    await reveal.trigger("click");
+    expect(wrapper.text()).not.toContain(original);
+  });
+
+  it("观察路由变化后丢弃迟到的旧沟通与身份数据", async () => {
+    let resolveOldCommunication: ((response: Response) => void) | undefined;
+    let resolveOldIdentity: ((response: Response) => void) | undefined;
+    const communicationPayload = (observationId: string, summary: string) => ({
+      communication: {
+        observation_id: observationId,
+        channel: "Email",
+        occurred_at: "2026-08-10T02:00:00Z",
+        summary_zh: summary,
+        original_language: "zh",
+        classification: "Customer Request",
+        review_status: "Unreviewed",
+        team_ref: "TEAM-1",
+        party_ref: null,
+        evidence_count: 0,
+        evidence: [],
+        fact_proposals: [],
+        association_suggestions: [],
+        participant_identities: [],
+        model: { name: "deepseek-v4-flash", version: "2026-08-01" },
+        raw_access_allowed: false,
+      },
+    });
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      const url = new URL(String(input), "https://gbos.invalid");
+      const observationId = url.searchParams.get("observation_id");
+      if (observationId === "OBS-OLD") {
+        return new Promise<Response>((resolve) => {
+          if (url.pathname === BFF_V4_ENDPOINTS.communicationGet) {
+            resolveOldCommunication = resolve;
+          } else {
+            resolveOldIdentity = resolve;
+          }
+        });
+      }
+      if (url.pathname === BFF_V4_ENDPOINTS.communicationGet) {
+        return Promise.resolve(okV4(communicationPayload("OBS-NEW", "新观察摘要")));
+      }
+      return Promise.resolve(
+        okV4({
+          identities: [],
+          connector_account_owner: { display_label: "新渠道负责人" },
+        }),
+      );
+    });
+    const wrapper = mount(CommunicationDetailView, {
+      props: { id: "OBS-OLD" },
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+          }),
+        },
+      },
+    });
+    await Promise.resolve();
+    await wrapper.setProps({ id: "OBS-NEW" });
+    await flushPromises();
+    expect(wrapper.text()).toContain("新观察摘要");
+    expect(wrapper.text()).toContain("新渠道负责人");
+
+    resolveOldCommunication?.(okV4(communicationPayload("OBS-OLD", "旧观察不得残留")));
+    resolveOldIdentity?.(
+      okV4({
+        identities: [],
+        connector_account_owner: { display_label: "旧渠道负责人不得残留" },
+      }),
+    );
+    await flushPromises();
+    expect(wrapper.text()).toContain("新观察摘要");
+    expect(wrapper.text()).not.toContain("旧观察不得残留");
+    expect(wrapper.text()).not.toContain("旧渠道负责人不得残留");
   });
 
   it("复用审核队列经 ConfirmDialog 将 AI Draft 受控送入 Pending并阻止重复提交", async () => {
