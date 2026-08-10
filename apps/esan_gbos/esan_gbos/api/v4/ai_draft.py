@@ -141,18 +141,23 @@ def _enrich(
         for row in rows:
             origin_reference = row.get("origin_reference")
             if not isinstance(origin_reference, str) or not origin_reference:
-                raise V4DTOValidationError("AI draft omitted its Agent origin reference")
-            data = call_local(
-                "Agent",
-                method="GET",
-                path=f"/internal/v1/ai-drafts/{quote(origin_reference, safe='')}",
-                purpose="ai_draft_review",
-            )
-            supplement = data.get("draft")
-            if not isinstance(supplement, dict):
-                raise V4DTOValidationError("Agent omitted a requested draft")
-            if supplement.get("draft_id") != origin_reference:
-                raise V4DTOValidationError("Agent returned a mismatched draft")
+                raise V4DTOValidationError("AI draft omitted its governed origin reference")
+            supplement: dict[str, Any]
+            if row.get("doctype") == "GBOS Informal Observation":
+                supplement = _informal_observation_supplement(row)
+            else:
+                data = call_local(
+                    "Agent",
+                    method="GET",
+                    path=f"/internal/v1/ai-drafts/{quote(origin_reference, safe='')}",
+                    purpose="ai_draft_review",
+                )
+                candidate = data.get("draft")
+                if not isinstance(candidate, dict):
+                    raise V4DTOValidationError("Agent omitted a requested draft")
+                supplement = candidate
+                if supplement.get("draft_id") != origin_reference:
+                    raise V4DTOValidationError("Agent returned a mismatched draft")
             mapped.append(
                 map_ai_draft(
                     {
@@ -168,8 +173,52 @@ def _enrich(
                 )
             )
     except V4DTOValidationError as error:
-        raise BFFError("internal_error", "Agent draft response is invalid", status=503) from error
+        raise BFFError("internal_error", "AI draft response is invalid", status=503) from error
     return mapped
+
+
+def _informal_observation_supplement(row: dict[str, Any]) -> dict[str, Any]:
+    draft_id = row.get("draft_id")
+    origin_reference = row.get("origin_reference")
+    if not isinstance(draft_id, str) or not draft_id:
+        raise V4DTOValidationError("Informal observation draft identity is invalid")
+    try:
+        doc = frappe.get_doc("GBOS Informal Observation", draft_id)
+        revision = int(doc.revision)
+    except (frappe.DoesNotExistError, TypeError, ValueError, AttributeError) as error:
+        raise V4DTOValidationError("Informal observation draft is unavailable") from error
+    if (
+        doc.doctype != "GBOS Informal Observation"
+        or doc.name != draft_id
+        or doc.origin != "AI"
+        or doc.origin_reference != origin_reference
+        or doc.review_status != row.get("status")
+        or revision != row.get("revision")
+        or doc.subject != row.get("subject")
+    ):
+        raise V4DTOValidationError("Informal observation draft binding is invalid")
+    evidence_rows = doc.get("evidence_refs") or []
+    if not isinstance(evidence_rows, (builtins.list, tuple)):
+        raise V4DTOValidationError("Informal observation evidence is invalid")
+    evidence: builtins.list[dict[str, Any]] = []
+    for child in evidence_rows:
+        getter = getattr(child, "get", None)
+        if not callable(getter):
+            raise V4DTOValidationError("Informal observation evidence is invalid")
+        evidence.append(
+            {
+                "ref": getter("evidence_ref"),
+                "locator": getter("locator_ref"),
+            }
+        )
+    return {
+        "draft_id": origin_reference,
+        "evidence": evidence,
+        "model": {
+            "name": doc.model_name,
+            "version": doc.model_version,
+        },
+    }
 
 
 def _find_draft(draft_id: str, *, for_update: bool = False) -> Any:
