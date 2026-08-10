@@ -164,6 +164,20 @@ def test_context_informal_draft_rejects_origin_binding_drift(
     assert raised.value.status == 503
 
 
+def test_context_informal_draft_rejects_missing_model_identity(
+    ai_draft_module: tuple[Any, _Frappe],
+) -> None:
+    module, fake_frappe = ai_draft_module
+    fake_frappe.documents[("GBOS Informal Observation", "OBS-DRAFT-01")] = _informal_document(
+        model_name=None
+    )
+
+    with pytest.raises(module.BFFError, match="invalid") as raised:
+        module._enrich([_row()])
+
+    assert raised.value.status == 503
+
+
 def test_agent_origin_draft_keeps_agent_enrichment_path(
     ai_draft_module: tuple[Any, _Frappe],
     monkeypatch: pytest.MonkeyPatch,
