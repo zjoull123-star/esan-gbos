@@ -170,7 +170,8 @@ def test_gate2_permission_matrix_freezes_service_identities_and_future_activatio
         "audience",
         "不直连 Frappe/MariaDB",
         "无 Kingdee 写工具",
-        "Gate 2 均未启动",
+        "当前分支已实现",
+        "正式 local pilot 仍为 No-Go",
     ):
         assert control.lower() in matrix.lower()
 
