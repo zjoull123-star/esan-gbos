@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import os
+import stat
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
+from services.agent_runtime.local_entrypoint import (
+    LocalEntrypointDisabled,
+    load_local_manifest,
+    require_component_enabled,
+)
 from services.model_gateway.tokenization import EncryptedFileMappingVault
 from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
 from services.observer.observer.models import TenantScope
@@ -18,18 +24,21 @@ from services.observer.observer.retention import (
     RetentionService,
 )
 
-from .projection_config import ProjectionConfigError, load_projection_config
 from .runtime_support import (
+    RuntimeConfig,
     RuntimeSupportError,
     close_connection,
     connect_postgres,
     load_runtime_config,
     reject_plaintext_secret_environment,
+    validate_manifest_binding,
 )
 
+DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
-DEFAULT_PROJECTION_CONFIG = Path("/config/local-pilot-projection.json")
 DEFAULT_MAPPING_VAULT_KEY_FILE = Path("/run/secrets/mapping_vault_key")
+DEFAULT_EVIDENCE_CAS_ROOT = Path("/var/lib/gbos/evidence")
+DEFAULT_TOKENIZER_VAULT_ROOT = Path("/var/lib/gbos/tokenizer-vault")
 
 
 class RetentionRunner(Protocol):
@@ -46,9 +55,11 @@ class RetentionRunner(Protocol):
 
 def main(
     *,
+    manifest_path: Path = DEFAULT_MANIFEST,
     runtime_config_path: Path = DEFAULT_RUNTIME_CONFIG,
-    projection_config_path: Path = DEFAULT_PROJECTION_CONFIG,
     mapping_vault_key_file: Path = DEFAULT_MAPPING_VAULT_KEY_FILE,
+    evidence_cas_root: Path = DEFAULT_EVIDENCE_CAS_ROOT,
+    tokenizer_vault_root: Path = DEFAULT_TOKENIZER_VAULT_ROOT,
     environ: Mapping[str, str] | None = None,
     runner: RetentionRunner | None = None,
     connector: Callable[..., object] | None = None,
@@ -59,14 +70,23 @@ def main(
     environment = os.environ if environ is None else environ
     try:
         reject_plaintext_secret_environment(environment)
+        manifest = load_local_manifest(manifest_path)
+        require_component_enabled(
+            manifest,
+            component="retention-worker",
+            environ=environment,
+        )
         if environment.get("GBOS_RETENTION_ENABLED") != "true":
             raise RuntimeSupportError("retention worker is disabled")
+        if manifest.get("retention_days") != 30:
+            raise LocalEntrypointDisabled("retention boundary is not approved")
         dry_run_value = environment.get("GBOS_RETENTION_DRY_RUN", "true")
         if dry_run_value not in {"true", "false"}:
             raise RuntimeSupportError("retention dry-run flag is invalid")
         dry_run = dry_run_value == "true"
         batch_size = _batch_size(environment.get("GBOS_RETENTION_BATCH_SIZE", "100"))
         runtime = load_runtime_config(runtime_config_path)
+        validate_manifest_binding(manifest, runtime)
         now = _aware_utc((clock or _utc_now)())
         if runner is not None:
             runner(
@@ -78,10 +98,10 @@ def main(
             )
         else:
             _run_default(
-                runtime_site_id=runtime.site_id,
-                worker_id=runtime.worker.worker_id,
-                projection_config_path=projection_config_path,
+                runtime_config=runtime,
                 mapping_vault_key_file=mapping_vault_key_file,
+                evidence_cas_root=evidence_cas_root,
+                tokenizer_vault_root=tokenizer_vault_root,
                 batch_size=batch_size,
                 dry_run=dry_run,
                 now=now,
@@ -89,8 +109,8 @@ def main(
             )
         return 0
     except (
+        LocalEntrypointDisabled,
         OSError,
-        ProjectionConfigError,
         RetentionError,
         RuntimeSupportError,
         ValueError,
@@ -100,28 +120,26 @@ def main(
 
 def _run_default(
     *,
-    runtime_site_id: str,
-    worker_id: str,
-    projection_config_path: Path,
+    runtime_config: RuntimeConfig,
     mapping_vault_key_file: Path,
+    evidence_cas_root: Path,
+    tokenizer_vault_root: Path,
     batch_size: int,
     dry_run: bool,
     now: datetime,
     connector: Callable[..., object] | None,
 ) -> RetentionResult:
-    projection = load_projection_config(
-        projection_config_path,
-        expected_site_id=runtime_site_id,
-    )
+    cas_root = _local_root(evidence_cas_root, "evidence CAS root")
+    vault_root = _local_root(tokenizer_vault_root, "tokenizer vault root")
     connection: object | None = None
     try:
         connection = connect_postgres(
-            projection.connections["observer"],
+            runtime_config.postgres,
             connector=connector,
         )
-        cas = ContentAddressedEvidenceStore(projection.evidence_cas_root)
+        cas = ContentAddressedEvidenceStore(cas_root)
         vault = EncryptedFileMappingVault.from_key_file(
-            root=projection.tokenizer_vault_root,
+            root=vault_root,
             key_file=mapping_vault_key_file,
             clock=lambda: now,
         )
@@ -129,18 +147,30 @@ def _run_default(
             storage=PostgresRetentionStorage(connection),  # type: ignore[arg-type]
             cas=cas,
             vault=vault,
-            worker_id=worker_id,
+            worker_id=runtime_config.worker.worker_id,
             clock=lambda: now,
             lease_duration=timedelta(minutes=5),
         )
         return service.run(
-            TenantScope(runtime_site_id, "audit_compliance"),
+            TenantScope(runtime_config.site_id, "audit_compliance"),
             batch_size=batch_size,
             dry_run=dry_run,
         )
     finally:
         if connection is not None:
             close_connection(connection)
+
+
+def _local_root(path: Path, label: str) -> Path:
+    candidate = Path(path)
+    try:
+        resolved = candidate.resolve(strict=True)
+        details = candidate.lstat()
+    except OSError as exc:
+        raise RuntimeSupportError(f"{label} is unavailable") from exc
+    if not candidate.is_absolute() or candidate.is_symlink() or not stat.S_ISDIR(details.st_mode):
+        raise RuntimeSupportError(f"{label} is unsafe")
+    return resolved
 
 
 def _batch_size(value: str) -> int:

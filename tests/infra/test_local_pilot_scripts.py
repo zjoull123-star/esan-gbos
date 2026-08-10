@@ -189,6 +189,68 @@ def _write_docker_inspect_stub(tmp_path: Path, image_lock: dict[str, object]) ->
     return stub
 
 
+def _prepare_emergency_repo(tmp_path: Path) -> tuple[Path, Path]:
+    repo = tmp_path / "repo"
+    scripts = repo / "scripts" / "local-pilot"
+    infra = repo / "infra" / "local"
+    scripts.mkdir(parents=True)
+    infra.mkdir(parents=True)
+    for name in ("lib.sh", "containment.py", "emergency-stop", "clear-emergency-stop"):
+        shutil.copy2(SCRIPTS / name, scripts / name)
+    (infra / "compose.yml").write_text("name: emergency-test\nservices: {}\n", encoding="utf-8")
+    docker_log = tmp_path / "docker.jsonl"
+    docker = tmp_path / "docker"
+    _write_executable(
+        docker,
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import os\n"
+        "import pathlib\n"
+        "import sys\n\n"
+        "log = pathlib.Path(os.environ['EMERGENCY_DOCKER_LOG'])\n"
+        "with log.open('a', encoding='utf-8') as handle:\n"
+        "    handle.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "args = sys.argv[1:]\n"
+        "if 'stop' in args:\n"
+        "    raise SystemExit(int(os.environ.get('EMERGENCY_STOP_CODE', '0')))\n"
+        "if 'ps' in args:\n"
+        "    if os.environ.get('EMERGENCY_PS_FAIL') == '1':\n"
+        "        raise SystemExit(3)\n"
+        "    running = os.environ.get('EMERGENCY_RUNNING_SERVICE')\n"
+        "    if running:\n"
+        "        print(running)\n"
+        "    raise SystemExit(0)\n"
+        "raise SystemExit(2)\n",
+    )
+    return repo, docker_log
+
+
+def _run_emergency(
+    repo: Path,
+    docker_log: Path,
+    *,
+    stop_code: int = 0,
+    ps_fail: bool = False,
+    running_service: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    environment["PATH"] = os.pathsep.join((str(docker_log.parent), os.defpath))
+    environment["EMERGENCY_DOCKER_LOG"] = str(docker_log)
+    environment["EMERGENCY_STOP_CODE"] = str(stop_code)
+    if ps_fail:
+        environment["EMERGENCY_PS_FAIL"] = "1"
+    if running_service is not None:
+        environment["EMERGENCY_RUNNING_SERVICE"] = running_service
+    return subprocess.run(
+        [str(repo / "scripts" / "local-pilot" / "emergency-stop")],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+
 def test_local_pilot_preflight_compiles_with_default_python3(tmp_path: Path) -> None:
     python3 = shutil.which("python3", path=os.defpath)
     assert python3 is not None
@@ -226,6 +288,7 @@ def test_operational_scripts_are_executable_and_shell_safe() -> None:
     for name in (
         "start",
         "start-synthetic",
+        "start-email-deepseek-canary",
         "status",
         "stop",
         "emergency-stop",
@@ -238,6 +301,11 @@ def test_operational_scripts_are_executable_and_shell_safe() -> None:
         "build-runtime-image",
         "build-frappe-image",
         "bootstrap-synthetic-user",
+        "prepare-email-deepseek-canary",
+        "canary-preflight",
+        "canary-evidence",
+        "run-offline-fault-drills",
+        "run-retention",
     ):
         path = SCRIPTS / name
         content = _read(path)
@@ -246,7 +314,9 @@ def test_operational_scripts_are_executable_and_shell_safe() -> None:
         assert "set -x" not in content
         if content.startswith("#!/usr/bin/env bash"):
             assert "set -euo pipefail" in content
-    assert "未组合，不可启动" in _read(SCRIPTS / "status")
+    status = _read(SCRIPTS / "status")
+    assert 'python3 "${SCRIPT_DIR}/status.py"' in status
+    assert "未组合，不可启动" not in status
 
 
 def test_runtime_image_build_rejects_dirty_runtime_sources_before_docker(
@@ -362,6 +432,13 @@ def test_start_runs_fail_closed_preflight_before_secret_or_compose_actions() -> 
     assert "export GBOS_LOCAL_PILOT_MANIFEST" in start
     assert "${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}" in compose_file
     assert "--skip-runtime-image-check" not in start
+    assert "--canary-control" in start
+    canary_preflight = start.index('"${SCRIPT_DIR}/canary-preflight"')
+    assert secrets < canary_preflight < compose
+    assert "--profile observability" in start
+    assert "--profile model-projection" in start
+    assert "--profile model)" not in start
+    assert 'GBOS_COMMUNICATION_DRAFT_KILL_SWITCH="true"' in start
 
 
 def test_synthetic_start_is_explicit_image_gated_and_never_enables_external_profiles() -> None:
@@ -408,6 +485,36 @@ def test_synthetic_start_is_explicit_image_gated_and_never_enables_external_prof
     assert start.index(runtime_up) < start.index(demo_bootstrap)
 
 
+def test_email_deepseek_canary_start_is_explicit_and_accepts_no_secret_values() -> None:
+    script = _read(SCRIPTS / "start-email-deepseek-canary")
+
+    assert "--acknowledge-real-email-and-model" in script
+    assert "pilot-manifest.json" in script
+    assert "canary-run.json" in script
+    assert "--manifest" in script
+    assert "--canary-control" in script
+    assert "prepare-email-deepseek-canary" not in script
+    for forbidden in ("password", "api-key", "token", "secret"):
+        assert f"--{forbidden}" not in script.lower()
+
+
+def test_retention_wrapper_is_dry_run_first_and_requires_double_opt_in_for_deletion() -> None:
+    script = _read(SCRIPTS / "run-retention")
+
+    assert "--dry-run" in script
+    assert "--execute-expired-data" in script
+    assert "--acknowledge-expired-local-data-deletion" in script
+    assert 'GBOS_RETENTION_ENABLED="true"' in script
+    assert 'GBOS_RETENTION_DRY_RUN="true"' in script
+    execute = script.index("--execute-expired-data)")
+    acknowledge = script.index("--acknowledge-expired-local-data-deletion)")
+    compose_run = script.index("run --rm --no-deps retention-worker")
+    assert execute < compose_run
+    assert acknowledge < compose_run
+    assert "EMERGENCY_STOP" in script
+    assert " down " not in re.sub(r"\s+", " ", script)
+
+
 def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() -> None:
     stop = _read(SCRIPTS / "stop")
     emergency = _read(SCRIPTS / "emergency-stop")
@@ -431,17 +538,107 @@ def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() ->
         "connector-worker",
         "identity-resolution-worker",
         "model-projection-worker",
+        "communication-draft-worker",
         "media-worker",
         "agent-worker",
         "materialization-worker",
+        "retention-worker",
     ):
         assert service in emergency
     stop_command = emergency[emergency.index("docker compose") :]
     assert " postgres" not in stop_command
     assert " mariadb" not in stop_command
     assert " local-pilot-evidence-cas" not in stop_command
-    assert "EMERGENCY_STOP" in emergency
+    assert 'containment.py" activate' in emergency
     assert "whatsapp-poller" not in emergency
+
+
+def test_emergency_stop_verifies_containment_and_binds_a_private_receipt(
+    tmp_path: Path,
+) -> None:
+    repo, docker_log = _prepare_emergency_repo(tmp_path)
+
+    result = _run_emergency(repo, docker_log)
+
+    assert result.returncode == 0, result.stderr
+    runtime = repo / ".runtime" / "local-pilot"
+    latch = json.loads((runtime / "EMERGENCY_STOP").read_text(encoding="utf-8"))
+    receipt_path = runtime / "containment-receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["schema_version"] == "1.0"
+    assert receipt["verified"] is True
+    assert receipt["latch_id"] == latch["latch_id"]
+    assert receipt["running_services"] == []
+    assert stat.S_IMODE(receipt_path.stat().st_mode) == 0o600
+    assert "verified" in result.stdout.lower()
+
+
+def test_emergency_stop_never_claims_success_when_containment_cannot_be_verified(
+    tmp_path: Path,
+) -> None:
+    repo, docker_log = _prepare_emergency_repo(tmp_path)
+
+    result = _run_emergency(repo, docker_log, stop_code=1, ps_fail=True)
+
+    assert result.returncode != 0
+    runtime = repo / ".runtime" / "local-pilot"
+    assert (runtime / "EMERGENCY_STOP").is_file()
+    receipt = json.loads((runtime / "containment-receipt.json").read_text(encoding="utf-8"))
+    assert receipt["verified"] is False
+    assert "verified" not in result.stdout.lower()
+
+
+def test_clear_emergency_stop_requires_a_matching_verified_receipt(tmp_path: Path) -> None:
+    repo, docker_log = _prepare_emergency_repo(tmp_path)
+    runtime = repo / ".runtime" / "local-pilot"
+    runtime.mkdir(parents=True)
+    (runtime / "EMERGENCY_STOP").write_text(
+        json.dumps({"schema_version": "1.0", "latch_id": "new-latch"}),
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment["PATH"] = os.pathsep.join((str(docker_log.parent), os.defpath))
+
+    refused = subprocess.run(
+        [
+            str(repo / "scripts" / "local-pilot" / "clear-emergency-stop"),
+            "--acknowledge-contained",
+        ],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert refused.returncode != 0
+    assert (runtime / "EMERGENCY_STOP").is_file()
+
+    (runtime / "containment-receipt.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "latch_id": "new-latch",
+                "verified": True,
+                "running_services": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cleared = subprocess.run(
+        [
+            str(repo / "scripts" / "local-pilot" / "clear-emergency-stop"),
+            "--acknowledge-contained",
+        ],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert cleared.returncode == 0, cleared.stderr
+    assert not (runtime / "EMERGENCY_STOP").exists()
 
 
 def test_keychain_secret_materialization_is_non_logging_and_mode_0600() -> None:

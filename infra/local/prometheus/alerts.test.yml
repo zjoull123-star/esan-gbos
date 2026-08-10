@@ -1,0 +1,39 @@
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="identity-resolution",instance="observer-api:8003"}'
+        values: "0 0 0"
+      - series: 'gbos_identity_resolver_ready{instance="observer-api:8003"}'
+        values: "1 1 1"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: IdentityResolverTargetDown
+        exp_alerts:
+          - exp_labels:
+              alertname: IdentityResolverTargetDown
+              instance: observer-api:8003
+              job: identity-resolution
+              severity: critical
+            exp_annotations:
+              summary: Identity resolver metrics target is down
+              runbook_url: docs/local-pilot/RUNBOOK.md#identity-resolution
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="identity-resolution",instance="observer-api:8003"}'
+        values: "1 1 1"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: IdentityResolverMetricsMissing
+        exp_alerts:
+          - exp_labels:
+              alertname: IdentityResolverMetricsMissing
+              severity: critical
+            exp_annotations:
+              summary: Identity resolver readiness metric is missing
+              runbook_url: docs/local-pilot/RUNBOOK.md#identity-resolution

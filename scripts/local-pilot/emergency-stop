@@ -6,30 +6,51 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib.sh"
 
-mkdir -p -- "${RUNTIME_DIR}"
-chmod 700 "${RUNTIME_DIR}"
-printf '%s\n' "activated" > "${EMERGENCY_STOP_FILE}"
-chmod 600 "${EMERGENCY_STOP_FILE}"
+python3 "${SCRIPT_DIR}/containment.py" activate --runtime-dir "${RUNTIME_DIR}"
 read_secret_dir
 read_config_dir
 
 # Preserve databases, the evidence CAS, monitoring, and the local UI for forensics.
+targets=(
+  cloudflared
+  email-poller
+  wecom-poller
+  connector-worker
+  identity-resolution-worker
+  model-projection-worker
+  communication-draft-worker
+  media-worker
+  agent-worker
+  materialization-worker
+  retention-worker
+  webhook-ingress
+  frappe-worker
+  frappe-scheduler
+)
+stop_returncode=0
 docker compose \
   --project-name "${PROJECT_NAME}" \
   -f "${COMPOSE_FILE}" \
   --profile "*" \
-  stop \
-  cloudflared \
-  email-poller \
-  wecom-poller \
-  connector-worker \
-  identity-resolution-worker \
-  model-projection-worker \
-  media-worker \
-  agent-worker \
-  materialization-worker \
-  webhook-ingress \
-  frappe-worker \
-  frappe-scheduler || true
+  stop "${targets[@]}" || stop_returncode=$?
 
-echo "Emergency stop latched: identity, tunnel, pollers, webhook, model, and media workers stopped."
+running_file="$(mktemp "${RUNTIME_DIR}/running-services.XXXXXX")"
+chmod 600 "${running_file}"
+trap 'rm -f -- "${running_file}"' EXIT HUP INT TERM
+ps_returncode=0
+docker compose \
+  --project-name "${PROJECT_NAME}" \
+  -f "${COMPOSE_FILE}" \
+  --profile "*" \
+  ps --status running --services "${targets[@]}" > "${running_file}" || ps_returncode=$?
+
+if ! python3 "${SCRIPT_DIR}/containment.py" record \
+  --runtime-dir "${RUNTIME_DIR}" \
+  --stop-returncode "${stop_returncode}" \
+  --ps-returncode "${ps_returncode}" \
+  --running-file "${running_file}"; then
+  echo "Emergency stop latched, but containment could not be verified." >&2
+  exit 1
+fi
+
+echo "Emergency stop latched and containment verified."

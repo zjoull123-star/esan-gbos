@@ -1,28 +1,59 @@
 groups:
   - name: identity-resolution
     rules:
+      - alert: IdentityResolverTargetDown
+        expr: up{job="identity-resolution"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Identity resolver metrics target is down
+          runbook_url: docs/local-pilot/RUNBOOK.md#identity-resolution
+      - alert: IdentityResolverMetricsMissing
+        expr: absent(gbos_identity_resolver_ready)
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Identity resolver readiness metric is missing
+          runbook_url: docs/local-pilot/RUNBOOK.md#identity-resolution
       - alert: IdentityResolverNotReady
         expr: gbos_identity_resolver_ready == 0
         for: 1m
+        labels:
+          severity: critical
         annotations:
           summary: Identity resolver is not ready
+          runbook_url: docs/local-pilot/RUNBOOK.md#identity-resolution
       - alert: IdentityResolverHeartbeatStale
         expr: gbos_identity_resolver_heartbeat_age_seconds > 30
         for: 1m
+        labels:
+          severity: critical
         annotations:
           summary: Identity resolver heartbeat is stale
+          runbook_url: docs/local-pilot/RUNBOOK.md#identity-resolution
       - alert: IdentityResolverBacklogStale
         expr: gbos_identity_resolver_oldest_work_age_seconds > 300
         for: 5m
+        labels:
+          severity: warning
         annotations:
           summary: Identity resolution backlog is stale
+          runbook_url: docs/local-pilot/RUNBOOK.md#identity-resolution
       - alert: IdentityResolverConflict
         expr: gbos_identity_resolver_conflicts > 0
         for: 1m
+        labels:
+          severity: warning
         annotations:
           summary: Identity resolution has conflicts
+          runbook_url: docs/local-pilot/RUNBOOK.md#identity-resolution
       - alert: IdentityResolverLatencyHigh
         expr: histogram_quantile(0.95, sum by (le) (rate(gbos_identity_resolver_request_duration_seconds_bucket[5m]))) > 0.5
         for: 5m
+        labels:
+          severity: warning
         annotations:
           summary: Identity resolver p95 latency is high
+          runbook_url: docs/local-pilot/RUNBOOK.md#identity-resolution

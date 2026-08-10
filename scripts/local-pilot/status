@@ -5,12 +5,34 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib.sh"
 
+MANIFEST="${DEFAULT_MANIFEST}"
+json_arg=()
+while (( $# > 0 )); do
+  case "$1" in
+    --manifest)
+      [[ $# -ge 2 ]] || { echo "--manifest requires a path" >&2; exit 64; }
+      MANIFEST="$2"
+      shift
+      ;;
+    --json)
+      json_arg=(--json)
+      ;;
+    *)
+      echo "Usage: scripts/local-pilot/status [--manifest PATH] [--json]" >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
 read_secret_dir
 read_config_dir
-echo "COMPOSITION: 未组合，不可启动（blocked runtime entrypoints 或镜像身份尚未闭合）。"
-if [[ -e "${EMERGENCY_STOP_FILE}" ]]; then
-  echo "SAFETY: emergency-stop latch is ACTIVE."
-else
-  echo "SAFETY: emergency-stop latch is clear."
-fi
-compose --profile "*" ps
+python3 "${SCRIPT_DIR}/status.py" \
+  --manifest "${MANIFEST}" \
+  --entrypoints "${REPO_ROOT}/infra/local/runtime-entrypoints.json" \
+  --image-lock "${REPO_ROOT}/infra/local/images.lock.json" \
+  --runtime-dir "${RUNTIME_DIR}" \
+  --repo-root "${REPO_ROOT}" \
+  --compose-file "${COMPOSE_FILE}" \
+  --project-name "${PROJECT_NAME}" \
+  "${json_arg[@]}"

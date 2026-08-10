@@ -242,7 +242,7 @@ services:
   model-projection-worker:
     image: *runtime-image
     pull_policy: never
-    profiles: ["model"]
+    profiles: ["model-projection"]
     command: ["python", "-m", "services.local_pilot_runtime.model_projection_worker"]
     environment:
       <<: *runtime-environment
@@ -270,20 +270,46 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  communication-draft-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["model-projection"]
+    command: ["python", "-m", "services.local_pilot_runtime.communication_draft_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_COMMUNICATION_DRAFT_KILL_SWITCH: ${GBOS_COMMUNICATION_DRAFT_KILL_SWITCH:-true}
+    secrets:
+      - postgres_context_password
+      - frappe_materializer_api_key
+      - frappe_materializer_api_secret
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-communication-draft.json:/config/local-pilot-runtime.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      frappe-backend:
+        condition: service_healthy
+    restart: unless-stopped
+
   agent-worker:
     image: *runtime-image
     pull_policy: never
-    profiles: ["model"]
+    profiles: ["agent-model"]
     command: ["python", "-m", "services.local_pilot_runtime.agent_worker"]
     environment:
       <<: *runtime-environment
       GBOS_MODEL_KILL_SWITCH: ${GBOS_MODEL_KILL_SWITCH:-true}
+      GBOS_DEEPSEEK_EGRESS_ENABLED: ${GBOS_DEEPSEEK_EGRESS_ENABLED:-false}
     secrets:
       - postgres_agent_password
       - context_client_bearer
       - deepseek_api_key
       - tokenizer_hmac_key
       - mapping_vault_key
+      - trusted_phrase_lexicon
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
       - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-agent.json:/config/local-pilot-runtime.json:ro
@@ -323,6 +349,31 @@ services:
       frappe-backend:
         condition: service_healthy
     restart: unless-stopped
+
+  retention-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["retention"]
+    command: ["python", "-m", "services.local_pilot_runtime.retention_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_RETENTION_ENABLED: ${GBOS_RETENTION_ENABLED:-false}
+      GBOS_RETENTION_DRY_RUN: ${GBOS_RETENTION_DRY_RUN:-true}
+      GBOS_RETENTION_BATCH_SIZE: ${GBOS_RETENTION_BATCH_SIZE:-100}
+    secrets:
+      - postgres_observer_password
+      - mapping_vault_key
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-retention.json:/config/local-pilot-runtime.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+      - local-pilot-evidence-cas:/var/lib/gbos/evidence
+      - local-pilot-tokenizer-vault:/var/lib/gbos/tokenizer-vault
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    restart: "no"
 
   webhook-ingress:
     image: *runtime-image

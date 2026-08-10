@@ -9,5 +9,5 @@ if [[ "${1:-}" != "--acknowledge-contained" || $# -ne 1 ]]; then
   echo "Usage: scripts/local-pilot/clear-emergency-stop --acknowledge-contained" >&2
   exit 64
 fi
-rm -f -- "${EMERGENCY_STOP_FILE}"
+python3 "${SCRIPT_DIR}/containment.py" clear --runtime-dir "${RUNTIME_DIR}"
 echo "Emergency-stop latch cleared after explicit containment acknowledgement."

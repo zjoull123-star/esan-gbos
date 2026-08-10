@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+
+if [[ "${1:-}" != "--acknowledge-real-email-and-model" || "${2:-}" != "--canary-dir" || $# -ne 3 ]]; then
+  echo "Usage: scripts/local-pilot/start-email-deepseek-canary --acknowledge-real-email-and-model --canary-dir PATH" >&2
+  exit 64
+fi
+
+CANARY_DIR="$3"
+if [[ ! -d "${CANARY_DIR}" || -L "${CANARY_DIR}" ]]; then
+  echo "Canary directory must be a real directory." >&2
+  exit 78
+fi
+MANIFEST="${CANARY_DIR}/pilot-manifest.json"
+CONTROL="${CANARY_DIR}/canary-run.json"
+if [[ ! -f "${MANIFEST}" || -L "${MANIFEST}" || ! -f "${CONTROL}" || -L "${CONTROL}" ]]; then
+  echo "Prepared canary controls are unavailable." >&2
+  exit 78
+fi
+
+exec "${SCRIPT_DIR}/start" \
+  --manifest "${MANIFEST}" \
+  --canary-control "${CONTROL}"

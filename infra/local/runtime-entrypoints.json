@@ -2,9 +2,9 @@
   "runtime_image": "esan-gbos-local-pilot-runtime:2026-08-08",
   "composition": {
     "status": "not_composed",
-    "frappe_pwa": "blocked_local_image_unbuilt",
+    "frappe_pwa": "blocked_current_source_image_refresh_required",
     "runtime_containerfile": "infra/local/Containerfile.runtime",
-    "reason": "blocked service entrypoints and local image identities remain unverified",
+    "reason": "service composition is implemented, but current-source runtime and Frappe images are not yet rebuilt and recorded",
     "synthetic_bootstrap": {
       "service": "frappe-synthetic-bootstrap",
       "status": "declared_not_executed",
@@ -56,16 +56,28 @@
     },
     "model-projection-worker": {
       "path": "services/local_pilot_runtime/model_projection_worker.py",
-      "status": "blocked_user_lexicon_and_credentials",
-      "reason": "production code is composable but an attested current user lexicon and real credentials are absent",
+      "status": "executable",
       "config": "/config/projection-connections.json",
-      "provider_topology": "direct_shared_provider_factory"
+      "provider_topology": "direct_shared_provider_factory",
+      "runtime_inputs": "attested current user lexicon and private DeepSeek/model/DB credentials"
     },
     "agent-worker": {
       "path": "services/local_pilot_runtime/agent_worker.py",
-      "status": "blocked",
-      "reason": "standalone main does not yet construct the shared DeepSeek provider factory",
-      "provider_topology": "direct_shared_provider_factory"
+      "status": "executable",
+      "provider_topology": "direct_shared_provider_factory",
+      "runtime_inputs": "attested current user lexicon and private DeepSeek/model/DB credentials"
+    },
+    "communication-draft-worker": {
+      "path": "services/local_pilot_runtime/communication_draft_worker.py",
+      "status": "executable",
+      "network": "internal_only",
+      "required_when_deepseek_enabled": true
+    },
+    "retention-worker": {
+      "path": "services/local_pilot_runtime/retention_worker.py",
+      "status": "executable",
+      "network": "internal_only",
+      "execution": "one_shot_dry_run_first"
     },
     "materialization-worker": {
       "path": "services/local_pilot_runtime/materialization_worker.py",
@@ -127,8 +139,8 @@
       "frappe-identity-resolver-bootstrap": "apps/esan_gbos/esan_gbos/identity_resolver_service.py"
     },
     "deepseek": {
-      "agent-worker": "services/local_pilot_runtime/agent_worker.py",
-      "model-projection-worker": "services/local_pilot_runtime/model_projection_worker.py"
+      "model-projection-worker": "services/local_pilot_runtime/model_projection_worker.py",
+      "communication-draft-worker": "services/local_pilot_runtime/communication_draft_worker.py"
     },
     "media": {
       "media-worker": "services/local_pilot_runtime/media_worker.py"

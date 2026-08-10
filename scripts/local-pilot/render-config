@@ -18,6 +18,7 @@ _ROLES = {
     "context": "gbos_context_app",
     "agent": "gbos_agent_app",
     "media": "gbos_media_app",
+    "retention": "gbos_observer_app",
 }
 _ROLE_PASSWORD_FILES = {
     "observer": "/run/secrets/postgres_observer_password",
@@ -26,6 +27,8 @@ _ROLE_PASSWORD_FILES = {
     "agent": "/run/secrets/postgres_agent_password",
     "media": "/run/secrets/postgres_media_password",
     "materialization": "/run/secrets/postgres_agent_password",
+    "communication": "/run/secrets/postgres_context_password",
+    "retention": "/run/secrets/postgres_observer_password",
 }
 _CHANNEL_FILES = {
     "email": "/run/secrets/email_credential",
@@ -144,10 +147,10 @@ def _runtime_config(
         ),
         "agent_worker": _component(
             enabled=(
-                (deepseek_enabled and purpose == "agent")
-                or (approved and purpose == "materialization")
+                (approved and purpose == "materialization")
+                or (deepseek_enabled and purpose == "communication")
             ),
-            provider_mode="deepseek" if purpose == "agent" else "disabled",
+            provider_mode="disabled",
             synthetic=synthetic,
         ),
         # The runtime schema retains the model_worker component name, but the
@@ -161,7 +164,7 @@ def _runtime_config(
     }
     endpoint = (
         "http://frappe-backend:8000"
-        if purpose in {"identity", "materialization"}
+        if purpose in {"identity", "materialization", "communication"}
         else "http://context-api:8001"
     )
     return {
@@ -184,7 +187,7 @@ def _runtime_config(
                 if purpose == "identity"
                 else (
                     "agent-materializer-v1"
-                    if purpose == "materialization"
+                    if purpose in {"materialization", "communication"}
                     else "local-pilot-context-auth-v1"
                 )
             ),
@@ -307,6 +310,16 @@ def main() -> int:
                 manifest,
                 role_name=_ROLES["agent"],
                 purpose="materialization",
+                synthetic=synthetic,
+            ),
+        )
+        _atomic_private_json(
+            output_dir,
+            "runtime-communication-draft.json",
+            _runtime_config(
+                manifest,
+                role_name=_ROLES["context"],
+                purpose="communication",
                 synthetic=synthetic,
             ),
         )

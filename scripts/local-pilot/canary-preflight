@@ -1,0 +1,320 @@
+#!/usr/bin/env python3
+"""Validate private Email + DeepSeek canary inputs without rendering their values."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional
+
+_EMAIL_FIELDS = {
+    "instance_id",
+    "team_ref",
+    "agent_task_type",
+    "account_user_ref",
+    "host",
+    "port",
+    "mailbox",
+    "folder",
+    "username",
+    "password",
+    "poll_limit",
+    "max_message_bytes",
+    "max_attachment_bytes",
+    "max_attachments",
+    "rescan_max_window_seconds",
+    "rescan_max_uids",
+    "initial_checkpoint",
+}
+_CHECKPOINT_FIELDS = {"mailbox", "uid", "uidvalidity", "version"}
+_LEXICON_FIELDS = {
+    "schema_version",
+    "site_id",
+    "resolver_version",
+    "approved_by",
+    "approved_at",
+    "expires_at",
+    "names_complete",
+    "organizations_complete",
+    "names",
+    "organizations",
+}
+_TASKS = {"sales", "purchase", "product_sample", "ceo"}
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest", required=True, type=Path)
+    parser.add_argument("--run-control", required=True, type=Path)
+    parser.add_argument("--secret-dir", required=True, type=Path)
+    parser.add_argument("--repo-root", required=True, type=Path)
+    parser.add_argument("--now")
+    parser.add_argument("--json", action="store_true")
+    return parser
+
+
+def _object(path: Path, *, maximum: int, private: bool) -> Dict[str, Any]:
+    try:
+        before = path.lstat()
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError("required private input is unavailable") from exc
+    try:
+        details = os.fstat(descriptor)
+        if (
+            stat.S_ISLNK(before.st_mode)
+            or before.st_dev != details.st_dev
+            or before.st_ino != details.st_ino
+            or not stat.S_ISREG(details.st_mode)
+            or not 0 < details.st_size <= maximum
+            or (private and stat.S_IMODE(details.st_mode) != 0o600)
+        ):
+            raise ValueError("required private input is unsafe")
+        payload = os.read(descriptor, maximum + 1)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if len(payload) != details.st_size or after.st_size != details.st_size:
+        raise ValueError("required private input changed during validation")
+    try:
+        value = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("required private input is invalid JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError("required private input must be an object")
+    return value
+
+
+def _private_bytes(path: Path, *, minimum: int, maximum: int, exact: int = 0) -> bytes:
+    try:
+        before = path.lstat()
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise ValueError("required credential file is unavailable") from exc
+    try:
+        details = os.fstat(descriptor)
+        expected = exact if exact else details.st_size
+        if (
+            stat.S_ISLNK(before.st_mode)
+            or before.st_dev != details.st_dev
+            or before.st_ino != details.st_ino
+            or not stat.S_ISREG(details.st_mode)
+            or stat.S_IMODE(details.st_mode) != 0o600
+            or not minimum <= details.st_size <= maximum
+            or (exact and details.st_size != exact)
+        ):
+            raise ValueError("required credential file is unsafe")
+        payload = os.read(descriptor, maximum + 1)
+    finally:
+        os.close(descriptor)
+    if len(payload) != expected:
+        raise ValueError("required credential file changed during validation")
+    return payload
+
+
+def _timestamp(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("timestamp is invalid")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("timestamp is invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timestamp is invalid")
+    return parsed.astimezone(timezone.utc)
+
+
+def _now(value: Optional[str]) -> datetime:
+    return datetime.now(timezone.utc) if value is None else _timestamp(value)
+
+
+def _source_commit(repo_root: Path) -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    value = result.stdout.strip()
+    if result.returncode != 0 or re.fullmatch(r"[0-9a-f]{40}", value) is None:
+        raise ValueError("source binding is unavailable")
+    return value
+
+
+def _require_repo_external(path: Path, repo_root: Path) -> None:
+    try:
+        resolved = path.resolve(strict=True)
+        root = repo_root.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("canary private inputs must exist outside the repository") from exc
+    if os.path.commonpath((str(resolved), str(root))) == str(root):
+        raise ValueError("canary private inputs must stay outside the repository")
+
+
+def _validate_manifest(manifest: Mapping[str, Any], control: Mapping[str, Any]) -> None:
+    channels = manifest.get("channels")
+    deepseek = manifest.get("deepseek")
+    if (
+        manifest.get("production_go") is not False
+        or manifest.get("local_pilot_go") is not True
+        or manifest.get("local_pilot_status") != "ready"
+        or not isinstance(channels, Mapping)
+        or not isinstance(deepseek, Mapping)
+        or deepseek.get("enabled") is not True
+        or deepseek.get("kill_switch") is not False
+        or deepseek.get("model") != "deepseek-v4-flash"
+    ):
+        raise ValueError("canary manifest boundary is invalid")
+    for name in ("email", "wecom", "whatsapp", "media"):
+        value = channels.get(name)
+        expected_enabled = name == "email"
+        if not isinstance(value, Mapping) or value.get("enabled") is not expected_enabled:
+            raise ValueError("canary manifest channel scope is invalid")
+    scope = control.get("scope")
+    if scope != {
+        "channels": ["email"],
+        "model": "deepseek-v4-flash",
+        "external_send": False,
+        "formal_commands": False,
+    }:
+        raise ValueError("canary control scope is invalid")
+    if (
+        control.get("schema_version") != "1.1"
+        or control.get("stability_assessment")
+        != {
+            "continuous_runtime_required": False,
+            "seventy_two_hour_run": "deferred_by_user",
+        }
+        or "pilot_window_hours" in control
+    ):
+        raise ValueError("canary stability scope is invalid")
+
+
+def _validate_email(path: Path) -> None:
+    value = _object(path, maximum=65_536, private=True)
+    if set(value) != _EMAIL_FIELDS:
+        raise ValueError("email credential schema is invalid")
+    for field in (
+        "instance_id",
+        "team_ref",
+        "account_user_ref",
+        "host",
+        "mailbox",
+        "folder",
+        "username",
+        "password",
+    ):
+        item = value.get(field)
+        if not isinstance(item, str) or not item or item != item.strip():
+            raise ValueError("email credential routing is incomplete")
+    if value.get("agent_task_type") not in _TASKS:
+        raise ValueError("email credential routing is incomplete")
+    checkpoint_value = value.get("initial_checkpoint")
+    if not isinstance(checkpoint_value, str) or not checkpoint_value:
+        raise ValueError("email initial checkpoint is required")
+    try:
+        checkpoint = json.loads(checkpoint_value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("email initial checkpoint is invalid") from exc
+    if (
+        not isinstance(checkpoint, dict)
+        or set(checkpoint) != _CHECKPOINT_FIELDS
+        or checkpoint.get("version") != 1
+        or checkpoint.get("mailbox") != value.get("mailbox")
+        or type(checkpoint.get("uid")) is not int
+        or checkpoint["uid"] < 0
+        or type(checkpoint.get("uidvalidity")) is not int
+        or checkpoint["uidvalidity"] < 1
+    ):
+        raise ValueError("email initial checkpoint is invalid")
+
+
+def _validate_lexicon(path: Path, *, site_id: object, now: datetime) -> None:
+    value = _object(path, maximum=65_536, private=True)
+    if (
+        set(value) != _LEXICON_FIELDS
+        or value.get("schema_version") != "1.0"
+        or value.get("site_id") != site_id
+        or value.get("names_complete") is not True
+        or value.get("organizations_complete") is not True
+        or not isinstance(value.get("names"), list)
+        or not isinstance(value.get("organizations"), list)
+        or not value["names"] + value["organizations"]
+    ):
+        raise ValueError("trusted phrase lexicon is invalid")
+    approved = _timestamp(value.get("approved_at"))
+    expires = _timestamp(value.get("expires_at"))
+    if not approved <= now < expires:
+        raise ValueError("trusted phrase lexicon is not current")
+    if expires - approved > timedelta(days=30):
+        raise ValueError("trusted phrase lexicon attestation window is invalid")
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        for candidate in (args.manifest, args.run_control, args.secret_dir):
+            _require_repo_external(candidate, args.repo_root)
+        manifest = _object(args.manifest, maximum=65_536, private=True)
+        control = _object(args.run_control, maximum=65_536, private=True)
+        if hashlib.sha256(args.manifest.read_bytes()).hexdigest() != control.get(
+            "manifest_sha256"
+        ):
+            raise ValueError("canary manifest digest conflicts")
+        if control.get("source_commit") != _source_commit(args.repo_root):
+            raise ValueError("canary source binding conflicts")
+        _validate_manifest(manifest, control)
+        directory = args.secret_dir
+        details = directory.lstat()
+        if directory.is_symlink() or not directory.is_dir() or stat.S_IMODE(details.st_mode) != 0o700:
+            raise ValueError("secret directory is unsafe")
+        _validate_email(directory / "email_credential")
+        _private_bytes(directory / "deepseek_api_key", minimum=1, maximum=4096)
+        _private_bytes(directory / "identity_hmac_key", minimum=32, maximum=4096)
+        _private_bytes(directory / "tokenizer_hmac_key", minimum=32, maximum=32, exact=32)
+        _private_bytes(directory / "mapping_vault_key", minimum=32, maximum=32, exact=32)
+        for name in (
+            "frappe_materializer_api_key",
+            "frappe_materializer_api_secret",
+            "frappe_identity_resolver_api_key",
+            "frappe_identity_resolver_api_secret",
+        ):
+            _private_bytes(directory / name, minimum=1, maximum=4096)
+        _validate_lexicon(
+            directory / "trusted_phrase_lexicon",
+            site_id=manifest.get("site_id"),
+            now=_now(args.now),
+        )
+        payload = {
+            "schema_version": "1.0",
+            "ready": True,
+            "checks": {
+                "credential_files": "verified",
+                "email_initial_checkpoint": "verified",
+                "manifest_binding": "verified",
+                "phrase_lexicon": "verified",
+                "source_binding": "verified",
+            },
+        }
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        print(f"CANARY PREFLIGHT FAILED: {exc}", file=sys.stderr)
+        return 78
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("Email + DeepSeek canary private inputs are ready.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

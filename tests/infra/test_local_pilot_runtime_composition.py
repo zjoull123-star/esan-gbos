@@ -541,15 +541,21 @@ def test_real_renderer_enables_direct_model_consumers_without_a_durable_queue(
     observer = json.loads(_read(output / "runtime-observer.json"))
     agent = json.loads(_read(output / "runtime-agent.json"))
     materialization = json.loads(_read(output / "runtime-materialization.json"))
+    communication = json.loads(
+        (output / "runtime-communication-draft.json").read_text(encoding="utf-8")
+    )
     projection = json.loads(_read(output / "projection-connections.json"))
     assert observer["components"]["model_worker"]["enabled"] is True
     assert observer["components"]["model_worker"]["provider_mode"] == "deepseek"
-    assert agent["components"]["agent_worker"]["enabled"] is True
-    assert agent["components"]["agent_worker"]["provider_mode"] == "deepseek"
+    assert agent["components"]["agent_worker"]["enabled"] is False
+    assert agent["components"]["agent_worker"]["provider_mode"] == "disabled"
     assert materialization["components"]["agent_worker"]["enabled"] is True
     assert materialization["components"]["agent_worker"]["kill_switch"] is False
     assert materialization["components"]["model_worker"]["enabled"] is False
     assert materialization["context_endpoint"]["base_url"] == "http://frappe-backend:8000"
+    assert communication["components"]["agent_worker"]["enabled"] is True
+    assert communication["components"]["agent_worker"]["provider_mode"] == "disabled"
+    assert communication["context_endpoint"]["base_url"] == "http://frappe-backend:8000"
     assert projection["controlled_egress"] is True
     assert {
         (connection["host"], connection["port"])
@@ -567,14 +573,15 @@ def test_blocked_entrypoints_are_honest_and_webhook_has_no_fake_health() -> None
     manifest = json.loads(_read(INFRA / "local-pilot-manifest.json"))
 
     assert entrypoints["composition"]["status"] == "not_composed"
+    assert entrypoints["composition"]["frappe_pwa"] == (
+        "blocked_current_source_image_refresh_required"
+    )
     assert manifest["local_pilot_go"] is False
     for service in ("connector-worker", "webhook-ingress", "email-poller"):
         assert entrypoints["services"][service]["status"] == "executable"
     assert entrypoints["services"]["wecom-poller"]["status"] == "blocked_official_sdk"
-    assert (
-        entrypoints["services"]["model-projection-worker"]["status"]
-        == "blocked_user_lexicon_and_credentials"
-    )
+    assert entrypoints["services"]["model-projection-worker"]["status"] == "executable"
+    assert entrypoints["services"]["communication-draft-worker"]["status"] == "executable"
     assert entrypoints["services"]["media-worker"]["status"] == "blocked"
     assert entrypoints["services"]["observer-api"]["status"] == "executable"
     observer = _service_block(compose, "observer-api")
@@ -595,6 +602,116 @@ def test_blocked_entrypoints_are_honest_and_webhook_has_no_fake_health() -> None
     assert "healthcheck:" not in webhook
     assert "condition: service_healthy" not in _service_block(compose, "cloudflared")
     assert "webhook-ingress" in _read(INFRA / "cloudflared" / "config.yml")
+
+
+def test_deepseek_profile_runs_only_observation_projection_and_draft_delivery(
+    tmp_path: Path,
+) -> None:
+    manifest = json.loads(_read(INFRA / "local-pilot-manifest.json"))
+    manifest["local_pilot_go"] = True
+    manifest["local_pilot_status"] = "ready"
+    manifest["deepseek"].update(
+        {
+            "enabled": True,
+            "kill_switch": False,
+            "keychain_ref": "keychain://com.esan.gbos.local-pilot/deepseek-api-key",
+        }
+    )
+    candidate = tmp_path / "manifest.json"
+    candidate.write_text(json.dumps(manifest), encoding="utf-8")
+    output = tmp_path / "rendered"
+
+    result = subprocess.run(
+        [
+            str(SCRIPTS / "render-config"),
+            "--manifest",
+            str(candidate),
+            "--output-dir",
+            str(output),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    agent = json.loads(_read(output / "runtime-agent.json"))
+    communication_path = output / "runtime-communication-draft.json"
+    assert communication_path.is_file(), "communication draft runtime config is missing"
+    communication = json.loads(communication_path.read_text(encoding="utf-8"))
+    assert agent["components"]["agent_worker"]["enabled"] is False
+    assert communication["postgres"]["user"] == "gbos_context_app"
+    assert communication["postgres"]["password_file"] == "/run/secrets/postgres_context_password"
+    assert communication["components"]["agent_worker"]["enabled"] is True
+    assert communication["components"]["model_worker"]["enabled"] is False
+    assert communication["context_endpoint"]["base_url"] == "http://frappe-backend:8000"
+    assert communication["auth"]["context_auth_ref"] == "agent-materializer-v1"
+
+    compose = _read(INFRA / "compose.yml")
+    projection = _service_block(compose, "model-projection-worker")
+    delivery = _service_block(compose, "communication-draft-worker")
+    agent_worker = _service_block(compose, "agent-worker")
+    assert 'profiles: ["model-projection"]' in projection
+    assert 'profiles: ["model-projection"]' in delivery
+    assert 'profiles: ["agent-model"]' in agent_worker
+    assert "GBOS_COMMUNICATION_DRAFT_KILL_SWITCH" in delivery
+    assert "runtime-communication-draft.json" in delivery
+    assert "postgres_context_password" in delivery
+    assert "frappe_materializer_api_key" in delivery
+    assert "frappe_materializer_api_secret" in delivery
+    assert "controlled-egress" not in delivery
+
+
+def test_retention_is_rendered_as_least_privilege_one_shot_without_egress(
+    tmp_path: Path,
+) -> None:
+    manifest = json.loads(_read(INFRA / "local-pilot-manifest.json"))
+    manifest["local_pilot_go"] = True
+    manifest["local_pilot_status"] = "ready"
+    candidate = tmp_path / "manifest.json"
+    candidate.write_text(json.dumps(manifest), encoding="utf-8")
+    output = tmp_path / "rendered"
+
+    result = subprocess.run(
+        [
+            str(SCRIPTS / "render-config"),
+            "--manifest",
+            str(candidate),
+            "--output-dir",
+            str(output),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    retention = json.loads(_read(output / "runtime-retention.json"))
+    assert retention["postgres"]["user"] == "gbos_observer_app"
+    assert retention["postgres"]["password_file"] == ("/run/secrets/postgres_observer_password")
+    assert all(component["enabled"] is False for component in retention["components"].values())
+    assert retention["worker"]["worker_id"] == "local-pilot-retention-worker"
+
+    block = _service_block(_read(INFRA / "compose.yml"), "retention-worker")
+    assert 'profiles: ["retention"]' in block
+    assert "services.local_pilot_runtime.retention_worker" in block
+    assert "GBOS_RETENTION_ENABLED" in block
+    assert "GBOS_RETENTION_DRY_RUN" in block
+    assert "runtime-retention.json:/config/local-pilot-runtime.json:ro" in block
+    assert "- postgres_observer_password" in block
+    assert "- mapping_vault_key" in block
+    for forbidden in (
+        "postgres_context_password",
+        "postgres_agent_password",
+        "deepseek_api_key",
+        "controlled-egress",
+    ):
+        assert forbidden not in block
+    assert "local-pilot-evidence-cas:/var/lib/gbos/evidence" in block
+    assert "local-pilot-tokenizer-vault:/var/lib/gbos/tokenizer-vault" in block
+    assert 'restart: "no"' in block
 
 
 def test_channel_commands_configs_and_profiles_match_the_concrete_entrypoints() -> None:
@@ -695,12 +812,18 @@ def test_start_orders_config_and_migration_before_runtime_and_keeps_real_gate() 
     secrets = start.index('"${SCRIPT_DIR}/prepare-secrets"')
     render = start.index('"${SCRIPT_DIR}/render-config"')
     migrate = start.index("run --rm migrations")
+    retention_dry_run = start.index('"${SCRIPT_DIR}/run-retention" --dry-run')
     runtime_up = start.rindex(" up -d --wait")
-    assert preflight < secrets < render < migrate < runtime_up
+    assert preflight < secrets < render < migrate < retention_dry_run < runtime_up
     assert "--require-go" in start
     assert "--synthetic" not in start
     assert 'GBOS_LOCAL_RUNTIME_ENABLED: "true"' in _read(INFRA / "compose.yml")
     assert "GBOS_LOCAL_RUNTIME_ENABLED" not in _read(SCRIPTS / "lib.sh")
+    assert 'compose_mutated="false"' in start
+    assert 'compose_mutated="true"' in start
+    rollback = start[start.index("rollback()") : start.index("config_tmp_root=")]
+    assert '"${SCRIPT_DIR}/emergency-stop"' in rollback
+    assert rollback.index('"${SCRIPT_DIR}/emergency-stop"') < rollback.index("cleanup_config_dir")
 
     executable_stop = "\n".join(
         line for line in stop.splitlines() if not line.lstrip().startswith("#")
@@ -713,6 +836,7 @@ def test_start_orders_config_and_migration_before_runtime_and_keeps_real_gate() 
         "model-projection-worker",
         "agent-worker",
         "materialization-worker",
+        "retention-worker",
         "email-poller",
         "wecom-poller",
         "media-worker",
@@ -855,10 +979,9 @@ def test_secret_materialization_covers_runtime_crypto_frappe_and_channels() -> N
     assert "keychain://com.esan.gbos.local-pilot/frappe-identity-resolver-api-secret" in prepare
     projection = _service_block(compose, "model-projection-worker")
     assert "- trusted_phrase_lexicon" in projection
-    for unrelated in ("agent-worker", "materialization-worker", "connector-worker"):
+    assert "- trusted_phrase_lexicon" in _service_block(compose, "agent-worker")
+    for unrelated in ("materialization-worker", "connector-worker"):
         assert "trusted_phrase_lexicon" not in _service_block(compose, unrelated)
     entrypoints = json.loads(_read(INFRA / "runtime-entrypoints.json"))
-    assert (
-        entrypoints["services"]["model-projection-worker"]["status"]
-        == "blocked_user_lexicon_and_credentials"
-    )
+    assert entrypoints["services"]["model-projection-worker"]["status"] == "executable"
+    assert "runtime_inputs" in entrypoints["services"]["model-projection-worker"]

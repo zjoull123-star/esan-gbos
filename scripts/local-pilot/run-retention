@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+MANIFEST="${DEFAULT_MANIFEST}"
+MODE=""
+ACKNOWLEDGED="false"
+while (( $# > 0 )); do
+  case "$1" in
+    --dry-run)
+      [[ -z "${MODE}" ]] || { echo "Retention mode may be selected only once." >&2; exit 64; }
+      MODE="dry-run"
+      ;;
+    --execute-expired-data)
+      [[ -z "${MODE}" ]] || { echo "Retention mode may be selected only once." >&2; exit 64; }
+      MODE="execute"
+      ;;
+    --acknowledge-expired-local-data-deletion)
+      ACKNOWLEDGED="true"
+      ;;
+    --manifest)
+      [[ $# -ge 2 ]] || { echo "--manifest requires a path" >&2; exit 64; }
+      MANIFEST="$2"
+      shift
+      ;;
+    *)
+      echo "Usage: run-retention (--dry-run | --execute-expired-data --acknowledge-expired-local-data-deletion) [--manifest PATH]" >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+[[ -n "${MODE}" ]] || { echo "Retention mode is required." >&2; exit 64; }
+if [[ "${MODE}" == "execute" && "${ACKNOWLEDGED}" != "true" ]]; then
+  echo "Expired-data deletion requires explicit acknowledgement." >&2
+  exit 64
+fi
+if [[ "${MODE}" == "dry-run" && "${ACKNOWLEDGED}" == "true" ]]; then
+  echo "Deletion acknowledgement is not valid for a dry run." >&2
+  exit 64
+fi
+if [[ -e "${EMERGENCY_STOP_FILE}" ]]; then
+  echo "Emergency-stop latch is active; retention is disabled." >&2
+  exit 78
+fi
+
+GBOS_LOCAL_PILOT_MANIFEST="$(
+  CDPATH='' cd -- "$(dirname -- "${MANIFEST}")" &&
+    printf '%s/%s\n' "$PWD" "$(basename -- "${MANIFEST}")"
+)"
+export GBOS_LOCAL_PILOT_MANIFEST
+read_secret_dir
+read_config_dir
+[[ -n "${GBOS_SECRET_DIR:-}" && -d "${GBOS_SECRET_DIR}" ]] || {
+  echo "Local-pilot secret directory is unavailable." >&2
+  exit 78
+}
+[[ -n "${GBOS_CONFIG_DIR:-}" && -f "${GBOS_CONFIG_DIR}/runtime-retention.json" ]] || {
+  echo "Retention runtime configuration is unavailable." >&2
+  exit 78
+}
+
+GBOS_RETENTION_ENABLED="true"
+GBOS_RETENTION_DRY_RUN="true"
+if [[ "${MODE}" == "execute" ]]; then
+  GBOS_RETENTION_DRY_RUN="false"
+fi
+export GBOS_RETENTION_ENABLED GBOS_RETENTION_DRY_RUN
+
+compose --profile retention run --rm --no-deps retention-worker
+if [[ "${MODE}" == "dry-run" ]]; then
+  echo "Retention dry run completed; no data was deleted."
+else
+  echo "Expired local data retention execution completed."
+fi

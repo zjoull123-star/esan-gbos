@@ -107,11 +107,17 @@ def test_external_capabilities_are_profile_gated_and_default_killed() -> None:
         assert "GBOS_CONNECTOR_KILL_SWITCH: ${GBOS_CONNECTOR_KILL_SWITCH:-true}" in block
         assert "controlled-egress" in block
 
-    for service in ("agent-worker", "model-projection-worker"):
-        model = _service_block(compose, service)
-        assert 'profiles: ["model"]' in model
+    agent = _service_block(compose, "agent-worker")
+    projection = _service_block(compose, "model-projection-worker")
+    delivery = _service_block(compose, "communication-draft-worker")
+    assert 'profiles: ["agent-model"]' in agent
+    assert 'profiles: ["model-projection"]' in projection
+    assert 'profiles: ["model-projection"]' in delivery
+    for model in (agent, projection):
         assert "GBOS_MODEL_KILL_SWITCH: ${GBOS_MODEL_KILL_SWITCH:-true}" in model
         assert "controlled-egress" in model
+    assert "GBOS_COMMUNICATION_DRAFT_KILL_SWITCH" in delivery
+    assert "controlled-egress" not in delivery
     assert "deepseek-worker:" not in compose
 
     tunnel = _service_block(compose, "cloudflared")
@@ -175,6 +181,7 @@ def test_optional_prometheus_scrapes_authenticated_identity_metrics_with_low_car
     compose = _read(COMPOSE)
     prometheus = _read(LOCAL_INFRA / "prometheus" / "prometheus.yml")
     alerts = _read(LOCAL_INFRA / "prometheus" / "alerts.yml")
+    alert_tests = _read(LOCAL_INFRA / "prometheus" / "alerts.test.yml")
 
     block = _service_block(compose, "prometheus")
     assert 'profiles: ["observability"]' in block
@@ -198,8 +205,14 @@ def test_optional_prometheus_scrapes_authenticated_identity_metrics_with_low_car
         "IdentityResolverBacklogStale",
         "IdentityResolverConflict",
         "IdentityResolverLatencyHigh",
+        "IdentityResolverTargetDown",
+        "IdentityResolverMetricsMissing",
     ):
         assert f"alert: {alert}" in alerts
+    for alert in ("IdentityResolverTargetDown", "IdentityResolverMetricsMissing"):
+        assert alert in alert_tests
+    assert "severity:" in alerts
+    assert "runbook_url:" in alerts
     for forbidden_label in ("site", "team", "identity", "provider", "target"):
         assert f"{forbidden_label}:" not in alerts
     entrypoints = json.loads(_read(LOCAL_INFRA / "runtime-entrypoints.json"))
