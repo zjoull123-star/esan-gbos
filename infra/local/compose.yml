@@ -470,6 +470,51 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  retention-scheduler:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["retention-scheduler"]
+    command: ["python", "-m", "services.local_pilot_runtime.retention_scheduler"]
+    environment:
+      <<: *runtime-environment
+      GBOS_RETENTION_SCHEDULER_ENABLED: ${GBOS_RETENTION_SCHEDULER_ENABLED:-false}
+      GBOS_RETENTION_SCHEDULER_KILL_SWITCH: ${GBOS_RETENTION_SCHEDULER_KILL_SWITCH:-true}
+      GBOS_RETENTION_ENABLED: ${GBOS_RETENTION_ENABLED:-false}
+      GBOS_RETENTION_DRY_RUN: ${GBOS_RETENTION_DRY_RUN:-true}
+      GBOS_RETENTION_BATCH_SIZE: ${GBOS_RETENTION_BATCH_SIZE:-100}
+      GBOS_RETENTION_INTERVAL_SECONDS: ${GBOS_RETENTION_INTERVAL_SECONDS:-86400}
+      GBOS_RETENTION_METRICS_PORT: "9101"
+    secrets:
+      - postgres_observer_password
+      - mapping_vault_key
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-retention.json:/config/local-pilot-runtime.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+      - local-pilot-evidence-cas:/var/lib/gbos/evidence
+      - local-pilot-tokenizer-vault:/var/lib/gbos/tokenizer-vault
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9101/healthz', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
   webhook-ingress:
     image: *runtime-image
     pull_policy: never

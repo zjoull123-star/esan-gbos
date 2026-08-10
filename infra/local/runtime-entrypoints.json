@@ -92,6 +92,12 @@
       "network": "internal_only",
       "execution": "one_shot_dry_run_first"
     },
+    "retention-scheduler": {
+      "path": "services/local_pilot_runtime/retention_scheduler.py",
+      "status": "executable",
+      "network": "internal_only",
+      "execution": "default_off_periodic_execute"
+    },
     "materialization-worker": {
       "path": "services/local_pilot_runtime/materialization_worker.py",
       "status": "executable"

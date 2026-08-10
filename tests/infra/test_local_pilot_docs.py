@@ -244,5 +244,7 @@ def test_runbook_documents_current_truth_boundaries_without_unlocking_formal_sta
     ):
         assert statement in runbook
     alert_count = _read(INFRA / "prometheus" / "alerts.yml").count("- alert:")
-    assert alert_count == 7
-    assert f"{alert_count} 条低基数规则健康" in runbook
+    assert alert_count == 9
+    assert f"共 {alert_count} 条低基数规则通过静态校验" in runbook
+    assert "RetentionSchedulerStale" in runbook
+    assert "RetentionSchedulerFailure" in runbook

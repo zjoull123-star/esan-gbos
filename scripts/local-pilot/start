@@ -8,6 +8,8 @@ source "${SCRIPT_DIR}/lib.sh"
 
 MANIFEST="${DEFAULT_MANIFEST}"
 CANARY_CONTROL=""
+ENABLE_RETENTION_SCHEDULER="false"
+ACKNOWLEDGE_PERIODIC_RETENTION="false"
 while (( $# > 0 )); do
   case "$1" in
     --manifest)
@@ -20,13 +22,42 @@ while (( $# > 0 )); do
       CANARY_CONTROL="$2"
       shift
       ;;
+    --enable-retention-scheduler)
+      ENABLE_RETENTION_SCHEDULER="true"
+      ;;
+    --acknowledge-periodic-expired-local-data-deletion)
+      ACKNOWLEDGE_PERIODIC_RETENTION="true"
+      ;;
     *)
-      echo "Usage: scripts/local-pilot/start [--manifest PATH] [--canary-control PATH]" >&2
+      echo "Usage: scripts/local-pilot/start [--manifest PATH] [--canary-control PATH] [--enable-retention-scheduler --acknowledge-periodic-expired-local-data-deletion]" >&2
       exit 64
       ;;
   esac
   shift
 done
+
+if [[ "${ENABLE_RETENTION_SCHEDULER}" != "${ACKNOWLEDGE_PERIODIC_RETENTION}" ]]; then
+  echo "Periodic retention requires both the enable flag and deletion acknowledgement." >&2
+  exit 64
+fi
+if [[ "${ENABLE_RETENTION_SCHEDULER}" == "true" ]]; then
+  if ! python3 - "${MANIFEST}" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    if manifest.get("retention_days") != 30:
+        raise ValueError
+except (OSError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(78)
+PY
+  then
+    echo "Periodic retention requires the exact approved 30-day manifest boundary." >&2
+    exit 78
+  fi
+fi
 
 GBOS_LOCAL_PILOT_MANIFEST="$(
   CDPATH='' cd -- "$(dirname -- "${MANIFEST}")" &&
@@ -148,6 +179,10 @@ GBOS_COMMUNICATION_DRAFT_KILL_SWITCH="true"
 GBOS_DEEPSEEK_EGRESS_ENABLED="false"
 GBOS_MATERIALIZATION_KILL_SWITCH="false"
 GBOS_EXTERNAL_SEND_ENABLED="false"
+GBOS_RETENTION_SCHEDULER_ENABLED="false"
+GBOS_RETENTION_SCHEDULER_KILL_SWITCH="true"
+GBOS_RETENTION_ENABLED="false"
+GBOS_RETENTION_DRY_RUN="true"
 export \
   GBOS_CONNECTOR_KILL_SWITCH \
   GBOS_IDENTITY_RESOLUTION_KILL_SWITCH \
@@ -156,9 +191,25 @@ export \
   GBOS_COMMUNICATION_DRAFT_KILL_SWITCH \
   GBOS_DEEPSEEK_EGRESS_ENABLED \
   GBOS_MATERIALIZATION_KILL_SWITCH \
-  GBOS_EXTERNAL_SEND_ENABLED
+  GBOS_EXTERNAL_SEND_ENABLED \
+  GBOS_RETENTION_SCHEDULER_ENABLED \
+  GBOS_RETENTION_SCHEDULER_KILL_SWITCH \
+  GBOS_RETENTION_ENABLED \
+  GBOS_RETENTION_DRY_RUN
 
 profile_args=(--profile runtime --profile observability)
+if [[ "${ENABLE_RETENTION_SCHEDULER}" == "true" ]]; then
+  GBOS_RETENTION_SCHEDULER_ENABLED="true"
+  GBOS_RETENTION_SCHEDULER_KILL_SWITCH="false"
+  GBOS_RETENTION_ENABLED="true"
+  GBOS_RETENTION_DRY_RUN="false"
+  profile_args+=(--profile retention-scheduler)
+  export \
+    GBOS_RETENTION_SCHEDULER_ENABLED \
+    GBOS_RETENTION_SCHEDULER_KILL_SWITCH \
+    GBOS_RETENTION_ENABLED \
+    GBOS_RETENTION_DRY_RUN
+fi
 connector_profile_enabled=false
 identity_profile_enabled=false
 model_profile_requested=false

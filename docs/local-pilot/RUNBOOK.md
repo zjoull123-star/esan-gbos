@@ -66,7 +66,11 @@ DeepSeek 默认关闭。runtime entrypoint、Compose config 和源绑定镜像�
 - 本地不可变 evidence truth 是 `local-pilot-evidence-cas` filesystem CAS。
   MinIO 不属于 required runtime，也没有对象存储控制台。
 - Prometheus 是可选 profile；固定 3.7.3 镜像已完成 `promtool` 配置/规则校验，
-  live scrape 中 `identity-resolution` target 为 `up=1`，7 条低基数规则健康。
+  当前共 9 条低基数规则通过静态校验：原有 7 条 identity-resolution 规则，
+  加上 `RetentionSchedulerStale`（最近成功已超过两个日常周期）和
+  `RetentionSchedulerFailure`（最近一次 bounded pass 失败且尚未由成功周期恢复）。
+  先前 live scrape 只证明 `identity-resolution` target 为 `up=1`；默认关闭的
+  retention scheduler 没有本次 live 运行证据，不能把静态告警校验解释为周期删除已运行。
   `gbos_identity_resolver_ready=0` 是预期禁用态结果，不可解释为真实 worker 已就绪或
   SLO 已达成。72 小时连续运行已按用户决定延后且不作为本阶段退出条件；证据只记录
   实际采样时长。

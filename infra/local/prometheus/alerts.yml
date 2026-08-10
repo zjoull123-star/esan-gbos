@@ -57,3 +57,21 @@ groups:
         annotations:
           summary: Identity resolver p95 latency is high
           runbook_url: docs/local-pilot/RUNBOOK.md#identity-resolution
+  - name: retention-scheduler
+    rules:
+      - alert: RetentionSchedulerStale
+        expr: gbos_retention_scheduler_last_success_age_seconds > 172800
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: Retention scheduler has not completed within two daily cycles
+          runbook_url: docs/local-pilot/RUNBOOK.md#retention
+      - alert: RetentionSchedulerFailure
+        expr: gbos_retention_scheduler_last_failure_timestamp_seconds > gbos_retention_scheduler_last_success_timestamp_seconds and gbos_retention_scheduler_failure_total{code="retention_run_failed"} > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Retention scheduler latest bounded pass failed
+          runbook_url: docs/local-pilot/RUNBOOK.md#retention

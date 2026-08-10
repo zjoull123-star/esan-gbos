@@ -23,6 +23,7 @@ targets=(
   agent-worker
   materialization-worker
   retention-worker
+  retention-scheduler
   webhook-ingress
   frappe-worker
   frappe-scheduler
