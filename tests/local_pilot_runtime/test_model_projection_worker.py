@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import importlib
 import json
 import os
+import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -1044,14 +1045,25 @@ def test_build_worker_rejects_missing_resolver_and_redacts_components() -> None:
         )
 
 
-def test_module_import_is_side_effect_free(monkeypatch: pytest.MonkeyPatch) -> None:
-    def forbidden(*_: object, **__: object) -> None:
-        raise AssertionError("import attempted DB or HTTP")
+def test_module_import_is_side_effect_free() -> None:
+    script = """
+from unittest.mock import patch
 
-    monkeypatch.setattr("socket.socket.connect", forbidden)
-    monkeypatch.setattr("psycopg.connect", forbidden)
+with (
+    patch("socket.socket.connect", side_effect=AssertionError("import attempted HTTP")),
+    patch("psycopg.connect", side_effect=AssertionError("import attempted DB")),
+):
+    import services.local_pilot_runtime.model_projection_worker as module
 
-    module = importlib.reload(model_projection_worker)
+assert callable(module.main)
+assert callable(module.run_worker)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).parents[2],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
-    assert callable(module.main)
-    assert callable(module.run_worker)
+    assert result.returncode == 0, result.stderr
