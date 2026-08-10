@@ -272,6 +272,7 @@ const identityStatuses = new Set([
   "proposed",
   "pending",
   "confirmed",
+  "rejected",
   "revoked",
 ]);
 const identityCandidateTypes = new Set(["User", "Party", "Contact"]);
@@ -355,6 +356,7 @@ const parseIdentityState = (value: unknown, requestId?: string): IdentityState =
     !identityStatuses.has(value.status) ||
     (value.mapping_ref !== undefined && !isBoundedText(value.mapping_ref, 1, 140)) ||
     (value.mapping_revision !== undefined && !isPositiveInteger(value.mapping_revision)) ||
+    (value.status === "rejected" && !isPositiveInteger(value.mapping_revision)) ||
     (value.target_type !== undefined &&
       value.target_type !== "User" &&
       value.target_type !== "Party") ||
@@ -623,7 +625,12 @@ const validateIdentitySubmit = (command: IdentitySubmitForReviewCommand) => {
   if (!identityCandidateTypes.has(command.selected_candidate_type)) {
     throw new BffError("validation_error", { message: "候选类型不符合接口约束。" });
   }
-  if (command.expected_state !== "unresolved" || command.expected_revision !== 0) {
+  if (
+    (command.expected_state === "unresolved" && command.expected_revision !== 0) ||
+    (command.expected_state === "rejected" &&
+      (!Number.isInteger(command.expected_revision) || command.expected_revision < 1)) ||
+    (command.expected_state !== "unresolved" && command.expected_state !== "rejected")
+  ) {
     throw new BffError("validation_error", { message: "身份状态或版本已失效。" });
   }
   validateCommandControl(command);

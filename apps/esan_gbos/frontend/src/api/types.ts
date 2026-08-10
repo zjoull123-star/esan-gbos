@@ -328,13 +328,14 @@ export type IdentityStatus =
   | "proposed"
   | "pending"
   | "confirmed"
+  | "rejected"
   | "revoked";
 export type IdentityCandidateType = "User" | "Party" | "Contact";
 
 export interface ParticipantIdentity {
   identity_ref: string;
   provider: IdentityProvider;
-  status: "unresolved" | "confirmed" | "revoked";
+  status: "unresolved" | "confirmed" | "rejected" | "revoked";
   mapping_ref?: string;
   mapping_revision?: number;
   target_type?: "User" | "Party";
@@ -424,8 +425,8 @@ export interface IdentitySubmitForReviewCommand {
   selected_candidate_type: IdentityCandidateType;
   selected_candidate_ref: string;
   assigned_reviewer: string;
-  expected_state: "unresolved";
-  expected_revision: 0;
+  expected_state: "unresolved" | "rejected";
+  expected_revision: number;
   idempotency_key: string;
 }
 

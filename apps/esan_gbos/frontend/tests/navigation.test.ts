@@ -42,7 +42,7 @@ describe("角色裁剪导航", () => {
     [["Purchase Manager"], ["采购协同"]],
     [["Product/R&D"], ["产品与样品"]],
     [["Reviewer"], ["审核队列"]],
-    [["Integration Admin"], ["集成状态"]],
+    [["Integration Admin"], ["集成状态", "沟通观察"]],
     [
       ["CEO"],
       [
@@ -111,6 +111,8 @@ describe("角色裁剪导航", () => {
     expect(isRouteAllowed("/gbos/review/REVIEW-1", ["CEO"])).toBe(false);
     expect(isRouteAllowed("/gbos/review/REVIEW-1", ["Sales User"])).toBe(false);
     expect(isRouteAllowed("/gbos/integrations", ["Integration Admin"])).toBe(true);
+    expect(isRouteAllowed("/gbos/communications", ["Integration Admin"])).toBe(true);
+    expect(isRouteAllowed("/gbos/communications/OBS-1", ["Integration Admin"])).toBe(true);
     expect(isRouteAllowed("/gbos/integrations", ["Sales User"])).toBe(false);
     expect(isRouteAllowed("/gbos/communications/OBS-1", ["CEO"])).toBe(true);
   });

@@ -66,9 +66,27 @@
                   身份解析案件
                 </h2>
               </div>
-              <p>
-                受保护的身份主体、目标引用与模型原始数据不会进入此页。依据审核队列提供的安全目标、固定证据与版本信息，可在下方记录批准或拒绝决定。
-              </p>
+              <dl v-if="identityReview" class="review-fact-rows identity-safe-facts">
+                <div><dt>安全目标</dt><dd>{{ identityReview.target.display_label }}</dd></div>
+                <div><dt>目标类型</dt><dd>{{ identityReview.target.candidate_type }}</dd></div>
+                <div><dt>审核版本</dt><dd>审核版本：{{ identityReview.review_case_revision }}</dd></div>
+                <div><dt>映射版本</dt><dd>映射版本：{{ identityReview.mapping_revision }}</dd></div>
+                <div><dt>策略</dt><dd>{{ identityReview.policy_version }}</dd></div>
+                <div>
+                  <dt>证据引用</dt>
+                  <dd>{{ identityReview.evidence_refs.join("、") || "无" }}</dd>
+                </div>
+              </dl>
+              <div v-else class="identity-safe-error" role="alert">
+                <p>身份审核详情不可用：{{ identityReviewError || "无法证明与当前案件一致。" }}</p>
+                <button
+                  data-action="refresh-identity-review"
+                  type="button"
+                  @click="load"
+                >
+                  刷新安全详情
+                </button>
+              </div>
             </article>
 
             <article v-else class="review-detail-card" aria-labelledby="snapshot-title">
@@ -113,11 +131,16 @@
 
       <template v-if="reviewCase" #command>
         <ReviewDecisionForm
-          v-if="reviewCase.review_status === 'Pending'"
+          v-if="reviewCase.review_status === 'Pending' && identityDecisionReady"
           :submitting="submitting"
           :reset-key="formResetKey"
           @decide="decide"
         />
+        <article v-else-if="reviewCase.review_status === 'Pending'" class="review-ended-card">
+          <p>DECISION LOCKED</p>
+          <h2>决定入口已关闭</h2>
+          <span>安全详情校验通过后才能提交决定。</span>
+        </article>
         <article v-else class="review-ended-card">
           <p>CASE CLOSED</p>
           <h2>案件已结束</h2>
@@ -133,7 +156,11 @@ import { computed, ref, watch } from "vue";
 
 import { BffError, createIdempotencyKey } from "@/api/bff";
 import { useBffClient } from "@/api/injection";
-import type { ReviewCaseDetailPayload } from "@/api/types";
+import type {
+  IdentityPendingReview,
+  ReviewCaseDetailPayload,
+  ReviewCaseSummary,
+} from "@/api/types";
 import DemoBanner from "@/components/DemoBanner.vue";
 import ReviewDecisionForm from "@/components/ReviewDecisionForm.vue";
 import ResourceBoundary from "@/components/feedback/ResourceBoundary.vue";
@@ -149,16 +176,84 @@ const decisionError = ref("");
 const decisionMessage = ref("");
 const decidedPayload = ref<ReviewCaseDetailPayload>();
 
-const resource = useOnlineResource(async () => {
+interface LoadedReviewDetail extends ReviewCaseDetailPayload {
+  identityReview?: IdentityPendingReview;
+  identityReviewError?: string;
+}
+
+const sameEvidenceRefs = (
+  reviewCase: ReviewCaseSummary,
+  identityReview: IdentityPendingReview,
+) => {
+  const genericRefs = reviewCase.evidence.map((evidence) => evidence.reference);
+  return genericRefs.length === identityReview.evidence_refs.length &&
+    genericRefs.every((reference, index) => reference === identityReview.evidence_refs[index]);
+};
+
+const isPinnedIdentityReview = (
+  reviewCase: ReviewCaseSummary,
+  identityReview: IdentityPendingReview,
+) =>
+  reviewCase.subject.doctype === "GBOS External Identity" &&
+  reviewCase.review_status === "Pending" &&
+  typeof reviewCase.team === "string" &&
+  reviewCase.team.length > 0 &&
+  identityReview.review_case_ref === reviewCase.name &&
+  identityReview.review_case_revision === reviewCase.case_revision &&
+  identityReview.assigned_reviewer === reviewCase.assigned_reviewer &&
+  identityReview.team_ref === reviewCase.team &&
+  identityReview.mapping_revision === reviewCase.subject.revision &&
+  identityReview.policy_version === reviewCase.policy_reference &&
+  sameEvidenceRefs(reviewCase, identityReview);
+
+const loadReviewDetail = async (retryConflict: boolean): Promise<LoadedReviewDetail> => {
   decidedPayload.value = undefined;
   const response = await client.getReviewCase(props.id);
-  return response.data;
-});
+  const current = response.data.case;
+  if (
+    current.subject.doctype !== "GBOS External Identity" ||
+    current.review_status !== "Pending"
+  ) {
+    return response.data;
+  }
+  try {
+    const safeResponse = await client.getPendingIdentityReview(current.name);
+    if (!isPinnedIdentityReview(current, safeResponse.data.review)) {
+      return {
+        ...response.data,
+        identityReviewError: "安全详情与案件不一致，已关闭决定入口。",
+      };
+    }
+    return { ...response.data, identityReview: safeResponse.data.review };
+  } catch (error) {
+    if (
+      retryConflict &&
+      error instanceof BffError &&
+      (error.status === 409 || error.code === "revision_conflict")
+    ) {
+      return loadReviewDetail(false);
+    }
+    return {
+      ...response.data,
+      identityReviewError:
+        error instanceof BffError ? error.displayMessage : "暂时无法读取安全详情。",
+    };
+  }
+};
+
+const resource = useOnlineResource(() => loadReviewDetail(true));
 const reviewCase = computed(
   () => decidedPayload.value?.case ?? resource.data.value?.case,
 );
 const isIdentityReview = computed(
   () => reviewCase.value?.subject.doctype === "GBOS External Identity",
+);
+const identityReview = computed(() =>
+  isIdentityReview.value ? resource.data.value?.identityReview : undefined,
+);
+const identityReviewError = computed(() => resource.data.value?.identityReviewError ?? "");
+const identityDecisionReady = computed(
+  () => !isIdentityReview.value || Boolean(identityReview.value),
 );
 const statusLabel = computed(() => {
   const labels = {
@@ -193,7 +288,7 @@ watch(
 
 const decide = async (decision: "Approved" | "Rejected", note: string) => {
   const current = reviewCase.value;
-  if (!current || submitting.value) {
+  if (!current || submitting.value || !identityDecisionReady.value) {
     return;
   }
   decisionError.value = "";
@@ -385,6 +480,36 @@ const decide = async (decision: "Approved" | "Rejected", note: string) => {
 
 .review-notice--error {
   border-color: var(--gbos-primary);
+}
+
+.identity-safe-error {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.identity-safe-error p {
+  margin: 0;
+  color: var(--gbos-primary);
+  overflow-wrap: anywhere;
+}
+
+.identity-safe-error button {
+  width: fit-content;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-text);
+  background: var(--gbos-surface);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.identity-safe-error button:focus-visible {
+  outline: 3px solid var(--gbos-accent);
+  outline-offset: 2px;
 }
 
 @media (max-width: 767px) {

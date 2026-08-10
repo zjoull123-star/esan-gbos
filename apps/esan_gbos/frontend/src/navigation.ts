@@ -68,7 +68,7 @@ export const WORKSPACE_NAVIGATION: readonly NavigationItem[] = [
     to: "/gbos/communications",
     icon: "message-circle",
     group: "intelligence",
-    roles: ["CEO", "Sales Manager", "Sales User"],
+    roles: ["CEO", "Sales Manager", "Sales User", "Integration Admin"],
   },
 ] as const;
 

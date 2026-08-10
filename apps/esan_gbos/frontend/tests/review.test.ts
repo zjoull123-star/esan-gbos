@@ -559,8 +559,44 @@ describe("Gate 4 人工审核界面", () => {
     const fetcher = vi
       .fn<Fetcher>()
       .mockResolvedValueOnce(ok(identityConflictFixture))
+      .mockResolvedValueOnce(okV4({
+        review: {
+          review_case_ref: "IDENTITY-REV-CONFLICT",
+          review_case_revision: 3,
+          status: "pending",
+          assigned_reviewer: "reviewer@example.invalid",
+          team_ref: "TEAM-SALES",
+          mapping_ref: "MAP-CONFLICT",
+          mapping_revision: 2,
+          target: {
+            candidate_type: "Party",
+            candidate_ref: "TARGET-CONFLICT",
+            display_label: "安全客户",
+          },
+          evidence_refs: ["EVID-01HZX"],
+          policy_version: "gbos-action-policy@1.0.0",
+        },
+      }))
       .mockResolvedValueOnce(conflict)
-      .mockResolvedValueOnce(ok(identityConflictFixture, "req-refreshed"));
+      .mockResolvedValueOnce(ok(identityConflictFixture, "req-refreshed"))
+      .mockResolvedValueOnce(okV4({
+        review: {
+          review_case_ref: "IDENTITY-REV-CONFLICT",
+          review_case_revision: 3,
+          status: "pending",
+          assigned_reviewer: "reviewer@example.invalid",
+          team_ref: "TEAM-SALES",
+          mapping_ref: "MAP-CONFLICT",
+          mapping_revision: 2,
+          target: {
+            candidate_type: "Party",
+            candidate_ref: "TARGET-CONFLICT",
+            display_label: "安全客户",
+          },
+          evidence_refs: ["EVID-01HZX"],
+          policy_version: "gbos-action-policy@1.0.0",
+        },
+      }, "req-refreshed-safe"));
     const client = createBffClient({
       fetcher,
       isOnline: () => true,
@@ -576,8 +612,8 @@ describe("Gate 4 人工审核界面", () => {
     await wrapper.get('button[data-decision="Rejected"]').trigger("click");
     await flushPromises();
 
-    expect(fetcher).toHaveBeenCalledTimes(3);
-    expect(fetcher.mock.calls[2]?.[0]).toEqual(
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(fetcher.mock.calls[3]?.[0]).toEqual(
       expect.stringContaining(BFF_V2_ENDPOINTS.reviewGet),
     );
     expect(wrapper.text()).toContain("案件或主体已更新，请重新审核");
@@ -642,10 +678,29 @@ describe("Gate 4 人工审核界面", () => {
           subject_name: "protected:identity-subject",
         },
       };
-      const browserResponses = [identityFixture, decidedFixture];
+      const safeIdentityDetail = {
+        review: {
+          review_case_ref: reviewCaseRef,
+          review_case_revision: 3,
+          status: "pending",
+          assigned_reviewer: "reviewer@example.invalid",
+          team_ref: "TEAM-SALES",
+          mapping_ref: "MAPPING-REF-MUST-NOT-RENDER",
+          mapping_revision: 2,
+          target: {
+            candidate_type: _targetType,
+            candidate_ref: "TARGET-REF-MUST-NOT-RENDER",
+            display_label: _targetType === "User" ? "合格系统用户" : "海湾香氛客户",
+          },
+          evidence_refs: ["EVID-01HZX"],
+          policy_version: "gbos-action-policy@1.0.0",
+        },
+      };
+      const browserResponses = [identityFixture, safeIdentityDetail, decidedFixture];
       const fetcher = vi
         .fn<Fetcher>()
         .mockResolvedValueOnce(ok(identityFixture))
+        .mockResolvedValueOnce(okV4(safeIdentityDetail))
         .mockResolvedValueOnce(ok(decidedFixture));
       const wrapper = mount(ReviewDetailView, {
         props: { id: reviewCaseRef },
@@ -662,12 +717,18 @@ describe("Gate 4 人工审核界面", () => {
       await flushPromises();
 
       expect(wrapper.text()).toContain("身份解析案件");
-      expect(wrapper.text()).toContain("可在下方记录批准或拒绝决定");
+      expect(wrapper.text()).toContain(safeIdentityDetail.review.target.display_label);
+      expect(wrapper.text()).toContain(_targetType);
+      expect(wrapper.text()).toContain("审核版本：3");
+      expect(wrapper.text()).toContain("映射版本：2");
+      expect(wrapper.text()).toContain("EVID-01HZX");
+      expect(wrapper.text()).toContain("gbos-action-policy@1.0.0");
       expect(wrapper.text()).not.toContain("请返回审核队列");
       expect(JSON.stringify(browserResponses)).not.toMatch(
         /external_subject|subject_snapshot|identity\.user@example\.invalid|PARTY-RAW-TARGET|MODEL-RAW/u,
       );
       expect(wrapper.text()).not.toContain("protected:identity-subject");
+      expect(wrapper.html()).not.toMatch(/MAPPING-REF-MUST-NOT-RENDER|TARGET-REF-MUST-NOT-RENDER/u);
       expect(wrapper.findComponent(ReviewDecisionForm).exists()).toBe(true);
       expect(wrapper.get('button[data-decision="Approved"]').text()).toContain("批准案件");
       expect(wrapper.get('button[data-decision="Rejected"]').text()).toContain("拒绝案件");
@@ -675,9 +736,12 @@ describe("Gate 4 人工审核界面", () => {
       await wrapper.get('button[data-decision="Approved"]').trigger("click");
       await flushPromises();
 
-      expect(fetcher).toHaveBeenCalledTimes(2);
-      expect(fetcher.mock.calls[1]?.[0]).toBe(BFF_V2_ENDPOINTS.reviewDecide);
-      const body = new URLSearchParams(String(fetcher.mock.calls[1]?.[1]?.body));
+      expect(fetcher).toHaveBeenCalledTimes(3);
+      expect(fetcher.mock.calls[1]?.[0]).toEqual(
+        expect.stringContaining(BFF_V4_ENDPOINTS.identityGetPendingReview),
+      );
+      expect(fetcher.mock.calls[2]?.[0]).toBe(BFF_V2_ENDPOINTS.reviewDecide);
+      const body = new URLSearchParams(String(fetcher.mock.calls[2]?.[1]?.body));
       expect(Object.fromEntries(body)).toMatchObject({
         name: reviewCaseRef,
         decision: "Approved",
@@ -692,4 +756,201 @@ describe("Gate 4 人工审核界面", () => {
       expect(wrapper.text()).toContain("审核决定已记录");
     },
   );
+
+  it.each([
+    ["404", 404, "not_found"],
+    ["403", 403, "permission_denied"],
+    ["field drift", 200, "invalid_response"],
+  ])("External Identity 安全详情 %s 时关闭决定入口", async (_label, status, code) => {
+    const identityFixture = {
+      case: {
+        ...detailFixture.case,
+        name: `IDENTITY-SAFE-${_label}`,
+        title: "Identity Resolution",
+        subject: {
+          ...detailFixture.case.subject,
+          doctype: "GBOS External Identity",
+          name: "protected:identity-subject",
+          snapshot: {},
+        },
+      },
+      decision: null,
+    };
+    const detailResponse = status === 200
+      ? okV4({
+          review: {
+            review_case_ref: identityFixture.case.name,
+            review_case_revision: 3,
+            status: "pending",
+            assigned_reviewer: "reviewer@example.invalid",
+            team_ref: "TEAM-SALES",
+            mapping_ref: "MAP-SECRET",
+            mapping_revision: 2,
+            target: {
+              candidate_type: "Party",
+              candidate_ref: "TARGET-SECRET",
+              display_label: "安全客户",
+            },
+            evidence_refs: ["EVID-01HZX"],
+            policy_version: "gbos-action-policy@1.0.0",
+            drifted_field: true,
+          },
+        })
+      : new Response(
+          JSON.stringify({
+            message: {
+              error: {
+                code,
+                message: status === 403 ? "当前审核人无权读取身份详情。" : "身份审核详情已不存在。",
+                request_id: `req-${_label}`,
+                details: {},
+              },
+            },
+          }),
+          { status, headers: { "Content-Type": "application/json" } },
+        );
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValueOnce(ok(identityFixture))
+      .mockResolvedValueOnce(detailResponse);
+    const wrapper = mount(ReviewDetailView, {
+      props: { id: identityFixture.case.name },
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({ fetcher, isOnline: () => true }),
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("身份审核详情不可用");
+    expect(wrapper.findComponent(ReviewDecisionForm).exists()).toBe(false);
+    expect(wrapper.find("button[data-action='refresh-identity-review']").exists()).toBe(true);
+    expect(wrapper.html()).not.toMatch(/MAP-SECRET|TARGET-SECRET|protected:identity-subject/u);
+  });
+
+  it("安全详情与通用案件的 reviewer/revision/policy/evidence 不一致时 fail closed", async () => {
+    const identityFixture = {
+      case: {
+        ...detailFixture.case,
+        name: "IDENTITY-MISMATCH",
+        title: "Identity Resolution",
+        subject: {
+          ...detailFixture.case.subject,
+          doctype: "GBOS External Identity",
+          name: "protected:identity-subject",
+          snapshot: {},
+        },
+      },
+      decision: null,
+    };
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValueOnce(ok(identityFixture))
+      .mockResolvedValueOnce(okV4({
+        review: {
+          review_case_ref: "IDENTITY-MISMATCH",
+          review_case_revision: 3,
+          status: "pending",
+          assigned_reviewer: "DIFFERENT-REVIEWER",
+          team_ref: "TEAM-SALES",
+          mapping_ref: "MAP-MISMATCH",
+          mapping_revision: 2,
+          target: {
+            candidate_type: "Party",
+            candidate_ref: "TARGET-MISMATCH",
+            display_label: "安全客户",
+          },
+          evidence_refs: ["DIFFERENT-EVIDENCE"],
+          policy_version: "different-policy",
+        },
+      }));
+    const wrapper = mount(ReviewDetailView, {
+      props: { id: "IDENTITY-MISMATCH" },
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({ fetcher, isOnline: () => true }),
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("安全详情与案件不一致");
+    expect(wrapper.findComponent(ReviewDecisionForm).exists()).toBe(false);
+    expect(wrapper.html()).not.toMatch(/MAP-MISMATCH|TARGET-MISMATCH/u);
+  });
+
+  it("安全详情 409 时只刷新案件与详情，不提交旧决定", async () => {
+    const identityFixture = {
+      case: {
+        ...detailFixture.case,
+        name: "IDENTITY-DETAIL-STALE",
+        title: "Identity Resolution",
+        subject: {
+          ...detailFixture.case.subject,
+          doctype: "GBOS External Identity",
+          name: "protected:identity-subject",
+          snapshot: {},
+        },
+      },
+      decision: null,
+    };
+    const conflict = new Response(
+      JSON.stringify({
+        message: {
+          error: {
+            code: "revision_conflict",
+            message: "身份审核详情已更新。",
+            request_id: "req-identity-detail-stale",
+            details: {},
+          },
+        },
+      }),
+      { status: 409, headers: { "Content-Type": "application/json" } },
+    );
+    const safeDetail = {
+      review: {
+        review_case_ref: "IDENTITY-DETAIL-STALE",
+        review_case_revision: 3,
+        status: "pending",
+        assigned_reviewer: "reviewer@example.invalid",
+        team_ref: "TEAM-SALES",
+        mapping_ref: "MAP-REFRESHED",
+        mapping_revision: 2,
+        target: {
+          candidate_type: "Party",
+          candidate_ref: "TARGET-REFRESHED",
+          display_label: "刷新后安全客户",
+        },
+        evidence_refs: ["EVID-01HZX"],
+        policy_version: "gbos-action-policy@1.0.0",
+      },
+    };
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValueOnce(ok(identityFixture))
+      .mockResolvedValueOnce(conflict)
+      .mockResolvedValueOnce(ok(identityFixture, "req-refreshed-case"))
+      .mockResolvedValueOnce(okV4(safeDetail, "req-refreshed-safe"));
+    const wrapper = mount(ReviewDetailView, {
+      props: { id: "IDENTITY-DETAIL-STALE" },
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({ fetcher, isOnline: () => true }),
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher.mock.calls.map(([input]) => String(input))).toEqual([
+      expect.stringContaining(BFF_V2_ENDPOINTS.reviewGet),
+      expect.stringContaining(BFF_V4_ENDPOINTS.identityGetPendingReview),
+      expect.stringContaining(BFF_V2_ENDPOINTS.reviewGet),
+      expect.stringContaining(BFF_V4_ENDPOINTS.identityGetPendingReview),
+    ]);
+    expect(wrapper.text()).toContain("刷新后安全客户");
+    expect(wrapper.findComponent(ReviewDecisionForm).exists()).toBe(true);
+    expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
 });

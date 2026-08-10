@@ -6,7 +6,7 @@ const PURCHASE_ROLES = ["Purchase Manager", "Buyer"] as const;
 const PRODUCT_ROLES = ["Product/R&D"] as const;
 const REVIEW_ROLES = ["Reviewer"] as const;
 const INTEGRATION_ROLES = ["Integration Admin"] as const;
-const COMMUNICATION_ROLES = [...CEO_ROLES, ...SALES_ROLES] as const;
+const COMMUNICATION_ROLES = [...CEO_ROLES, ...SALES_ROLES, ...INTEGRATION_ROLES] as const;
 const OVERVIEW_ROLES = [
   ...CEO_ROLES,
   ...SALES_ROLES,

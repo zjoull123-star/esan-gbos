@@ -145,10 +145,26 @@
                 <span>{{ providerLabel(identity.provider) }} · {{ identityStatusLabel(identity.status) }}</span>
                 <span v-if="identity.display_label">{{ identity.display_label }}</span>
                 <small v-if="identity.target_type">已审核对象类型：{{ identity.target_type }}</small>
+                <button
+                  v-if="canRevokeIdentity && isRevokeEligible(identity)"
+                  class="identity-state-action"
+                  data-action="revoke-identity"
+                  type="button"
+                  :disabled="revokeSubmitting"
+                  @click="openRevoke(index)"
+                >
+                  撤回已确认映射
+                </button>
               </li>
             </ul>
+            <p v-if="revokeMessage" class="identity-success" role="status">
+              {{ revokeMessage }}
+            </p>
+            <p v-if="revokeError" class="identity-error" role="alert">
+              {{ revokeError }}
+            </p>
             <div
-              v-if="canSubmitIdentity && unresolvedIdentityOptions.length > 0 && suggestions.length > 0"
+              v-if="canSubmitIdentity && reviewableIdentityOptions.length > 0 && suggestions.length > 0"
               class="identity-source-selectors"
             >
               <label>
@@ -158,7 +174,7 @@
                     请选择消息参与者
                   </option>
                   <option
-                    v-for="(option, index) in unresolvedIdentityOptions"
+                    v-for="(option, index) in reviewableIdentityOptions"
                     :key="index"
                     :value="index"
                   >
@@ -204,9 +220,13 @@
               <label>
                 候选类型
                 <select v-model="candidateType" name="candidate_type" @change="resetCandidateSearch">
-                  <option value="User">系统用户</option>
-                  <option value="Party">客户主体</option>
-                  <option value="Contact">联系人</option>
+                  <option
+                    v-for="type in allowedCandidateTypes"
+                    :key="type"
+                    :value="type"
+                  >
+                    {{ candidateTypeLabel(type) }}
+                  </option>
                 </select>
               </label>
               <div class="identity-search-row">
@@ -279,13 +299,13 @@
               </button>
             </form>
             <p
-              v-else-if="unresolvedIdentityOptions.length > 0 && suggestions.length === 0"
+              v-else-if="reviewableIdentityOptions.length > 0 && suggestions.length === 0"
               class="identity-relation-note"
             >
               当前没有可用于送审的关联建议。
             </p>
             <p
-              v-else-if="unresolvedIdentityOptions.length > 0 && !canSubmitIdentity"
+              v-else-if="reviewableIdentityOptions.length > 0 && !canSubmitIdentity"
               class="identity-relation-note"
             >
               当前角色只能查看身份状态，不能发起身份关联审核。
@@ -296,13 +316,39 @@
             <p>{{ communication.model.name }} · {{ communication.model.version }}</p>
           </article>
         </div>
+        <dialog
+          ref="revokeDialogRef"
+          class="identity-revoke-dialog"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="identity-revoke-title"
+          aria-describedby="identity-revoke-description"
+          @cancel.prevent="closeRevokeDialog"
+        >
+          <div class="identity-revoke-dialog__surface">
+            <h2 id="identity-revoke-title">
+              撤回已确认映射
+            </h2>
+            <p id="identity-revoke-description">
+              撤回后该参与者将不再关联当前对象。请再次确认。
+            </p>
+            <div class="identity-revoke-dialog__actions">
+              <button data-action="cancel" type="button" @click="closeRevokeDialog">
+                取消
+              </button>
+              <button data-action="confirm" type="button" @click="confirmRevoke">
+                确认撤回
+              </button>
+            </div>
+          </div>
+        </dialog>
       </template>
     </DetailCommandTemplate>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 
 import { BffError, createIdempotencyKey } from "@/api/bff";
 import { useBffClient } from "@/api/injection";
@@ -352,24 +398,57 @@ const submittingIdentity = ref(false);
 const submitMessage = ref("");
 const submitError = ref("");
 const submissionKey = ref("");
+const revokeDialogRef = ref<HTMLDialogElement>();
+const selectedRevokeIndex = ref(-1);
+const revokeSubmitting = ref(false);
+const revokeMessage = ref("");
+const revokeError = ref("");
+const revokeKeys = new Map<string, string>();
+let revokeReturnFocus: HTMLElement | null = null;
 let candidateGeneration = 0;
 
 const canSubmitIdentity = computed(() =>
   sessionState.roles.some((role) =>
-    ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin"].includes(role),
+    ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin", "CEO"].includes(role),
   ),
 );
-const unresolvedIdentityOptions = computed(() =>
+const canRequestUser = computed(() =>
+  sessionState.roles.some((role) =>
+    ["Integration Admin", "GBOS Admin", "CEO"].includes(role),
+  ),
+);
+const canRevokeIdentity = computed(() =>
+  sessionState.roles.some((role) =>
+    ["Integration Admin", "GBOS Admin"].includes(role),
+  ),
+);
+const allowedCandidateTypes = computed<IdentityCandidateType[]>(() =>
+  canRequestUser.value ? ["User", "Party", "Contact"] : ["Party", "Contact"],
+);
+const isCandidateTypeAllowed = (type: IdentityCandidateType) =>
+  allowedCandidateTypes.value.includes(type);
+const reviewableIdentityOptions = computed(() =>
   identities.value.flatMap((identity, index) =>
-    identity.status === "unresolved" ? [{ identity, ordinal: index + 1 }] : [],
+    identity.status === "unresolved" ||
+    (identity.status === "rejected" &&
+      Number.isInteger(identity.mapping_revision) &&
+      Number(identity.mapping_revision) > 0)
+      ? [{ identity, ordinal: index + 1 }]
+      : [],
   ),
 );
 const suggestions = computed(() => communication.value?.association_suggestions ?? []);
 const activeIdentity = computed(
-  () => unresolvedIdentityOptions.value[selectedParticipantIndex.value]?.identity,
+  () => reviewableIdentityOptions.value[selectedParticipantIndex.value]?.identity,
 );
 const activeSuggestion = computed(() => suggestions.value[selectedSuggestionIndex.value]);
-const candidates = computed(() => candidatePayload.value?.candidates ?? []);
+const candidates = computed(() =>
+  (candidatePayload.value?.candidates ?? []).filter(
+    (candidate) =>
+      candidate.candidate_type === candidateType.value &&
+      isCandidateTypeAllowed(candidate.candidate_type),
+  ),
+);
 const eligibleReviewers = computed(() => candidatePayload.value?.eligible_reviewers ?? []);
 const candidateHasMore = computed(() => candidatePayload.value?.has_more ?? false);
 const selectedCandidate = computed(() => candidates.value[selectedCandidateIndex.value]);
@@ -384,12 +463,21 @@ const identityStatusLabel = (status: string) =>
     proposed: "已建议",
     pending: "待审核",
     confirmed: "已确认",
+    rejected: "已拒绝",
     revoked: "已撤回",
   })[status] ?? "未知状态";
 const providerLabel = (provider: string) =>
   ({ email: "Email", wecom: "企业微信", whatsapp: "WhatsApp", phone: "电话", manual_import: "人工导入" })[
     provider
   ] ?? "未知渠道";
+const candidateTypeLabel = (type: IdentityCandidateType) =>
+  ({ User: "系统用户", Party: "客户主体", Contact: "联系人" })[type];
+const isRevokeEligible = (identity: (typeof identities.value)[number]) =>
+  identity.status === "confirmed" &&
+  typeof identity.mapping_ref === "string" &&
+  identity.mapping_ref.length > 0 &&
+  Number.isInteger(identity.mapping_revision) &&
+  Number(identity.mapping_revision) > 0;
 
 const resetSubmissionKey = () => {
   submissionKey.value = "";
@@ -404,7 +492,12 @@ const loadCandidates = async () => {
   selectedCandidateIndex.value = -1;
   selectedReviewerIndex.value = -1;
   candidateError.value = "";
-  if (!identity || !activeSuggestion.value || !canSubmitIdentity.value) {
+  if (
+    !identity ||
+    !activeSuggestion.value ||
+    !canSubmitIdentity.value ||
+    !isCandidateTypeAllowed(candidateType.value)
+  ) {
     candidateLoading.value = false;
     return;
   }
@@ -463,6 +556,15 @@ const submitIdentity = async () => {
   if (!identity || !suggestion || !candidate || !reviewer || submittingIdentity.value) {
     return;
   }
+  if (
+    !canSubmitIdentity.value ||
+    !isCandidateTypeAllowed(candidate.candidate_type) ||
+    candidate.candidate_type !== candidateType.value
+  ) {
+    candidatePayload.value = undefined;
+    submitError.value = "当前角色不允许该候选类型，已关闭提交。";
+    return;
+  }
   submittingIdentity.value = true;
   submitMessage.value = "";
   submitError.value = "";
@@ -475,8 +577,9 @@ const submitIdentity = async () => {
       selected_candidate_type: candidate.candidate_type,
       selected_candidate_ref: candidate.candidate_ref,
       assigned_reviewer: reviewer.reviewer_ref,
-      expected_state: "unresolved",
-      expected_revision: 0,
+      expected_state: identity.status === "rejected" ? "rejected" : "unresolved",
+      expected_revision:
+        identity.status === "rejected" ? Number(identity.mapping_revision) : 0,
       idempotency_key: submissionKey.value,
     });
     submitMessage.value = "已提交人工审核，不会直接确认身份。";
@@ -498,11 +601,105 @@ const submitIdentity = async () => {
   }
 };
 
+const closeRevokeDialog = () => {
+  const dialog = revokeDialogRef.value;
+  if (dialog?.open || dialog?.hasAttribute("open")) {
+    if (typeof dialog.close === "function") {
+      try {
+        dialog.close();
+      } catch {
+        dialog.removeAttribute("open");
+      }
+    } else {
+      dialog.removeAttribute("open");
+    }
+  }
+  if (revokeReturnFocus?.isConnected) {
+    revokeReturnFocus.focus();
+  }
+  revokeReturnFocus = null;
+};
+
+const openRevoke = async (index: number) => {
+  if (revokeSubmitting.value || !canRevokeIdentity.value) {
+    return;
+  }
+  const identity = identities.value[index];
+  if (!identity || !isRevokeEligible(identity)) {
+    return;
+  }
+  selectedRevokeIndex.value = index;
+  revokeError.value = "";
+  revokeMessage.value = "";
+  revokeReturnFocus = document.activeElement as HTMLElement | null;
+  await nextTick();
+  const dialog = revokeDialogRef.value;
+  if (dialog && !dialog.open && !dialog.hasAttribute("open")) {
+    if (typeof dialog.showModal === "function") {
+      dialog.showModal();
+    } else {
+      dialog.setAttribute("open", "");
+    }
+  }
+  dialog?.querySelector<HTMLButtonElement>("[data-action='cancel']")?.focus();
+};
+
+const confirmRevoke = () => {
+  closeRevokeDialog();
+  void revokeIdentity();
+};
+
+const revokeIdentity = async () => {
+  const identity = identities.value[selectedRevokeIndex.value];
+  if (
+    revokeSubmitting.value ||
+    !canRevokeIdentity.value ||
+    !identity ||
+    !isRevokeEligible(identity)
+  ) {
+    selectedRevokeIndex.value = -1;
+    return;
+  }
+  const mappingRef = identity.mapping_ref as string;
+  const mappingRevision = identity.mapping_revision as number;
+  const keySignature = `${props.id}\u0000${identity.identity_ref}\u0000${mappingRef}\u0000${mappingRevision}`;
+  const idempotencyKey = revokeKeys.get(keySignature) ?? createIdempotencyKey();
+  revokeKeys.set(keySignature, idempotencyKey);
+  revokeSubmitting.value = true;
+  revokeMessage.value = "";
+  revokeError.value = "";
+  try {
+    await client.revokeIdentity({
+      observation_id: props.id,
+      identity_ref: identity.identity_ref,
+      mapping_ref: mappingRef,
+      expected_revision: mappingRevision,
+      idempotency_key: idempotencyKey,
+    });
+    revokeMessage.value = "已撤回身份映射。";
+    await identityResource.load();
+  } catch (error) {
+    revokeError.value =
+      error instanceof BffError ? error.displayMessage : "暂时无法撤回身份映射。";
+    if (
+      error instanceof BffError &&
+      (error.status === 409 ||
+        error.code === "revision_conflict" ||
+        error.code === "idempotency_conflict")
+    ) {
+      await identityResource.load();
+    }
+  } finally {
+    revokeSubmitting.value = false;
+    selectedRevokeIndex.value = -1;
+  }
+};
+
 watch(
-  () => unresolvedIdentityOptions.value.map((option) => option.identity.identity_ref).join("|"),
+  () => reviewableIdentityOptions.value.map((option) => option.identity.identity_ref).join("|"),
   () => {
     selectedParticipantIndex.value =
-      unresolvedIdentityOptions.value.length === 1 ? 0 : -1;
+      reviewableIdentityOptions.value.length === 1 ? 0 : -1;
   },
 );
 watch(
@@ -528,6 +725,20 @@ watch([selectedCandidateIndex, selectedReviewerIndex], () => {
 });
 
 watch(
+  () => sessionState.roles.join("|"),
+  () => {
+    if (!isCandidateTypeAllowed(candidateType.value)) {
+      candidateType.value = "Party";
+      resetCandidateSearch();
+    }
+    if (!canRevokeIdentity.value) {
+      closeRevokeDialog();
+      selectedRevokeIndex.value = -1;
+    }
+  },
+);
+
+watch(
   () => props.id,
   () => {
     originalRevealed.value = false;
@@ -542,11 +753,21 @@ watch(
     selectedReviewerIndex.value = -1;
     selectedParticipantIndex.value = -1;
     selectedSuggestionIndex.value = -1;
+    closeRevokeDialog();
+    selectedRevokeIndex.value = -1;
+    revokeMessage.value = "";
+    revokeError.value = "";
+    revokeKeys.clear();
     resetSubmissionKey();
     void load();
     void identityResource.load();
   },
 );
+
+onBeforeUnmount(() => {
+  closeRevokeDialog();
+  revokeReturnFocus = null;
+});
 </script>
 
 <style scoped>
@@ -637,7 +858,8 @@ watch(
 .identity-review-form button,
 .identity-review-form select,
 .identity-review-form input,
-.identity-source-selectors select {
+.identity-source-selectors select,
+.identity-state-action {
   min-height: 44px;
   border: 1px solid var(--gbos-border);
   border-radius: var(--gbos-radius-control);
@@ -647,7 +869,8 @@ watch(
 }
 
 .communication-original-toggle,
-.identity-review-form button {
+.identity-review-form button,
+.identity-state-action {
   width: fit-content;
   padding: 9px 14px;
   font-weight: 700;
@@ -659,7 +882,8 @@ watch(
 .identity-review-form select:focus-visible,
 .identity-review-form input:focus-visible,
 .identity-source-selectors select:focus-visible,
-.identity-choice input:focus-visible {
+.identity-choice input:focus-visible,
+.identity-state-action:focus-visible {
   outline: 3px solid var(--gbos-accent);
   outline-offset: 2px;
 }
@@ -784,6 +1008,79 @@ watch(
   padding: 10px;
   border-radius: var(--gbos-radius-control);
   background: var(--gbos-canvas);
+}
+
+.identity-state-action {
+  width: fit-content;
+  margin-top: 4px;
+  padding: 8px 12px;
+  color: var(--gbos-primary);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.identity-state-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.identity-revoke-dialog {
+  z-index: 50;
+  width: min(440px, calc(100vw - 32px));
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--gbos-radius-card);
+  color: var(--gbos-text);
+  background: transparent;
+  box-shadow: var(--gbos-shadow-card);
+}
+
+.identity-revoke-dialog::backdrop {
+  background: rgb(11 18 32 / 56%);
+}
+
+.identity-revoke-dialog__surface {
+  padding: 20px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-card);
+  background: var(--gbos-surface);
+}
+
+.identity-revoke-dialog h2,
+.identity-revoke-dialog p {
+  margin: 0;
+}
+
+.identity-revoke-dialog p {
+  margin-top: 8px;
+  color: var(--gbos-muted);
+  line-height: 1.55;
+}
+
+.identity-revoke-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.identity-revoke-dialog__actions button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-control);
+  color: var(--gbos-text);
+  background: var(--gbos-surface);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.identity-revoke-dialog__actions button:focus-visible {
+  outline: 3px solid var(--gbos-accent);
+  outline-offset: 2px;
 }
 
 .identity-state-list li > *,

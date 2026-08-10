@@ -519,6 +519,7 @@ describe("v4 roles and pages", () => {
   it("角色裁剪导航和深链", () => {
     expect(navigationForRoles(["Integration Admin"]).map((item) => item.to)).toEqual([
       "/gbos/integrations",
+      "/gbos/communications",
     ]);
     expect(navigationForRoles(["Sales User"]).map((item) => item.to)).toEqual([
       "/gbos/sales",
@@ -1141,6 +1142,317 @@ describe("v4 roles and pages", () => {
     expect(stateReads).toBe(2);
     expect(candidateReads).toBeGreaterThanOrEqual(1);
     expect(submitCalls).toBe(1);
+
+    delete host.frappe;
+    refreshSession();
+  });
+
+  it("销售角色只能请求 Party/Contact，角色漂移后立即退回 Party", async () => {
+    const host = globalThis as typeof globalThis & {
+      frappe?: {
+        session: { user: string };
+        boot: { user: { roles: string[] } };
+      };
+    };
+    host.frappe = {
+      session: { user: "admin@example.invalid" },
+      boot: { user: { roles: ["GBOS Admin"] } },
+    };
+    refreshSession();
+    const identityRef = "extid:v1:email:opaque-role-guard";
+    const candidateTypes: string[] = [];
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
+      const url = new URL(String(input), "https://gbos.invalid");
+      if (url.pathname === BFF_V4_ENDPOINTS.communicationGet) {
+        return Promise.resolve(okV4({
+          communication: {
+            observation_id: "OBS-ROLE-GUARD",
+            channel: "Email",
+            occurred_at: "2026-08-10T02:00:00Z",
+            summary_zh: "客户询问样品。",
+            original_language: "zh",
+            classification: "Customer Request",
+            review_status: "Unreviewed",
+            team_ref: "TEAM-1",
+            party_ref: null,
+            evidence_count: 0,
+            evidence: [],
+            fact_proposals: [],
+            association_suggestions: [{
+              type: "Party",
+              confidence: 0.8,
+              suggestion_key: `suggestion:v1:${"e".repeat(64)}`,
+            }],
+            participant_identities: [{ identity_ref: identityRef, provider: "email", status: "unresolved" }],
+            model: { name: "deepseek-v4-flash", version: "2026-08-01" },
+            raw_access_allowed: false,
+          },
+        }));
+      }
+      if (url.pathname === BFF_V4_ENDPOINTS.identityListStates) {
+        return Promise.resolve(okV4({
+          identities: [{ identity_ref: identityRef, provider: "email", status: "unresolved" }],
+          connector_account_owner: null,
+        }));
+      }
+      if (url.pathname === BFF_V4_ENDPOINTS.identityListCandidates) {
+        candidateTypes.push(url.searchParams.get("candidate_type") ?? "");
+        return Promise.resolve(okV4({
+          candidates: [
+            { candidate_type: "User", candidate_ref: "USER-SECRET", display_label: "系统用户" },
+            { candidate_type: "Party", candidate_ref: "PARTY-SECRET", display_label: "客户主体" },
+            { candidate_type: "Contact", candidate_ref: "CONTACT-SECRET", display_label: "客户联系人" },
+          ],
+          eligible_reviewers: [{ reviewer_ref: "REVIEWER-1", display_label: "审核人甲" }],
+          has_more: false,
+        }));
+      }
+      return Promise.resolve(okV4({ status: "pending", mapping_ref: "MAP-1", mapping_revision: 1 }));
+    });
+    const wrapper = mount(CommunicationDetailView, {
+      props: { id: "OBS-ROLE-GUARD" },
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({ fetcher, isOnline: () => true }),
+        },
+      },
+    });
+    await flushPromises();
+
+    const typeSelect = wrapper.get("select[name='candidate_type']");
+    expect(typeSelect.findAll("option").map((option) => option.attributes("value"))).toEqual([
+      "User",
+      "Party",
+      "Contact",
+    ]);
+    await typeSelect.setValue("User");
+    await flushPromises();
+    expect(candidateTypes).toContain("User");
+
+    host.frappe.boot.user.roles = ["Sales User"];
+    refreshSession();
+    await flushPromises();
+
+    expect(typeSelect.findAll("option").map((option) => option.attributes("value"))).toEqual([
+      "Party",
+      "Contact",
+    ]);
+    expect((typeSelect.element as HTMLSelectElement).value).toBe("Party");
+    expect(candidateTypes.at(-1)).toBe("Party");
+    expect(wrapper.text()).not.toContain("系统用户");
+    expect(wrapper.html()).not.toMatch(/USER-SECRET|PARTY-SECRET|CONTACT-SECRET/u);
+
+    delete host.frappe;
+    refreshSession();
+  });
+
+  it("管理员撤回已确认映射前二次确认，重复操作共用一个幂等请求", async () => {
+    const host = globalThis as typeof globalThis & {
+      frappe?: {
+        session: { user: string };
+        boot: { user: { roles: string[] } };
+      };
+    };
+    host.frappe = {
+      session: { user: "admin@example.invalid" },
+      boot: { user: { roles: ["GBOS Admin"] } },
+    };
+    refreshSession();
+    const identityRef = "extid:v1:email:opaque-revoke";
+    const mappingRef = "MAPPING-RAW-MUST-NOT-RENDER";
+    let stateReads = 0;
+    let revokeCalls = 0;
+    let resolveRevoke: ((response: Response) => void) | undefined;
+    const revokeBodies: URLSearchParams[] = [];
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input, init) => {
+      const url = new URL(String(input), "https://gbos.invalid");
+      if (url.pathname === BFF_V4_ENDPOINTS.communicationGet) {
+        return Promise.resolve(okV4({
+          communication: {
+            observation_id: "OBS-REVOKE",
+            channel: "Email",
+            occurred_at: "2026-08-10T02:00:00Z",
+            summary_zh: "已确认参与者。",
+            original_language: "zh",
+            classification: "Customer Request",
+            review_status: "Reviewed",
+            team_ref: "TEAM-1",
+            party_ref: null,
+            evidence_count: 0,
+            evidence: [],
+            fact_proposals: [],
+            association_suggestions: [],
+            participant_identities: [],
+            model: { name: "deepseek-v4-flash", version: "2026-08-01" },
+            raw_access_allowed: false,
+          },
+        }));
+      }
+      if (url.pathname === BFF_V4_ENDPOINTS.identityListStates) {
+        stateReads += 1;
+        return Promise.resolve(okV4({
+          identities: [{
+            identity_ref: identityRef,
+            provider: "email",
+            status: stateReads > 1 ? "revoked" : "confirmed",
+            mapping_ref: mappingRef,
+            mapping_revision: stateReads > 1 ? 5 : 4,
+            target_type: "Party",
+            display_label: "海湾香氛客户",
+          }],
+          connector_account_owner: null,
+        }));
+      }
+      revokeCalls += 1;
+      revokeBodies.push(new URLSearchParams(String(init?.body)));
+      return new Promise<Response>((resolve) => {
+        resolveRevoke = resolve;
+      });
+    });
+    const wrapper = mount(CommunicationDetailView, {
+      props: { id: "OBS-REVOKE" },
+      global: {
+        stubs: { GbosButton: gbosButtonStub },
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+            getCsrfToken: () => "csrf-identity",
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.html()).not.toContain(identityRef);
+    expect(wrapper.html()).not.toContain(mappingRef);
+    await wrapper.get("button[data-action='revoke-identity']").trigger("click");
+    expect(revokeCalls).toBe(0);
+    expect(wrapper.get("dialog").attributes("open")).toBeDefined();
+    expect(wrapper.get("dialog").text()).toContain("撤回后该参与者将不再关联");
+    expect(wrapper.get("dialog button[data-action='confirm']").text()).toBe("确认撤回");
+    await wrapper.get("dialog button[data-action='confirm']").trigger("click");
+    await wrapper.get("button[data-action='revoke-identity']").trigger("click");
+    expect(revokeCalls).toBe(1);
+    expect(revokeBodies[0]?.get("expected_revision")).toBe("4");
+    expect(revokeBodies[0]?.get("mapping_ref")).toBe(mappingRef);
+    expect(revokeBodies[0]?.get("identity_ref")).toBe(identityRef);
+    expect(revokeBodies[0]?.get("idempotency_key")).toMatch(/\S/u);
+
+    resolveRevoke?.(okV4({ status: "revoked", mapping_ref: mappingRef, mapping_revision: 5 }));
+    await flushPromises();
+    expect(stateReads).toBe(2);
+    expect(wrapper.text()).toContain("已撤回身份映射");
+    expect(wrapper.find("button[data-action='revoke-identity']").exists()).toBe(false);
+
+    delete host.frappe;
+    refreshSession();
+  });
+
+  it("已拒绝映射可重新选择候选，送审携带 rejected 和服务端映射版本", async () => {
+    const host = globalThis as typeof globalThis & {
+      frappe?: {
+        session: { user: string };
+        boot: { user: { roles: string[] } };
+      };
+    };
+    host.frappe = {
+      session: { user: "admin@example.invalid" },
+      boot: { user: { roles: ["GBOS Admin"] } },
+    };
+    refreshSession();
+    const identityRef = "extid:v1:email:opaque-rejected";
+    const mappingRef = "MAPPING-REJECTED-MUST-NOT-RENDER";
+    let submitBody: URLSearchParams | undefined;
+    const fetcher = vi.fn<Fetcher>().mockImplementation((input, init) => {
+      const url = new URL(String(input), "https://gbos.invalid");
+      if (url.pathname === BFF_V4_ENDPOINTS.communicationGet) {
+        return Promise.resolve(okV4({
+          communication: {
+            observation_id: "OBS-REJECTED",
+            channel: "Email",
+            occurred_at: "2026-08-11T02:00:00Z",
+            summary_zh: "重新核对参与者。",
+            original_language: "zh",
+            classification: "Customer Request",
+            review_status: "Reviewed",
+            team_ref: "TEAM-1",
+            party_ref: null,
+            evidence_count: 0,
+            evidence: [],
+            fact_proposals: [],
+            association_suggestions: [{
+              type: "Party",
+              confidence: 0.9,
+              suggestion_key: `suggestion:v1:${"f".repeat(64)}`,
+            }],
+            participant_identities: [{
+              identity_ref: identityRef,
+              provider: "email",
+              status: "rejected",
+              mapping_ref: mappingRef,
+              mapping_revision: 7,
+            }],
+            model: { name: "deepseek-v4-flash", version: "2026-08-01" },
+            raw_access_allowed: false,
+          },
+        }));
+      }
+      if (url.pathname === BFF_V4_ENDPOINTS.identityListStates) {
+        return Promise.resolve(okV4({
+          identities: [{
+            identity_ref: identityRef,
+            provider: "email",
+            status: "rejected",
+            mapping_ref: mappingRef,
+            mapping_revision: 7,
+          }],
+          connector_account_owner: null,
+        }));
+      }
+      if (url.pathname === BFF_V4_ENDPOINTS.identityListCandidates) {
+        return Promise.resolve(okV4({
+          candidates: [{
+            candidate_type: "Party",
+            candidate_ref: "PARTY-RESELECTED",
+            display_label: "重选客户主体",
+          }],
+          eligible_reviewers: [{ reviewer_ref: "REVIEWER-1", display_label: "审核人甲" }],
+          has_more: false,
+        }));
+      }
+      submitBody = new URLSearchParams(String(init?.body));
+      return Promise.resolve(okV4({
+        status: "pending",
+        mapping_ref: mappingRef,
+        mapping_revision: 8,
+      }));
+    });
+    const wrapper = mount(CommunicationDetailView, {
+      props: { id: "OBS-REJECTED" },
+      global: {
+        provide: {
+          [BFF_CLIENT_KEY as symbol]: createBffClient({
+            fetcher,
+            isOnline: () => true,
+            getCsrfToken: () => "csrf-identity",
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("已拒绝");
+    expect(wrapper.find("form[aria-label='身份关联送审']").exists()).toBe(true);
+    expect(wrapper.html()).not.toMatch(/opaque-rejected|MAPPING-REJECTED-MUST-NOT-RENDER|PARTY-RESELECTED/u);
+    await wrapper.get("input[name='candidate']").setValue();
+    await wrapper.get("select[name='assigned_reviewer']").setValue("0");
+    await wrapper.get("form[aria-label='身份关联送审']").trigger("submit");
+    await flushPromises();
+
+    expect(submitBody?.get("expected_state")).toBe("rejected");
+    expect(submitBody?.get("expected_revision")).toBe("7");
+    expect(submitBody?.get("identity_ref")).toBe(identityRef);
 
     delete host.frappe;
     refreshSession();

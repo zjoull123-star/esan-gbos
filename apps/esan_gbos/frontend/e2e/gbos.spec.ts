@@ -100,7 +100,7 @@ const roleCases = [
   {
     name: "Integration Admin",
     roles: ["Integration Admin"],
-    navigation: ["集成状态"],
+    navigation: ["集成状态", "沟通观察"],
     deniedPath: "/gbos/sample/SAMPLE-E2E",
   },
   { name: "CEO", roles: ["CEO"], navigation: [...allNavigationLabels] },
@@ -488,6 +488,8 @@ const syntheticIdentityGenericReviewCase = {
   ...syntheticReviewCase,
   name: "IDENTITY-REVIEW-E2E",
   title: "Identity Resolution",
+  team: "TEAM-E2E",
+  assigned_reviewer: "REVIEWER-E2E",
   case_revision: 3,
   subject: {
     doctype: "GBOS External Identity",
@@ -507,13 +509,13 @@ const syntheticIdentityGenericReviewDetailEnvelope = v1Envelope({
 const syntheticIdentityGenericDecisionEnvelope = v1Envelope({
   case: {
     ...syntheticIdentityGenericReviewCase,
-    review_status: "Approved",
+    review_status: "Rejected",
     case_revision: 4,
-    decision_note: "身份映射证据充分。",
+    decision_note: "当前证据不足。",
   },
   decision: {
     name: "IDENTITY-DECISION-E2E",
-    decision: "Approved",
+    decision: "Rejected",
     subject_doctype: "GBOS External Identity",
     subject_name: "protected:identity-subject",
   },
@@ -1121,6 +1123,160 @@ test("集成与沟通切片通过 axe、Restricted 和三视口检查", async ({
   }
 });
 
+test("销售身份候选只有 Party/Contact，不发出 User 请求", async ({ page }, testInfo) => {
+  test.skip(!isHarness(testInfo), "身份角色裁剪使用前端严格 harness");
+  await setHarnessSession(page, ["Sales User"]);
+  const candidateTypes: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === BFF_V4_ENDPOINTS.identityListCandidates) {
+      candidateTypes.push(new URL(request.url()).searchParams.get("candidate_type") ?? "");
+    }
+  });
+  await page.goto(harnessEntry);
+  await navigateHarnessRoute(page, "/gbos/communications/OBS-E2E-1");
+
+  const candidateType = page.getByLabel("候选类型");
+  await expect(candidateType.locator("option")).toHaveText(["客户主体", "联系人"]);
+  await expect(candidateType.locator("option[value='User']")).toHaveCount(0);
+  await expect(page.getByText("系统用户", { exact: true })).toHaveCount(0);
+  await candidateType.selectOption("Contact");
+  await expect.poll(() => candidateTypes.at(-1)).toBe("Contact");
+  expect(candidateTypes).not.toContain("User");
+  expect(await axeViolations(page)).toEqual([]);
+});
+
+test("管理员撤回经二次确认，stale 409 刷新后可成功重试", async ({
+  page,
+}, testInfo) => {
+  test.skip(!isHarness(testInfo), "身份撤回使用前端严格 harness");
+  await setHarnessSession(page, ["GBOS Admin"]);
+  const identityRef = "extid:v1:email:opaque-revoke-e2e";
+  const mappingRef = "MAPPING-REVOKE-E2E-MUST-NOT-RENDER";
+  let stateReads = 0;
+  let revokeCalls = 0;
+  const revokePosts: string[] = [];
+  await page.route(`**${BFF_V4_ENDPOINTS.identityListStates}**`, async (route) => {
+    stateReads += 1;
+    const revoked = stateReads >= 3;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(v4Envelope({
+        identities: [{
+          identity_ref: identityRef,
+          provider: "email",
+          status: revoked ? "revoked" : "confirmed",
+          mapping_ref: mappingRef,
+          mapping_revision: stateReads === 1 ? 4 : stateReads === 2 ? 5 : 6,
+          target_type: "Party",
+          display_label: "海湾香氛客户",
+        }],
+        connector_account_owner: { display_label: "渠道账号负责人" },
+      })),
+    });
+  });
+  await page.route(`**${BFF_V4_ENDPOINTS.identityRevoke}`, async (route) => {
+    revokeCalls += 1;
+    revokePosts.push(route.request().postData() ?? "");
+    if (revokeCalls === 1) {
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          message: {
+            error: {
+              code: "revision_conflict",
+              message: "映射版本已更新，请重新确认。",
+              request_id: "req-revoke-stale-e2e",
+              details: {},
+            },
+          },
+        }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(v4Envelope({
+        status: "revoked",
+        mapping_ref: mappingRef,
+        mapping_revision: 6,
+      })),
+    });
+  });
+  await page.goto(harnessEntry);
+  await navigateHarnessRoute(page, "/gbos/communications/OBS-E2E-1");
+
+  await expect(page.getByText(identityRef, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(mappingRef, { exact: true })).toHaveCount(0);
+  const revoke = page.getByRole("button", { name: "撤回已确认映射" });
+  await revoke.click();
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("alert")).toContainText("映射版本已更新");
+  consumeExpectedConsoleError(page, "409 (Conflict)");
+  expect(stateReads).toBe(2);
+  expect(revokeCalls).toBe(1);
+
+  await revoke.click();
+  await page.getByRole("button", { name: "确认撤回" }).dblclick();
+  await expect(page.getByText("已撤回身份映射。", { exact: true })).toBeVisible();
+  expect(stateReads).toBe(3);
+  expect(revokeCalls).toBe(2);
+  for (const post of revokePosts) {
+    const body = new URLSearchParams(post);
+    expect(body.get("idempotency_key")).toMatch(/\S/u);
+    expect(body.get("identity_ref")).toBe(identityRef);
+    expect(body.get("mapping_ref")).toBe(mappingRef);
+  }
+  await expect(page.getByText(identityRef, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(mappingRef, { exact: true })).toHaveCount(0);
+  expect(await axeViolations(page)).toEqual([]);
+});
+
+test("身份安全详情 permission deny 时不提供无目标决定", async ({
+  page,
+}, testInfo) => {
+  test.skip(!isHarness(testInfo), "身份审核失败关闭使用前端严格 harness");
+  await setHarnessSession(page, ["GBOS Admin"]);
+  await page.route(`**${BFF_V2_ENDPOINTS.reviewGet}**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(syntheticIdentityGenericReviewDetailEnvelope),
+    });
+  });
+  await page.route(`**${BFF_V4_ENDPOINTS.identityGetPendingReview}**`, async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({
+        message: {
+          error: {
+            code: "permission_denied",
+            message: "当前审核人无权读取身份详情。",
+            request_id: "req-identity-permission-e2e",
+            details: {},
+          },
+        },
+      }),
+    });
+  });
+  await page.goto(harnessEntry);
+  await navigateHarnessRoute(page, "/gbos/review/IDENTITY-REVIEW-E2E");
+
+  await expect(page.getByRole("alert")).toContainText("身份审核详情不可用");
+  await expect(page.getByRole("button", { name: "刷新安全详情" })).toBeVisible();
+  await expect(page.getByLabel("审核说明")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /批准案件|拒绝案件/u })).toHaveCount(0);
+  await expect(page.getByText("MAPPING-E2E", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("PROTECTED-PARTY-E2E", { exact: true })).toHaveCount(0);
+  consumeExpectedConsoleError(page, "403 (Forbidden)");
+  expect(await axeViolations(page)).toEqual([]);
+});
+
 test("身份解析只显示安全标签并通过服务端审核筛选", async ({ page }, testInfo) => {
   test.skip(!isHarness(testInfo), "身份解析交互使用前端严格 harness");
   await setHarnessSession(page, ["GBOS Admin"]);
@@ -1207,13 +1363,20 @@ test("身份解析只显示安全标签并通过服务端审核筛选", async ({
   await page.getByRole("link", { name: "进入治理审核" }).click();
   await expect(page).toHaveURL(/\/gbos\/review\/IDENTITY-REVIEW-E2E$/u);
   await expect(page.getByRole("heading", { name: "身份解析案件" })).toBeVisible();
+  await expect(page.getByText("海湾香氛客户", { exact: true })).toBeVisible();
+  await expect(page.getByText("审核版本：3", { exact: true })).toBeVisible();
+  await expect(page.getByText("映射版本：2", { exact: true })).toBeVisible();
   await expect(page.getByText("protected:identity-subject", { exact: true })).toHaveCount(0);
-  await page.getByLabel("审核说明").fill("身份映射证据充分。");
-  await page.getByRole("button", { name: "批准案件" }).click();
+  await expect(page.getByText("MAPPING-E2E", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("PROTECTED-PARTY-E2E", { exact: true })).toHaveCount(0);
+  await page.getByLabel("审核说明").fill("当前证据不足。");
+  await page.getByRole("button", { name: "拒绝案件" }).focus();
+  await page.keyboard.press("Enter");
   await expect(page.getByText("审核决定已记录。", { exact: true })).toBeVisible();
   expect(decisionPosts).toHaveLength(1);
   const decisionBody = new URLSearchParams(decisionPosts[0]);
   expect(decisionBody.get("name")).toBe("IDENTITY-REVIEW-E2E");
+  expect(decisionBody.get("decision")).toBe("Rejected");
   expect(decisionBody.get("expected_revision")).toBe("3");
   expect(decisionBody.get("expected_subject_revision")).toBe("2");
   expect(decisionBody.get("idempotency_key")).toMatch(/\S/u);
