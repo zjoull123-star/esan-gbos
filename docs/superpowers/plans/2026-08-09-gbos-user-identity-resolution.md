@@ -36,7 +36,7 @@ The four user relationships remain separate and **禁止相互推导**:
 | Task 6–8 | Implemented and verified | PostgreSQL migration/checksum chain ran twice; forced-RLS coverage retained |
 | Task 9–11 | Implemented and verified | Live Frappe subset plus responsive frontend harness passed |
 | Task 12 | Implemented and verified | Local composition, current-source image inspect/record, Prometheus/runtime boundaries, model fatal latch and offline drills verified |
-| Task 13 | **部分完成** | Credential-free closure passed (`2687 passed/42 skipped/1 warning`, frontend unit `188`, Playwright harness `22`); real Email/DeepSeek credentials and observed model identity remain absent |
+| Task 13 | **部分完成** | Credential-free closure passed (`2692 passed/42 skipped/1 warning`, frontend unit `188`, Playwright harness `22`); real Email/DeepSeek credentials and observed model identity remain absent |
 
 The current verdict is `credential_free_closure=go` and
 `real_email_deepseek_canary=no_go`. The checked-in formal state remains
@@ -297,7 +297,7 @@ Email fixture
 **Primary-agent-only external inputs:** IMAP host/port/mailbox/app password/folder, activation time, target team, account user, DeepSeek API key/balance, HMAC key, current trusted phrase lexicon.
 
 **Current boundary:** `credential_free_closure=go` and
-`real_email_deepseek_canary=no_go`. Full pytest is `2687 passed/42 skipped/1 warning`;
+`real_email_deepseek_canary=no_go`. Full pytest is `2692 passed/42 skipped/1 warning`;
 Ruff check/format, mypy, compileall, secret scan, frontend lint/typecheck/build, unit
 `188` and Playwright harness `22` are green. Model fatal latch behavior is fail-closed;
 Email uses source-bound STATUS-only checkpoint/receipt/preflight; the machine

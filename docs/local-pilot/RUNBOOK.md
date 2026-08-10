@@ -41,7 +41,7 @@ Playwright 使用 `synthetic.ceo@example.invalid` 登录后访问 `/gbos/ceo` �
 显示“经营总览”和“演示 / 合成数据”；375/768/1440 宽度均无横向溢出，console
 errors/warnings 均为 0，cache 只有 21 个静态预缓存条目且 API `cached=false`。
 上述是历史 snapshot，不是当前 HEAD 的 live runtime 证明。当前 credential-free
-closure 的 source-bound 计数为 full pytest `2687 passed/42 skipped/1 warning`，
+closure 的 source-bound 计数为 full pytest `2692 passed/42 skipped/1 warning`，
 frontend unit `188 passed`、frontend-harness Playwright `22 passed`，lint/typecheck/
 build、Ruff check/format、mypy、compileall、secret scan 均 green。首次部分 site 的
 失败目录已可恢复地移动到数据卷内 `.failed-gbos.localhost-20260808T033521`，未删除。
@@ -118,7 +118,7 @@ real Email + DeepSeek canary 未执行
 response_reported_observed_model=unknown
 ```
 
-- Full pytest 为 `2687 passed/42 skipped/1 warning`；Ruff check/format、mypy、
+- Full pytest 为 `2692 passed/42 skipped/1 warning`；Ruff check/format、mypy、
   compileall、secret scan、frontend lint/typecheck/build 均 green；frontend unit
   为 `188 passed`，Playwright harness 为 `22 passed`。
 - Model fatal latch 的 fail-closed 行为已验证：fatal/mismatch 会锁住模型外发并在

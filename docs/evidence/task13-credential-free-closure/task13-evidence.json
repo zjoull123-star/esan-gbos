@@ -27,7 +27,7 @@
   "verification": {
     "pytest": {
       "command": "uv run --frozen pytest -q",
-      "passed": 2687,
+      "passed": 2692,
       "skipped": 42,
       "failed": 0,
       "warnings": 1

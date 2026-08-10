@@ -27,7 +27,7 @@ API key、identity HMAC、trusted phrase lexicon 和 Frappe identity-resolver cr
 
 ## Credential-free verification
 
-- Full pytest：`2687 passed, 42 skipped, 1 warning`，failed `0`。
+- Full pytest：`2692 passed, 42 skipped, 1 warning`，failed `0`。
 - Ruff check/format、mypy、compileall、secret scan：全部 `pass`。
 - Frontend unit：`188 passed`；Playwright harness：`22 passed`；lint、typecheck、
   production build：全部 `pass`。

@@ -61,7 +61,7 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 | `local-runtime` | `sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee` | `ad58ab3ea8c0d521cebd90c2642709d135f98fac` |
 
 当前 credential-free closure 的 source-bound 验证快照为：full pytest
-`2687 passed, 42 skipped, 1 warning`；Ruff check/format、mypy、compileall 与
+`2692 passed, 42 skipped, 1 warning`；Ruff check/format、mypy、compileall 与
 secret scan 全部 green；frontend unit `188 passed`、Playwright harness `22 passed`、
 lint/typecheck/build 全部 green。模型 fatal latch 的 fail-closed 行为已验证；Email
 只允许 source-bound `STATUS_UIDVALIDITY_UIDNEXT` checkpoint/receipt，preflight

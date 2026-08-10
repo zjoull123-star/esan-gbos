@@ -193,7 +193,7 @@ def test_current_task13_closure_snapshot_is_bound_to_code_and_not_a_canary_claim
         "continuous_runtime_required": False,
         "seventy_two_hour_run": "deferred_by_user",
     }
-    assert evidence["verification"]["pytest"]["passed"] == 2687
+    assert evidence["verification"]["pytest"]["passed"] == 2692
     assert evidence["verification"]["pytest"]["skipped"] == 42
     assert evidence["verification"]["pytest"]["failed"] == 0
     assert evidence["verification"]["pytest"]["warnings"] == 1
