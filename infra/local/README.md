@@ -31,10 +31,13 @@ rechecked on another container runtime.
 The Frappe, MariaDB, Redis, backend, worker, scheduler, websocket, and PWA
 services use local-pilot-specific volume names. The Frappe services use the
 recorded local image `esan-gbos-local-pilot-frappe:2026-08-08` with inspect digest
-`sha256:94c1bb068a868e0c0c7bb1deda231c2fc5bd13f2928b83036f83802674c5afe6`;
+`sha256:22c3a2c129442588d0353c6a8f564aec593afc63b7354b4294d37aa9d40f7625`;
 the local runtime digest is
-`sha256:705012abe856dbe33298e508c79e121831585e1036dca701a93553ebe0186c8b`.
-Both images bind source revision `00a1a0a395d6326688ff131192c9aa332f8d32b1`;
+`sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee`.
+Both images bind runtime-code revision
+`ad58ab3ea8c0d521cebd90c2642709d135f98fac`; later branch commits contain only
+image-lock, test and documentation successors and are not runtime-code deltas inside
+the images.
 the upstream ERPNext image is not treated as a GBOS PWA. The previous synthetic
 snapshot, rather than this rebuild alone, reported
 `setup_complete=1`, Frappe/ERPNext/CRM/esan_gbos versions
@@ -72,7 +75,7 @@ temporary core-only manifest and starts the three runtime APIs plus Frappe/PWA.
 It never enables connector, model, media, or tunnel profiles and does not alter
 the checked-in manifest, composition state, or formal `start --require-go` gate.
 The earlier synthetic snapshot completed this path with its then-source-bound images;
-the newly recorded `00a1a0a` images have not been promoted to real-channel evidence.
+the newly recorded `ad58ab3` images have not been promoted to real-channel evidence.
 The pinned Prometheus profile also observed the authenticated
 `identity-resolution` target as `up=1` with five healthy rules. Resolver
 readiness remained `0` because the real identity worker and channels were

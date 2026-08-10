@@ -10,6 +10,8 @@ README = ROOT / "README.md"
 PERMISSION_MATRIX = ROOT / "docs" / "permission-matrix.md"
 EXTERNAL_DEPS = ROOT / "docs" / "external-deps.md"
 HANDOFF = ROOT / "docs" / "HANDOFF.md"
+LOCAL_PLAN = ROOT / "docs" / "local-pilot" / "IMPLEMENTATION_PLAN.md"
+LOCAL_INFRA_README = ROOT / "infra" / "local" / "README.md"
 IDENTITY_PLAN = (
     ROOT / "docs" / "superpowers" / "plans" / "2026-08-09-gbos-user-identity-resolution.md"
 )
@@ -69,6 +71,12 @@ def test_permission_matrix_records_the_closed_ceo_auto_elevation_bundle() -> Non
     assert "CEO_FULL_ACCESS_ROLES" in ceo_source
     for role in CEO_ROLES:
         assert role in _read(HANDOFF)
+    assert "无连接配置；受控汇总导出" not in matrix
+    assert "Gate 2 均未启动下列服务身份" not in matrix
+    assert "所有服务身份均未启动" not in matrix
+    assert "Observer Identity Resolver" in matrix
+    assert "Agent TrustedMaterializer" in matrix
+    assert "正式 local pilot" in matrix
 
 
 def test_external_dependency_truth_names_deepseek_without_claiming_a_real_call() -> None:
@@ -141,6 +149,28 @@ def test_owned_handoff_docs_do_not_reintroduce_stale_runtime_claims() -> None:
     )
     for statement in forbidden:
         assert statement.lower() not in owned_docs.lower(), statement
+
+
+def test_current_local_pilot_docs_follow_the_locked_runtime_images() -> None:
+    image_lock = json.loads(_read(IMAGE_LOCK))
+    locked_digests = {
+        image["service"]: image["local_inspect_digest"]
+        for image in image_lock["images"]
+        if image["service"] in {"frappe-pwa", "local-runtime"}
+    }
+    current_docs = "\n".join(
+        _read(path) for path in (EXTERNAL_DEPS, LOCAL_PLAN, LOCAL_INFRA_README)
+    )
+
+    assert CURRENT_SOURCE_COMMIT in current_docs
+    for service, digest in locked_digests.items():
+        assert digest in current_docs, service
+    for stale in (
+        "00a1a0a395d6326688ff131192c9aa332f8d32b1",
+        "sha256:94c1bb068a868e0c0c7bb1deda231c2fc5bd13f2928b83036f83802674c5afe6",
+        "sha256:705012abe856dbe33298e508c79e121831585e1036dca701a93553ebe0186c8b",
+    ):
+        assert stale not in current_docs
 
 
 def test_identity_handoff_keeps_the_four_user_relations_separate_and_truthful() -> None:

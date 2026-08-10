@@ -5,10 +5,13 @@ channel ingestion, identity resolution and model proposals without enabling outb
 actions, Kingdee, cloud deployment or production state changes.
 
 **Current validation reference:**
-`66a17db87528d67f08bf6692a1f67eb85e03f4e3`. The locked Frappe/PWA and local
-runtime images were built from `00a1a0a395d6326688ff131192c9aa332f8d32b1`;
-there is no later application, service, contract or dependency-lock delta through the
-validation reference.
+`ad58ab3ea8c0d521cebd90c2642709d135f98fac`. The locked Frappe/PWA image is
+`sha256:22c3a2c129442588d0353c6a8f564aec593afc63b7354b4294d37aa9d40f7625`
+and the local runtime image is
+`sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee`.
+Both images carry that exact runtime-code revision label. Later branch commits are
+limited to image-lock, test and documentation successors and are not represented as
+additional runtime code inside the images.
 
 ## Current architecture
 

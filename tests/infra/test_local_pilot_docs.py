@@ -243,3 +243,6 @@ def test_runbook_documents_current_truth_boundaries_without_unlocking_formal_sta
         "isolated PostgreSQL validation/build/scanner containers",
     ):
         assert statement in runbook
+    alert_count = _read(INFRA / "prometheus" / "alerts.yml").count("- alert:")
+    assert alert_count == 7
+    assert f"{alert_count} 条低基数规则健康" in runbook

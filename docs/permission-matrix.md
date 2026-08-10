@@ -33,10 +33,10 @@ Legend: **允许** = 仅在列出的条件下；**审批** = 可提交申请但�
 
 | 角色 | 业务数据范围 | Restricted 原文与证据 | AI Draft / Review | 正式状态与 Kingdee | 配置、审计与导出 |
 |---|---|---|---|---|---|
-| GBOS Admin | 本 site 全部 GBOS 配置与业务对象；不代替业务审批 | 默认拒绝；仅 break-glass | 可查看策略结果，不能代替被分配 Reviewer | 不签发业务批准；Kingdee 拒绝写 | 管理角色/团队；导出仍需审批和审计 |
+| GBOS Admin | 本 site 全部 GBOS 配置与业务对象；不代替普通业务审批 | 默认拒绝；仅 break-glass | 仅在命令明确允许的管理员覆核路径决定，仍要求 pinned Review Case、revision、幂等与审计 | 不绕过正式命令或签发 Kingdee 写入 | 管理角色/团队；导出仍需审批和审计 |
 | Integration Admin | 只读连接状态及最小映射字段 | 拒绝原文；不能读取明文秘钥 | 拒绝审核 | Gate 5 Kingdee 只读连接配置；无写工具 | 管理连接器开关、轮换引用和健康状态 |
 | Privacy/Audit | 只读审计、分类、同意、保留与删除回执 | 按审计目的只读最小证据 | 只读 | 所有业务写拒绝；只读连接审计 | 可生成受控审计报告，不修改业务 |
-| CEO | 全局汇总及业务对象只读 | 默认拒绝原始证据 | 可查看审核队列结果，不批准未分配事项 | Gate 5 正式指标只经 Metrics API；Kingdee 拒绝写 | 无连接配置；受控汇总导出 |
+| CEO | 通过封闭自动角色包读取本 site 全局汇总及业务对象 | 默认拒绝原始证据 | 按 `Reviewer` / `GBOS Admin` 的受控规则处理审核，不能绕过 pinned case、revision 或审计 | Gate 5 正式指标只经 Metrics API；Kingdee 拒绝写 | 通过 `Integration Admin` 管理连接状态、开关与健康；不能从 UI 读取秘钥；受控汇总导出 |
 | Sales Manager | 所管理团队的客户、Deal、样品和工作项 | 仅关联业务所需最小字段 | 可创建草稿、退回团队草稿 | Deal 阶段等仍走人工命令；Kingdee 拒绝写 | 无连接配置；团队范围导出需审批 |
 | Sales User | 自己或所属团队的客户、Deal、样品和工作项 | 仅关联业务所需最小字段，不得批量导出 | 可创建/修改 AI Draft，不得批准 | 不能自动改 Deal 阶段、Won/Lost、报价或外发；Kingdee 拒绝写 | 拒绝配置；按审批导出 |
 | Purchase Manager | 采购协同及获授权的客户需求摘要；所管理采购团队 | 默认拒绝客户原始通信 | 可退回采购草稿或处理被分配审核 | 最终供应商选择须人工命令；Kingdee 拒绝写 | 拒绝连接配置；采购范围导出需审批 |
@@ -50,7 +50,10 @@ Legend: **允许** = 仅在列出的条件下；**审批** = 可提交申请但�
 服务身份不是业务用户，也不能继承 System Manager。所有服务调用均须
 **每请求**验证 issuer、`audience`、`site_id`、`purpose`、最小 `scope`、
 数据分类、资源和过期时间；服务不能把上游 token 直接传给下游，也不能读取
-不属于自身连接的明文凭据。Gate 2 均未启动下列服务身份，只冻结未来边界。
+不属于自身连接的明文凭据。下表的“最早 Gate”保留最初能力分期；当前分支已实现
+本地 DB/HTTP 服务鉴权，以及两个 desk-less Frappe 身份 `Observer Identity Resolver`
+和 `Agent TrustedMaterializer`。这些实现与合成/隔离测试不等于正式 local pilot 已启动：
+checked-in manifest、真实渠道、真实模型、Kingdee、cloud 与 production 仍保持关闭。
 
 | 服务身份 | 最早 Gate | 允许范围 | 永久或当前拒绝 |
 |---|---:|---|---|
@@ -60,6 +63,12 @@ Legend: **允许** = 仅在列出的条件下；**审批** = 可提交申请但�
 | `gbos-bff-service` | 4 | 在委托用户、Review Case、revision、幂等键和 Action Guard 均有效时执行白名单 GBOS 内部命令 | 不浏览 Restricted 原文；不代理任意 DocType/SQL；无 Kingdee 写工具 |
 | `metrics-service` | 5 | 读取已治理 workflow/read projection 并返回带 definition、lineage、freshness、coverage、reconciliation 的指标 | 不读取未确认 Fact/AI Draft，不执行任意 SQL，不把模型估算作为正式 KPI |
 | `kingdee-adapter` | 5 | 使用独立受限身份和 `kingdee-read` scope 查询 metadata 与白名单只读投影 | 无 Kingdee 写工具；不接受 raw Form/字段/SQL/URL，不共享用户或模型 token |
+
+当前 Frappe 服务身份使用固定用户和单一服务角色，均为 `desk_access=0`，凭据只从
+repository-external `0600` 文件装载：`gbos-identity-resolver@localhost.invalid`
+仅持有 `Observer Identity Resolver`，可调用精确的身份解析方法但没有通用 DocPerm；
+`gbos-materializer@localhost.invalid` 仅持有 `Agent TrustedMaterializer`，只能执行
+封闭的 AI Draft / Review 物化命令。两者都不能继承 CEO、GBOS Admin 或 System Manager。
 
 任何服务身份新增 scope、跨 site 访问或外部出站目标，均需要重新更新本矩阵、
 威胁模型、负向测试和变更审批。服务身份不能审批自己的提案，也不能将
@@ -87,9 +96,10 @@ Legend: **允许** = 仅在列出的条件下；**审批** = 可提交申请但�
 Gate 1 已通过角色正向/负向、团队隔离、草稿禁止字段、命令幂等/revision、
 浏览器缓存和业务闭环测试；其历史证据受
 [`docs/evidence/SHA256SUMS`](evidence/SHA256SUMS) 保护。break-glass 的真实
-组织演练以及上述服务身份的运行时鉴权仍未开始。
+组织演练仍未执行。
 
-Gate 2 仅验证服务身份、scope、purpose 和默认拒绝的设计契约，所有服务身份
-均未启动。Gate 3–5 必须分别补齐跨 site、audience/resource、token 重放、
-撤销、数据分类、出站控制和审计脱敏的运行证据；文档存在不等于这些未来
-运行时证据已经通过。
+Gate 2 历史证据只验证服务身份、scope、purpose 和默认拒绝的设计契约；当前分支
+随后增加了本地服务组合、Frappe 服务身份、跨 site/RLS、重放和审计脱敏测试。
+正式 local pilot 仍为 No-Go，真实渠道/provider 与生产环境的 audience/resource、
+撤销传播、数据分类、出站控制和组织演练证据仍须单独补齐；代码和合成测试不能替代
+这些现场证据。
