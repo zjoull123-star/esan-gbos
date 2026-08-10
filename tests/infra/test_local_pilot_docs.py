@@ -197,11 +197,14 @@ def test_runbook_has_the_current_credential_free_canary_operator_sequence() -> N
         "canary-preflight",
         "receipt",
         "start-email-deepseek-canary",
-        "verify-canary-chain",
-        "projection config",
-        "observation window",
+        "status-before.json",
         "canary-evidence",
+        "canary_verifier_runtime",
+        "observation window",
         "--chain-attestation",
+        "email_body_peek_no_backfill",
+        "zero_prohibited_actions",
+        "status-after.json",
         "finalize",
     )
     positions = [sequence_text.lower().find(item.lower()) for item in sequence]
@@ -209,10 +212,11 @@ def test_runbook_has_the_current_credential_free_canary_operator_sequence() -> N
     assert positions == sorted(positions)
     assert "response_reported_observed_model" in sequence_section
     assert "free-form observed model" in sequence_section.lower()
-    invocation_text = "\n".join(
-        line for line in command_block.splitlines() if not line.lstrip().startswith("#")
+    model_identity_block = command_block.split("# 10.", maxsplit=1)[1].split("# 11.", maxsplit=1)[0]
+    model_identity_invocation = "\n".join(
+        line for line in model_identity_block.splitlines() if not line.lstrip().startswith("#")
     )
-    assert "--observed-at" not in invocation_text
+    assert "--observed-at" not in model_identity_invocation
     assert "repo-external" in sequence_section
     assert "secrets outside" in runbook.lower()
 

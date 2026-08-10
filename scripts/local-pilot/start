@@ -150,8 +150,7 @@ if [[ -n "${CANARY_CONTROL}" ]]; then
   "${SCRIPT_DIR}/canary-preflight" \
     --manifest "${MANIFEST}" \
     --run-control "${CANARY_CONTROL}" \
-    --secret-dir "${GBOS_SECRET_DIR}" \
-    --repo-root "${REPO_ROOT}"
+    --secret-dir "${GBOS_SECRET_DIR}"
   GBOS_CANARY_CONTROL="$(
     CDPATH='' cd -- "$(dirname -- "${CANARY_CONTROL}")" &&
       printf '%s/%s\n' "$PWD" "$(basename -- "${CANARY_CONTROL}")"

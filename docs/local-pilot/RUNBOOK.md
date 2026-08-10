@@ -197,7 +197,6 @@ scripts/local-pilot/canary-preflight \
   --manifest "$CANARY_DIR/pilot-manifest.json" \
   --run-control "$CANARY_DIR/canary-run.json" \
   --secret-dir "$SECRET_DIR" \
-  --repo-root "$REPO_ROOT" \
   --json
 #    It must require and verify the checkpoint receipt before returning ready.
 
@@ -206,31 +205,69 @@ scripts/local-pilot/start-email-deepseek-canary \
   --acknowledge-real-email-and-model \
   --canary-dir "$CANARY_DIR"
 
-# 8. verify-canary-chain with projection config/window/output and one DB-attested observation window.
-CONFIG_DIR=/absolute/path/outside/repo/private-canary-config
-scripts/local-pilot/render-config \
+# 8. Capture the first source/image/container-bound status sample.
+umask 077
+STATUS_BEFORE="$CANARY_DIR/status-before.json"
+scripts/local-pilot/status \
   --manifest "$CANARY_DIR/pilot-manifest.json" \
-  --output-dir "$CONFIG_DIR"
-PROJECTION_CONFIG="$CONFIG_DIR/projection-connections.json"
+  --json > "$STATUS_BEFORE"
+chmod 600 "$STATUS_BEFORE"
+scripts/local-pilot/canary-evidence sample \
+  --canary-dir "$CANARY_DIR" \
+  --status-json "$STATUS_BEFORE"
+
+# 9. Run the machine chain verifier inside Compose local-internal. It reads the
+#    already-rendered private config and 0600 DB secrets recorded by start;
+#    never run verify-canary-chain directly on the host with postgres:5432 or
+#    /run/secrets paths.
 WINDOW_START=__RFC3339_WINDOW_START__
 WINDOW_END=__RFC3339_WINDOW_END__
 CHAIN_ATTESTATION=/absolute/path/outside/repo/task13-chain-attestation.json
-scripts/local-pilot/verify-canary-chain \
+scripts/local-pilot/canary_verifier_runtime \
   --canary-dir "$CANARY_DIR" \
-  --projection-config "$PROJECTION_CONFIG" \
   --window-start "$WINDOW_START" \
   --window-end "$WINDOW_END" \
   --output "$CHAIN_ATTESTATION"
+#    The output binds exactly one observation window to the current run.
 
-# 9. Record the machine chain attestation; do not pass --observed-at or free-form observed model text.
-#    The attestation is the only source for response_reported_observed_model.
+# 10. Record the machine chain attestation. It is the only source for
+#     response_reported_observed_model; do not pass --observed-at or free-form observed model text.
 scripts/local-pilot/canary-evidence record \
   --canary-dir "$CANARY_DIR" \
   --kind model_identity_exact \
   --source system_query \
   --chain-attestation "$CHAIN_ATTESTATION"
 
-# 10. After all required checks and bounded samples, finalize the private evidence package.
+# 11. Produce the remaining 0600, repo-external artifacts from authenticated
+#     local system queries, browser captures and controlled drills. They must
+#     contain only bounded summaries/checksums and no raw identity, message,
+#     credential or model prompt. Record every required check explicitly.
+CHECK_DIR="$CANARY_DIR/checks"
+CHECK_TIME=__RFC3339_CHECK_TIME__
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind email_body_peek_no_backfill --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/email-body-peek.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind user_mapping_reviewed --source browser_capture --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/user-mapping-review.png"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind party_mapping_reviewed --source browser_capture --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/party-mapping-review.png"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind user_second_message_auto_resolved --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/user-second-message.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind party_second_message_auto_resolved --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/party-second-message.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind model_input_tokenized --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/model-input-tokenized.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind ai_draft_review_visible --source browser_capture --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/ai-draft-review.png"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind budget_limits_verified --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/budget-limits.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind retention_verified --source controlled_drill --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/retention-drill.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind emergency_stop_verified --source controlled_drill --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/emergency-stop-drill.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind fault_drills_verified --source controlled_drill --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/fault-drills.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind zero_prohibited_actions --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/zero-prohibited-actions.json"
+
+# 12. Capture a later healthy status sample, then close the ledger. 72 hours is not
+#     required, but sample order must be increasing and every live check must
+#     fall between the two samples.
+STATUS_AFTER="$CANARY_DIR/status-after.json"
+scripts/local-pilot/status \
+  --manifest "$CANARY_DIR/pilot-manifest.json" \
+  --json > "$STATUS_AFTER"
+chmod 600 "$STATUS_AFTER"
+scripts/local-pilot/canary-evidence sample \
+  --canary-dir "$CANARY_DIR" \
+  --status-json "$STATUS_AFTER"
 scripts/local-pilot/canary-evidence finalize --canary-dir "$CANARY_DIR"
 ```
 
