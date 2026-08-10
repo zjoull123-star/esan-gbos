@@ -17,6 +17,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from services.local_pilot_runtime.canary_chain_verifier import (  # noqa: E402
+    CanaryChainVerificationError,
+    validate_canary_chain_attestation,
+)
+
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _IMAGE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -40,6 +49,22 @@ _REQUIRED_CHECK_SOURCES = {
     "fault_drills_verified": "controlled_drill",
     "zero_prohibited_actions": "system_query",
 }
+_LIVE_CHECK_BASE_FIELDS = frozenset(
+    {
+        "observed_at",
+        "run_id",
+        "source_commit",
+        "manifest_sha256",
+        "kind",
+        "status",
+        "source",
+        "evidence_sha256",
+        "record_type",
+        "sequence",
+        "previous_sha256",
+        "record_sha256",
+    }
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -56,9 +81,9 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         choices=("system_query", "browser_capture", "controlled_drill"),
     )
-    record.add_argument("--observed-at", required=True)
-    record.add_argument("--evidence-file", required=True, type=Path)
-    record.add_argument("--observed-model")
+    record.add_argument("--observed-at")
+    record.add_argument("--evidence-file", type=Path)
+    record.add_argument("--chain-attestation", type=Path)
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--canary-dir", required=True, type=Path)
     return parser
@@ -70,9 +95,15 @@ def _canonical(value: Mapping[str, Any]) -> bytes:
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("hashed artifact must be a regular file")
+        while chunk := os.read(descriptor, 1024 * 1024):
             digest.update(chunk)
+    finally:
+        os.close(descriptor)
     return digest.hexdigest()
 
 
@@ -89,25 +120,71 @@ def _timestamp(value: object, label: str) -> datetime:
 
 
 def _private_file(path: Path, label: str, *, maximum: int = 10 * 1024 * 1024) -> Path:
-    candidate = path.resolve(strict=True)
-    if path.is_symlink() or candidate.is_symlink():
-        raise ValueError(f"{label} must be a private regular file")
-    metadata = candidate.stat()
-    if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
-        raise ValueError(f"{label} must be a private regular file")
-    if metadata.st_size < 1 or metadata.st_size > maximum:
-        raise ValueError(f"{label} size is invalid")
+    candidate, _raw = _private_bytes(path, label, maximum=maximum)
     return candidate
 
 
 def _object(path: Path, label: str) -> dict[str, Any]:
-    candidate = _private_file(path, label, maximum=1024 * 1024)
+    _candidate, value, _digest = _object_with_sha256(path, label)
+    return value
+
+
+def _object_with_sha256(
+    path: Path,
+    label: str,
+    *,
+    maximum: int = 1024 * 1024,
+) -> tuple[Path, dict[str, Any], str]:
+    candidate, raw = _private_bytes(path, label, maximum=maximum)
     try:
-        value = json.loads(candidate.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        value = json.loads(raw, object_pairs_hook=_unique_object)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise ValueError(f"{label} is invalid") from exc
     if not isinstance(value, dict):
         raise ValueError(f"{label} is invalid")
+    return candidate, value, hashlib.sha256(raw).hexdigest()
+
+
+def _private_bytes(path: Path, label: str, *, maximum: int) -> tuple[Path, bytes]:
+    try:
+        candidate = path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"{label} must be a private regular file") from exc
+    if path.is_symlink() or candidate.is_symlink():
+        raise ValueError(f"{label} must be a private regular file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(candidate, flags)
+    except OSError as exc:
+        raise ValueError(f"{label} must be a private regular file") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise ValueError(f"{label} must be a private regular file")
+        if metadata.st_size < 1 or metadata.st_size > maximum:
+            raise ValueError(f"{label} size is invalid")
+        chunks: list[bytes] = []
+        remaining = metadata.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 1024 * 1024))
+            if not chunk:
+                raise ValueError(f"{label} changed while being read")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if os.fstat(descriptor).st_size != len(raw):
+            raise ValueError(f"{label} changed while being read")
+        return candidate, raw
+    finally:
+        os.close(descriptor)
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
     return value
 
 
@@ -122,7 +199,10 @@ def _canary_context(canary_dir: Path) -> tuple[Path, dict[str, Any], dict[str, A
         raise ValueError("canary directory must be outside the repository")
     manifest_path = candidate / "pilot-manifest.json"
     control_path = candidate / "canary-run.json"
-    manifest = _object(manifest_path, "canary manifest")
+    _manifest_file, manifest, manifest_sha256 = _object_with_sha256(
+        manifest_path,
+        "canary manifest",
+    )
     control = _object(control_path, "canary control")
     required_control = {
         "schema_version",
@@ -144,7 +224,7 @@ def _canary_context(canary_dir: Path) -> tuple[Path, dict[str, Any], dict[str, A
         or _COMMIT.fullmatch(str(control.get("source_commit"))) is None
         or _HEX.fullmatch(str(control.get("manifest_sha256"))) is None
         or control.get("manifest_sha256") == _ZERO_HASH
-        or _sha256(manifest_path) != control.get("manifest_sha256")
+        or manifest_sha256 != control.get("manifest_sha256")
     ):
         raise ValueError("canary control binding is invalid")
     scope = control.get("scope")
@@ -183,8 +263,8 @@ def _load_ledger(path: Path, record_type: str, *, required: bool) -> list[dict[s
         if not line:
             continue
         try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
+            record = json.loads(line, object_pairs_hook=_unique_object)
+        except (json.JSONDecodeError, ValueError) as exc:
             raise ValueError(f"{record_type} ledger is invalid") from exc
         if not isinstance(record, dict):
             raise ValueError(f"{record_type} ledger is invalid")
@@ -254,8 +334,13 @@ def _sample(canary_dir: Path, status_path: Path) -> int:
     services = status.get("services")
     emergency = status.get("emergency_stop")
     images = status.get("images")
-    if not all(isinstance(value, Mapping) for value in (manifest, services, emergency)):
+    if (
+        not isinstance(manifest, Mapping)
+        or not isinstance(services, Mapping)
+        or not isinstance(emergency, Mapping)
+    ):
         raise ValueError("status snapshot shape is invalid")
+    missing = services.get("missing")
     if (
         status.get("schema_version") != "1.0"
         or status.get("source_commit") != control["source_commit"]
@@ -263,7 +348,7 @@ def _sample(canary_dir: Path, status_path: Path) -> int:
         or manifest.get("sha256") != control["manifest_sha256"]
         or manifest.get("local_pilot_go") is not True
         or services.get("inspection_error") is not None
-        or not isinstance(services.get("missing"), list)
+        or not isinstance(missing, list)
         or not isinstance(status.get("no_go_reasons"), list)
         or not isinstance(images, list)
     ):
@@ -285,7 +370,6 @@ def _sample(canary_dir: Path, status_path: Path) -> int:
     existing = _load_ledger(directory / "runtime-samples.jsonl", "status_sample", required=False)
     if existing and observed_at <= _timestamp(existing[-1].get("observed_at"), "sample"):
         raise ValueError("status sample time must increase")
-    missing = services.get("missing")
     reasons = status.get("no_go_reasons")
     record = _append(
         directory / "runtime-samples.jsonl",
@@ -312,18 +396,50 @@ def _record(
     *,
     kind: str,
     source: str,
-    observed_at: str,
-    evidence_file: Path,
-    observed_model: str | None,
+    observed_at: str | None,
+    evidence_file: Path | None,
+    chain_attestation: Path | None,
 ) -> int:
-    directory, _manifest, control = _canary_context(canary_dir)
+    directory, manifest, control = _canary_context(canary_dir)
     if source != _REQUIRED_CHECK_SOURCES[kind]:
         raise ValueError("live check source is invalid")
-    observed = _timestamp(observed_at, "live check")
-    artifact = _private_file(evidence_file, "live check artifact")
     repo_root = Path(__file__).resolve().parents[2]
-    if os.path.commonpath((str(artifact), str(repo_root))) == str(repo_root):
-        raise ValueError("live check artifact must be outside the repository")
+    attestation: dict[str, Any] | None = None
+    if kind == "model_identity_exact":
+        if observed_at is not None or evidence_file is not None or chain_attestation is None:
+            raise ValueError("model identity requires only a machine chain attestation")
+        artifact, candidate, evidence_sha256 = _object_with_sha256(
+            chain_attestation, "machine chain attestation", maximum=1024 * 1024
+        )
+        if os.path.commonpath((str(artifact), str(repo_root))) == str(repo_root):
+            raise ValueError("machine chain attestation must be outside the repository")
+        site_id = manifest.get("site_id")
+        if not isinstance(site_id, str):
+            raise ValueError("canary manifest site binding is invalid")
+        try:
+            attestation = validate_canary_chain_attestation(
+                candidate,
+                expected_run_id=str(control["run_id"]),
+                expected_site_id=site_id,
+                expected_source_commit=str(control["source_commit"]),
+                expected_manifest_sha256=str(control["manifest_sha256"]),
+                expected_activation_time=str(control["activation_time"]),
+            )
+        except CanaryChainVerificationError as exc:
+            raise ValueError("machine chain attestation is invalid") from exc
+        window = attestation["observation_window"]
+        chain = attestation["chain"]
+        if not isinstance(window, Mapping) or not isinstance(chain, Mapping):
+            raise ValueError("machine chain attestation is invalid")
+        observed = _timestamp(window.get("ended_at"), "machine chain attestation")
+    else:
+        if observed_at is None or evidence_file is None or chain_attestation is not None:
+            raise ValueError("live check artifact inputs are invalid")
+        observed = _timestamp(observed_at, "live check")
+        artifact = _private_file(evidence_file, "live check artifact")
+        if os.path.commonpath((str(artifact), str(repo_root))) == str(repo_root):
+            raise ValueError("live check artifact must be outside the repository")
+        evidence_sha256 = _sha256(artifact)
     payload: dict[str, Any] = {
         "observed_at": observed.isoformat().replace("+00:00", "Z"),
         "run_id": control["run_id"],
@@ -332,14 +448,16 @@ def _record(
         "kind": kind,
         "status": "pass",
         "source": source,
-        "evidence_sha256": _sha256(artifact),
+        "evidence_sha256": evidence_sha256,
     }
     if kind == "model_identity_exact":
-        if observed_model != "deepseek-v4-flash":
-            raise ValueError("observed model identity is invalid")
-        payload["observed_model"] = observed_model
-    elif observed_model is not None:
-        raise ValueError("observed model is not allowed for this check")
+        if attestation is None:
+            raise ValueError("machine chain attestation is invalid")
+        chain = attestation["chain"]
+        if not isinstance(chain, Mapping):
+            raise ValueError("machine chain attestation is invalid")
+        payload["response_reported_observed_model"] = chain["response_reported_observed_model"]
+        payload["chain_attestation"] = attestation
     record = _append(directory / "live-checks.jsonl", "live_check", payload)
     print(f"Recorded canary live check {record['sequence']}.")
     return 0
@@ -374,7 +492,7 @@ def _duration_value(seconds: float) -> object:
 
 
 def _finalize(canary_dir: Path) -> int:
-    directory, _manifest, control = _canary_context(canary_dir)
+    directory, manifest, control = _canary_context(canary_dir)
     samples = _load_ledger(directory / "runtime-samples.jsonl", "status_sample", required=True)
     checks = _load_ledger(directory / "live-checks.jsonl", "live_check", required=True)
     for record in [*samples, *checks]:
@@ -401,6 +519,9 @@ def _finalize(canary_dir: Path) -> int:
         ):
             raise ValueError("canary contains an unhealthy status sample")
     activation_time = _timestamp(control.get("activation_time"), "activation")
+    site_id = manifest.get("site_id")
+    if not isinstance(site_id, str):
+        raise ValueError("canary manifest site binding is invalid")
     latest: dict[str, Mapping[str, Any]] = {}
     for check in checks:
         kind = check.get("kind")
@@ -419,14 +540,54 @@ def _finalize(canary_dir: Path) -> int:
             or digest == _ZERO_HASH
         ):
             raise ValueError("live check evidence is invalid")
+        expected_fields = _LIVE_CHECK_BASE_FIELDS
+        if kind == "model_identity_exact":
+            expected_fields = expected_fields | {
+                "response_reported_observed_model",
+                "chain_attestation",
+            }
+        if set(check) != expected_fields:
+            raise ValueError("live check schema is invalid")
+        if kind == "model_identity_exact":
+            candidate = check.get("chain_attestation")
+            try:
+                attestation = validate_canary_chain_attestation(
+                    candidate,
+                    expected_run_id=str(control["run_id"]),
+                    expected_site_id=site_id,
+                    expected_source_commit=str(control["source_commit"]),
+                    expected_manifest_sha256=str(control["manifest_sha256"]),
+                    expected_activation_time=str(control["activation_time"]),
+                )
+            except CanaryChainVerificationError as exc:
+                raise ValueError("machine chain attestation is invalid") from exc
+            window = attestation["observation_window"]
+            chain = attestation["chain"]
+            if (
+                not isinstance(window, Mapping)
+                or not isinstance(chain, Mapping)
+                or observed != _timestamp(window.get("ended_at"), "machine chain attestation")
+                or _timestamp(window.get("started_at"), "machine chain attestation")
+                < sample_times[0]
+                or _timestamp(window.get("ended_at"), "machine chain attestation")
+                > sample_times[-1]
+                or check.get("response_reported_observed_model")
+                != chain.get("response_reported_observed_model")
+            ):
+                raise ValueError("machine chain attestation period or facts are invalid")
         previous = latest.get(str(kind))
         if previous is None or observed >= _timestamp(previous.get("observed_at"), "live check"):
             latest[str(kind)] = check
     missing_checks = sorted(set(_REQUIRED_CHECK_SOURCES) - set(latest))
     if missing_checks:
         raise ValueError("required live checks are incomplete")
-    if latest["model_identity_exact"].get("observed_model") != "deepseek-v4-flash":
-        raise ValueError("observed model identity is invalid")
+    model_check = latest["model_identity_exact"]
+    model_attestation = model_check.get("chain_attestation")
+    if not isinstance(model_attestation, Mapping):
+        raise ValueError("machine chain attestation is invalid")
+    model_chain = model_attestation.get("chain")
+    if not isinstance(model_chain, Mapping):
+        raise ValueError("machine chain attestation is invalid")
     evidence_dir = directory / "evidence"
     if evidence_dir.exists():
         raise ValueError("canary evidence directory already exists")
@@ -449,7 +610,23 @@ def _finalize(canary_dir: Path) -> int:
             "continuous_runtime_stability": "not_assessed",
         },
         "live_checks": {kind: "pass" for kind in sorted(_REQUIRED_CHECK_SOURCES)},
-        "observed_model_identity": "deepseek-v4-flash",
+        "response_reported_observed_model": model_chain["response_reported_observed_model"],
+        "chain_attestation_sha256": model_check["evidence_sha256"],
+        "chain_attestation_payload_sha256": model_attestation["payload_sha256"],
+        "canary_chain": {
+            "agent_invocation_count": model_chain["agent_invocation_count"],
+            "context_chain_count": model_chain["context_chain_count"],
+            "network_call_count": model_chain["network_call_count"],
+            "tool_call_count": model_chain["tool_call_count"],
+            "external_send_count": model_chain["external_send_count"],
+            "fatal_or_mismatch_invocation_count": model_chain["fatal_or_mismatch_invocation_count"],
+            "context_state_bound": model_chain["context_state_bound"],
+            "observer_fatal_latch_open": model_chain["observer_fatal_latch_open"],
+            "frappe_receipt_bound": (
+                model_chain["draft_status"] == "succeeded"
+                and model_chain["receipt_request_bound"] is True
+            ),
+        },
         "scope_verdicts": {
             "email_deepseek_identity_local_shadow": "go",
             "formal_compliance": "no_go",
@@ -467,7 +644,7 @@ def _finalize(canary_dir: Path) -> int:
         f"- Observed runtime only: {evidence['runtime_window']['duration_hours']} hours\n"
         f"- Status samples: {len(samples)}\n"
         "- 72-hour continuous stability: deferred by user; not assessed\n"
-        "- Observed model: deepseek-v4-flash\n"
+        "- Response-reported observed model: deepseek-v4-flash\n"
         "- Evidence contains hashes and bounded results only; source artifacts stay private.\n"
     ).encode()
     evidence_path = evidence_dir / "task13-canary-evidence.json"
@@ -495,7 +672,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source=args.source,
                 observed_at=args.observed_at,
                 evidence_file=args.evidence_file,
-                observed_model=args.observed_model,
+                chain_attestation=args.chain_attestation,
             )
         if args.command == "finalize":
             return _finalize(args.canary_dir)

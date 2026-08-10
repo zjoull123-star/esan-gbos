@@ -6,6 +6,15 @@ import stat
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
+
+from services.local_pilot_runtime.canary_chain_verifier import (
+    AgentInvocationProjection,
+    CanaryProjectionRepositories,
+    ContextChainProjection,
+    ObserverLatchProjection,
+    verify_canary_chain,
+)
 
 ROOT = Path(__file__).parents[2]
 STATUS = ROOT / "scripts" / "local-pilot" / "status.py"
@@ -15,6 +24,7 @@ CANARY_PREPARE = ROOT / "scripts" / "local-pilot" / "prepare-email-deepseek-cana
 CANARY_PREFLIGHT = ROOT / "scripts" / "local-pilot" / "canary-preflight"
 FAULT_DRILLS = ROOT / "scripts" / "local-pilot" / "run-offline-fault-drills"
 CANARY_EVIDENCE = ROOT / "scripts" / "local-pilot" / "canary-evidence"
+CANARY_CHAIN_VERIFIER = ROOT / "scripts" / "local-pilot" / "verify-canary-chain"
 START = ROOT / "scripts" / "local-pilot" / "start"
 
 REQUIRED_CANARY_CHECKS = {
@@ -32,6 +42,25 @@ REQUIRED_CANARY_CHECKS = {
     "fault_drills_verified": "controlled_drill",
     "zero_prohibited_actions": "system_query",
 }
+
+
+def test_canary_chain_launcher_binds_repository_from_its_own_file() -> None:
+    source = CANARY_CHAIN_VERIFIER.read_text(encoding="utf-8")
+
+    assert "Path(__file__).resolve().parents[2]" in source
+    assert "--repo-root" not in source
+    assert stat.S_IMODE(CANARY_CHAIN_VERIFIER.stat().st_mode) & stat.S_IXUSR
+    help_result = subprocess.run(
+        [str(CANARY_CHAIN_VERIFIER), "--help"],
+        cwd=Path("/"),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert help_result.returncode == 0, help_result.stderr
+    assert "--projection-config" in help_result.stdout
+    assert "--window-start" in help_result.stdout
+    assert "--window-end" in help_result.stdout
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -454,6 +483,26 @@ def _prepared_canary(tmp_path: Path) -> tuple[Path, Path, Path]:
         text=True,
     )
     assert result.returncode == 0, result.stderr
+    checkpoint = {"mailbox": "pilot@example.invalid", "uid": 900, "uidvalidity": 55, "version": 1}
+    checkpoint_bytes = json.dumps(checkpoint, separators=(",", ":")).encode()
+    _private(output / "email-checkpoint.json", checkpoint_bytes)
+    control = json.loads((output / "canary-run.json").read_text(encoding="utf-8"))
+    _private(
+        output / "email-checkpoint-receipt.json",
+        json.dumps(
+            {
+                "activation_time": control["activation_time"],
+                "checkpoint_sha256": __import__("hashlib").sha256(checkpoint_bytes).hexdigest(),
+                "observed_at": "2026-08-11T09:30:00Z",
+                "operation": "STATUS_UIDVALIDITY_UIDNEXT",
+                "read_only": True,
+                "schema": "gbos.email_checkpoint_receipt",
+                "source_commit": control["source_commit"],
+                "version": 1,
+            },
+            separators=(",", ":"),
+        ).encode(),
+    )
     secrets = tmp_path / "secrets"
     secrets.mkdir(mode=0o700)
     credential = {
@@ -473,10 +522,7 @@ def _prepared_canary(tmp_path: Path) -> tuple[Path, Path, Path]:
         "max_attachments": 20,
         "rescan_max_window_seconds": 86_400,
         "rescan_max_uids": 500,
-        "initial_checkpoint": json.dumps(
-            {"mailbox": "pilot@example.invalid", "uid": 900, "uidvalidity": 55, "version": 1},
-            separators=(",", ":"),
-        ),
+        "initial_checkpoint": checkpoint_bytes.decode(),
     }
     _private(secrets / "email_credential", json.dumps(credential).encode())
     _private(secrets / "deepseek_api_key", b"DEEPSEEK-SECRET-SENTINEL")
@@ -505,6 +551,87 @@ def _prepared_canary(tmp_path: Path) -> tuple[Path, Path, Path]:
         ).encode(),
     )
     return output / "pilot-manifest.json", output / "canary-run.json", secrets
+
+
+def _machine_chain_attestation(tmp_path: Path, manifest: Path, control_path: Path) -> Path:
+    control = json.loads(control_path.read_text(encoding="utf-8"))
+    started_at = datetime(2026, 8, 11, 10, 20, tzinfo=UTC)
+    invocation_digest = "d" * 64
+    repositories = CanaryProjectionRepositories(
+        agent=SimpleNamespace(
+            bounded_window=lambda **_: (
+                AgentInvocationProjection(
+                    site_id="gbos.localhost",
+                    invocation_ref_sha256=invocation_digest,
+                    requested_model="deepseek-v4-flash",
+                    response_reported_observed_model="deepseek-v4-flash",
+                    response_id_present=True,
+                    network_call_count=1,
+                    tool_call_count=0,
+                    external_send_count=0,
+                    status="succeeded",
+                    error_code=None,
+                    started_at=started_at,
+                    completed_at=datetime(2026, 8, 11, 10, 21, tzinfo=UTC),
+                ),
+            )
+        ),
+        context=SimpleNamespace(
+            bounded_window=lambda **_: (
+                ContextChainProjection(
+                    site_id="gbos.localhost",
+                    processing_purpose="observation_processing",
+                    invocation_ref_sha256=invocation_digest,
+                    intelligence_ref_sha256="e" * 64,
+                    invocation_ordinal=1,
+                    review_status="AI Draft",
+                    model_name="deepseek-v4-flash",
+                    model_version="deepseek-v4-flash",
+                    draft_state_bound=True,
+                    draft_status="succeeded",
+                    receipt_doctype="GBOS Informal Observation",
+                    receipt_name_present=True,
+                    receipt_revision=1,
+                    receipt_request_present=True,
+                    receipt_request_bound=True,
+                    receipt_digest="f" * 64,
+                    created_at=datetime(2026, 8, 11, 10, 22, tzinfo=UTC),
+                    updated_at=datetime(2026, 8, 11, 10, 23, tzinfo=UTC),
+                ),
+            )
+        ),
+        observer=SimpleNamespace(
+            latch=lambda **_: ObserverLatchProjection(
+                site_id="gbos.localhost",
+                processing_purpose="observation_processing",
+                is_open=True,
+            )
+        ),
+        close=lambda: None,
+    )
+    output = tmp_path / "machine-chain-attestation.json"
+    verify_canary_chain(
+        canary_dir=manifest.parent,
+        output_path=output,
+        window_start=datetime(2026, 8, 11, 10, 15, tzinfo=UTC),
+        window_end=datetime(2026, 8, 11, 10, 30, tzinfo=UTC),
+        expected_source_commit=str(control["source_commit"]),
+        repositories=repositories,
+        clock=lambda: datetime(2026, 8, 11, 10, 31, tzinfo=UTC),
+    )
+    return output
+
+
+def _machine_chain_check_fields(attestation_path: Path) -> dict[str, object]:
+    attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
+    return {
+        "observed_at": attestation["observation_window"]["ended_at"],
+        "evidence_sha256": __import__("hashlib").sha256(attestation_path.read_bytes()).hexdigest(),
+        "response_reported_observed_model": attestation["chain"][
+            "response_reported_observed_model"
+        ],
+        "chain_attestation": attestation,
+    }
 
 
 def test_canary_preflight_validates_private_inputs_without_rendering_values(tmp_path: Path) -> None:
@@ -817,6 +944,9 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
         "source_commit": control["source_commit"],
         "manifest_sha256": control["manifest_sha256"],
     }
+    chain_fields = _machine_chain_check_fields(
+        _machine_chain_attestation(tmp_path, manifest, control_path)
+    )
     samples = [
         {
             **common,
@@ -845,15 +975,18 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
             {
                 **common,
                 "record_type": "live_check",
-                "observed_at": start.isoformat().replace("+00:00", "Z"),
+                "observed_at": (
+                    chain_fields["observed_at"]
+                    if kind == "model_identity_exact"
+                    else start.isoformat().replace("+00:00", "Z")
+                ),
                 "kind": kind,
                 "status": "pass",
                 "source": source,
-                "evidence_sha256": f"{index + 100:064x}",
                 **(
-                    {"observed_model": "deepseek-v4-flash"}
+                    chain_fields
                     if kind == "model_identity_exact"
-                    else {}
+                    else {"evidence_sha256": f"{index + 100:064x}"}
                 ),
             }
         )
@@ -889,7 +1022,18 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
         "continuous_runtime_stability": "not_assessed",
         "seventy_two_hour_run": "deferred_by_user",
     }
-    assert evidence["observed_model_identity"] == "deepseek-v4-flash"
+    assert evidence["response_reported_observed_model"] == "deepseek-v4-flash"
+    assert evidence["canary_chain"] == {
+        "agent_invocation_count": 1,
+        "context_chain_count": 1,
+        "context_state_bound": True,
+        "external_send_count": 0,
+        "fatal_or_mismatch_invocation_count": 0,
+        "frappe_receipt_bound": True,
+        "network_call_count": 1,
+        "observer_fatal_latch_open": True,
+        "tool_call_count": 0,
+    }
     assert evidence["scope_verdicts"] == {
         "email_deepseek_identity_local_shadow": "go",
         "formal_compliance": "no_go",
@@ -924,6 +1068,83 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
     assert not (canary_dir / "evidence").exists()
 
 
+def test_canary_evidence_finalize_rejects_machine_receipt_fatal_or_model_drift(
+    tmp_path: Path,
+) -> None:
+    manifest, control_path, _secrets = _prepared_canary(tmp_path)
+    canary_dir = manifest.parent
+    control = json.loads(control_path.read_text(encoding="utf-8"))
+    common = {
+        "run_id": control["run_id"],
+        "source_commit": control["source_commit"],
+        "manifest_sha256": control["manifest_sha256"],
+    }
+    chain_fields = _machine_chain_check_fields(
+        _machine_chain_attestation(tmp_path, manifest, control_path)
+    )
+    attestation = chain_fields["chain_attestation"]
+    assert isinstance(attestation, dict)
+    chain = attestation["chain"]
+    assert isinstance(chain, dict)
+    chain["fatal_or_mismatch_invocation_count"] = 1
+    body = {key: value for key, value in attestation.items() if key != "payload_sha256"}
+    attestation["payload_sha256"] = (
+        __import__("hashlib")
+        .sha256(json.dumps(body, separators=(",", ":"), sort_keys=True).encode())
+        .hexdigest()
+    )
+    samples = [
+        {
+            **common,
+            "record_type": "status_sample",
+            "observed_at": observed_at,
+            "status_snapshot_sha256": digest,
+            "verdict": "running",
+            "missing_service_count": 0,
+            "emergency_stop_active": False,
+            "image_binding_count": 2,
+        }
+        for observed_at, digest in (
+            ("2026-08-11T10:00:00Z", "1" * 64),
+            ("2026-08-11T11:00:00Z", "2" * 64),
+        )
+    ]
+    checks = [
+        {
+            **common,
+            "record_type": "live_check",
+            "observed_at": (
+                chain_fields["observed_at"]
+                if kind == "model_identity_exact"
+                else "2026-08-11T10:30:00Z"
+            ),
+            "kind": kind,
+            "status": "pass",
+            "source": source,
+            **(
+                chain_fields
+                if kind == "model_identity_exact"
+                else {"evidence_sha256": f"{index + 100:064x}"}
+            ),
+        }
+        for index, (kind, source) in enumerate(REQUIRED_CANARY_CHECKS.items(), start=1)
+    ]
+    _write_ledger(canary_dir / "runtime-samples.jsonl", samples)
+    _write_ledger(canary_dir / "live-checks.jsonl", checks)
+
+    result = subprocess.run(
+        [str(CANARY_EVIDENCE), "finalize", "--canary-dir", str(canary_dir)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "machine chain attestation" in result.stderr.lower()
+    assert not (canary_dir / "evidence").exists()
+
+
 def test_canary_evidence_requires_two_health_samples_and_brackets_live_checks(
     tmp_path: Path,
 ) -> None:
@@ -935,6 +1156,9 @@ def test_canary_evidence_requires_two_health_samples_and_brackets_live_checks(
         "source_commit": control["source_commit"],
         "manifest_sha256": control["manifest_sha256"],
     }
+    chain_fields = _machine_chain_check_fields(
+        _machine_chain_attestation(tmp_path, manifest, control_path)
+    )
     single_sample = [
         {
             **common,
@@ -951,12 +1175,19 @@ def test_canary_evidence_requires_two_health_samples_and_brackets_live_checks(
         {
             **common,
             "record_type": "live_check",
-            "observed_at": "2026-08-11T10:30:00Z",
+            "observed_at": (
+                chain_fields["observed_at"]
+                if kind == "model_identity_exact"
+                else "2026-08-11T10:30:00Z"
+            ),
             "kind": kind,
             "status": "pass",
             "source": source,
-            "evidence_sha256": f"{index + 100:064x}",
-            **({"observed_model": "deepseek-v4-flash"} if kind == "model_identity_exact" else {}),
+            **(
+                chain_fields
+                if kind == "model_identity_exact"
+                else {"evidence_sha256": f"{index + 100:064x}"}
+            ),
         }
         for index, (kind, source) in enumerate(REQUIRED_CANARY_CHECKS.items(), start=1)
     ]
@@ -996,13 +1227,88 @@ def test_canary_evidence_requires_two_health_samples_and_brackets_live_checks(
     assert not (canary_dir / "evidence").exists()
 
 
-def test_canary_evidence_records_only_hash_of_private_live_check_artifact(
+def test_canary_evidence_requires_exact_machine_chain_and_rejects_hand_entered_model(
     tmp_path: Path,
 ) -> None:
     manifest, control_path, _secrets = _prepared_canary(tmp_path)
     control = json.loads(control_path.read_text(encoding="utf-8"))
-    artifact = tmp_path / "model-check.json"
-    _private(artifact, b'{"model":"deepseek-v4-flash","result":"pass"}\n')
+    arbitrary = tmp_path / "arbitrary-model-check.json"
+    _private(arbitrary, b'{"model":"deepseek-v4-flash","result":"pass"}\n')
+
+    rejected_artifact = subprocess.run(
+        [
+            str(CANARY_EVIDENCE),
+            "record",
+            "--canary-dir",
+            str(manifest.parent),
+            "--kind",
+            "model_identity_exact",
+            "--source",
+            "system_query",
+            "--chain-attestation",
+            str(arbitrary),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected_artifact.returncode != 0
+    assert not (manifest.parent / "live-checks.jsonl").exists()
+
+    hand_entered = subprocess.run(
+        [
+            str(CANARY_EVIDENCE),
+            "record",
+            "--canary-dir",
+            str(manifest.parent),
+            "--kind",
+            "model_identity_exact",
+            "--source",
+            "system_query",
+            "--observed-model",
+            "deepseek-v4-flash",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert hand_entered.returncode != 0
+    assert not (manifest.parent / "live-checks.jsonl").exists()
+
+    attestation = _machine_chain_attestation(tmp_path, manifest, control_path)
+    duplicate_key_attestation = tmp_path / "duplicate-key-chain-attestation.json"
+    _private(
+        duplicate_key_attestation,
+        attestation.read_text(encoding="utf-8")
+        .replace(
+            '"schema_version": "1.0",',
+            '"schema_version": "1.0",\n  "schema_version": "1.0",',
+            1,
+        )
+        .encode(),
+    )
+    duplicate_rejected = subprocess.run(
+        [
+            str(CANARY_EVIDENCE),
+            "record",
+            "--canary-dir",
+            str(manifest.parent),
+            "--kind",
+            "model_identity_exact",
+            "--source",
+            "system_query",
+            "--chain-attestation",
+            str(duplicate_key_attestation),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert duplicate_rejected.returncode != 0
+    assert not (manifest.parent / "live-checks.jsonl").exists()
 
     result = subprocess.run(
         [
@@ -1014,12 +1320,8 @@ def test_canary_evidence_records_only_hash_of_private_live_check_artifact(
             "model_identity_exact",
             "--source",
             "system_query",
-            "--observed-at",
-            "2026-08-11T11:00:00Z",
-            "--evidence-file",
-            str(artifact),
-            "--observed-model",
-            "deepseek-v4-flash",
+            "--chain-attestation",
+            str(attestation),
         ],
         cwd=ROOT,
         check=False,
@@ -1032,13 +1334,16 @@ def test_canary_evidence_records_only_hash_of_private_live_check_artifact(
     assert record["run_id"] == control["run_id"]
     assert record["kind"] == "model_identity_exact"
     assert record["source"] == "system_query"
-    assert record["observed_model"] == "deepseek-v4-flash"
+    assert record["observed_at"] == "2026-08-11T10:30:00Z"
+    assert record["response_reported_observed_model"] == "deepseek-v4-flash"
+    assert record["chain_attestation"]["payload_sha256"]
     assert (
-        record["evidence_sha256"] == __import__("hashlib").sha256(artifact.read_bytes()).hexdigest()
+        record["evidence_sha256"]
+        == __import__("hashlib").sha256(attestation.read_bytes()).hexdigest()
     )
     serialized = json.dumps(record, sort_keys=True)
     assert "result" not in serialized
-    assert str(artifact) not in serialized
+    assert str(attestation) not in serialized
 
 
 def test_canary_evidence_rejects_tampered_hash_chain_and_missing_model_identity(
