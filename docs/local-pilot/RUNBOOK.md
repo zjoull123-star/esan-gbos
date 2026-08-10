@@ -144,15 +144,18 @@ manifest 的 `keychain://<service>/<account>` 对应 Keychain item 保存的是
 `instance_id` 标识一个稳定的 connector instance。`team_ref` 与
 `agent_task_type` 必须同时为空，或使用已审批 team；只要
 `agent_task_type` 非空就必须提供 `team_ref`。task type 只允许
-`sales`、`purchase`、`product_sample`、`ceo`。
+`sales`、`purchase`、`product_sample`、`ceo`。`account_user_ref` 是独立的
+渠道账号负责人，只能填写已确认的 Frappe User；它不能推导沟通参与人、客户映射或
+业务负责人。
 
 ### Email credential JSON
 
 ```json
 {
   "instance_id": "email-primary",
-  "team_ref": null,
-  "agent_task_type": null,
+  "team_ref": "__APPROVED_TEAM__",
+  "agent_task_type": "sales",
+  "account_user_ref": "__APPROVED_FRAPPE_USER__",
   "host": "imap.example.invalid",
   "port": 993,
   "mailbox": "pilot-primary",
@@ -165,9 +168,14 @@ manifest 的 `keychain://<service>/<account>` 对应 Keychain item 保存的是
   "max_attachments": 5,
   "rescan_max_window_seconds": 86400,
   "rescan_max_uids": 100,
-  "initial_checkpoint": null
+  "initial_checkpoint": "{\"mailbox\":\"pilot-primary\",\"uid\":0,\"uidvalidity\":1,\"version\":1}"
 }
 ```
+
+上述 `initial_checkpoint` 只展示 closed JSON 形状，**不能直接用于真实 canary**。
+真实值必须在 activation time 使用只读 IMAP TLS 检查取得当前 `UIDVALIDITY` 与
+最高已存在 UID，并保持 mailbox 完全一致；否则 preflight 必须拒绝启动。该检查不应
+设置已读、移动、删除或抓取历史正文。
 
 ### WhatsApp credential JSON
 
@@ -176,6 +184,7 @@ manifest 的 `keychain://<service>/<account>` 对应 Keychain item 保存的是
   "instance_id": "whatsapp-primary",
   "team_ref": null,
   "agent_task_type": null,
+  "account_user_ref": "__APPROVED_FRAPPE_USER__",
   "app_secret": "__REPLACE_IN_KEYCHAIN__",
   "verify_token": "__REPLACE_IN_KEYCHAIN__",
   "path": "/webhooks/whatsapp",
@@ -190,6 +199,7 @@ manifest 的 `keychain://<service>/<account>` 对应 Keychain item 保存的是
   "instance_id": "wecom-primary",
   "team_ref": null,
   "agent_task_type": null,
+  "account_user_ref": "__APPROVED_FRAPPE_USER__",
   "corp_id": "__REPLACE_IN_KEYCHAIN__",
   "secret": "__REPLACE_IN_KEYCHAIN__",
   "private_key": "__REPLACE_IN_KEYCHAIN__",

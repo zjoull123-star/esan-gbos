@@ -100,12 +100,23 @@ def test_runbook_documents_closed_channel_credential_json_without_real_secrets()
         '"instance_id"',
         '"team_ref"',
         '"agent_task_type"',
+        '"account_user_ref"',
         '"initial_checkpoint"',
         '"app_secret"',
         '"verify_token"',
         '"private_key"',
     ):
         assert field in runbook
+    email_section = runbook.split("### Email credential JSON", maxsplit=1)[1].split(
+        "### WhatsApp credential JSON", maxsplit=1
+    )[0]
+    email_example = email_section.split("```json", maxsplit=1)[1].split("```", maxsplit=1)[0]
+    email_payload = json.loads(email_example)
+    assert email_payload["account_user_ref"] == "__APPROVED_FRAPPE_USER__"
+    checkpoint = json.loads(email_payload["initial_checkpoint"])
+    assert set(checkpoint) == {"mailbox", "uid", "uidvalidity", "version"}
+    assert checkpoint["mailbox"] == email_payload["mailbox"]
+    assert checkpoint["version"] == 1
     assert "整份 credential JSON" in runbook
     assert "activation_time" in runbook
     assert "blocked_official_sdk" in runbook

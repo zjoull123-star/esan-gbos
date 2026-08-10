@@ -15,6 +15,7 @@ CANARY_PREPARE = ROOT / "scripts" / "local-pilot" / "prepare-email-deepseek-cana
 CANARY_PREFLIGHT = ROOT / "scripts" / "local-pilot" / "canary-preflight"
 FAULT_DRILLS = ROOT / "scripts" / "local-pilot" / "run-offline-fault-drills"
 CANARY_EVIDENCE = ROOT / "scripts" / "local-pilot" / "canary-evidence"
+START = ROOT / "scripts" / "local-pilot" / "start"
 
 REQUIRED_CANARY_CHECKS = {
     "email_body_peek_no_backfill": "system_query",
@@ -152,15 +153,25 @@ def test_status_json_requires_every_email_projection_service_and_clear_latch(
     tmp_path: Path,
 ) -> None:
     required = [
+        "postgres",
+        "mariadb",
+        "redis-cache",
+        "redis-queue",
+        "context-api",
+        "agent-api",
+        "observer-api",
+        "materialization-worker",
+        "frappe-backend",
+        "frappe-websocket",
+        "frappe-worker",
+        "frappe-scheduler",
+        "pwa",
+        "prometheus",
         "email-poller",
         "connector-worker",
         "identity-resolution-worker",
         "model-projection-worker",
         "communication-draft-worker",
-        "observer-api",
-        "frappe-backend",
-        "pwa",
-        "prometheus",
     ]
     command, environment = _fixture(tmp_path, running=required)
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
@@ -199,6 +210,7 @@ def test_status_json_requires_every_email_projection_service_and_clear_latch(
     assert payload["no_go_reasons"] == []
     assert payload["emergency_stop"]["active"] is False
     assert payload["services"]["missing"] == []
+    assert payload["services"]["required"] == sorted(required)
 
     required.remove("communication-draft-worker")
     docker = tmp_path / "docker"
@@ -220,6 +232,30 @@ def test_status_json_requires_every_email_projection_service_and_clear_latch(
     assert failed_payload["verdict"] == "no_go"
     assert failed_payload["services"]["missing"] == ["communication-draft-worker"]
     assert "required_services_not_running" in failed_payload["no_go_reasons"]
+
+    unhealthy_rows = [
+        {
+            "Service": value,
+            "State": "running",
+            "Health": "unhealthy" if value == "pwa" else "healthy",
+        }
+        for value in [*required, "communication-draft-worker"]
+    ]
+    _write_executable(
+        docker,
+        f"#!/usr/bin/env python3\nimport json\nprint(json.dumps({json.dumps(unhealthy_rows)}))\n",
+    )
+    unhealthy = subprocess.run(
+        command,
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert unhealthy.returncode != 0
+    unhealthy_payload = json.loads(unhealthy.stdout)
+    assert unhealthy_payload["services"]["missing"] == ["pwa"]
 
 
 def test_canary_prepare_writes_only_private_repo_external_email_model_controls(
@@ -330,6 +366,43 @@ def test_canary_prepare_rejects_repo_paths_and_missing_acknowledgement(tmp_path:
     )
     assert rejected.returncode != 0
     assert not inside_repo.exists()
+
+
+def test_generic_start_requires_canary_control_before_enabled_email_or_model(
+    tmp_path: Path,
+) -> None:
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    manifest["local_pilot_go"] = True
+    manifest["local_pilot_status"] = "ready"
+    manifest["channels"]["email"].update(
+        {
+            "enabled": True,
+            "activation_time": "2026-08-11T09:00:00Z",
+            "credential_ref": "keychain://com.esan.gbos.local-pilot/email-canary",
+        }
+    )
+    manifest["deepseek"].update(
+        {
+            "enabled": True,
+            "kill_switch": False,
+            "keychain_ref": "keychain://com.esan.gbos.local-pilot/deepseek-canary",
+        }
+    )
+    candidate = tmp_path / "enabled-pilot-manifest.json"
+    _private(candidate, json.dumps(manifest).encode())
+
+    result = subprocess.run(
+        [str(START), "--manifest", str(candidate)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 78
+    assert result.stderr == ("Enabled Email or DeepSeek requires a bound canary control file.\n")
+    assert "Keychain" not in result.stderr
+    assert "Docker" not in result.stderr
 
 
 def _private(path: Path, content: bytes) -> None:
@@ -518,6 +591,73 @@ def test_canary_preflight_rejects_missing_checkpoint_without_echoing_credentials
     assert "pilot@example.invalid" not in result.stderr
 
 
+def test_canary_preflight_rejects_email_numeric_boundaries_before_runtime_mutation(
+    tmp_path: Path,
+) -> None:
+    manifest, control, secrets = _prepared_canary(tmp_path)
+    credential_path = secrets / "email_credential"
+    credential = json.loads(credential_path.read_text(encoding="utf-8"))
+    credential["port"] = 0
+    _private(credential_path, json.dumps(credential).encode())
+
+    result = subprocess.run(
+        [
+            str(CANARY_PREFLIGHT),
+            "--manifest",
+            str(manifest),
+            "--run-control",
+            str(control),
+            "--secret-dir",
+            str(secrets),
+            "--repo-root",
+            str(ROOT),
+            "--now",
+            "2026-08-11T10:00:00Z",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "email" in result.stderr.lower()
+    assert "RAW-PASSWORD-SENTINEL" not in result.stderr
+    assert "pilot@example.invalid" not in result.stderr
+
+
+def test_canary_preflight_binds_activation_across_control_manifest_and_clock(
+    tmp_path: Path,
+) -> None:
+    manifest, control_path, secrets = _prepared_canary(tmp_path)
+    control = json.loads(control_path.read_text(encoding="utf-8"))
+    control["activation_time"] = "2026-08-11T09:01:00Z"
+    _private(control_path, json.dumps(control).encode())
+
+    result = subprocess.run(
+        [
+            str(CANARY_PREFLIGHT),
+            "--manifest",
+            str(manifest),
+            "--run-control",
+            str(control_path),
+            "--secret-dir",
+            str(secrets),
+            "--repo-root",
+            str(ROOT),
+            "--now",
+            "2026-08-11T10:00:00Z",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "activation" in result.stderr.lower()
+
+
 def test_canary_preflight_rejects_any_control_or_manifest_inside_repository(
     tmp_path: Path,
 ) -> None:
@@ -671,7 +811,7 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
     manifest, control_path, _secrets = _prepared_canary(tmp_path)
     canary_dir = manifest.parent
     control = json.loads(control_path.read_text(encoding="utf-8"))
-    start = datetime(2026, 8, 11, 10, 0, tzinfo=UTC)
+    start = datetime(2026, 8, 11, 10, 30, tzinfo=UTC)
     common = {
         "run_id": control["run_id"],
         "source_commit": control["source_commit"],
@@ -681,13 +821,23 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
         {
             **common,
             "record_type": "status_sample",
-            "observed_at": "2026-08-11T11:00:00Z",
+            "observed_at": "2026-08-11T10:00:00Z",
             "status_snapshot_sha256": "1" * 64,
             "verdict": "running",
             "missing_service_count": 0,
             "emergency_stop_active": False,
             "image_binding_count": 2,
-        }
+        },
+        {
+            **common,
+            "record_type": "status_sample",
+            "observed_at": "2026-08-11T11:00:00Z",
+            "status_snapshot_sha256": "2" * 64,
+            "verdict": "running",
+            "missing_service_count": 0,
+            "emergency_stop_active": False,
+            "image_binding_count": 2,
+        },
     ]
     checks = []
     for index, (kind, source) in enumerate(REQUIRED_CANARY_CHECKS.items(), start=1):
@@ -730,9 +880,9 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
     )
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     assert evidence["runtime_window"] == {
-        "duration_hours": 0,
-        "max_gap_seconds": 0,
-        "sample_count": 1,
+        "duration_hours": 1,
+        "max_gap_seconds": 3600,
+        "sample_count": 2,
     }
     assert evidence["stability_assessment"] == {
         "continuous_runtime_required": False,
@@ -757,7 +907,10 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
     assert len(checksums.read_text(encoding="utf-8").splitlines()) == 2
 
     evidence_dir.rename(canary_dir / "valid-evidence")
-    unhealthy_samples = [{**samples[0], "verdict": "degraded"}]
+    unhealthy_samples = [
+        {**samples[0], "verdict": "degraded"},
+        samples[1],
+    ]
     _write_ledger(canary_dir / "runtime-samples.jsonl", unhealthy_samples)
     unhealthy = subprocess.run(
         [str(CANARY_EVIDENCE), "finalize", "--canary-dir", str(canary_dir)],
@@ -768,6 +921,78 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
     )
     assert unhealthy.returncode != 0
     assert "unhealthy" in unhealthy.stderr.lower()
+    assert not (canary_dir / "evidence").exists()
+
+
+def test_canary_evidence_requires_two_health_samples_and_brackets_live_checks(
+    tmp_path: Path,
+) -> None:
+    manifest, control_path, _secrets = _prepared_canary(tmp_path)
+    canary_dir = manifest.parent
+    control = json.loads(control_path.read_text(encoding="utf-8"))
+    common = {
+        "run_id": control["run_id"],
+        "source_commit": control["source_commit"],
+        "manifest_sha256": control["manifest_sha256"],
+    }
+    single_sample = [
+        {
+            **common,
+            "record_type": "status_sample",
+            "observed_at": "2026-08-11T11:00:00Z",
+            "status_snapshot_sha256": "1" * 64,
+            "verdict": "running",
+            "missing_service_count": 0,
+            "emergency_stop_active": False,
+            "image_binding_count": 2,
+        }
+    ]
+    checks = [
+        {
+            **common,
+            "record_type": "live_check",
+            "observed_at": "2026-08-11T10:30:00Z",
+            "kind": kind,
+            "status": "pass",
+            "source": source,
+            "evidence_sha256": f"{index + 100:064x}",
+            **({"observed_model": "deepseek-v4-flash"} if kind == "model_identity_exact" else {}),
+        }
+        for index, (kind, source) in enumerate(REQUIRED_CANARY_CHECKS.items(), start=1)
+    ]
+    _write_ledger(canary_dir / "runtime-samples.jsonl", single_sample)
+    _write_ledger(canary_dir / "live-checks.jsonl", checks)
+
+    one_point = subprocess.run(
+        [str(CANARY_EVIDENCE), "finalize", "--canary-dir", str(canary_dir)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert one_point.returncode != 0
+    assert "samples" in one_point.stderr.lower()
+    assert not (canary_dir / "evidence").exists()
+
+    two_samples = [
+        {**single_sample[0], "observed_at": "2026-08-11T10:00:00Z"},
+        {**single_sample[0], "observed_at": "2026-08-11T11:00:00Z"},
+    ]
+    _write_ledger(canary_dir / "runtime-samples.jsonl", two_samples)
+    checks[0]["observed_at"] = "2026-08-11T09:30:00Z"
+    _write_ledger(canary_dir / "live-checks.jsonl", checks)
+
+    unbracketed = subprocess.run(
+        [str(CANARY_EVIDENCE), "finalize", "--canary-dir", str(canary_dir)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert unbracketed.returncode != 0
+    assert "observed canary period" in unbracketed.stderr.lower()
     assert not (canary_dir / "evidence").exists()
 
 

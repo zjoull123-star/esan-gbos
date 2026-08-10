@@ -70,7 +70,9 @@ def _running_services(*, compose_file: Path, project_name: str) -> tuple[set[str
             return set(), "compose_status_invalid"
         service = row.get("Service")
         state = row.get("State")
-        if isinstance(service, str) and state == "running":
+        health = row.get("Health")
+        health_is_ready = not isinstance(health, str) or not health or health == "healthy"
+        if isinstance(service, str) and state == "running" and health_is_ready:
             running.add(service)
     return running, None
 
@@ -78,7 +80,22 @@ def _running_services(*, compose_file: Path, project_name: str) -> tuple[set[str
 def _required_services(manifest: Mapping[str, Any]) -> set[str]:
     if manifest.get("local_pilot_go") is not True:
         return set()
-    required = {"observer-api", "frappe-backend", "pwa", "prometheus"}
+    required = {
+        "postgres",
+        "mariadb",
+        "redis-cache",
+        "redis-queue",
+        "context-api",
+        "agent-api",
+        "observer-api",
+        "materialization-worker",
+        "frappe-backend",
+        "frappe-websocket",
+        "frappe-worker",
+        "frappe-scheduler",
+        "pwa",
+        "prometheus",
+    }
     channels = manifest.get("channels")
     if isinstance(channels, Mapping):
         enabled_channel = False

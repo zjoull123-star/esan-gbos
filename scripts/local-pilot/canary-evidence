@@ -12,9 +12,10 @@ import re
 import stat
 import sys
 import tempfile
-from datetime import datetime, timezone
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any
 
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -84,7 +85,7 @@ def _timestamp(value: object, label: str) -> datetime:
         raise ValueError(f"{label} timestamp is invalid") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{label} timestamp is invalid")
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def _private_file(path: Path, label: str, *, maximum: int = 10 * 1024 * 1024) -> Path:
@@ -99,7 +100,7 @@ def _private_file(path: Path, label: str, *, maximum: int = 10 * 1024 * 1024) ->
     return candidate
 
 
-def _object(path: Path, label: str) -> Dict[str, Any]:
+def _object(path: Path, label: str) -> dict[str, Any]:
     candidate = _private_file(path, label, maximum=1024 * 1024)
     try:
         value = json.loads(candidate.read_text(encoding="utf-8"))
@@ -110,7 +111,7 @@ def _object(path: Path, label: str) -> Dict[str, Any]:
     return value
 
 
-def _canary_context(canary_dir: Path) -> Tuple[Path, Dict[str, Any], Dict[str, Any]]:
+def _canary_context(canary_dir: Path) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     repo_root = Path(__file__).resolve().parents[2]
     candidate = canary_dir.resolve(strict=True)
     if canary_dir.is_symlink() or not candidate.is_dir():
@@ -166,13 +167,13 @@ def _canary_context(canary_dir: Path) -> Tuple[Path, Dict[str, Any], Dict[str, A
     return candidate, manifest, control
 
 
-def _load_ledger(path: Path, record_type: str, *, required: bool) -> List[Dict[str, Any]]:
+def _load_ledger(path: Path, record_type: str, *, required: bool) -> list[dict[str, Any]]:
     if not path.exists():
         if required:
             raise ValueError(f"{record_type} ledger is unavailable")
         return []
     candidate = _private_file(path, f"{record_type} ledger", maximum=8 * 1024 * 1024)
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     previous = _ZERO_HASH
     try:
         lines = candidate.read_text(encoding="utf-8").splitlines()
@@ -207,7 +208,7 @@ def _load_ledger(path: Path, record_type: str, *, required: bool) -> List[Dict[s
     return records
 
 
-def _append(path: Path, record_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _append(path: Path, record_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     lock_path = path.with_suffix(path.suffix + ".lock")
     flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(lock_path, flags, 0o600)
@@ -313,7 +314,7 @@ def _record(
     source: str,
     observed_at: str,
     evidence_file: Path,
-    observed_model: Optional[str],
+    observed_model: str | None,
 ) -> int:
     directory, _manifest, control = _canary_context(canary_dir)
     if source != _REQUIRED_CHECK_SOURCES[kind]:
@@ -323,7 +324,7 @@ def _record(
     repo_root = Path(__file__).resolve().parents[2]
     if os.path.commonpath((str(artifact), str(repo_root))) == str(repo_root):
         raise ValueError("live check artifact must be outside the repository")
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "observed_at": observed.isoformat().replace("+00:00", "Z"),
         "run_id": control["run_id"],
         "source_commit": control["source_commit"],
@@ -374,17 +375,17 @@ def _duration_value(seconds: float) -> object:
 
 def _finalize(canary_dir: Path) -> int:
     directory, _manifest, control = _canary_context(canary_dir)
-    samples = _load_ledger(
-        directory / "runtime-samples.jsonl", "status_sample", required=True
-    )
+    samples = _load_ledger(directory / "runtime-samples.jsonl", "status_sample", required=True)
     checks = _load_ledger(directory / "live-checks.jsonl", "live_check", required=True)
     for record in [*samples, *checks]:
         _validate_common(record, control)
+    if len(samples) < 2:
+        raise ValueError("at least two canary status samples are required")
     sample_times = [_timestamp(record.get("observed_at"), "sample") for record in samples]
     duration_seconds = (sample_times[-1] - sample_times[0]).total_seconds()
     gaps = [
         int((current - previous).total_seconds())
-        for previous, current in zip(sample_times, sample_times[1:])
+        for previous, current in zip(sample_times, sample_times[1:], strict=False)
     ]
     if any(gap <= 0 for gap in gaps):
         raise ValueError("canary status sample order is invalid")
@@ -400,7 +401,7 @@ def _finalize(canary_dir: Path) -> int:
         ):
             raise ValueError("canary contains an unhealthy status sample")
     activation_time = _timestamp(control.get("activation_time"), "activation")
-    latest: Dict[str, Mapping[str, Any]] = {}
+    latest: dict[str, Mapping[str, Any]] = {}
     for check in checks:
         kind = check.get("kind")
         if kind not in _REQUIRED_CHECK_SOURCES:
@@ -408,7 +409,7 @@ def _finalize(canary_dir: Path) -> int:
         if check.get("source") != _REQUIRED_CHECK_SOURCES[str(kind)]:
             raise ValueError("live check source is invalid")
         observed = _timestamp(check.get("observed_at"), "live check")
-        if observed < activation_time or observed > sample_times[-1]:
+        if observed < activation_time or observed < sample_times[0] or observed > sample_times[-1]:
             raise ValueError("live check is outside the observed canary period")
         digest = check.get("evidence_sha256")
         if (
@@ -468,7 +469,7 @@ def _finalize(canary_dir: Path) -> int:
         "- 72-hour continuous stability: deferred by user; not assessed\n"
         "- Observed model: deepseek-v4-flash\n"
         "- Evidence contains hashes and bounded results only; source artifacts stay private.\n"
-    ).encode("utf-8")
+    ).encode()
     evidence_path = evidence_dir / "task13-canary-evidence.json"
     summary_path = evidence_dir / "task13-canary-summary.md"
     _atomic_private(evidence_path, evidence_bytes)
@@ -482,7 +483,7 @@ def _finalize(canary_dir: Path) -> int:
     return 0
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "sample":

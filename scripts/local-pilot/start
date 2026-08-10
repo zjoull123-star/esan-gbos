@@ -34,6 +34,37 @@ GBOS_LOCAL_PILOT_MANIFEST="$(
 )"
 export GBOS_LOCAL_PILOT_MANIFEST
 
+if [[ -z "${CANARY_CONTROL}" ]]; then
+  if python3 - "${MANIFEST}" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    channels = manifest["channels"]
+    email = channels["email"]
+    deepseek = manifest["deepseek"]
+    if not all(isinstance(value, dict) for value in (manifest, channels, email, deepseek)):
+        raise ValueError
+except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(78)
+
+raise SystemExit(10 if email.get("enabled") is True or deepseek.get("enabled") is True else 0)
+PY
+  then
+    :
+  else
+    manifest_gate_status=$?
+    if [[ "${manifest_gate_status}" -eq 10 ]]; then
+      echo "Enabled Email or DeepSeek requires a bound canary control file." >&2
+    else
+      echo "Manifest enablement could not be evaluated safely." >&2
+    fi
+    exit 78
+  fi
+fi
+
 if [[ -e "${EMERGENCY_STOP_FILE}" ]]; then
   echo "Emergency-stop latch is active; explicit acknowledgement is required." >&2
   exit 78

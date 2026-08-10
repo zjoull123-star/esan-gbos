@@ -11,9 +11,10 @@ import re
 import stat
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any
 
 _EMAIL_FIELDS = {
     "instance_id",
@@ -61,7 +62,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _object(path: Path, *, maximum: int, private: bool) -> Dict[str, Any]:
+def _object(path: Path, *, maximum: int, private: bool) -> dict[str, Any]:
     try:
         before = path.lstat()
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -130,11 +131,11 @@ def _timestamp(value: object) -> datetime:
         raise ValueError("timestamp is invalid") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("timestamp is invalid")
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
-def _now(value: Optional[str]) -> datetime:
-    return datetime.now(timezone.utc) if value is None else _timestamp(value)
+def _now(value: str | None) -> datetime:
+    return datetime.now(UTC) if value is None else _timestamp(value)
 
 
 def _source_commit(repo_root: Path) -> str:
@@ -161,7 +162,12 @@ def _require_repo_external(path: Path, repo_root: Path) -> None:
         raise ValueError("canary private inputs must stay outside the repository")
 
 
-def _validate_manifest(manifest: Mapping[str, Any], control: Mapping[str, Any]) -> None:
+def _validate_manifest(
+    manifest: Mapping[str, Any],
+    control: Mapping[str, Any],
+    *,
+    now: datetime,
+) -> None:
     channels = manifest.get("channels")
     deepseek = manifest.get("deepseek")
     if (
@@ -189,7 +195,8 @@ def _validate_manifest(manifest: Mapping[str, Any], control: Mapping[str, Any]) 
     }:
         raise ValueError("canary control scope is invalid")
     if (
-        control.get("schema_version") != "1.1"
+        control.get("state") != "prepared"
+        or control.get("schema_version") != "1.1"
         or control.get("stability_assessment")
         != {
             "continuous_runtime_required": False,
@@ -198,30 +205,74 @@ def _validate_manifest(manifest: Mapping[str, Any], control: Mapping[str, Any]) 
         or "pilot_window_hours" in control
     ):
         raise ValueError("canary stability scope is invalid")
+    email = channels.get("email")
+    if not isinstance(email, Mapping):
+        raise ValueError("canary activation binding is invalid")
+    activation = _timestamp(control.get("activation_time"))
+    if email.get("activation_time") != control.get("activation_time") or activation > now:
+        raise ValueError("canary activation binding is invalid")
+
+
+def _bounded_text(value: object, *, maximum: int) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value.encode("utf-8")) > maximum
+        or any(character in value for character in ("\x00", "\r", "\n"))
+    ):
+        raise ValueError("email credential string boundary is invalid")
+    return value
+
+
+def _bounded_integer(value: object, *, minimum: int, maximum: int) -> int:
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ValueError("email credential numeric boundary is invalid")
+    return value
 
 
 def _validate_email(path: Path) -> None:
     value = _object(path, maximum=65_536, private=True)
     if set(value) != _EMAIL_FIELDS:
         raise ValueError("email credential schema is invalid")
-    for field in (
-        "instance_id",
-        "team_ref",
-        "account_user_ref",
-        "host",
-        "mailbox",
-        "folder",
-        "username",
-        "password",
+    for field, maximum in (
+        ("instance_id", 256),
+        ("team_ref", 256),
+        ("account_user_ref", 256),
+        ("host", 253),
+        ("mailbox", 256),
+        ("folder", 256),
+        ("username", 4_096),
+        ("password", 4_096),
     ):
-        item = value.get(field)
-        if not isinstance(item, str) or not item or item != item.strip():
-            raise ValueError("email credential routing is incomplete")
+        _bounded_text(value.get(field), maximum=maximum)
+    account_user_ref = str(value["account_user_ref"])
+    if any(
+        character.isspace() or ord(character) < 32 or ord(character) == 127
+        for character in account_user_ref
+    ):
+        raise ValueError("email credential routing is incomplete")
     if value.get("agent_task_type") not in _TASKS:
         raise ValueError("email credential routing is incomplete")
+    for field, minimum, maximum in (
+        ("port", 1, 65_535),
+        ("poll_limit", 1, 1_000),
+        ("max_message_bytes", 1, 100_000_000),
+        ("max_attachment_bytes", 1, 100_000_000),
+        ("max_attachments", 1, 1_000),
+        ("rescan_max_window_seconds", 1, 90 * 86_400),
+        ("rescan_max_uids", 1, 10_000),
+    ):
+        _bounded_integer(value.get(field), minimum=minimum, maximum=maximum)
     checkpoint_value = value.get("initial_checkpoint")
     if not isinstance(checkpoint_value, str) or not checkpoint_value:
         raise ValueError("email initial checkpoint is required")
+    if (
+        checkpoint_value != checkpoint_value.strip()
+        or len(checkpoint_value.encode("utf-8")) > 4_096
+        or any(character in checkpoint_value for character in ("\x00", "\r", "\n"))
+    ):
+        raise ValueError("email initial checkpoint is invalid")
     try:
         checkpoint = json.loads(checkpoint_value)
     except json.JSONDecodeError as exc:
@@ -260,23 +311,26 @@ def _validate_lexicon(path: Path, *, site_id: object, now: datetime) -> None:
         raise ValueError("trusted phrase lexicon attestation window is invalid")
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         for candidate in (args.manifest, args.run_control, args.secret_dir):
             _require_repo_external(candidate, args.repo_root)
         manifest = _object(args.manifest, maximum=65_536, private=True)
         control = _object(args.run_control, maximum=65_536, private=True)
-        if hashlib.sha256(args.manifest.read_bytes()).hexdigest() != control.get(
-            "manifest_sha256"
-        ):
+        if hashlib.sha256(args.manifest.read_bytes()).hexdigest() != control.get("manifest_sha256"):
             raise ValueError("canary manifest digest conflicts")
         if control.get("source_commit") != _source_commit(args.repo_root):
             raise ValueError("canary source binding conflicts")
-        _validate_manifest(manifest, control)
+        current_time = _now(args.now)
+        _validate_manifest(manifest, control, now=current_time)
         directory = args.secret_dir
         details = directory.lstat()
-        if directory.is_symlink() or not directory.is_dir() or stat.S_IMODE(details.st_mode) != 0o700:
+        if (
+            directory.is_symlink()
+            or not directory.is_dir()
+            or stat.S_IMODE(details.st_mode) != 0o700
+        ):
             raise ValueError("secret directory is unsafe")
         _validate_email(directory / "email_credential")
         _private_bytes(directory / "deepseek_api_key", minimum=1, maximum=4096)
@@ -293,7 +347,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         _validate_lexicon(
             directory / "trusted_phrase_lexicon",
             site_id=manifest.get("site_id"),
-            now=_now(args.now),
+            now=current_time,
         )
         payload = {
             "schema_version": "1.0",
