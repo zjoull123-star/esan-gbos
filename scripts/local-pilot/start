@@ -70,6 +70,18 @@ if [[ -e "${EMERGENCY_STOP_FILE}" ]]; then
   exit 78
 fi
 
+if [[ -n "${CANARY_CONTROL}" ]]; then
+  running_services="$(compose ps --status running --services)"
+  while IFS= read -r running_service; do
+    case "${running_service}" in
+      agent-worker|communication-draft-worker|connector-worker|email-poller|identity-resolution-worker|model-projection-worker)
+        echo "A canary producer or model worker is already running; stop it before guarded startup." >&2
+        exit 78
+        ;;
+    esac
+  done <<< "${running_services}"
+fi
+
 "${SCRIPT_DIR}/preflight" \
   --repo-root "${REPO_ROOT}" \
   --manifest "${MANIFEST}" \
@@ -109,7 +121,12 @@ if [[ -n "${CANARY_CONTROL}" ]]; then
     --run-control "${CANARY_CONTROL}" \
     --secret-dir "${GBOS_SECRET_DIR}" \
     --repo-root "${REPO_ROOT}"
-  printf '%s\n' "${CANARY_CONTROL}" > "${RUNTIME_DIR}/canary-control-path"
+  GBOS_CANARY_CONTROL="$(
+    CDPATH='' cd -- "$(dirname -- "${CANARY_CONTROL}")" &&
+      printf '%s/%s\n' "$PWD" "$(basename -- "${CANARY_CONTROL}")"
+  )"
+  export GBOS_CANARY_CONTROL
+  printf '%s\n' "${GBOS_CANARY_CONTROL}" > "${RUNTIME_DIR}/canary-control-path"
   chmod 600 "${RUNTIME_DIR}/canary-control-path"
 fi
 
@@ -144,6 +161,7 @@ export \
 profile_args=(--profile runtime --profile observability)
 connector_profile_enabled=false
 identity_profile_enabled=false
+model_profile_requested=false
 while IFS= read -r capability; do
   case "${capability}" in
     email|wecom|whatsapp)
@@ -161,7 +179,7 @@ while IFS= read -r capability; do
       profile_args+=(--profile media)
       ;;
     model)
-      profile_args+=(--profile model-projection)
+      model_profile_requested=true
       ;;
     tunnel:*)
       GBOS_CLOUDFLARED_TUNNEL_ID="${capability#tunnel:}"
@@ -194,12 +212,6 @@ fi
 if [[ "${identity_profile_enabled}" == "true" ]]; then
   GBOS_IDENTITY_RESOLUTION_KILL_SWITCH="false"
 fi
-if printf '%s\n' "${profile_args[@]}" | grep -Fxq model-projection; then
-  GBOS_MODEL_KILL_SWITCH="false"
-  GBOS_MODEL_PROJECTION_KILL_SWITCH="false"
-  GBOS_COMMUNICATION_DRAFT_KILL_SWITCH="false"
-  GBOS_DEEPSEEK_EGRESS_ENABLED="true"
-fi
 export \
   GBOS_CONNECTOR_KILL_SWITCH \
   GBOS_IDENTITY_RESOLUTION_KILL_SWITCH \
@@ -221,6 +233,20 @@ compose --profile runtime up -d --wait \
   frappe-backend \
   frappe-websocket
 compose --profile runtime run --rm migrations
+if [[ "${model_profile_requested}" == "true" ]]; then
+  compose --profile runtime --profile canary-start-guard \
+    run --rm --no-deps canary-start-guard
+  GBOS_MODEL_KILL_SWITCH="false"
+  GBOS_MODEL_PROJECTION_KILL_SWITCH="false"
+  GBOS_COMMUNICATION_DRAFT_KILL_SWITCH="false"
+  GBOS_DEEPSEEK_EGRESS_ENABLED="true"
+  profile_args+=(--profile model-projection)
+  export \
+    GBOS_MODEL_KILL_SWITCH \
+    GBOS_MODEL_PROJECTION_KILL_SWITCH \
+    GBOS_COMMUNICATION_DRAFT_KILL_SWITCH \
+    GBOS_DEEPSEEK_EGRESS_ENABLED
+fi
 "${SCRIPT_DIR}/run-retention" --dry-run --manifest "${MANIFEST}"
 compose --profile runtime --profile materializer-bootstrap run --rm --no-deps frappe-materializer-bootstrap
 if [[ "${identity_profile_enabled}" == "true" ]]; then

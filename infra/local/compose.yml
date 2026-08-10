@@ -71,6 +71,77 @@ services:
       - no-new-privileges:true
     restart: "no"
 
+  canary-start-guard:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["canary-start-guard"]
+    command: ["python", "-m", "services.local_pilot_runtime.canary_start_guard"]
+    secrets:
+      - source: postgres_observer_password
+        target: postgres_observer_password
+        mode: 0600
+      - source: email_credential
+        target: email_credential
+        mode: 0600
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CANARY_CONTROL:-/tmp/gbos-canary-control-unavailable}:/config/canary-run.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/canary-start-guard.json:/config/canary-start-guard.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/connectors.json:/config/connectors.json:ro
+    networks: [local-internal]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+  canary-verifier:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["canary-verifier"]
+    command:
+      - python
+      - -m
+      - services.local_pilot_runtime.canary_verifier_runtime
+      - --canary-dir
+      - /canary
+      - --projection-config
+      - /config/projection-connections.json
+      - --window-start
+      - ${GBOS_CANARY_WINDOW_START:-unavailable}
+      - --window-end
+      - ${GBOS_CANARY_WINDOW_END:-unavailable}
+      - --output
+      - /attestation/${GBOS_CANARY_OUTPUT_NAME:-unavailable}
+      - --expected-source-commit
+      - ${GBOS_CANARY_SOURCE_COMMIT:-unavailable}
+    secrets:
+      - source: postgres_observer_password
+        target: postgres_observer_password
+        mode: 0600
+      - source: postgres_context_password
+        target: postgres_context_password
+        mode: 0600
+      - source: postgres_agent_password
+        target: postgres_agent_password
+        mode: 0600
+    volumes:
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/projection-connections.json:/config/projection-connections.json:ro
+      - ${GBOS_CANARY_DIR:-/tmp/gbos-canary-directory-unavailable}:/canary:ro
+      - ${GBOS_CANARY_OUTPUT_DIR:-/tmp/gbos-canary-output-unavailable}:/attestation
+      - local-pilot-evidence-cas:/var/lib/gbos/evidence:ro
+      - local-pilot-tokenizer-vault:/var/lib/gbos/tokenizer-vault:ro
+    networks: [local-internal]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
   runtime-volume-init:
     image: *runtime-image
     pull_policy: never

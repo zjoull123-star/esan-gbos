@@ -261,6 +261,22 @@ def _projection_config(
     }
 
 
+def _canary_start_guard_config(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "site_id": manifest["site_id"],
+        "processing_purpose": "observation_processing",
+        "postgres": {
+            "host": "postgres",
+            "port": 5432,
+            "database": "gbos_local_pilot",
+            "user": _ROLES["observer"],
+            "password_file": _ROLE_PASSWORD_FILES["observer"],
+            "connect_timeout_seconds": 5,
+        },
+    }
+
+
 def _atomic_private_json(output_dir: Path, name: str, payload: dict[str, Any]) -> None:
     serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{name}.", dir=output_dir)
@@ -328,6 +344,11 @@ def main() -> int:
             output_dir,
             "projection-connections.json",
             _projection_config(manifest, synthetic=synthetic),
+        )
+        _atomic_private_json(
+            output_dir,
+            "canary-start-guard.json",
+            _canary_start_guard_config(manifest),
         )
         if args.synthetic_runtime:
             _atomic_private_json(output_dir, "local-pilot-manifest.json", manifest)

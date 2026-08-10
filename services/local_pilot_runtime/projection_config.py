@@ -32,6 +32,7 @@ _CONNECTION_FIELDS = frozenset(
         "connect_timeout_seconds",
     }
 )
+_START_GUARD_FIELDS = frozenset({"schema_version", "site_id", "processing_purpose", "postgres"})
 _ROLE_USERS = {
     "observer": "gbos_observer_app",
     "context": "gbos_context_app",
@@ -59,6 +60,21 @@ class ProjectionConfig:
             "ProjectionConfig("
             f"site_id={self.site_id!r}, controlled_egress={self.controlled_egress!r}, "
             "roots=<redacted>, connections=<redacted>)"
+        )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class CanaryStartGuardConfig:
+    site_id: str
+    processing_purpose: str
+    postgres: PostgresSettings
+    schema_version: Literal["1.0"] = "1.0"
+
+    def __repr__(self) -> str:
+        return (
+            "CanaryStartGuardConfig("
+            f"site_id={self.site_id!r}, processing_purpose={self.processing_purpose!r}, "
+            "postgres=<redacted>)"
         )
 
 
@@ -97,6 +113,26 @@ def load_projection_config(path: Path, *, expected_site_id: str) -> ProjectionCo
         evidence_cas_root=cas_root,
         tokenizer_vault_root=vault_root,
         connections=MappingProxyType(connections),
+    )
+
+
+def load_canary_start_guard_config(path: Path) -> CanaryStartGuardConfig:
+    """Load the private one-role pre-egress database guard configuration."""
+
+    value = _read_private_json(Path(path))
+    if set(value) != _START_GUARD_FIELDS or value.get("schema_version") != "1.0":
+        raise ProjectionConfigError("canary start guard config must use the closed v1 schema")
+    raw_postgres = value.get("postgres")
+    if not isinstance(raw_postgres, dict) or set(raw_postgres) != _CONNECTION_FIELDS:
+        raise ProjectionConfigError("canary start guard connection must use the closed schema")
+    return CanaryStartGuardConfig(
+        site_id=_text(value.get("site_id"), "site_id", maximum=140),
+        processing_purpose=_text(
+            value.get("processing_purpose"),
+            "processing purpose",
+            maximum=80,
+        ),
+        postgres=_connection(raw_postgres, expected_user=_ROLE_USERS["observer"]),
     )
 
 
@@ -207,7 +243,9 @@ def _integer(value: object, name: str, *, minimum: int, maximum: int) -> int:
 
 
 __all__ = [
+    "CanaryStartGuardConfig",
     "ProjectionConfig",
     "ProjectionConfigError",
+    "load_canary_start_guard_config",
     "load_projection_config",
 ]

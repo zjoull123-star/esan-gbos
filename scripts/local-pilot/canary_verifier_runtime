@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+if [[ "${1:-}" != "--canary-dir" || "${3:-}" != "--window-start" || \
+      "${5:-}" != "--window-end" || "${7:-}" != "--output" || $# -ne 8 ]]; then
+  echo "Usage: scripts/local-pilot/canary_verifier_runtime --canary-dir PATH --window-start TIME --window-end TIME --output PATH" >&2
+  exit 64
+fi
+
+GBOS_CANARY_DIR="$(CDPATH='' cd -- "$2" && pwd -P)"
+GBOS_CANARY_WINDOW_START="$4"
+GBOS_CANARY_WINDOW_END="$6"
+output_parent="$(CDPATH='' cd -- "$(dirname -- "$8")" && pwd -P)"
+GBOS_CANARY_OUTPUT_NAME="$(basename -- "$8")"
+case "${GBOS_CANARY_OUTPUT_NAME}" in
+  ""|.|..|*/*)
+    echo "Canary verifier output filename is invalid." >&2
+    exit 78
+    ;;
+esac
+if [[ -e "${output_parent}/${GBOS_CANARY_OUTPUT_NAME}" ]]; then
+  echo "Canary verifier output must be new." >&2
+  exit 78
+fi
+GBOS_CANARY_OUTPUT_DIR="${output_parent}"
+GBOS_CANARY_SOURCE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse --verify 'HEAD^{commit}')"
+read_secret_dir
+read_config_dir
+if [[ ! -d "${GBOS_SECRET_DIR:-}" || ! -d "${GBOS_CONFIG_DIR:-}" ]]; then
+  echo "Running local-pilot secrets and configuration are unavailable." >&2
+  exit 78
+fi
+export \
+  GBOS_CANARY_DIR \
+  GBOS_CANARY_OUTPUT_DIR \
+  GBOS_CANARY_OUTPUT_NAME \
+  GBOS_CANARY_SOURCE_COMMIT \
+  GBOS_CANARY_WINDOW_END \
+  GBOS_CANARY_WINDOW_START \
+  GBOS_CONFIG_DIR \
+  GBOS_SECRET_DIR
+
+compose --profile canary-verifier \
+  run --rm --no-deps canary-verifier

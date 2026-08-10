@@ -32,6 +32,19 @@
       "path": "scripts/local-pilot/migrate",
       "status": "executable"
     },
+    "canary-start-guard": {
+      "path": "services/local_pilot_runtime/canary_start_guard.py",
+      "status": "executable",
+      "network": "local-internal-only",
+      "database_role": "gbos_observer_app read-only transaction"
+    },
+    "canary-verifier": {
+      "path": "services/local_pilot_runtime/canary_verifier_runtime.py",
+      "launcher": "scripts/local-pilot/canary_verifier_runtime",
+      "status": "executable",
+      "network": "local-internal-only",
+      "host_ports": false
+    },
     "context-api": {
       "path": "services/local_pilot_runtime/context_api.py",
       "status": "executable"
