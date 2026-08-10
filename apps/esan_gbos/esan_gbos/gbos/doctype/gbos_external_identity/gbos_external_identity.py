@@ -9,9 +9,7 @@ import frappe
 from esan_gbos.gbos.doctype.base import GBOSDocument
 
 IDENTITY_PROVIDERS = frozenset({"email", "wecom", "whatsapp", "phone", "manual_import"})
-_OPAQUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~-]{0,127}")
-_RAW_EMAIL = re.compile(r"[^@\s]+@[^@\s]+")
-_RAW_PHONE = re.compile(r"\+?[0-9][0-9 ()-]{7,}[0-9]")
+_OPAQUE = re.compile(r"[A-Za-z0-9_-]{43}")
 _TARGET_FIELDS = ("team", "identity_type", "user", "party_profile")
 _DB_SET_PROTECTED_FIELDS = frozenset(
     {
@@ -43,11 +41,7 @@ def validate_external_subject(provider: object, external_subject: object) -> Non
     if not external_subject.startswith(prefix):
         raise ValueError("external subject reference is invalid")
     opaque = external_subject[len(prefix) :]
-    if (
-        _OPAQUE.fullmatch(opaque) is None
-        or _RAW_EMAIL.fullmatch(opaque) is not None
-        or _RAW_PHONE.fullmatch(opaque) is not None
-    ):
+    if _OPAQUE.fullmatch(opaque) is None:
         raise ValueError("external subject reference is invalid")
 
 

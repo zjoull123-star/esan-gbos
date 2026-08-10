@@ -51,6 +51,10 @@ MIGRATION_SCRIPT = ROOT / "scripts" / "dev" / "gate3-migrate"
 NOW = datetime(2026, 8, 7, 9, 30, tzinfo=UTC)
 SCOPE = TenantScope("alpha.example", "observation_processing")
 KEY = ConnectorKey("wecom", "sales-primary")
+PARTICIPANT_IDENTITY_REF = "extid:v1:wecom:wM3gc-fl_ByHLD-JhgRmNn06DaMafEuFiCdXprfdS6M"
+REPLAY_IDENTITY_REF = "extid:v1:wecom:rCA8mEO1vYyIPgcDn_goIMlEIgEL5hCLuCQDyiU3aiI"
+KEY_IDENTITY_A = "extid:v1:email:jtP2rWhblZ6tcCJRjhr3bNgW-OjsfM3aHtQBjo8iI_g"
+KEY_IDENTITY_B = "extid:v1:email:9E5k5185SOn3P436lHIcTOjLtPJlxHkMcCstQc-_J1M"
 
 
 class FakeCursor:
@@ -492,7 +496,7 @@ def test_persist_normalized_batch_enqueues_each_distinct_stable_participant_once
 ):
     item1, original1 = _normalized_item("stable-event-001")
     item2, original2 = _normalized_item("stable-event-002")
-    identity_ref = "extid:v1:wecom:opaque-participant"
+    identity_ref = PARTICIPANT_IDENTITY_REF
     normalized1 = replace(
         original1,
         participants=(
@@ -556,7 +560,7 @@ def test_persist_normalized_batch_replay_updates_stable_identity_seen_time_witho
     item, original = _normalized_item("stable-replay-event")
     normalized = replace(
         original,
-        participants=(Participant("external", "extid:v1:wecom:stable-replay"),),
+        participants=(Participant("external", REPLAY_IDENTITY_REF),),
     )
     probe = FakeConnection(
         [
@@ -646,7 +650,7 @@ def test_persist_normalized_batch_requires_trusted_team_before_stable_identity_w
     item, original = _normalized_item("stable-without-team")
     normalized = replace(
         original,
-        participants=(Participant("external", "extid:v1:wecom:opaque-participant"),),
+        participants=(Participant("external", PARTICIPANT_IDENTITY_REF),),
     )
     connection = FakeConnection([_routing_row(team_ref=None)])
 
@@ -669,19 +673,15 @@ def test_identity_resolution_work_key_separates_site_provider_ref_and_team() -> 
     base = module._identity_resolution_work_id(
         "alpha.example",
         "email",
-        "extid:v1:email:opaque-a",
+        KEY_IDENTITY_A,
         "team:sales",
     )
 
     variants = {
+        module._identity_resolution_work_id("beta.example", "email", KEY_IDENTITY_A, "team:sales"),
+        module._identity_resolution_work_id("alpha.example", "email", KEY_IDENTITY_B, "team:sales"),
         module._identity_resolution_work_id(
-            "beta.example", "email", "extid:v1:email:opaque-a", "team:sales"
-        ),
-        module._identity_resolution_work_id(
-            "alpha.example", "email", "extid:v1:email:opaque-b", "team:sales"
-        ),
-        module._identity_resolution_work_id(
-            "alpha.example", "email", "extid:v1:email:opaque-a", "team:purchase"
+            "alpha.example", "email", KEY_IDENTITY_A, "team:purchase"
         ),
     }
 

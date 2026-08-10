@@ -23,6 +23,7 @@ from observer.read_service import (
 from observer.runtime import LocalPilotRuntimeGuard
 
 NOW = datetime(2026, 8, 8, 9, tzinfo=UTC)
+PRIVATE_IDENTITY_REF = "extid:v1:email:LV6GAKT7pm5calE6bndCH0B5zbhyjtErgQGWWEsLveI"
 STATUS = ConnectorStatus(
     instance_id="sales-inbox",
     channel="email",
@@ -221,7 +222,7 @@ def test_identity_authority_denial_is_authenticated_idempotent_and_redacted() ->
     client = TestClient(app)
     payload = {
         "identity_provider": "email",
-        "external_subject_ref": "extid:v1:email:opaque-private-sentinel",
+        "external_subject_ref": PRIVATE_IDENTITY_REF,
         "mapping_ref": "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "team_ref": "TEM-SALES",
         "deny_through_revision": 4,
@@ -334,7 +335,7 @@ def test_identity_metrics_use_only_fixed_low_cardinality_labels_and_no_scope_val
     for forbidden in (
         "alpha.example",
         "team-sales",
-        "extid:v1:email:private-sentinel",
+        PRIVATE_IDENTITY_REF,
         "member@example.invalid",
         "account-owner-private",
         "provider=",

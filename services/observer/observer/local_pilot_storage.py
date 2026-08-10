@@ -25,9 +25,8 @@ _DELIVERY_UNRESOLVED_IDENTITY = re.compile(
 )
 _OPAQUE_IDENTITY = re.compile(
     r"^extid:v1:(email|wecom|whatsapp|phone|manual_import):"
-    r"([A-Za-z0-9][A-Za-z0-9._~-]{0,127})$"
+    r"([A-Za-z0-9_-]{43})$"
 )
-_PHONE_LIKE_IDENTITY_TAIL = re.compile(r"^[0-9][0-9 ()-]{7,}[0-9]$")
 _MAX_LEASE_SECONDS = 86_400
 _MAX_ATTEMPTS = 100
 
@@ -2938,8 +2937,8 @@ def _participant_identity_provider(key: ConnectorKey, identity_ref: str) -> str 
     match = _OPAQUE_IDENTITY.fullmatch(identity_ref)
     if match is None:
         raise ValueError("normalized participant identity is invalid")
-    provider, opaque_tail = match.groups()
-    if provider != key.connector or _PHONE_LIKE_IDENTITY_TAIL.fullmatch(opaque_tail) is not None:
+    provider = match.group(1)
+    if provider != key.connector:
         raise ValueError("normalized participant identity is invalid")
     return provider
 

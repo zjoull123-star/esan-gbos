@@ -424,7 +424,7 @@ def test_restricted_communication_never_maps_original_text() -> None:
 
 
 def test_communication_detail_maps_closed_identity_metadata_without_protected_targets() -> None:
-    opaque_identity = "extid:v1:email:opaque-participant"
+    opaque_identity = "extid:v1:email:wM3gc-fl_ByHLD-JhgRmNn06DaMafEuFiCdXprfdS6M"
     suggestion_key = f"suggestion:v1:{'a' * 64}"
     value = map_communication_detail(
         {

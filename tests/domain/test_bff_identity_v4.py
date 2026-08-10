@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import copy
+import hashlib
 import importlib
 import json
 import sys
@@ -10,8 +12,14 @@ from typing import Any
 
 import pytest
 
-IDENTITY_USER = "extid:v1:email:user-opaque"
-IDENTITY_PARTY = "extid:v1:email:party-opaque"
+
+def _identity_ref(label: str, provider: str = "email") -> str:
+    digest = base64.urlsafe_b64encode(hashlib.sha256(label.encode()).digest()).rstrip(b"=")
+    return f"extid:v1:{provider}:{digest.decode()}"
+
+
+IDENTITY_USER = _identity_ref("user-opaque")
+IDENTITY_PARTY = _identity_ref("party-opaque")
 SUGGESTION_KEY = f"suggestion:v1:{'a' * 64}"
 
 
@@ -633,7 +641,7 @@ def test_identity_states_include_rejected_without_raw_refs(
     identity_module: tuple[Any, FakeFrappe, SimpleNamespace],
 ) -> None:
     identity, fake, state = identity_module
-    refs = [f"extid:v1:email:opaque-{index}" for index in range(6)]
+    refs = [_identity_ref(f"opaque-{index}") for index in range(6)]
     state.communication = _communication(
         identities=[
             {"identity_ref": refs[0], "provider": "email", "status": "unresolved"},

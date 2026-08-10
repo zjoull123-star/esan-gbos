@@ -222,7 +222,7 @@
         "security": [{"FrappeSession": []}],
         "parameters": [
           {"name": "observation_id", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 48}},
-          {"name": "identity_ref", "in": "query", "required": true, "schema": {"type": "string", "pattern": "^extid:v1:[a-z_]+:[A-Za-z0-9._~-]+$", "maxLength": 160}}
+          {"name": "identity_ref", "in": "query", "required": true, "schema": {"type": "string", "pattern": "^extid:v1:(email|wecom|whatsapp|phone|manual_import):[A-Za-z0-9_-]{43}$", "maxLength": 160}}
         ],
         "responses": {
           "200": {"$ref": "#/components/responses/IdentityStateDetailSuccess"},
@@ -246,7 +246,7 @@
         "security": [{"FrappeSession": []}],
         "parameters": [
           {"name": "observation_id", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 48}},
-          {"name": "identity_ref", "in": "query", "required": true, "schema": {"type": "string", "maxLength": 160}},
+          {"name": "identity_ref", "in": "query", "required": true, "schema": {"type": "string", "pattern": "^extid:v1:(email|wecom|whatsapp|phone|manual_import):[A-Za-z0-9_-]{43}$", "maxLength": 160}},
           {"name": "candidate_type", "in": "query", "required": true, "schema": {"type": "string", "enum": ["User", "Party", "Contact"]}},
           {"name": "search", "in": "query", "schema": {"type": "string", "maxLength": 100}},
           {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 1000}},
@@ -514,7 +514,7 @@
         "additionalProperties": false,
         "required": ["identity_ref", "provider", "status"],
         "properties": {
-          "identity_ref": {"type": "string", "pattern": "^extid:v1:[a-z_]+:[A-Za-z0-9._~-]+$", "maxLength": 160},
+          "identity_ref": {"type": "string", "pattern": "^extid:v1:(email|wecom|whatsapp|phone|manual_import):[A-Za-z0-9_-]{43}$", "maxLength": 160},
           "provider": {"type": "string", "enum": ["email", "wecom", "whatsapp", "phone", "manual_import"]},
           "status": {"type": "string", "enum": ["unresolved", "confirmed", "revoked"]},
           "mapping_ref": {"type": "string"},
@@ -615,7 +615,7 @@
         "additionalProperties": false,
         "required": ["identity_ref", "provider", "status"],
         "properties": {
-          "identity_ref": {"type": "string", "maxLength": 160},
+          "identity_ref": {"type": "string", "pattern": "^extid:v1:(email|wecom|whatsapp|phone|manual_import):[A-Za-z0-9_-]{43}$", "maxLength": 160},
           "provider": {"type": "string", "enum": ["email", "wecom", "whatsapp", "phone", "manual_import"]},
           "status": {"type": "string", "enum": ["unresolved", "proposed", "pending", "confirmed", "rejected", "revoked"]},
           "mapping_ref": {"type": "string"},
@@ -682,7 +682,7 @@
         ],
         "properties": {
           "observation_id": {"type": "string", "minLength": 1, "maxLength": 48},
-          "identity_ref": {"type": "string", "maxLength": 160},
+          "identity_ref": {"type": "string", "pattern": "^extid:v1:(email|wecom|whatsapp|phone|manual_import):[A-Za-z0-9_-]{43}$", "maxLength": 160},
           "suggestion_key": {"type": "string", "pattern": "^suggestion:v1:[a-f0-9]{64}$"},
           "selected_candidate_type": {"type": "string", "enum": ["User", "Party", "Contact"]},
           "selected_candidate_ref": {"type": "string", "minLength": 1, "maxLength": 256},
@@ -698,7 +698,7 @@
         "required": ["observation_id", "identity_ref", "mapping_ref", "expected_revision", "idempotency_key"],
         "properties": {
           "observation_id": {"type": "string", "minLength": 1, "maxLength": 48},
-          "identity_ref": {"type": "string", "maxLength": 160},
+          "identity_ref": {"type": "string", "pattern": "^extid:v1:(email|wecom|whatsapp|phone|manual_import):[A-Za-z0-9_-]{43}$", "maxLength": 160},
           "mapping_ref": {"type": "string", "minLength": 1, "maxLength": 140},
           "expected_revision": {"type": "integer", "minimum": 1},
           "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 256}

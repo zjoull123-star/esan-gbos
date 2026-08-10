@@ -277,7 +277,7 @@ const identityStatuses = new Set([
 ]);
 const identityCandidateTypes = new Set(["User", "Party", "Contact"]);
 const identityRefPattern =
-  /^extid:v1:(email|wecom|whatsapp|phone|manual_import):([A-Za-z0-9._~-]+)$/u;
+  /^extid:v1:(email|wecom|whatsapp|phone|manual_import):([A-Za-z0-9_-]{43})$/u;
 
 const isBoundedText = (
   value: unknown,

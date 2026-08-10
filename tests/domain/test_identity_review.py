@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import re
 import sys
 from collections.abc import Generator
 from copy import deepcopy
@@ -13,8 +14,8 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).parents[2]
-SUBJECT = "extid:v1:email:OpaqueSubject01"
-SENSITIVE_SUBJECT = "extid:v1:email:SensitiveSubjectSentinel"
+SUBJECT = "extid:v1:email:N6juwc4ZaH0TL-KQUdymKdFk4sSVi6FB1fQTOjPwaI8"
+SENSITIVE_SUBJECT = "extid:v1:email:LV6GAKT7pm5calE6bndCH0B5zbhyjtErgQGWWEsLveI"
 SENSITIVE_TARGET = "sensitive-target@example.invalid"
 SUGGESTION_KEY = f"suggestion:v1:{'a' * 64}"
 
@@ -198,7 +199,11 @@ def _validate_external_subject(provider: object, subject: object) -> None:
     prefix = f"extid:v1:{provider}:"
     if provider not in {"email", "wecom", "whatsapp", "phone", "manual_import"}:
         raise ValueError("identity provider is not allowed")
-    if not isinstance(subject, str) or not subject.startswith(prefix) or len(subject) > 160:
+    if (
+        not isinstance(subject, str)
+        or not subject.startswith(prefix)
+        or re.fullmatch(r"[A-Za-z0-9_-]{43}", subject[len(prefix) :]) is None
+    ):
         raise ValueError("external subject reference is invalid")
 
 
@@ -425,6 +430,32 @@ def test_materializes_only_exact_same_team_frappe_candidates_as_ai_draft(
 
 
 @pytest.mark.parametrize(
+    "identity_ref",
+    (
+        "extid:v1:email:internal-user",
+        "extid:v1:email:" + "A" * 42,
+        "extid:v1:email:" + "A" * 44,
+        "extid:v1:email:" + "A" * 43 + "=",
+        "extid:v1:email:" + "A" * 42 + "+",
+        "extid:v1:email:" + "A" * 42 + ".",
+    ),
+)
+def test_identity_review_rejects_non_digest_external_refs_without_echo(
+    identity_review: tuple[Any, _Frappe],
+    identity_ref: str,
+) -> None:
+    service, fake = identity_review
+
+    with pytest.raises(service.IdentityReviewError) as raised:
+        service.materialize_association_suggestion(
+            _materialize_request(external_subject_ref=identity_ref)
+        )
+
+    assert identity_ref not in repr(raised.value)
+    assert not any(key[0] == "GBOS External Identity" for key in fake.docs)
+
+
+@pytest.mark.parametrize(
     "overrides",
     (
         {"selected_candidate_ref": SENSITIVE_TARGET},
@@ -597,7 +628,7 @@ def test_rejected_mapping_is_corrected_in_place_with_monotonic_revision_and_hist
         {"expected_revision": 2},
         {"team": "TEM-02"},
         {"identity_provider": "wecom"},
-        {"external_subject_ref": "extid:v1:email:OtherOpaque"},
+        {"external_subject_ref": "extid:v1:email:2SmKENGwc1g33EvYXaxkGw887yekfl1TpU8vP1svz_o"},
         {"selected_candidate_ref": "disabled@example.invalid"},
         {"selected_candidate_type": "Party", "selected_candidate_ref": "PTY-02"},
     ),

@@ -12,10 +12,13 @@ ROOT = Path(__file__).parents[2]
 MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "009_local_pilot_identity_resolution.sql"
 )
+DIGEST_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "013_local_pilot_identity_digest_boundary.sql"
+)
 NOW = datetime(2026, 8, 9, 9, tzinfo=UTC)
 SCOPE = TenantScope("alpha.example", "observation_processing")
 MAPPING_REF = "EID-01K" + "A" * 23
-SUBJECT_REF = "extid:v1:email:opaque-token"
+SUBJECT_REF = "extid:v1:email:N6juwc4ZaH0TL-KQUdymKdFk4sSVi6FB1fQTOjPwaI8"
 TARGET_REF = "protected-user@example.invalid"
 
 
@@ -64,6 +67,20 @@ def test_migration_adds_protected_connector_owner_and_forced_rls_projection() ->
         assert forbidden not in sql.lower()
 
 
+def test_digest_boundary_migration_is_idempotent_rls_safe_and_canonical() -> None:
+    sql = DIGEST_MIGRATION.read_text(encoding="utf-8").lower()
+
+    assert "participant_identity_resolutions_digest_ref_ck" in sql
+    assert "identity_resolution_work_digest_ref_ck" in sql
+    assert "identity_authority_denials_digest_ref_ck" in sql
+    assert "participants_external_identity_digest_ref_ck" in sql
+    assert "[a-za-z0-9_-]{43}" in sql
+    assert sql.count("force row level security") >= 3
+    assert "revoke all on observer.participant_identity_resolutions" in sql
+    assert "revoke all on observer.identity_resolution_work" in sql
+    assert "revoke all on observer.identity_authority_denials" in sql
+
+
 def test_resolution_projection_validates_closed_contract_and_redacts_protected_refs() -> None:
     resolution = _resolution()
 
@@ -81,6 +98,11 @@ def test_resolution_projection_validates_closed_contract_and_redacts_protected_r
         {"identity_provider": "smtp"},
         {"external_subject_ref": "extid:v1:email:raw@example.invalid"},
         {"external_subject_ref": "extid:v1:email:13800138000"},
+        {"external_subject_ref": "extid:v1:email:internal-user"},
+        {"external_subject_ref": "extid:v1:email:" + "A" * 42},
+        {"external_subject_ref": "extid:v1:email:" + "A" * 44},
+        {"external_subject_ref": SUBJECT_REF + "="},
+        {"external_subject_ref": "extid:v1:email:" + "A" * 42 + "+"},
         {"external_subject_ref": "extid:v1:wecom:opaque-token"},
         {"mapping_ref": "EID-not-a-ulid"},
         {"mapping_revision": 0},

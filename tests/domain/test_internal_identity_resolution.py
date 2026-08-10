@@ -16,7 +16,7 @@ ENDPOINT_PATH = (
 ROLE = "Observer Identity Resolver"
 USER = "resolver@example.invalid"
 AUTH_REF = "observer-identity-resolver-v1"
-SUBJECT = "extid:v1:email:OpaqueSender01"
+SUBJECT = "extid:v1:email:N6juwc4ZaH0TL-KQUdymKdFk4sSVi6FB1fQTOjPwaI8"
 
 
 class _PermissionError(Exception):
@@ -475,6 +475,13 @@ def test_resolution_rejects_timestamps_outside_the_closed_datetime_contract(
             {
                 "identity_provider": "carrier_pigeon",
                 "external_subject_ref": "extid:v1:carrier_pigeon:Opaque",
+                "expected_team_ref": "TEM-01",
+            }
+        ],
+        [
+            {
+                "identity_provider": "email",
+                "external_subject_ref": "extid:v1:email:internal-user",
                 "expected_team_ref": "TEM-01",
             }
         ],

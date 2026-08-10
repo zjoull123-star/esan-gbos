@@ -24,6 +24,14 @@ import CommunicationsView from "@/views/CommunicationsView.vue";
 import IntegrationsView from "@/views/IntegrationsView.vue";
 import ReviewQueueView from "@/views/ReviewQueueView.vue";
 
+const fixtureIdentityRef = (
+  label: string,
+  provider: "email" | "wecom" | "whatsapp" | "phone" | "manual_import" = "email",
+) => {
+  const tail = `${label.replace(/[^A-Za-z0-9_-]/gu, "_")}${"0".repeat(43)}`.slice(0, 43);
+  return `extid:v1:${provider}:${tail}`;
+};
+
 const okV4 = (data: unknown) =>
   new Response(
     JSON.stringify({
@@ -104,7 +112,7 @@ describe("BFF v4 typed client", () => {
         return Promise.resolve(
           okV4({
             identity: {
-              identity_ref: "extid:v1:email:opaque-participant",
+              identity_ref: fixtureIdentityRef("opaque-participant"),
               provider: "email",
               status: "unresolved",
             },
@@ -151,7 +159,7 @@ describe("BFF v4 typed client", () => {
       isOnline: () => true,
       getCsrfToken: () => "csrf-identity",
     });
-    const identityRef = "extid:v1:email:opaque-participant";
+    const identityRef = fixtureIdentityRef("opaque-participant");
 
     await client.listIdentityStates("OBS-1");
     await client.getIdentityState("OBS-1", identityRef);
@@ -364,7 +372,7 @@ describe("BFF v4 typed client", () => {
     await expect(
       client.listIdentityCandidates({
         observationId: "OBS-1",
-        identityRef: "extid:v1:email:opaque-token",
+        identityRef: fixtureIdentityRef("opaque-token"),
         candidateType: "Party",
       }),
     ).rejects.toMatchObject({ code: "invalid_response" });
@@ -952,7 +960,7 @@ describe("v4 roles and pages", () => {
           ],
           participant_identities: [
             {
-              identity_ref: "extid:v1:email:opaque-participant",
+              identity_ref: fixtureIdentityRef("opaque-participant"),
               provider: "email",
               status: "unresolved",
             },
@@ -1010,7 +1018,7 @@ describe("v4 roles and pages", () => {
       boot: { user: { roles: ["GBOS Admin"] } },
     };
     refreshSession();
-    const identityRef = "extid:v1:email:opaque-form-participant";
+    const identityRef = fixtureIdentityRef("opaque-form-participant");
     let stateReads = 0;
     let candidateReads = 0;
     let submitCalls = 0;
@@ -1057,7 +1065,7 @@ describe("v4 roles and pages", () => {
         return Promise.resolve(
           okV4({
             identities: statuses.map((status, index) => ({
-              identity_ref: index === 0 ? identityRef : `extid:v1:email:opaque-${index}`,
+              identity_ref: index === 0 ? identityRef : fixtureIdentityRef(`opaque-${index}`),
               provider: "email",
               status,
               ...(status === "confirmed"
@@ -1159,7 +1167,7 @@ describe("v4 roles and pages", () => {
       boot: { user: { roles: ["GBOS Admin"] } },
     };
     refreshSession();
-    const identityRef = "extid:v1:email:opaque-role-guard";
+    const identityRef = fixtureIdentityRef("opaque-role-guard");
     const candidateTypes: string[] = [];
     const fetcher = vi.fn<Fetcher>().mockImplementation((input) => {
       const url = new URL(String(input), "https://gbos.invalid");
@@ -1258,7 +1266,7 @@ describe("v4 roles and pages", () => {
       boot: { user: { roles: ["GBOS Admin"] } },
     };
     refreshSession();
-    const identityRef = "extid:v1:email:opaque-revoke";
+    const identityRef = fixtureIdentityRef("opaque-revoke");
     const mappingRef = "MAPPING-RAW-MUST-NOT-RENDER";
     let stateReads = 0;
     let revokeCalls = 0;
@@ -1361,7 +1369,7 @@ describe("v4 roles and pages", () => {
       boot: { user: { roles: ["GBOS Admin"] } },
     };
     refreshSession();
-    const identityRef = "extid:v1:email:opaque-rejected";
+    const identityRef = fixtureIdentityRef("opaque-rejected");
     const mappingRef = "MAPPING-REJECTED-MUST-NOT-RENDER";
     let submitBody: URLSearchParams | undefined;
     const fetcher = vi.fn<Fetcher>().mockImplementation((input, init) => {
@@ -1600,8 +1608,8 @@ describe("v4 roles and pages", () => {
     };
     refreshSession();
     const refs = [
-      "extid:v1:email:opaque-first",
-      "extid:v1:phone:opaque-second",
+      fixtureIdentityRef("opaque-first"),
+      fixtureIdentityRef("opaque-second", "phone"),
     ];
     const suggestionKeys = [
       `suggestion:v1:${"c".repeat(64)}`,

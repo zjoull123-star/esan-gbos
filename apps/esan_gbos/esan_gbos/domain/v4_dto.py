@@ -32,9 +32,8 @@ _COMMUNICATION_SUMMARY_FIELDS = (
 _USAGE_STATES = frozenset({"known", "partial", "unknown"})
 _OPAQUE_IDENTITY_REF = re.compile(
     r"^extid:v1:(email|wecom|whatsapp|phone|manual_import):"
-    r"([A-Za-z0-9][A-Za-z0-9._~-]{0,127})$"
+    r"([A-Za-z0-9_-]{43})$"
 )
-_PHONE_LIKE_IDENTITY = re.compile(r"[0-9][0-9-]{7,}[0-9]")
 
 
 def _closed(
@@ -280,12 +279,7 @@ def _map_participant_identities(payload: object) -> list[dict[str, Any]]:
             {"email", "wecom", "whatsapp", "phone", "manual_import"},
         )
         match = _OPAQUE_IDENTITY_REF.fullmatch(identity_ref)
-        if (
-            match is None
-            or match.group(1) != provider
-            or _PHONE_LIKE_IDENTITY.fullmatch(match.group(2)) is not None
-            or identity_ref in seen
-        ):
+        if match is None or match.group(1) != provider or identity_ref in seen:
             raise V4DTOValidationError("participant identity reference is invalid")
         seen.add(identity_ref)
         status = _enum(

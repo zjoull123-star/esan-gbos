@@ -58,8 +58,7 @@ _WORK_ID = re.compile(r"^IRW-[0-9a-f]{64}$")
 _DENIAL_NOTICE_ID = re.compile(r"^IAD-[0-9a-f]{64}$")
 _MAPPING_REF = re.compile(r"^EID-[0-9A-HJKMNP-TV-Z]{26}$")
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{7,255}$")
-_SUBJECT_TAIL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$")
-_PHONE_LIKE = re.compile(r"^[0-9][0-9 ()-]{7,}[0-9]$")
+_SUBJECT_TAIL = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _WORK_COLUMNS = ", ".join(
     (
         "site_id",
@@ -1526,7 +1525,6 @@ def _validate_identity(provider: object, identity_ref: object) -> None:
         or len(identity_ref) > 160
         or not identity_ref.startswith(prefix)
         or _SUBJECT_TAIL.fullmatch(tail) is None
-        or _PHONE_LIKE.fullmatch(tail) is not None
     ):
         raise ValueError("invalid opaque identity reference")
 

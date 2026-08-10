@@ -45,7 +45,8 @@ They do not modify or activate the frozen Gate 0/1 contracts:
   commercial commitments, orders, Won/Lost outcomes, or official KPI fields.
 - `External Identity Resolution v1.0` is a closed, minimum projection of a
   confirmed or revoked Frappe external-identity mapping. Its provider subject
-  is an opaque `extid:v1:<provider>:<token>` reference; `target_ref` remains a
+  is an opaque `extid:v1:<provider>:<43-char unpadded base64url SHA-256 digest>`
+  reference; `target_ref` remains a
   permission-protected Frappe authority reference and may be email-shaped when
   it is a Frappe `User.name`.
 - Canonical valid and intentionally invalid examples live under

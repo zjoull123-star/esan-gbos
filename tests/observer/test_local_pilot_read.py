@@ -35,6 +35,8 @@ SUMMARY = CommunicationSummary(
     evidence_count=1,
 )
 MODEL = {"name": "deepseek-v4-flash", "version": "2026-08-08"}
+USER_IDENTITY_REF = "extid:v1:email:BPiZbadjt6lpsQKO4wB1aerzpjVIbdqyEdUSyFud-Ps"
+PARTY_IDENTITY_REF = "extid:v1:email:HQ_qOewz_3VD80W-hdHM001thkKX1BUbc3gCyylKM4w"
 
 
 class _AuthorityFreshness:
@@ -274,8 +276,8 @@ def _in_memory_reader(
             original_text="restricted source body",
         ),
         participant_refs=(
-            "extid:v1:email:user-opaque",
-            "extid:v1:email:party-opaque",
+            USER_IDENTITY_REF,
+            PARTY_IDENTITY_REF,
         ),
     )
     return LocalPilotReadService(repository=repository, cursor_secret=b"x" * 32)
@@ -286,8 +288,8 @@ def _in_memory_detail_reader(
     association_suggestions: tuple[dict[str, object], ...] = (),
     connector_account_user_ref: str | None = None,
     participant_refs: tuple[str, ...] = (
-        "extid:v1:email:user-opaque",
-        "extid:v1:email:party-opaque",
+        USER_IDENTITY_REF,
+        PARTY_IDENTITY_REF,
     ),
 ) -> LocalPilotReadService:
     from observer.identity_resolution import InMemoryIdentityResolutionRepository
@@ -327,7 +329,7 @@ def test_confirmed_user_projection_grants_self_access_but_raw_participant_never_
 
     confirmed_but_stale = _in_memory_reader(
         _identity_resolution(
-            subject="extid:v1:email:user-opaque",
+            subject=USER_IDENTITY_REF,
             target_type="User",
             target_ref=actor,
         )
@@ -342,11 +344,11 @@ def test_confirmed_user_projection_grants_self_access_but_raw_participant_never_
 
     confirmed = _in_memory_reader(
         _identity_resolution(
-            subject="extid:v1:email:user-opaque",
+            subject=USER_IDENTITY_REF,
             target_type="User",
             target_ref=actor,
         ),
-        fresh_identity_refs=frozenset({"extid:v1:email:user-opaque"}),
+        fresh_identity_refs=frozenset({USER_IDENTITY_REF}),
     )
     page = confirmed.list_communications(SCOPE, outside_team)
     assert [item.observation_id for item in page.communications] == ["event-001"]
@@ -365,7 +367,7 @@ def test_durable_authority_denial_blocks_self_access_before_worker_polling() -> 
     from observer.identity_resolution import InMemoryIdentityResolutionRepository
     from observer.read_service import InMemoryCommunicationRepository
 
-    subject = "extid:v1:email:user-opaque"
+    subject = USER_IDENTITY_REF
     actor = "protected-user@example.invalid"
     resolution = _identity_resolution(
         subject=subject,
@@ -448,7 +450,7 @@ def test_postgres_self_access_requires_current_fresh_undenied_confirmed_authorit
 
 def test_confirmed_party_projection_enriches_without_using_immutable_event_party_ref() -> None:
     party = _identity_resolution(
-        subject="extid:v1:email:party-opaque",
+        subject=PARTY_IDENTITY_REF,
         target_type="Party",
         target_ref="PARTY-001",
     )
@@ -464,7 +466,7 @@ def test_confirmed_party_projection_enriches_without_using_immutable_event_party
 def test_revoked_and_cross_team_projections_never_grant_or_enrich() -> None:
     actor = "protected-user@example.invalid"
     confirmed_user = _identity_resolution(
-        subject="extid:v1:email:user-opaque",
+        subject=USER_IDENTITY_REF,
         target_type="User",
         target_ref=actor,
     )
@@ -476,7 +478,7 @@ def test_revoked_and_cross_team_projections_never_grant_or_enrich() -> None:
         recorded_at=NOW + timedelta(minutes=2, seconds=1),
     )
     cross_team_party = _identity_resolution(
-        subject="extid:v1:email:party-opaque",
+        subject=PARTY_IDENTITY_REF,
         target_type="Party",
         target_ref="PARTY-OTHER",
         team_ref="team-other",
@@ -549,7 +551,7 @@ def test_in_memory_filters_access_before_limit_so_unauthorized_rows_do_not_starv
 def test_detail_exposes_closed_unresolved_identity_views_without_raw_participants() -> None:
     reader = _in_memory_detail_reader(
         participant_refs=(
-            "extid:v1:email:user-opaque",
+            USER_IDENTITY_REF,
             "raw-person@example.invalid",
         )
     )
@@ -562,7 +564,7 @@ def test_detail_exposes_closed_unresolved_identity_views_without_raw_participant
 
     assert [identity.as_dict() for identity in detail.participant_identities] == [
         {
-            "identity_ref": "extid:v1:email:user-opaque",
+            "identity_ref": USER_IDENTITY_REF,
             "provider": "email",
             "status": "unresolved",
         }
@@ -576,12 +578,12 @@ def test_detail_identity_views_show_confirmed_and_revoked_metadata_without_targe
     protected_user = "protected-user@example.invalid"
     protected_party = "PARTY-PROTECTED-001"
     confirmed_user = _identity_resolution(
-        subject="extid:v1:email:user-opaque",
+        subject=USER_IDENTITY_REF,
         target_type="User",
         target_ref=protected_user,
     )
     confirmed_party = _identity_resolution(
-        subject="extid:v1:email:party-opaque",
+        subject=PARTY_IDENTITY_REF,
         target_type="Party",
         target_ref=protected_party,
     )
@@ -601,16 +603,16 @@ def test_detail_identity_views_show_confirmed_and_revoked_metadata_without_targe
     )
     identities = {item.identity_ref: item.as_dict() for item in detail.participant_identities}
 
-    assert identities["extid:v1:email:user-opaque"] == {
-        "identity_ref": "extid:v1:email:user-opaque",
+    assert identities[USER_IDENTITY_REF] == {
+        "identity_ref": USER_IDENTITY_REF,
         "provider": "email",
         "status": "confirmed",
         "mapping_ref": confirmed_user.mapping_ref,
         "mapping_revision": 1,
         "target_type": "User",
     }
-    assert identities["extid:v1:email:party-opaque"]["status"] == "revoked"
-    assert identities["extid:v1:email:party-opaque"]["mapping_revision"] == 2
+    assert identities[PARTY_IDENTITY_REF]["status"] == "revoked"
+    assert identities[PARTY_IDENTITY_REF]["mapping_revision"] == 2
     rendered = repr(detail.as_dict())
     assert protected_user not in rendered
     assert protected_party not in rendered
@@ -674,7 +676,7 @@ def test_association_suggestion_key_is_stable_closed_and_bound_to_observation() 
 
 def test_cross_team_identity_stays_unresolved_and_cross_site_detail_is_absent() -> None:
     cross_team = _identity_resolution(
-        subject="extid:v1:email:user-opaque",
+        subject=USER_IDENTITY_REF,
         target_type="User",
         target_ref="protected-user@example.invalid",
         team_ref="team-other",
@@ -718,7 +720,7 @@ def test_postgres_detail_projects_closed_identity_and_separate_connector_owner()
             [],
             [
                 (
-                    "extid:v1:email:user-opaque",
+                    USER_IDENTITY_REF,
                     "email",
                     "confirmed",
                     mapping_ref,
@@ -740,7 +742,7 @@ def test_postgres_detail_projects_closed_identity_and_separate_connector_owner()
     assert detail is not None
     assert detail.connector_account_user_ref == "USER-OWNER-001"
     assert detail.participant_identities[0].as_dict() == {
-        "identity_ref": "extid:v1:email:user-opaque",
+        "identity_ref": USER_IDENTITY_REF,
         "provider": "email",
         "status": "confirmed",
         "mapping_ref": mapping_ref,

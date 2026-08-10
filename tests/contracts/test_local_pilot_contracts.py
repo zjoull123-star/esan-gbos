@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -133,11 +134,14 @@ def test_communication_intelligence_is_closed_and_keeps_rich_evidence_binding() 
 
 def test_external_identity_resolution_is_closed_and_keeps_subjects_opaque() -> None:
     validator = _validator("external-identity-resolution-v1.0.schema.json")
+    digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(b"contract-subject").digest()).rstrip(b"=").decode()
+    )
     valid = {
         "schema_version": "1.0",
         "site_id": "gbos.localhost",
         "identity_provider": "email",
-        "external_subject_ref": "extid:v1:email:opaque-token",
+        "external_subject_ref": f"extid:v1:email:{digest}",
         "mapping_ref": "EID-01K2M4N6P8Q0R2S4T6V8W0XYZA",
         "mapping_revision": 1,
         "team_ref": "TEAM-SALES",
@@ -152,6 +156,12 @@ def test_external_identity_resolution_is_closed_and_keeps_subjects_opaque() -> N
 
     invalid_records = (
         {**valid, "external_subject_ref": "alice@example.com"},
+        {**valid, "external_subject_ref": "extid:v1:email:internal-user"},
+        {**valid, "external_subject_ref": "extid:v1:email:" + "A" * 42},
+        {**valid, "external_subject_ref": "extid:v1:email:" + "A" * 44},
+        {**valid, "external_subject_ref": f"extid:v1:email:{digest}="},
+        {**valid, "external_subject_ref": "extid:v1:email:" + "A" * 42 + "+"},
+        {**valid, "external_subject_ref": "extid:v1:email:" + "A" * 42 + "."},
         {**valid, "external_subject_ref": "extid:v1:email:+8613800138000"},
         {**valid, "external_subject_ref": "extid:v1:wecom:opaque-token"},
         {**valid, "identity_provider": "carrier_pigeon"},

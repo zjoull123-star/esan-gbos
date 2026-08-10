@@ -19,7 +19,9 @@ AUTHORITY_MIGRATION = (
 NOW = datetime(2026, 8, 10, 9, tzinfo=UTC)
 SCOPE = TenantScope("alpha.example", "observation_processing")
 OTHER_SCOPE = TenantScope("beta.example", "observation_processing")
-IDENTITY_REF = "extid:v1:email:opaque-token"
+IDENTITY_REF = "extid:v1:email:N6juwc4ZaH0TL-KQUdymKdFk4sSVi6FB1fQTOjPwaI8"
+FIRST_IDENTITY_REF = "extid:v1:email:p5N7ZLjKpY8Dchu2us9ceMsjX-vg5wsbhM2ZVBRhoI4"
+SECOND_IDENTITY_REF = "extid:v1:email:FjZ6rLZ6SgF8jairlWgsyzkIY3gPcRTdoKDgxVZEx8Q"
 MAPPING_REF = "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 
@@ -227,10 +229,10 @@ def test_enqueue_never_reopens_terminal_operator_states(terminal: str) -> None:
 def test_claim_is_fair_heartbeat_is_fenced_and_expiry_reclaims() -> None:
     module = _module()
     repository = module.InMemoryIdentityResolutionWorkRepository()
-    first = _enqueue(repository, identity_ref="extid:v1:email:first", now=NOW)
+    first = _enqueue(repository, identity_ref=FIRST_IDENTITY_REF, now=NOW)
     second = _enqueue(
         repository,
-        identity_ref="extid:v1:email:second",
+        identity_ref=SECOND_IDENTITY_REF,
         now=NOW + timedelta(seconds=1),
     )
 
@@ -509,10 +511,10 @@ def test_conflict_never_fabricates_a_successful_resolution() -> None:
 def test_snapshot_is_low_cardinality_and_contains_no_identity_labels() -> None:
     module = _module()
     repository = module.InMemoryIdentityResolutionWorkRepository()
-    _enqueue(repository, identity_ref="extid:v1:email:one", now=NOW)
+    _enqueue(repository, identity_ref=FIRST_IDENTITY_REF, now=NOW)
     second = _enqueue(
         repository,
-        identity_ref="extid:v1:email:two",
+        identity_ref=SECOND_IDENTITY_REF,
         now=NOW + timedelta(seconds=1),
     )
     claim = repository.claim(
@@ -697,6 +699,11 @@ def test_work_item_validation_rejects_raw_or_mutable_identity_fields() -> None:
         "extid:v1:email:alice@example.invalid",
         "extid:v1:email:13800138000",
         "extid:v1:wecom:opaque-token",
+        "extid:v1:email:internal-user",
+        "extid:v1:email:" + "A" * 42,
+        "extid:v1:email:" + "A" * 44,
+        IDENTITY_REF + "=",
+        "extid:v1:email:" + "A" * 42 + "+",
     ):
         with pytest.raises(ValueError):
             _enqueue(repository, identity_ref=identity_ref)

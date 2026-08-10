@@ -20,9 +20,7 @@ _ROLE = IDENTITY_RESOLVER_ROLE
 _PURPOSE = "identity_resolution"
 _ALLOWED_RUNTIME_ROLES = frozenset({_ROLE, "All", "Guest", "Website User"})
 _PROVIDERS = frozenset({"email", "wecom", "whatsapp", "phone", "manual_import"})
-_OPAQUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~-]{0,127}")
-_RAW_EMAIL = re.compile(r"[^@\s]+@[^@\s]+")
-_RAW_PHONE = re.compile(r"\+?[0-9][0-9 ()-]{7,}[0-9]")
+_OPAQUE = re.compile(r"[A-Za-z0-9_-]{43}")
 _TEXT = re.compile(r"[^\x00-\x1f\x7f]+")
 _SITE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,139}")
 _TEAM = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}")
@@ -318,11 +316,7 @@ def _external_subject(provider: str, value: object) -> str:
     if not value.startswith(prefix):
         raise _APIError("invalid_resolution_request", 422)
     opaque = value[len(prefix) :]
-    if (
-        _OPAQUE.fullmatch(opaque) is None
-        or _RAW_EMAIL.fullmatch(opaque) is not None
-        or _RAW_PHONE.fullmatch(opaque) is not None
-    ):
+    if _OPAQUE.fullmatch(opaque) is None:
         raise _APIError("invalid_resolution_request", 422)
     return value
 

@@ -215,7 +215,12 @@ class CommunicationGetRequest(_ClosedModel):
 
 class IdentityAuthorityDenyRequest(_ClosedModel):
     identity_provider: Literal["email", "wecom", "whatsapp", "phone", "manual_import"]
-    external_subject_ref: str = Field(min_length=1, max_length=160)
+    external_subject_ref: str = Field(
+        pattern=(
+            r"^extid:v1:(email|wecom|whatsapp|phone|manual_import):"
+            r"[A-Za-z0-9_-]{43}$"
+        )
+    )
     mapping_ref: str = Field(pattern=r"^EID-[0-9A-HJKMNP-TV-Z]{26}$")
     team_ref: str = Field(min_length=1, max_length=256)
     deny_through_revision: int = Field(ge=1, le=2_147_483_647)

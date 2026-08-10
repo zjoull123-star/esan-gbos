@@ -69,7 +69,7 @@ def test_every_mapping_lifecycle_hard_denies_physical_delete_without_echo(
     review_status: str,
     business_status: str,
 ) -> None:
-    subject = "extid:v1:email:SensitiveOpaqueSubject"
+    subject = "extid:v1:email:LV6GAKT7pm5calE6bndCH0B5zbhyjtErgQGWWEsLveI"
     target = "sensitive-target@example.invalid"
     identity = external_identity_module.GBOSExternalIdentity(
         external_subject=subject,

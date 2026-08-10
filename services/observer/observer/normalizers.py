@@ -22,7 +22,7 @@ from .models import (
 _SAFE_KIND = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,79}$")
 _OPAQUE_IDENTITY = re.compile(
     r"^extid:v1:(email|wecom|whatsapp|phone|manual_import):"
-    r"[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"
+    r"[A-Za-z0-9_-]{43}$"
 )
 _POLICY = {
     "consent_basis": "pilot_deferred_review",

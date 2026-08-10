@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import subprocess
@@ -108,6 +109,9 @@ MODEL_FATAL_LATCH_MIGRATION = (
 IDENTITY_AUTHORITY_MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "012_local_pilot_identity_authority_safety.sql"
 )
+IDENTITY_DIGEST_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "013_local_pilot_identity_digest_boundary.sql"
+)
 
 pytestmark = [pytest.mark.postgres_integration]
 if not RUN_INTEGRATION:
@@ -140,7 +144,7 @@ def _container_sql(
         ),
         "sh",
         sql,
-        database or "",
+        database or CONTEXT_DATABASE or "",
     ]
     return subprocess.run(
         command,
@@ -150,8 +154,13 @@ def _container_sql(
     )
 
 
+def _identity_ref(provider: str, label: str) -> str:
+    digest = base64.urlsafe_b64encode(hashlib.sha256(label.encode()).digest()).rstrip(b"=").decode()
+    return f"extid:v1:{provider}:{digest}"
+
+
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 14
+    assert _migration_ledger_count() == 15
     result = _container_sql(
         """
         SELECT count(*)
@@ -203,11 +212,76 @@ def _migration_ledger_count() -> int:
               'observer/011_local_pilot_retention.sql',
               'observer/012_local_pilot_model_fatal_latch.sql',
               'observer/012_local_pilot_identity_authority_safety.sql',
+              'observer/013_local_pilot_identity_digest_boundary.sql',
               'context/001_gate3_context.sql'
         )
         """
     )
     return int(result.stdout.strip())
+
+
+def test_identity_digest_boundary_migrates_twice_and_rejects_disguised_raw_ids() -> None:
+    migration_sql = IDENTITY_DIGEST_MIGRATION.read_text(encoding="utf-8")
+    _container_sql(migration_sql)
+    _container_sql(migration_sql)
+
+    constraints = _container_sql(
+        """
+        SELECT count(*)
+        FROM pg_constraint
+        WHERE conname IN (
+            'participant_identity_resolutions_digest_ref_ck',
+            'identity_resolution_work_digest_ref_ck',
+            'identity_authority_denials_digest_ref_ck',
+            'participants_external_identity_digest_ref_ck'
+        )
+          AND convalidated
+        """
+    )
+    assert int(constraints.stdout.strip()) == 4
+
+    suffix = uuid.uuid4().hex[:12]
+    invalid = _container_sql(
+        f"""
+        INSERT INTO observer.identity_resolution_work (
+            site_id, work_id, identity_provider, identity_ref, team_ref,
+            status, attempt_count, max_attempts, next_attempt_at,
+            lease_generation, first_seen_at, last_seen_at, created_at, updated_at
+        ) VALUES (
+            'digest-{suffix}', 'IRW-{"a" * 64}', 'email',
+            'extid:v1:email:internal-user', 'team-sales', 'queued',
+            0, 3, now(), 0, now(), now(), now(), now()
+        )
+        """,
+        check=False,
+    )
+    assert invalid.returncode != 0
+    assert "internal-user" not in invalid.stdout + invalid.stderr
+
+    invalid_participant = _container_sql(
+        f"""
+        BEGIN;
+        INSERT INTO observer.observation_events (
+            site_id, event_id, connector, channel, processing_purpose,
+            consent_basis, data_classification, retention_class,
+            correlation_id, occurred_at, ingested_at, document
+        ) VALUES (
+            'digest-{suffix}', 'event-{suffix}', 'manual_import', 'email',
+            'observation_processing', 'pilot_deferred_review', 'Restricted',
+            'R1-operational', 'corr-{suffix}', now(), now(), '{{}}'::jsonb
+        );
+        INSERT INTO observer.participants (
+            site_id, event_id, participant_id, role, identity_ref
+        ) VALUES (
+            'digest-{suffix}', 'event-{suffix}', 'participant-{suffix}',
+            'external', 'extid:v1:email:internal-user'
+        );
+        ROLLBACK;
+        """,
+        check=False,
+    )
+    assert invalid_participant.returncode != 0
+    assert "internal-user" not in invalid_participant.stdout + invalid_participant.stderr
 
 
 def test_identity_authority_denial_is_restart_safe_revision_fenced_and_immutable() -> None:
@@ -256,7 +330,7 @@ def test_identity_authority_denial_is_restart_safe_revision_fenced_and_immutable
         f"identity-denial-other-{suffix}",
         "observation_processing",
     )
-    identity_ref = f"extid:v1:email:user-{suffix}"
+    identity_ref = _identity_ref("email", f"user-{suffix}")
     mapping_ref = "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV"
     values = {
         "identity_provider": "email",
@@ -458,7 +532,7 @@ def test_gate3_identity_work_is_rls_fenced_restart_safe_and_aggregated() -> None
         f"identity-work-other-{suffix}",
         "observation_processing",
     )
-    identity_ref = f"extid:v1:email:user-{suffix}"
+    identity_ref = _identity_ref("email", f"user-{suffix}")
     connection = connect()
     restart = None
     try:
@@ -557,7 +631,7 @@ def test_gate3_identity_work_is_rls_fenced_restart_safe_and_aggregated() -> None
         conflict_item = restarted.enqueue(
             scope,
             identity_provider="email",
-            identity_ref=f"extid:v1:email:conflict-{suffix}",
+            identity_ref=_identity_ref("email", f"conflict-{suffix}"),
             team_ref="team-sales",
             now=now + timedelta(seconds=11),
             max_attempts=3,
@@ -584,7 +658,7 @@ def test_gate3_identity_work_is_rls_fenced_restart_safe_and_aggregated() -> None
         confirmed_item = restarted.enqueue(
             scope,
             identity_provider="email",
-            identity_ref=f"extid:v1:email:confirmed-{suffix}",
+            identity_ref=_identity_ref("email", f"confirmed-{suffix}"),
             team_ref="team-sales",
             now=now + timedelta(seconds=13),
             max_attempts=3,
@@ -702,9 +776,9 @@ def test_gate3_identity_projection_fences_replay_revocation_and_confirmed_reads(
     now = datetime.now(UTC).replace(microsecond=0)
     event_id = f"event-{suffix}"
     unauthorized_event_id = f"event-unauthorized-{suffix}"
-    user_subject = f"extid:v1:email:user-{suffix}"
-    party_subject = f"extid:v1:email:party-{suffix}"
-    cross_team_subject = f"extid:v1:email:cross-{suffix}"
+    user_subject = _identity_ref("email", f"user-{suffix}")
+    party_subject = _identity_ref("email", f"party-{suffix}")
+    cross_team_subject = _identity_ref("email", f"cross-{suffix}")
     protected_user = f"protected-{suffix}@example.invalid"
     raw_actor = f"raw-{suffix}@example.invalid"
     user_mapping = "EID-01K" + "A" * 23

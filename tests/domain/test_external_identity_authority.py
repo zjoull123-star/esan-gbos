@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import importlib.util
 import sys
 from collections.abc import Generator
@@ -22,6 +24,11 @@ CONTROLLER = (
 )
 HOOKS = ROOT / "apps" / "esan_gbos" / "esan_gbos" / "hooks.py"
 MAPPING_REF = "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV"
+
+
+def _subject(provider: str, label: str) -> str:
+    digest = base64.urlsafe_b64encode(hashlib.sha256(label.encode()).digest()).rstrip(b"=").decode()
+    return f"extid:v1:{provider}:{digest}"
 
 
 class _PermissionError(Exception):
@@ -172,11 +179,11 @@ def authority_module() -> Generator[tuple[Any, _Frappe]]:
 @pytest.mark.parametrize(
     ("provider", "subject"),
     (
-        ("email", "extid:v1:email:Opaque_01~-token"),
-        ("wecom", "extid:v1:wecom:Opaque01"),
-        ("whatsapp", "extid:v1:whatsapp:Opaque01"),
-        ("phone", "extid:v1:phone:Opaque01"),
-        ("manual_import", "extid:v1:manual_import:Opaque01"),
+        ("email", _subject("email", "email")),
+        ("wecom", _subject("wecom", "wecom")),
+        ("whatsapp", _subject("whatsapp", "whatsapp")),
+        ("phone", _subject("phone", "phone")),
+        ("manual_import", _subject("manual_import", "manual_import")),
     ),
 )
 def test_external_subject_accepts_only_closed_provider_scoped_tokens(
@@ -198,6 +205,12 @@ def test_external_subject_accepts_only_closed_provider_scoped_tokens(
         ("email", "extid:v1:phone:Opaque01"),
         ("email", "extid:v1:email:person@example.invalid"),
         ("phone", "extid:v1:phone:+8613800138000"),
+        ("email", "extid:v1:email:internal-user"),
+        ("email", "extid:v1:email:" + "A" * 42),
+        ("email", "extid:v1:email:" + "A" * 44),
+        ("email", "extid:v1:email:" + "A" * 43 + "="),
+        ("email", "extid:v1:email:" + "A" * 42 + "+"),
+        ("email", "extid:v1:email:" + "A" * 42 + "."),
         ("email", "extid:v1:email: leading"),
         ("email", "extid:v1:email:line\nbreak"),
         ("email", "extid:v1:email:" + "a" * 129),
@@ -222,7 +235,7 @@ def _identity(module: Any, **overrides: Any) -> Any:
         "name": MAPPING_REF,
         "team": "TEM-01",
         "identity_provider": "email",
-        "external_subject": "extid:v1:email:Opaque01",
+        "external_subject": _subject("email", "default"),
         "identity_type": "User",
         "user": "member@example.invalid",
         "party_profile": None,
@@ -306,7 +319,7 @@ def test_ai_creation_and_direct_status_bypass_are_closed(
         review_status="Pending",
         business_status="Active",
         identity_provider="email",
-        external_subject="extid:v1:email:Opaque01",
+        external_subject=_subject("email", "default"),
         identity_type="User",
         user="member@example.invalid",
         party_profile=None,
@@ -369,7 +382,7 @@ def test_rejected_ai_mapping_can_only_be_reopened_by_the_dedicated_command(
         origin_reference="association:v1:old",
         last_request_id="REQ-old",
         identity_provider="email",
-        external_subject="extid:v1:email:Opaque01",
+        external_subject=_subject("email", "default"),
         identity_type="User",
         user="member@example.invalid",
         party_profile=None,
@@ -419,9 +432,9 @@ def test_rejected_ai_mapping_can_only_be_reopened_by_the_dedicated_command(
     (
         {
             "identity_provider": "wecom",
-            "external_subject": "extid:v1:wecom:Opaque01",
+            "external_subject": _subject("wecom", "default"),
         },
-        {"external_subject": "extid:v1:email:DifferentOpaque"},
+        {"external_subject": _subject("email", "different")},
         {"team": "TEM-02", "identity_type": "Channel", "user": None},
     ),
 )
@@ -438,7 +451,7 @@ def test_rejected_mapping_scope_cannot_be_mutated_without_reopen_command(
         origin_reference="association:v1:old",
         last_request_id="REQ-old",
         identity_provider="email",
-        external_subject="extid:v1:email:Opaque01",
+        external_subject=_subject("email", "default"),
         identity_type="User",
         user="member@example.invalid",
         party_profile=None,
@@ -483,7 +496,7 @@ def test_reopen_command_cannot_reopen_non_rejected_active_mapping(
         origin_reference="association:v1:old",
         last_request_id="REQ-old",
         identity_provider="email",
-        external_subject="extid:v1:email:Opaque01",
+        external_subject=_subject("email", "default"),
         identity_type="User",
         user="member@example.invalid",
         party_profile=None,
@@ -509,9 +522,9 @@ def test_reopen_command_cannot_reopen_non_rejected_active_mapping(
     (
         {
             "identity_provider": "wecom",
-            "external_subject": "extid:v1:wecom:Opaque01",
+            "external_subject": _subject("wecom", "default"),
         },
-        {"external_subject": "extid:v1:email:DifferentOpaque"},
+        {"external_subject": _subject("email", "different")},
         {"team": "TEM-02", "identity_type": "Channel", "user": None},
     ),
 )
@@ -528,7 +541,7 @@ def test_reopen_command_keeps_provider_subject_and_team_immutable(
         origin_reference="association:v1:old",
         last_request_id="REQ-old",
         identity_provider="email",
-        external_subject="extid:v1:email:Opaque01",
+        external_subject=_subject("email", "default"),
         identity_type="User",
         user="member@example.invalid",
         party_profile=None,
@@ -633,7 +646,7 @@ def test_revocation_and_supersession_durably_deny_observer_before_save_returns(
     before = SimpleNamespace(
         revision=4,
         identity_provider="email",
-        external_subject="extid:v1:email:Opaque01",
+        external_subject=_subject("email", "default"),
         identity_type="User",
         user="member@example.invalid",
         party_profile=None,
@@ -656,7 +669,7 @@ def test_revocation_and_supersession_durably_deny_observer_before_save_returns(
     assert call["purpose"] == "identity_authority"
     assert call["payload"] == {
         "identity_provider": "email",
-        "external_subject_ref": "extid:v1:email:Opaque01",
+        "external_subject_ref": _subject("email", "default"),
         "mapping_ref": MAPPING_REF,
         "team_ref": "TEM-01",
         "deny_through_revision": 4,
@@ -676,7 +689,7 @@ def test_authority_loss_is_rejected_when_observer_denial_is_not_durable(
         review_status="Approved",
         business_status="Active",
         identity_provider="email",
-        external_subject="extid:v1:email:Opaque01",
+        external_subject=_subject("email", "default"),
         identity_type="User",
         user="member@example.invalid",
         party_profile=None,
@@ -707,7 +720,7 @@ def test_invalid_status_bypass_cannot_emit_an_observer_denial(
         review_status="Approved",
         business_status="Active",
         identity_provider="email",
-        external_subject="extid:v1:email:Opaque01",
+        external_subject=_subject("email", "default"),
         identity_type="User",
         user="member@example.invalid",
         party_profile=None,
@@ -789,7 +802,7 @@ def test_live_target_ineligibility_synchronously_denies_cached_confirmed_mapping
             "revision": 4,
             "team": "TEM-01",
             "identity_provider": "email",
-            "external_subject": "extid:v1:email:Opaque01",
+            "external_subject": _subject("email", "default"),
             "identity_type": "Party" if handler.endswith("party_mappings") else "User",
             "user": None if handler.endswith("party_mappings") else "member@example.invalid",
             "party_profile": "PTY-01" if handler.endswith("party_mappings") else None,
@@ -818,7 +831,7 @@ def test_target_ineligibility_denial_failure_raises_to_abort_the_frappe_transact
             "revision": 4,
             "team": "TEM-01",
             "identity_provider": "email",
-            "external_subject": "extid:v1:email:Opaque01",
+            "external_subject": _subject("email", "default"),
             "identity_type": "User",
             "user": "member@example.invalid",
             "party_profile": None,
@@ -847,7 +860,7 @@ def test_team_parent_save_denies_a_removed_child_membership_before_commit(
             "revision": 4,
             "team": "TEM-01",
             "identity_provider": "email",
-            "external_subject": "extid:v1:email:Opaque01",
+            "external_subject": _subject("email", "default"),
             "identity_type": "User",
             "user": "member@example.invalid",
             "party_profile": None,

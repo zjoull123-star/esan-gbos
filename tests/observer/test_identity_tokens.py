@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,10 @@ def test_hmac_identity_refs_are_stable_scoped_and_provider_prefixed() -> None:
     assert first.startswith("extid:v1:email:")
     assert "alice" not in first
     assert len(first.rsplit(":", 1)[1]) == 43
+    assert re.fullmatch(
+        r"extid:v1:email:[A-Za-z0-9_-]{43}",
+        first,
+    )
     assert (
         resolver.resolve(
             "other.localhost",

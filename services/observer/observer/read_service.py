@@ -17,9 +17,8 @@ from .storage import Connection
 
 _IDENTITY_REF = re.compile(
     r"^extid:v1:(email|wecom|whatsapp|phone|manual_import):"
-    r"([A-Za-z0-9][A-Za-z0-9._~-]{0,127})$"
+    r"([A-Za-z0-9_-]{43})$"
 )
-_PHONE_LIKE_IDENTITY_TAIL = re.compile(r"^[0-9][0-9 ()-]{7,}[0-9]$")
 _MAPPING_REF = re.compile(r"^EID-[0-9A-HJKMNP-TV-Z]{26}$")
 _SUGGESTION_TYPE = re.compile(r"^[a-z][a-z0-9_.-]{0,79}$")
 IDENTITY_SELF_ACCESS_MAX_AGE = timedelta(hours=2)
@@ -605,11 +604,7 @@ class PostgresCommunicationRepository:
                   AND participant.event_id = %s
                   AND participant.identity_ref ~ (
                       '^extid:v1:(email|wecom|whatsapp|phone|manual_import):'
-                      || '[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$'
-                  )
-                  AND participant.identity_ref !~ (
-                      '^extid:v1:(email|wecom|whatsapp|phone|manual_import):'
-                      || '[0-9][0-9 ()-]{7,}[0-9]$'
+                      || '[A-Za-z0-9_-]{43}$'
                   )
                 ORDER BY participant.identity_ref ASC
                 """,
@@ -1243,7 +1238,7 @@ def _utc_now() -> datetime:
 
 def _parse_external_subject_ref(value: str) -> tuple[str, str] | None:
     match = _IDENTITY_REF.fullmatch(value)
-    if match is None or _PHONE_LIKE_IDENTITY_TAIL.fullmatch(match.group(2)):
+    if match is None:
         return None
     return match.group(1), value
 

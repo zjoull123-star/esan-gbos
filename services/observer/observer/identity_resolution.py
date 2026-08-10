@@ -11,8 +11,7 @@ from .storage import Connection
 _PROVIDERS = frozenset({"email", "wecom", "whatsapp", "phone", "manual_import"})
 _MAPPING_REF = re.compile(r"^EID-[0-9A-HJKMNP-TV-Z]{26}$")
 _TEAM_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
-_SUBJECT_TAIL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$")
-_PHONE_LIKE_SUBJECT = re.compile(r"^[0-9][0-9 ()-]{7,}[0-9]$")
+_SUBJECT_TAIL = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _MAX_REVISION = 2_147_483_647
 
 _RESOLUTION_COLUMNS = """
@@ -59,7 +58,6 @@ class ParticipantIdentityResolution:
             or len(self.external_subject_ref) > 160
             or not self.external_subject_ref.startswith(prefix)
             or not _SUBJECT_TAIL.fullmatch(subject_tail)
-            or _PHONE_LIKE_SUBJECT.fullmatch(subject_tail)
         ):
             raise ValueError("invalid external subject reference")
         if not isinstance(self.mapping_ref, str) or not _MAPPING_REF.fullmatch(self.mapping_ref):
@@ -347,7 +345,6 @@ def _validate_lookup(
         or len(external_subject_ref) > 160
         or not external_subject_ref.startswith(prefix)
         or not _SUBJECT_TAIL.fullmatch(subject_tail)
-        or _PHONE_LIKE_SUBJECT.fullmatch(subject_tail)
     ):
         raise ValueError("invalid external subject reference")
     if not isinstance(scope, TenantScope):
