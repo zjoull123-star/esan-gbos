@@ -478,9 +478,11 @@ def test_synthetic_start_is_explicit_image_gated_and_never_enables_external_prof
         assert core_service in start
     assert "materialization-worker" not in start
     migration = "compose --profile runtime run --rm migrations"
+    volume_init = "compose --profile runtime run --rm --no-deps runtime-volume-init"
     bootstrap = "run --rm --no-deps frappe-materializer-bootstrap"
     runtime_up = 'compose "${profile_args[@]}" up -d --wait "${synthetic_services[@]}"'
     demo_bootstrap = '"${SCRIPT_DIR}/bootstrap-synthetic-user" --acknowledge-synthetic'
+    assert start.index(volume_init) < start.index(migration)
     assert start.index(migration) < start.index(bootstrap) < start.index(runtime_up)
     assert start.index(runtime_up) < start.index(demo_bootstrap)
 
@@ -506,11 +508,17 @@ def test_retention_wrapper_is_dry_run_first_and_requires_double_opt_in_for_delet
     assert "--acknowledge-expired-local-data-deletion" in script
     assert 'GBOS_RETENTION_ENABLED="true"' in script
     assert 'GBOS_RETENTION_DRY_RUN="true"' in script
+    assert (
+        "compose --profile runtime --profile retention run --rm --no-deps retention-worker"
+        in script
+    )
     execute = script.index("--execute-expired-data)")
     acknowledge = script.index("--acknowledge-expired-local-data-deletion)")
     compose_run = script.index("run --rm --no-deps retention-worker")
+    volume_init = script.index("run --rm --no-deps runtime-volume-init")
     assert execute < compose_run
     assert acknowledge < compose_run
+    assert volume_init < compose_run
     assert "EMERGENCY_STOP" in script
     assert " down " not in re.sub(r"\s+", " ", script)
 

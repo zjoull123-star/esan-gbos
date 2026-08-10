@@ -95,6 +95,7 @@ synthetic_services=(
   pwa
 )
 compose "${profile_args[@]}" config --quiet
+compose --profile runtime run --rm --no-deps runtime-volume-init
 compose --profile runtime up -d --wait \
   postgres \
   mariadb \

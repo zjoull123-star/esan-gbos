@@ -692,7 +692,19 @@ def test_retention_is_rendered_as_least_privilege_one_shot_without_egress(
     assert all(component["enabled"] is False for component in retention["components"].values())
     assert retention["worker"]["worker_id"] == "local-pilot-retention-worker"
 
-    block = _service_block(_read(INFRA / "compose.yml"), "retention-worker")
+    compose = _read(INFRA / "compose.yml")
+    initializer = _service_block(compose, "runtime-volume-init")
+    assert 'profiles: ["runtime"]' in initializer
+    assert 'user: "0:0"' in initializer
+    assert 'network_mode: "none"' in initializer
+    assert 'cap_add: ["CHOWN", "FOWNER"]' in initializer
+    assert "local-pilot-evidence-cas:/var/lib/gbos/evidence" in initializer
+    assert "local-pilot-tokenizer-vault:/var/lib/gbos/tokenizer-vault" in initializer
+    assert "10001:10001" in initializer
+    assert "0700" in initializer
+    assert 'restart: "no"' in initializer
+
+    block = _service_block(compose, "retention-worker")
     assert 'profiles: ["retention"]' in block
     assert "services.local_pilot_runtime.retention_worker" in block
     assert "GBOS_RETENTION_ENABLED" in block
@@ -809,10 +821,11 @@ def test_start_orders_config_and_migration_before_runtime_and_keeps_real_gate() 
     preflight = start.index('"${SCRIPT_DIR}/preflight"')
     secrets = start.index('"${SCRIPT_DIR}/prepare-secrets"')
     render = start.index('"${SCRIPT_DIR}/render-config"')
+    volume_init = start.index("run --rm --no-deps runtime-volume-init")
     migrate = start.index("run --rm migrations")
     retention_dry_run = start.index('"${SCRIPT_DIR}/run-retention" --dry-run')
     runtime_up = start.rindex(" up -d --wait")
-    assert preflight < secrets < render < migrate < retention_dry_run < runtime_up
+    assert preflight < secrets < render < volume_init < migrate < retention_dry_run < runtime_up
     assert "--require-go" in start
     assert "--synthetic" not in start
     assert 'GBOS_LOCAL_RUNTIME_ENABLED: "true"' in _read(INFRA / "compose.yml")

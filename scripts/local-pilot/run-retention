@@ -72,7 +72,8 @@ if [[ "${MODE}" == "execute" ]]; then
 fi
 export GBOS_RETENTION_ENABLED GBOS_RETENTION_DRY_RUN
 
-compose --profile retention run --rm --no-deps retention-worker
+compose --profile runtime run --rm --no-deps runtime-volume-init
+compose --profile runtime --profile retention run --rm --no-deps retention-worker
 if [[ "${MODE}" == "dry-run" ]]; then
   echo "Retention dry run completed; no data was deleted."
 else

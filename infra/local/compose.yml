@@ -71,6 +71,30 @@ services:
       - no-new-privileges:true
     restart: "no"
 
+  runtime-volume-init:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["runtime"]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ceu"]
+    command:
+      - >-
+        for root in /var/lib/gbos/evidence /var/lib/gbos/tokenizer-vault; do
+          test -d "$${root}";
+          chown 10001:10001 "$${root}";
+          chmod 0700 "$${root}";
+        done
+    volumes:
+      - local-pilot-evidence-cas:/var/lib/gbos/evidence
+      - local-pilot-tokenizer-vault:/var/lib/gbos/tokenizer-vault
+    network_mode: "none"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER"]
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
   context-api:
     image: *runtime-image
     pull_policy: never

@@ -179,6 +179,7 @@ export \
 
 compose "${profile_args[@]}" config --quiet
 compose_mutated="true"
+compose --profile runtime run --rm --no-deps runtime-volume-init
 compose --profile runtime up -d --wait \
   postgres \
   mariadb \
