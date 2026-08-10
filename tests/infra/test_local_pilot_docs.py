@@ -222,6 +222,8 @@ def test_runbook_documents_current_truth_boundaries_without_unlocking_formal_sta
 
     for statement in (
         CURRENT_SOURCE_COMMIT,
+        "runtime code validation reference",
+        "final branch includes only image-lock/test/docs successors after it",
         "response_reported_observed_model=unknown",
         "local_pilot_go=false",
         "production_go=false",
@@ -237,5 +239,7 @@ def test_runbook_documents_current_truth_boundaries_without_unlocking_formal_sta
         "Model fatal latch",
         "STATUS_UIDVALIDITY_UIDNEXT",
         "42 passed, 10 deselected",
+        "governed dependency/image/scanner network",
+        "isolated PostgreSQL validation/build/scanner containers",
     ):
         assert statement in runbook

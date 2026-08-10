@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "evidence_id": "task13-credential-free-closure-20260811",
-  "captured_at": "2026-08-10T20:24:50Z",
+  "captured_at": "2026-08-10T20:30:48Z",
   "validation_reference_commit": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
   "branch": "feat/user-identity-resolution-20260810",
   "status": "credential_free_closure_external_canary_deferred",
@@ -11,13 +11,17 @@
     "seventy_two_hour_run": "deferred_by_user"
   },
   "source_scope": {
-    "current_code_head": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
+    "runtime_code_validation_reference": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
     "validation_reference_commit": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
+    "branch_head_scope": "final branch includes only image-lock/test/docs successors after the runtime validation reference",
     "image_lock_commit": "e10a780",
     "image_rebuild_recorded": true,
     "evidence_scope": "credential_free_documentation_and_local_test_contracts",
-    "network_used_for_this_snapshot": false,
-    "containers_started_for_this_snapshot": false,
+    "network_used_for_this_snapshot": true,
+    "containers_started_for_this_snapshot": true,
+    "provider_channel_network": false,
+    "pilot_application_services_started": false,
+    "activity_qualifier": "governed dependency/image/scanner network and isolated PostgreSQL validation/build/scanner containers only; no provider/channel network and no pilot application services",
     "credentials_loaded_for_this_snapshot": false
   },
   "verification": {
@@ -85,7 +89,7 @@
     "image_lock_commit": "e10a780",
     "locked_image_source_revision": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
     "locked_image_source_revision_short": "ad58ab3",
-    "current_code_revision": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
+    "runtime_code_validation_reference": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
     "older_source_than_validation_reference": false,
     "rebuild_required_before_real_canary": false,
     "rebuild_verified": true,

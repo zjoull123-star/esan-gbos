@@ -20,12 +20,13 @@ pilot UI。
 容器访问 `api.deepseek.com:443` 均 blocked，`webhook-tunnel` 仍为 internal。
 这只证明本地 synthetic core 的隔离边界，不改变正式 No-Go。
 
-当前代码 HEAD 是 `ad58ab3ea8c0d521cebd90c2642709d135f98fac`。当前 Frappe image lock 为
+runtime code validation reference 是 `ad58ab3ea8c0d521cebd90c2642709d135f98fac`；final branch includes only image-lock/test/docs successors after it。当前 Frappe image lock 为
 `sha256:22c3a2c129442588d0353c6a8f564aec593afc63b7354b4294d37aa9d40f7625`，
 local runtime image lock 为
 `sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee`；
-两者均已从当前 source revision `ad58ab3` governed rebuild/record，revision label
-已复核，image-lock recording commit 为 `e10a780`。它们尚未用真实渠道/模型凭据运行。
+两者均已从该 runtime code validation reference `ad58ab3` governed rebuild/record，
+revision label 已复核，image-lock recording commit 为 `e10a780`。final docs/evidence
+successors 不在这些镜像内；它们尚未用真实渠道/模型凭据运行。
 若 final code 再变化，真实 canary 前仍必须
 重复 governed current-image rebuild/record。以下
 site、浏览器和监控观察来自先前 synthetic 快照：
@@ -93,16 +94,21 @@ Frappe 使用独立的本地 image ref。当前 lock 已记录
 `sha256:22c3a2c129442588d0353c6a8f564aec593afc63b7354b4294d37aa9d40f7625`，
 local runtime 已记录
 `sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee`，
-两者均标记当前 source revision `ad58ab3`，完成 inspect 和安全扫描。synthetic site setup 与 `/gbos/ceo`
+两者均标记 runtime code validation reference `ad58ab3`，完成 inspect 和安全扫描。synthetic site setup 与 `/gbos/ceo`
 浏览器验证来自较早的 `098d728` 快照，不自动证明新镜像 live runtime；这也不等于
 正式 composition 已 go。若 final code 变化，后续重建仍必须显式运行
 `scripts/local-pilot/build-frappe-image --confirm-network-build`，只在成功后记录
 新的本机 image ID。
 
+本次 closure snapshot 使用了 governed dependency/image/scanner network，并启动了
+isolated PostgreSQL validation/build/scanner containers；没有 provider/channel network，
+也没有 pilot application services。真实 IMAP/model/external calls 仍为零。
+
 ## Task 13 credential-free closure 与 real-canary operator sequence
 
-当前 source-bound closure 绑定代码 HEAD
-`ad58ab3ea8c0d521cebd90c2642709d135f98fac`：
+当前 source-bound closure 绑定 runtime code validation reference
+`ad58ab3ea8c0d521cebd90c2642709d135f98fac`；final branch includes only
+image-lock/test/docs successors after it：
 
 ```text
 production_go=false

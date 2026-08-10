@@ -6,12 +6,13 @@
 ## 来源与证据边界
 
 - 规划来源基线是 `8c40731`（观察身份解析 roadmap）；当前分支为
-  `feat/user-identity-resolution-20260810`，当前代码 HEAD 是
-  `ad58ab3ea8c0d521cebd90c2642709d135f98fac`（`ad58ab3`）。历史 host 验证基线是
-  `66a17db87528d67f08bf6692a1f67eb85e03f4e3`（`66a17db`）；此前 older-source image
-  lock 已按当前 HEAD 完成 governed rebuild/record（image-lock recording commit
-  `e10a780`），当前镜像 revision label 与
-  `ad58ab3` 一致。真实 canary 仍受外部凭据与正式 go 门阻断。
+  `feat/user-identity-resolution-20260810`，runtime code validation reference 是
+  `ad58ab3ea8c0d521cebd90c2642709d135f98fac`（`ad58ab3`）。final branch includes only
+  image-lock/test/docs successors after it；因此后续 handoff/evidence 提交不表示已被
+  写入镜像。历史 host 验证基线是 `66a17db87528d67f08bf6692a1f67eb85e03f4e3`
+  （`66a17db`）；此前 older-source image lock 已按该 runtime validation reference
+  完成 governed rebuild/record（image-lock recording commit `e10a780`），当前镜像
+  revision label 与 `ad58ab3` 一致。真实 canary 仍受外部凭据与正式 go 门阻断。
 - 身份解析离线实现基线 `c98f6a5` 保留为历史里程碑；本轮在其上补齐了真实
   Frappe v16 站点、最终镜像、Prometheus live scrape 与安全扫描证据；这些历史
   真实 Frappe 观察不自动代表当前 HEAD live runtime。
@@ -52,7 +53,7 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 
 ## 当前验证快照
 
-当前 image lock 中的本地镜像已按当前 source revision `ad58ab3` 重建并记录：
+当前 image lock 中的本地镜像已按 runtime code validation reference `ad58ab3` 重建并记录：
 
 | Service | Local image digest | Revision label |
 | --- | --- | --- |
@@ -73,7 +74,10 @@ started.
 
 这些结果不等于真实 Email/DeepSeek canary 或正式 Go。当前镜像已完成
 governed current-image rebuild/record；数据库隔离矩阵结果见 closure evidence，且
-唯一验证 DB/network/volume 已移除。
+唯一验证 DB/network/volume 已移除。本快照曾使用 governed dependency/image/scanner
+network，并启动 isolated PostgreSQL validation/build/scanner containers；没有
+provider/channel network，也没有 pilot application services。真实 IMAP/model/external
+calls 仍为零。
 
 详见 [当前 credential-free closure 证据](evidence/task13-credential-free-closure/task13-evidence.json)
 及 [Task 13 历史真实渠道前就绪证据](evidence/task13-readiness/task13-readiness-summary.md)。
@@ -96,8 +100,9 @@ checked_in_deepseek_enabled=false
 ```
 
 - Task 1–12 的离线实现和 credential-free checks 已完成；full pytest、静态检查与
-  frontend 计数见当前 closure evidence。当前 image lock 已按 `ad58ab3` 重建并记录，
-  但这仍不等于真实 Email/DeepSeek canary 或正式 Go。
+  frontend 计数见当前 closure evidence。当前 image lock 已按 runtime code validation
+  reference `ad58ab3` 重建并记录；final branch includes only image-lock/test/docs
+  successors after it，但这仍不等于真实 Email/DeepSeek canary 或正式 Go。
 - Task 13 的 credential-free closure 已完成；真实 Email + DeepSeek canary **未执行**。
   当前缺少 Email credential、DeepSeek API Key、identity HMAC、人工批准的 trusted
   phrase lexicon，以及 Frappe identity resolver API key/secret。real Email/DeepSeek
@@ -109,8 +114,9 @@ checked_in_deepseek_enabled=false
 
 ## 后续实施顺序
 
-1. 最终代码与 current image lock 已按 `ad58ab3` 完成 governed rebuild/record；后续
-   canary 仍必须复核 revision label 与 manifest binding。
+1. Runtime code validation reference `ad58ab3` 与 current image lock 已完成 governed
+   rebuild/record；final branch includes only image-lock/test/docs successors after it，
+   后续 canary 仍必须复核 revision label 与 manifest binding。
 2. 用户以安全方式提供 Task 13 外部输入；凭据只进入 macOS Keychain，不写仓库。
 3. 按 [运行手册](local-pilot/RUNBOOK.md) 创建 repo-external canary dir/control，
    用 activation-time 做 Email STATUS-only checkpoint probe，复制 exact checkpoint

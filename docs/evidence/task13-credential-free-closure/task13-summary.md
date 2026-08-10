@@ -1,8 +1,9 @@
 # Task 13 credential-free closure snapshot
 
-捕获时间：`2026-08-10T20:24:50Z`。本快照绑定 validation reference commit
-`ad58ab3ea8c0d521cebd90c2642709d135f98fac`，不声明 final evidence commit SHA，
-也不修改任何历史 evidence 目录。
+捕获时间：`2026-08-10T20:30:48Z`。本快照绑定 runtime code validation reference
+commit `ad58ab3ea8c0d521cebd90c2642709d135f98fac`；final branch includes only
+image-lock/test/docs successors after it，不声明 final evidence commit SHA，也不修改
+任何历史 evidence 目录。后续 docs/evidence successor 不在已记录镜像内。
 
 ## 结论
 
@@ -34,6 +35,9 @@ API key、identity HMAC、trusted phrase lexicon 和 Frappe identity-resolver cr
   rebuilt images 各为 `0` unwaived High/Critical、`0` image secrets、`0`
   misconfigurations；扫描显示历史 57 条 waiver/103 个 exact-PURL entries，但不把它们
   误报为零总 findings，且扫描期间未启动 services。
+- 本快照使用 governed dependency/image/scanner network，并启动 isolated PostgreSQL
+  validation/build/scanner containers；没有 provider/channel network，也没有 pilot
+  application services。真实 IMAP/model/external calls 仍为 `0`。
 - Model fatal latch：已验证 fatal/mismatch 在后续 model egress 前 fail closed，并
   记录为 isolated fatal-latch check；当前没有真实 provider invocation。
 - Email checkpoint：仅 source-bound `STATUS_UIDVALIDITY_UIDNEXT`、read-only；probe
@@ -50,10 +54,11 @@ Root 已完成 isolated PostgreSQL integration matrix：`42 passed, 10 deselecte
 
 ## Image and stability boundary
 
-当前代码 HEAD 与 validation reference 都是 `ad58ab3`。此前 older-source image lock
-blocker 已关闭：Frappe PWA 与 local-runtime 已从当前 validation reference governed
-rebuild/record，并复核 revision label 与 source commit 一致。build/inspect/record 不
-等于 provider canary 或正式 Go；若 final code 再变化，真实 canary 前必须重建。72 小时
+Runtime code validation reference 是 `ad58ab3`；final branch includes only image-lock/test/docs
+successors after it。此前 older-source image lock blocker 已关闭：Frappe PWA 与
+local-runtime 已从该 validation reference governed rebuild/record，并复核 revision label
+与 source commit 一致。build/inspect/record 不等于 provider canary 或正式 Go；若 final
+code 再变化，真实 canary 前必须重建。72 小时
 连续运行按用户决定 deferred/not required for this stage，未执行、未评估，也不是本阶段
 gate；后续只需记录实际 evidence-bound health sample duration。
 

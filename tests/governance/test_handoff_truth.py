@@ -174,6 +174,17 @@ def test_current_task13_closure_snapshot_is_bound_to_code_and_not_a_canary_claim
 
     assert evidence["schema_version"] == "1.0"
     assert evidence["validation_reference_commit"] == CURRENT_SOURCE_COMMIT
+    source_scope = evidence["source_scope"]
+    assert source_scope["runtime_code_validation_reference"] == CURRENT_SOURCE_COMMIT
+    assert source_scope["branch_head_scope"] == (
+        "final branch includes only image-lock/test/docs successors after the "
+        "runtime validation reference"
+    )
+    assert source_scope["network_used_for_this_snapshot"] is True
+    assert source_scope["containers_started_for_this_snapshot"] is True
+    assert source_scope["provider_channel_network"] is False
+    assert source_scope["pilot_application_services_started"] is False
+    assert "governed dependency/image/scanner network" in source_scope["activity_qualifier"]
     captured_at = datetime.fromisoformat(evidence["captured_at"].replace("Z", "+00:00"))
     assert captured_at.tzinfo is not None
     assert captured_at.utcoffset() == UTC.utcoffset(captured_at)
@@ -268,6 +279,9 @@ def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
     handoff = _read(HANDOFF)
 
     assert CURRENT_SOURCE_COMMIT in handoff
+    assert "runtime code validation reference" in handoff.lower()
+    assert "final branch includes only image-lock/test/docs successors after it" in handoff.lower()
+    assert "current code HEAD 是" not in handoff
     assert "older-source image" in handoff.lower()
     assert "governed rebuild/record" in handoff.lower()
     assert "response_reported_observed_model=unknown" in handoff

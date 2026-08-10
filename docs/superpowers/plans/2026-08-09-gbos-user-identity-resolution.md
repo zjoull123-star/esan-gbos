@@ -14,12 +14,13 @@
 
 ## Implementation status snapshot — 2026-08-11
 
-The original offline implementation baseline is `c98f6a5`. The current code HEAD and
-validation reference are `ad58ab3ea8c0d521cebd90c2642709d135f98fac`; the previously
-older-source image lock was rebuilt and recorded at that reference (image-lock recording
-commit `e10a780`). This status section records what was actually implemented and verified;
-it does not authorize the real canary. If final code changes again, rebuild and record
-images before running it.
+The original offline implementation baseline is `c98f6a5`. The runtime code validation
+reference is `ad58ab3ea8c0d521cebd90c2642709d135f98fac`; the final branch includes only
+image-lock/test/docs successors after it, so later documentation commits are not inside
+the runtime images. The previously older-source image lock was rebuilt and recorded at
+that runtime validation reference (image-lock recording commit `e10a780`). This status
+section records what was actually implemented and verified; it does not authorize the
+real canary. If final code changes again, rebuild and record images before running it.
 
 The four user relationships remain separate and **禁止相互推导**:
 
@@ -48,7 +49,9 @@ without free-form observed-model input. 72 小时连续运行不再作为本阶�
 deferred/not required for this stage and does not relax any live channel, model, outbound
 or production gate. Root's isolated PostgreSQL matrix is `42 passed, 10 deselected,
 1 warning` across Gate3/4/5, Context and Media; its validation DB/network/volume was
-removed. 真实 Email + DeepSeek canary 未执行。
+removed. This snapshot used governed dependency/image/scanner network and isolated
+PostgreSQL validation/build/scanner containers only; provider/channel network and pilot
+application services were not used or started. 真实 Email + DeepSeek canary 未执行。
 
 ---
 
