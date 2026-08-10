@@ -216,6 +216,8 @@ def _prepare_emergency_repo(tmp_path: Path) -> tuple[Path, Path]:
         "if 'ps' in args:\n"
         "    if os.environ.get('EMERGENCY_PS_FAIL') == '1':\n"
         "        raise SystemExit(3)\n"
+        "    if os.environ.get('EMERGENCY_PS_BLANK_LINE') == '1':\n"
+        "        print()\n"
         "    running = os.environ.get('EMERGENCY_RUNNING_SERVICE')\n"
         "    if running:\n"
         "        print(running)\n"
@@ -231,6 +233,7 @@ def _run_emergency(
     *,
     stop_code: int = 0,
     ps_fail: bool = False,
+    ps_blank_line: bool = False,
     running_service: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
@@ -239,6 +242,8 @@ def _run_emergency(
     environment["EMERGENCY_STOP_CODE"] = str(stop_code)
     if ps_fail:
         environment["EMERGENCY_PS_FAIL"] = "1"
+    if ps_blank_line:
+        environment["EMERGENCY_PS_BLANK_LINE"] = "1"
     if running_service is not None:
         environment["EMERGENCY_RUNNING_SERVICE"] = running_service
     return subprocess.run(
@@ -579,6 +584,21 @@ def test_emergency_stop_verifies_containment_and_binds_a_private_receipt(
     assert receipt["running_services"] == []
     assert stat.S_IMODE(receipt_path.stat().st_mode) == 0o600
     assert "verified" in result.stdout.lower()
+
+
+def test_emergency_stop_treats_blank_compose_ps_line_as_no_running_service(
+    tmp_path: Path,
+) -> None:
+    repo, docker_log = _prepare_emergency_repo(tmp_path)
+
+    result = _run_emergency(repo, docker_log, ps_blank_line=True)
+
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(
+        (repo / ".runtime" / "local-pilot" / "containment-receipt.json").read_text(encoding="utf-8")
+    )
+    assert receipt["verified"] is True
+    assert receipt["running_services"] == []
 
 
 def test_emergency_stop_never_claims_success_when_containment_cannot_be_verified(

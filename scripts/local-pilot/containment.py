@@ -65,7 +65,9 @@ def _activate(runtime: Path) -> int:
 def _running_services(path: Path) -> list[str]:
     if not path.is_file() or path.is_symlink() or path.stat().st_size > 65_536:
         raise ValueError("running-service result is unavailable")
-    values = sorted({line.strip() for line in path.read_text(encoding="utf-8").splitlines()})
+    values = sorted(
+        {value for line in path.read_text(encoding="utf-8").splitlines() if (value := line.strip())}
+    )
     if any(not _SERVICE.fullmatch(value) for value in values):
         raise ValueError("running-service result is invalid")
     return values
