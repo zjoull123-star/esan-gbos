@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -46,6 +48,12 @@ IGNORE_TEST_RECORD_DEPENDENCIES = [
 ]
 
 
+def _external_subject(label: str) -> str:
+    digest = hashlib.sha256(label.encode("utf-8")).digest()
+    token = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return f"extid:v1:email:{token}"
+
+
 class TestGBOSExternalIdentityAuthority(IntegrationTestCase):
     def setUp(self) -> None:
         frappe.set_user("Administrator")
@@ -87,7 +95,9 @@ class TestGBOSExternalIdentityAuthority(IntegrationTestCase):
             "doctype": "GBOS External Identity",
             "team": self.team.name,
             "identity_provider": "email",
-            "external_subject": f"extid:v1:email:{frappe.generate_hash(length=24)}",
+            "external_subject": _external_subject(
+                f"native-authority-{frappe.generate_hash(length=24)}"
+            ),
             "identity_type": "User",
             "user": self.member,
             "origin": "Manual",
@@ -510,7 +520,7 @@ class TestObserverIdentityResolverNativeBoundary(IntegrationTestCase):
         )
         self._authenticate(other_service_headers, expected_user=OTHER_RESOLVER_USER)
         wrong_service = identity_resolution_api.resolve(
-            self._payload("extid:v1:email:WrongServiceToken01")
+            self._payload(_external_subject("wrong-service-token"))
         )
         self.assertEqual(frappe.local.response["http_status_code"], 403)
         self.assertEqual(wrong_service, {"error": {"code": "identity_scope_mismatch"}})
@@ -523,7 +533,7 @@ class TestObserverIdentityResolverNativeBoundary(IntegrationTestCase):
             self._authenticate(self._headers())
 
     def test_exact_site_purpose_and_auth_ref_binding_is_fail_closed(self) -> None:
-        subject = "extid:v1:email:NativeScopeBinding01"
+        subject = _external_subject("native-scope-binding")
         self._identity(subject)
         cases = (
             (
@@ -552,8 +562,8 @@ class TestObserverIdentityResolverNativeBoundary(IntegrationTestCase):
                 self.assertFalse(identity_resolution_scope_active())
 
     def test_confirmed_and_revoked_mappings_use_the_real_database_boundary(self) -> None:
-        confirmed_subject = "extid:v1:email:NativeConfirmed01"
-        revoked_subject = "extid:v1:email:NativeRevoked01"
+        confirmed_subject = _external_subject("native-confirmed")
+        revoked_subject = _external_subject("native-revoked")
         confirmed = self._identity(confirmed_subject)
         revoked = self._identity(revoked_subject, business_status="Revoked")
 
@@ -577,10 +587,10 @@ class TestObserverIdentityResolverNativeBoundary(IntegrationTestCase):
                 self.assertFalse(identity_resolution_scope_active())
 
     def test_unresolved_and_conflicts_are_closed_and_clear_request_guard(self) -> None:
-        subject = "extid:v1:email:NativeRevisionConflict01"
+        subject = _external_subject("native-revision-conflict")
         identity = self._identity(subject)
 
-        unresolved = self._resolve(self._payload("extid:v1:email:NativeUnresolved01"))
+        unresolved = self._resolve(self._payload(_external_subject("native-unresolved")))
         self.assertEqual(frappe.local.response["http_status_code"], 404)
         self.assertEqual(unresolved, {"error": {"code": "mapping_not_resolved"}})
         self.assertFalse(identity_resolution_scope_active())
@@ -603,7 +613,7 @@ class TestObserverIdentityResolverNativeBoundary(IntegrationTestCase):
         self.assertFalse(hasattr(frappe.local, RESOLVER_SCOPE_ATTRIBUTE))
 
     def test_direct_doctype_list_and_guarded_mapping_access_stay_denied(self) -> None:
-        subject = "extid:v1:email:NativeDirectAccessDenied01"
+        subject = _external_subject("native-direct-access-denied")
         identity = self._identity(subject)
         frappe.set_user(RESOLVER_USER)
 
