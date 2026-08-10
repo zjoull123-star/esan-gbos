@@ -13,17 +13,14 @@ CHECKSUMS = EVIDENCE_DIR / "SHA256SUMS"
 ROADMAP = ROOT / "docs" / "superpowers" / "plans" / ("2026-08-09-gbos-user-identity-resolution.md")
 LOCAL_PLAN = ROOT / "docs" / "local-pilot" / "IMPLEMENTATION_PLAN.md"
 HANDOFF = ROOT / "docs" / "HANDOFF.md"
-IMAGE_LOCK = ROOT / "infra" / "local" / "images.lock.json"
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_task13_readiness_evidence_is_current_closed_and_honest() -> None:
+def test_task13_readiness_historical_snapshot_is_closed_and_honest() -> None:
     payload = json.loads(_read(EVIDENCE))
-    image_lock = json.loads(_read(IMAGE_LOCK))
-    images = {item["service"]: item for item in image_lock["images"]}
 
     assert payload["schema_version"] == "1.0"
     assert payload["status"] == "pre_canary_ready_external_inputs_blocked"
@@ -32,13 +29,13 @@ def test_task13_readiness_evidence_is_current_closed_and_honest() -> None:
         "continuous_runtime_required": False,
         "seventy_two_hour_run": "deferred_by_user",
     }
-    assert (
-        payload["images"]["frappe_pwa"]["image_id"] == images["frappe-pwa"]["local_inspect_digest"]
-    )
-    assert (
-        payload["images"]["local_runtime"]["image_id"]
-        == images["local-runtime"]["local_inspect_digest"]
-    )
+    # This directory is an immutable historical snapshot. A governed image
+    # rebuild updates the current image lock and writes a new evidence package;
+    # it must not make an older, checksum-bound snapshot follow mutable state.
+    for image in payload["images"].values():
+        assert len(image["source_revision"]) == 40
+        assert image["image_id"].startswith("sha256:")
+        assert len(image["image_id"]) == len("sha256:") + 64
     assert payload["formal_state"] == {
         "production_go": False,
         "local_pilot_go": False,
