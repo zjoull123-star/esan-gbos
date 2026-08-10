@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import frappe
@@ -36,6 +37,7 @@ _MISSING = object()
 
 IGNORE_TEST_RECORD_DEPENDENCIES = [
     "DocType",
+    "GBOS Party Profile",
     "GBOS Review Decision",
     "GBOS Team",
     "User",
@@ -232,6 +234,7 @@ class TestObserverIdentityResolverNativeBoundary(IntegrationTestCase):
         self._previous_identity_config = frappe.conf.get(RESOLVER_CONFIG_KEY, _MISSING)
         self._previous_request = getattr(frappe.local, "request", _MISSING)
         self._previous_response = getattr(frappe.local, "response", _MISSING)
+        self._previous_login_manager = getattr(frappe.local, "login_manager", _MISSING)
         self.site_id = str(frappe.local.site)
         frappe.conf[RESOLVER_CONFIG_KEY] = {
             RESOLVER_AUTH_REF: {
@@ -256,13 +259,25 @@ class TestObserverIdentityResolverNativeBoundary(IntegrationTestCase):
             }
         ).insert(ignore_permissions=True)
         frappe.clear_cache()
+        # Resolver identities and routing are pre-existing authority in a real
+        # HTTP request. Commit this isolated fixture so a fail-closed POST
+        # rollback cannot erase the request's authentication boundary.
+        frappe.db.commit()
 
     def tearDown(self) -> None:
         frappe.set_user("Administrator")
+        if hasattr(self, "team"):
+            frappe.db.delete("GBOS External Identity", {"team": self.team.name})
+            frappe.db.delete("GBOS Team Member", {"parent": self.team.name})
+            frappe.db.delete("GBOS Team", {"name": self.team.name})
+        if frappe.db.exists("User", RESOLVER_USER):
+            frappe.db.set_value("User", RESOLVER_USER, "enabled", 1)
+        frappe.db.commit()
         if hasattr(frappe.local, RESOLVER_SCOPE_ATTRIBUTE):
             delattr(frappe.local, RESOLVER_SCOPE_ATTRIBUTE)
         self._restore_local("request", self._previous_request)
         self._restore_local("response", self._previous_response)
+        self._restore_local("login_manager", self._previous_login_manager)
         if self._previous_identity_config is _MISSING:
             frappe.conf.pop(RESOLVER_CONFIG_KEY, None)
         else:
@@ -345,6 +360,7 @@ class TestObserverIdentityResolverNativeBoundary(IntegrationTestCase):
                 "business_status": business_status,
             },
         )
+        frappe.db.commit()
         return frappe.get_doc(identity.doctype, identity.name)
 
     def _headers(self, **overrides: str) -> dict[str, str]:
@@ -383,6 +399,7 @@ class TestObserverIdentityResolverNativeBoundary(IntegrationTestCase):
         expected_user: str = RESOLVER_USER,
     ) -> None:
         frappe.set_user("Guest")
+        frappe.local.login_manager = SimpleNamespace(user="Guest")
         frappe.local.response = frappe._dict()
         frappe.local.request = Request.from_values(method="POST", headers=headers)
         validate_auth()

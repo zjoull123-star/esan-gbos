@@ -9,7 +9,11 @@ from typing import Any
 import frappe
 
 from esan_gbos.api.v1.common import BFFError, bff_endpoint, require_roles, success
-from esan_gbos.domain.metrics_fixture import MetricsFixtureError, validate_dashboard
+from esan_gbos.domain.metrics_fixture import (
+    MetricsFixtureError,
+    bind_synthetic_dashboard_site,
+    validate_dashboard,
+)
 
 METRICS_READ_ROLES = frozenset({"CEO", "Finance Readonly", "GBOS Admin"})
 _TRUE = frozenset({"1", "true", "yes"})
@@ -54,7 +58,10 @@ def dashboard() -> dict[str, Any]:
             status=503,
         )
     try:
-        payload = _load_synthetic_dashboard()
+        payload = bind_synthetic_dashboard_site(
+            _load_synthetic_dashboard(),
+            str(frappe.local.site),
+        )
     except (OSError, json.JSONDecodeError, MetricsFixtureError) as error:
         frappe.logger("esan_gbos").error(
             "Gate 5 metrics fixture unavailable exception=%s",

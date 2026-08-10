@@ -9,13 +9,24 @@ _IMMUTABLE_FIELDS = (
     "subject",
     "summary_zh",
     "team",
-    "evidence_refs",
     "model_name",
     "model_version",
     "is_official_metric",
     "origin",
     "origin_reference",
 )
+
+
+def _evidence_signature(rows: object) -> tuple[tuple[str, str], ...]:
+    if not rows:
+        return ()
+    return tuple(
+        (
+            str(row.get("evidence_ref") or ""),
+            str(row.get("locator_ref") or ""),
+        )
+        for row in rows
+    )
 
 
 class GBOSInformalObservation(GBOSDocument):
@@ -34,6 +45,10 @@ class GBOSInformalObservation(GBOSDocument):
             for fieldname in _IMMUTABLE_FIELDS:
                 if self.get(fieldname) != before.get(fieldname):
                     raise frappe.PermissionError
+            if _evidence_signature(self.get("evidence_refs")) != _evidence_signature(
+                before.get("evidence_refs")
+            ):
+                raise frappe.PermissionError
             if self.review_status != before.review_status and not self.flags.gbos_ai_draft_command:
                 raise frappe.PermissionError
         super().validate()

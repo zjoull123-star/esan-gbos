@@ -124,14 +124,14 @@ class TestGBOSGateFourReviewCase(IntegrationTestCase):
         with self.assertRaises(frappe.PermissionError):
             case.save()
 
-    def test_admin_without_explicit_reviewer_role_cannot_decide(self) -> None:
+    def test_assigned_gbos_admin_can_decide_without_reviewer_role(self) -> None:
         case, _work, _snapshot = self._case(assigned_reviewer=self.admin)
         frappe.set_user(self.admin)
 
         result = self._decide(case)
 
-        self.assertEqual(result["error"]["code"], "permission_denied")
-        self.assertEqual(frappe.local.response["http_status_code"], 403)
+        self.assertEqual(result["data"]["case"]["business_status"], "Approved")
+        self.assertEqual(result["data"]["decision"]["reviewer"], self.admin)
 
     def test_admin_cannot_bypass_command_by_editing_review_status(self) -> None:
         case, _work, _snapshot = self._case()

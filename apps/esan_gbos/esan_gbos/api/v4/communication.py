@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 from typing import Any
 
 import frappe
@@ -85,7 +86,9 @@ def list(
     )
     rows = data.get("communications")
     next_cursor = data.get("next_cursor")
-    if not isinstance(rows, list) or not (next_cursor is None or isinstance(next_cursor, str)):
+    if not isinstance(rows, builtins.list) or not (
+        next_cursor is None or isinstance(next_cursor, str)
+    ):
         raise BFFError("internal_error", "Observer communication list is invalid", status=503)
     try:
         mapped = [map_communication_summary(item) for item in rows]

@@ -148,3 +148,15 @@ def validate_dashboard(raw: object) -> dict[str, Any]:
         raise MetricsFixtureError("metric keys must be unique")
     dashboard["metrics"] = normalized
     return copy.deepcopy(dashboard)
+
+
+def bind_synthetic_dashboard_site(raw: object, site_id: str) -> dict[str, Any]:
+    """Bind a checksum-validated synthetic fixture to one active Frappe site."""
+    dashboard = validate_dashboard(raw)
+    if dashboard["source_mode"] != "synthetic" or dashboard["synthetic"] is not True:
+        raise MetricsFixtureError("only synthetic dashboards may bind to an active site")
+    bound_site = _text(site_id, "site_id")
+    dashboard["site_id"] = bound_site
+    for metric in dashboard["metrics"]:
+        metric["site_id"] = bound_site
+    return validate_dashboard(dashboard)

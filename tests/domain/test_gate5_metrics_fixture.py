@@ -6,7 +6,11 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from esan_gbos.domain.metrics_fixture import MetricsFixtureError, validate_dashboard
+from esan_gbos.domain.metrics_fixture import (
+    MetricsFixtureError,
+    bind_synthetic_dashboard_site,
+    validate_dashboard,
+)
 
 ROOT = Path(__file__).parents[2]
 FIXTURE = ROOT / "apps" / "esan_gbos" / "esan_gbos" / "data" / "gate5" / "dashboard.json"
@@ -37,6 +41,30 @@ def test_fixture_manifest_binds_exact_network_free_payload() -> None:
     assert manifest["kingdee_calls"] == 0
     assert manifest["credentials_loaded"] == 0
     assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == manifest["dashboard_sha256"]
+
+
+def test_synthetic_dashboard_can_bind_to_a_fresh_site_without_mutating_fixture() -> None:
+    original = _dashboard()
+
+    scoped = bind_synthetic_dashboard_site(original, "gbos-smoke.localhost")
+
+    assert original["site_id"] == "gbos.localhost"
+    assert scoped["site_id"] == "gbos-smoke.localhost"
+    assert {metric["site_id"] for metric in scoped["metrics"]} == {"gbos-smoke.localhost"}
+    assert scoped["synthetic"] is True
+    assert scoped["source_mode"] == "synthetic"
+
+
+def test_live_dashboard_can_never_be_rebound_to_another_site() -> None:
+    dashboard = _dashboard()
+    dashboard["source_mode"] = "live"
+    dashboard["synthetic"] = False
+    for metric in dashboard["metrics"]:
+        metric["source_mode"] = "live"
+        metric["synthetic"] = False
+
+    with pytest.raises(MetricsFixtureError, match="synthetic"):
+        bind_synthetic_dashboard_site(dashboard, "gbos-smoke.localhost")
 
 
 @pytest.mark.parametrize(

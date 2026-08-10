@@ -192,6 +192,7 @@ class TestGBOSInformalObservation(IntegrationTestCase):
                 "origin_reference",
             )
         }
+        before_evidence = [(row.evidence_ref, row.locator_ref) for row in observation.evidence_refs]
         frappe.set_user(self.admin)
         with patch(
             "esan_gbos.api.v4.ai_draft.call_local",
@@ -216,6 +217,10 @@ class TestGBOSInformalObservation(IntegrationTestCase):
         self.assertFalse(first["meta"]["replayed"])
         self.assertTrue(replay["meta"]["replayed"])
         self.assertEqual(before, {field: current.get(field) for field in before})
+        self.assertEqual(
+            before_evidence,
+            [(row.evidence_ref, row.locator_ref) for row in current.evidence_refs],
+        )
 
     def test_unassigned_reviewer_cannot_get_an_informal_draft(self) -> None:
         observation = self._observation()
@@ -240,8 +245,17 @@ class TestGBOSInformalObservation(IntegrationTestCase):
         with patch("esan_gbos.api.v4.communication.call_local", side_effect=observer):
             result = list_communications(page_size=20)
 
+        expected_teams = sorted(
+            str(row["parent"])
+            for row in frappe.get_all(
+                "GBOS Team Member",
+                filters={"user": self.sales, "enabled": 1},
+                fields=["parent"],
+            )
+        )
         self.assertEqual(result["meta"]["schema_version"], "4.0")
-        self.assertEqual(seen[0]["allowed_team_refs"], [self.team.name])
+        self.assertEqual(seen[0]["allowed_team_refs"], expected_teams)
+        self.assertIn(self.team.name, seen[0]["allowed_team_refs"])
         self.assertNotIn(self.other_team.name, seen[0]["allowed_team_refs"])
         self.assertFalse(seen[0]["include_raw"])
 

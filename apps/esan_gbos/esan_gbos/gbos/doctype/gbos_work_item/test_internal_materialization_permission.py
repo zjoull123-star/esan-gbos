@@ -49,7 +49,7 @@ class TestInternalMaterializationPermission(IntegrationTestCase):
                 "team_name": "Internal materialization permission test",
             }
         ).insert(ignore_permissions=True)
-        self.subject = frappe.get_doc(
+        inserted_subject = frappe.get_doc(
             {
                 "doctype": "GBOS Work Item",
                 "title": "Controlled subject",
@@ -59,6 +59,7 @@ class TestInternalMaterializationPermission(IntegrationTestCase):
                 "review_status": "Pending",
             }
         ).insert(ignore_permissions=True)
+        self.subject = frappe.get_doc("GBOS Work Item", inserted_subject.name)
 
     def tearDown(self) -> None:
         frappe.set_user("Administrator")
