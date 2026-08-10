@@ -241,6 +241,77 @@ def test_probe_rejects_credential_symlink_before_network(tmp_path: Path) -> None
         )
 
 
+def test_probe_bounded_read_loop_accepts_short_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    credential = _credential(tmp_path / "email.json")
+    client = FakeImap()
+    factory, _ = _capturing_factory(client)
+    real_read = os.read
+    read_sizes: list[int] = []
+
+    def short_read(descriptor: int, maximum: int) -> bytes:
+        read_sizes.append(maximum)
+        return real_read(descriptor, min(maximum, 7))
+
+    monkeypatch.setattr(
+        "services.local_pilot_runtime.email_checkpoint_probe.os.read",
+        short_read,
+    )
+
+    checkpoint = probe_email_checkpoint(
+        credential,
+        tmp_path / "output",
+        repo_root=ROOT,
+        client_factory=factory,
+    )
+
+    assert checkpoint.uid == 42
+    assert len(read_sizes) > 2
+    assert max(read_sizes) <= 65_537
+
+
+def test_probe_short_read_early_eof_fails_before_output_or_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    credential = _credential(tmp_path / "email.json")
+    output = tmp_path / "output"
+    real_read = os.read
+    read_count = 0
+    network_calls = 0
+
+    def truncated_read(descriptor: int, maximum: int) -> bytes:
+        nonlocal read_count
+        read_count += 1
+        if read_count == 1:
+            return real_read(descriptor, min(maximum, 7))
+        return b""
+
+    def forbidden_factory(**_kwargs: Any) -> FakeImap:
+        nonlocal network_calls
+        network_calls += 1
+        raise AssertionError("truncated credential must fail before network")
+
+    monkeypatch.setattr(
+        "services.local_pilot_runtime.email_checkpoint_probe.os.read",
+        truncated_read,
+    )
+
+    with pytest.raises(EmailCheckpointProbeError):
+        probe_email_checkpoint(
+            credential,
+            output,
+            repo_root=ROOT,
+            client_factory=forbidden_factory,
+        )
+
+    assert read_count == 2
+    assert network_calls == 0
+    assert not output.exists()
+
+
 @pytest.mark.parametrize(
     "changes",
     [
@@ -353,5 +424,31 @@ def test_probe_script_help_is_offline_and_executable() -> None:
     assert result.returncode == 0
     assert "--credential-file" in result.stdout
     assert "--output-dir" in result.stdout
-    assert "--repo-root" in result.stdout
+    assert "--repo-root" not in result.stdout
     assert os.access(SCRIPT, os.X_OK)
+    assert "Path(__file__).resolve().parents[2]" in SCRIPT.read_text(encoding="utf-8")
+
+
+def test_probe_script_rejects_caller_controlled_repo_root(tmp_path: Path) -> None:
+    fake_root = tmp_path / "fake-repo"
+    fake_root.mkdir()
+
+    result = subprocess.run(
+        [
+            str(SCRIPT),
+            "--credential-file",
+            str(tmp_path / "missing.json"),
+            "--output-dir",
+            str(tmp_path / "output"),
+            "--repo-root",
+            str(fake_root),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "unrecognized arguments: --repo-root" in result.stderr
+    assert not (tmp_path / "output").exists()

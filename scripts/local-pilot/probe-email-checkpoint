@@ -1,5 +1,12 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env python3
+"""Launch the Email checkpoint probe with its repository-bound Python."""
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-exec "$ROOT/.venv/bin/python" -m services.local_pilot_runtime.email_checkpoint_probe "$@"
+import os
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+PYTHON = ROOT / ".venv" / "bin" / "python"
+MODULE = ROOT / "services" / "local_pilot_runtime" / "email_checkpoint_probe.py"
+
+os.execv(str(PYTHON), [str(PYTHON), str(MODULE), *sys.argv[1:]])

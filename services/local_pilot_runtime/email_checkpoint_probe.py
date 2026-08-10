@@ -290,7 +290,15 @@ def _read_private_json(path: Path) -> dict[str, Any]:
             or not 0 < details.st_size <= _MAX_CREDENTIAL_BYTES
         ):
             raise EmailCheckpointProbeError("email checkpoint credential is invalid")
-        payload = os.read(descriptor, _MAX_CREDENTIAL_BYTES + 1)
+        chunks: list[bytes] = []
+        remaining = details.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, _MAX_CREDENTIAL_BYTES + 1))
+            if not chunk:
+                raise EmailCheckpointProbeError("email checkpoint credential is invalid")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
         after = os.fstat(descriptor)
         if (
             len(payload) != details.st_size
@@ -476,17 +484,17 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--credential-file", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--repo-root", required=True, type=Path)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    repo_root = Path(__file__).resolve().parents[2]
     try:
         probe_email_checkpoint(
             args.credential_file,
             args.output_dir,
-            repo_root=args.repo_root,
+            repo_root=repo_root,
         )
     except EmailCheckpointProbeError:
         print("EMAIL CHECKPOINT PROBE FAILED", file=sys.stderr)
