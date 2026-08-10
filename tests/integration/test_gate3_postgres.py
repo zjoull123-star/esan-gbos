@@ -31,6 +31,7 @@ from services.observer.observer.identity_resolution import (
     PostgresIdentityResolutionRepository,
 )
 from services.observer.observer.identity_resolution_work import (
+    IdentityAuthorityDenialConflict,
     IdentityResolutionLeaseConflict,
     PostgresIdentityResolutionWorkRepository,
 )
@@ -104,6 +105,9 @@ IDENTITY_WORK_MIGRATION = (
 MODEL_FATAL_LATCH_MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "012_local_pilot_model_fatal_latch.sql"
 )
+IDENTITY_AUTHORITY_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "012_local_pilot_identity_authority_safety.sql"
+)
 
 pytestmark = [pytest.mark.postgres_integration]
 if not RUN_INTEGRATION:
@@ -147,7 +151,7 @@ def _container_sql(
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 13
+    assert _migration_ledger_count() == 14
     result = _container_sql(
         """
         SELECT count(*)
@@ -171,13 +175,13 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
               'local_pilot_dead_letter', 'participant_identity_resolutions',
               'identity_resolution_work', 'identity_resolution_worker_metrics',
               'retention_runs', 'retention_cas_tombstones',
-              'model_fatal_latches'
+              'model_fatal_latches', 'identity_authority_denials'
           )
           AND c.relrowsecurity
           AND c.relforcerowsecurity
         """
     )
-    assert int(result.stdout.strip()) == 36
+    assert int(result.stdout.strip()) == 37
 
 
 def _migration_ledger_count() -> int:
@@ -198,11 +202,128 @@ def _migration_ledger_count() -> int:
               'observer/010_local_pilot_identity_resolution_worker.sql',
               'observer/011_local_pilot_retention.sql',
               'observer/012_local_pilot_model_fatal_latch.sql',
+              'observer/012_local_pilot_identity_authority_safety.sql',
               'context/001_gate3_context.sql'
         )
         """
     )
     return int(result.stdout.strip())
+
+
+def test_identity_authority_denial_is_restart_safe_revision_fenced_and_immutable() -> None:
+    if not all((CONTEXT_HOST, CONTEXT_PORT, CONTEXT_DATABASE, CONTEXT_PASSWORD)):
+        pytest.fail("Gate 3 Observer app-role connection components are required")
+
+    migration_sql = IDENTITY_AUTHORITY_MIGRATION.read_text(encoding="utf-8")
+    _container_sql(migration_sql)
+    _container_sql(migration_sql)
+    security = _container_sql(
+        """
+        SELECT c.relrowsecurity, c.relforcerowsecurity,
+               has_table_privilege(
+                   'gbos_observer_app', 'observer.identity_authority_denials', 'SELECT'
+               ),
+               has_table_privilege(
+                   'gbos_observer_app', 'observer.identity_authority_denials', 'INSERT'
+               ),
+               has_table_privilege(
+                   'gbos_observer_app', 'observer.identity_authority_denials', 'UPDATE'
+               ),
+               has_table_privilege(
+                   'gbos_observer_app', 'observer.identity_authority_denials', 'DELETE'
+               )
+        FROM pg_class AS c
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'observer'
+          AND c.relname = 'identity_authority_denials'
+        """
+    )
+    assert security.stdout.strip() == "t|t|t|t|f|f"
+
+    def connect():
+        return connect_postgres_components(
+            host=str(CONTEXT_HOST),
+            port=int(str(CONTEXT_PORT)),
+            database=str(CONTEXT_DATABASE),
+            user="gbos_observer_app",
+            password=str(CONTEXT_PASSWORD),
+        )
+
+    suffix = uuid.uuid4().hex[:12]
+    now = datetime.now(UTC).replace(microsecond=0)
+    scope = ObserverTenantScope(f"identity-denial-{suffix}", "observation_processing")
+    other_scope = ObserverTenantScope(
+        f"identity-denial-other-{suffix}",
+        "observation_processing",
+    )
+    identity_ref = f"extid:v1:email:user-{suffix}"
+    mapping_ref = "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    values = {
+        "identity_provider": "email",
+        "identity_ref": identity_ref,
+        "mapping_ref": mapping_ref,
+        "team_ref": "team-sales",
+        "deny_through_revision": 4,
+        "reason": "revoked",
+        "denied_at": now,
+        "idempotency_key": f"identity-authority-deny-{suffix}",
+    }
+    connection = connect()
+    restart = None
+    try:
+        repository = PostgresIdentityResolutionWorkRepository(connection)
+        first = repository.record_authority_denial(scope, **values)
+        restart = connect()
+        restarted = PostgresIdentityResolutionWorkRepository(restart)
+        replay = restarted.record_authority_denial(
+            scope,
+            **{**values, "denied_at": now + timedelta(seconds=1)},
+        )
+        assert replay == first
+        assert restarted.is_denied(
+            scope,
+            "email",
+            identity_ref,
+            "team-sales",
+            mapping_ref,
+            mapping_revision=4,
+        )
+        assert not restarted.is_denied(
+            scope,
+            "email",
+            identity_ref,
+            "team-sales",
+            mapping_ref,
+            mapping_revision=5,
+        )
+        assert not restarted.is_denied(
+            other_scope,
+            "email",
+            identity_ref,
+            "team-sales",
+            mapping_ref,
+            mapping_revision=4,
+        )
+        with pytest.raises(IdentityAuthorityDenialConflict):
+            restarted.record_authority_denial(
+                scope,
+                **{**values, "reason": "superseded"},
+            )
+        with (
+            pytest.raises(Exception, match="permission denied|immutable"),
+            restart.transaction(),
+            restart.cursor() as cursor,
+        ):
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (scope.site_id,))
+            cursor.execute(
+                "DELETE FROM observer.identity_authority_denials "
+                "WHERE site_id = %s AND notice_id = %s",
+                (scope.site_id, first.notice_id),
+            )
+    finally:
+        connection.close()
+        if restart is not None:
+            restart.close()
 
 
 def test_model_fatal_latch_is_restart_safe_scope_isolated_and_immutable() -> None:

@@ -13,10 +13,14 @@ ROOT = Path(__file__).parents[2]
 MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "010_local_pilot_identity_resolution_worker.sql"
 )
+AUTHORITY_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "012_local_pilot_identity_authority_safety.sql"
+)
 NOW = datetime(2026, 8, 10, 9, tzinfo=UTC)
 SCOPE = TenantScope("alpha.example", "observation_processing")
 OTHER_SCOPE = TenantScope("beta.example", "observation_processing")
 IDENTITY_REF = "extid:v1:email:opaque-token"
+MAPPING_REF = "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 
 def _module():
@@ -74,6 +78,83 @@ def test_migration_defines_closed_rls_queue_and_identity_free_metrics() -> None:
         "jsonb",
     ):
         assert forbidden not in sql
+
+
+def test_authority_safety_migration_is_append_only_rls_and_contains_no_target_data() -> None:
+    sql = AUTHORITY_MIGRATION.read_text(encoding="utf-8").lower()
+
+    assert "create table if not exists observer.identity_authority_denials" in sql
+    assert "enable row level security" in sql
+    assert "force row level security" in sql
+    assert "identity_authority_denials_site_isolation" in sql
+    assert "reject_identity_authority_denial_mutation" in sql
+    assert "before update or delete" in sql
+    assert "revoke all on observer.identity_authority_denials from public" in sql
+    assert "grant select, insert" in sql
+    assert "grant select, insert, update" not in sql
+    for forbidden in (
+        "target_ref",
+        "message_body",
+        "display_name",
+        "email_address",
+        "phone_number",
+        "jsonb",
+    ):
+        assert forbidden not in sql
+
+
+def test_in_memory_authority_denial_is_durable_idempotent_and_revision_fenced() -> None:
+    module = _module()
+    repository = module.InMemoryIdentityResolutionWorkRepository()
+    values = {
+        "identity_provider": "email",
+        "identity_ref": IDENTITY_REF,
+        "mapping_ref": MAPPING_REF,
+        "team_ref": "team-sales",
+        "deny_through_revision": 4,
+        "reason": "revoked",
+        "denied_at": NOW,
+        "idempotency_key": "identity-authority-deny-0001",
+    }
+
+    first = repository.record_authority_denial(SCOPE, **values)
+    replay = repository.record_authority_denial(
+        SCOPE,
+        **{**values, "denied_at": NOW + timedelta(minutes=1)},
+    )
+
+    assert replay is first
+    assert repository.is_denied(
+        SCOPE,
+        "email",
+        IDENTITY_REF,
+        "team-sales",
+        MAPPING_REF,
+        mapping_revision=3,
+    )
+    assert repository.is_denied(
+        SCOPE,
+        "email",
+        IDENTITY_REF,
+        "team-sales",
+        MAPPING_REF,
+        mapping_revision=4,
+    )
+    assert not repository.is_denied(
+        SCOPE,
+        "email",
+        IDENTITY_REF,
+        "team-sales",
+        MAPPING_REF,
+        mapping_revision=5,
+    )
+    assert IDENTITY_REF not in repr(first)
+
+    with pytest.raises(module.IdentityAuthorityDenialConflict):
+        repository.record_authority_denial(
+            SCOPE,
+            **{**values, "reason": "superseded"},
+        )
 
 
 def test_enqueue_is_site_scoped_idempotent_and_updates_only_last_seen() -> None:

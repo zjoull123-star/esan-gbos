@@ -26,6 +26,7 @@ WorkStatus = Literal[
 ]
 ResolutionOutcome = Literal["unresolved", "confirmed", "revoked", "conflict"]
 LastResolutionStatus = Literal["unresolved", "confirmed", "revoked"]
+IdentityAuthorityDenialReason = Literal["revoked", "superseded", "target_ineligible"]
 
 _PURPOSE = "observation_processing"
 _PROVIDERS = frozenset({"email", "wecom", "whatsapp", "phone", "manual_import"})
@@ -54,6 +55,9 @@ _ERROR_CODES = frozenset(
 )
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _WORK_ID = re.compile(r"^IRW-[0-9a-f]{64}$")
+_DENIAL_NOTICE_ID = re.compile(r"^IAD-[0-9a-f]{64}$")
+_MAPPING_REF = re.compile(r"^EID-[0-9A-HJKMNP-TV-Z]{26}$")
+_IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{7,255}$")
 _SUBJECT_TAIL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$")
 _PHONE_LIKE = re.compile(r"^[0-9][0-9 ()-]{7,}[0-9]$")
 _WORK_COLUMNS = ", ".join(
@@ -79,10 +83,66 @@ _WORK_COLUMNS = ", ".join(
         "updated_at",
     )
 )
+_DENIAL_COLUMNS = ", ".join(
+    (
+        "site_id",
+        "notice_id",
+        "identity_provider",
+        "identity_ref",
+        "mapping_ref",
+        "team_ref",
+        "deny_through_revision",
+        "reason",
+        "denied_at",
+    )
+)
 
 
 class IdentityResolutionLeaseConflict(RuntimeError):
     """A stale worker no longer owns the current fenced lease."""
+
+
+class IdentityAuthorityDenialConflict(ValueError):
+    """An authority-denial idempotency key was reused for different authority."""
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class IdentityAuthorityDenial:
+    site_id: str
+    notice_id: str
+    identity_provider: str
+    identity_ref: str
+    mapping_ref: str
+    team_ref: str
+    deny_through_revision: int
+    reason: IdentityAuthorityDenialReason
+    denied_at: datetime
+
+    def __post_init__(self) -> None:
+        _validate_scope(TenantScope(self.site_id, _PURPOSE))
+        _safe_identifier(self.notice_id, "denial notice", pattern=_DENIAL_NOTICE_ID)
+        _validate_identity(self.identity_provider, self.identity_ref)
+        _safe_identifier(self.mapping_ref, "mapping", pattern=_MAPPING_REF)
+        _safe_identifier(self.team_ref, "team")
+        _bounded_integer(
+            self.deny_through_revision,
+            "denial revision",
+            minimum=1,
+            maximum=2_147_483_647,
+        )
+        if self.reason not in {"revoked", "superseded", "target_ineligible"}:
+            raise ValueError("invalid identity authority denial reason")
+        _require_aware(self.denied_at, "denied_at")
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(site_id={self.site_id!r}, "
+            f"notice_id={self.notice_id!r}, identity_provider={self.identity_provider!r}, "
+            "identity_ref=<redacted>, "
+            f"mapping_ref={self.mapping_ref!r}, team_ref={self.team_ref!r}, "
+            f"deny_through_revision={self.deny_through_revision}, "
+            f"reason={self.reason!r}, denied_at={self.denied_at!r})"
+        )
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -203,6 +263,31 @@ class IdentityResolutionWorkSnapshot:
 
 
 class IdentityResolutionWorkRepository(Protocol):
+    def record_authority_denial(
+        self,
+        scope: TenantScope,
+        *,
+        identity_provider: str,
+        identity_ref: str,
+        mapping_ref: str,
+        team_ref: str,
+        deny_through_revision: int,
+        reason: IdentityAuthorityDenialReason,
+        denied_at: datetime,
+        idempotency_key: str,
+    ) -> IdentityAuthorityDenial: ...
+
+    def is_denied(
+        self,
+        scope: TenantScope,
+        identity_provider: str,
+        identity_ref: str,
+        team_ref: str,
+        mapping_ref: str,
+        *,
+        mapping_revision: int,
+    ) -> bool: ...
+
     def enqueue(
         self,
         scope: TenantScope,
@@ -273,15 +358,77 @@ class IdentityResolutionWorkRepository(Protocol):
 
 
 class InMemoryIdentityResolutionWorkRepository:
-    __slots__ = ("_items", "_keys", "_metrics")
+    __slots__ = ("_denials", "_items", "_keys", "_metrics")
 
     def __init__(self) -> None:
+        self._denials: dict[tuple[str, str], IdentityAuthorityDenial] = {}
         self._items: dict[tuple[str, str], IdentityResolutionWorkItem] = {}
         self._keys: dict[tuple[str, str, str, str], str] = {}
         self._metrics: dict[str, dict[str, int | datetime | None]] = {}
 
     def __repr__(self) -> str:
         return "InMemoryIdentityResolutionWorkRepository(items=<redacted>)"
+
+    def record_authority_denial(
+        self,
+        scope: TenantScope,
+        *,
+        identity_provider: str,
+        identity_ref: str,
+        mapping_ref: str,
+        team_ref: str,
+        deny_through_revision: int,
+        reason: IdentityAuthorityDenialReason,
+        denied_at: datetime,
+        idempotency_key: str,
+    ) -> IdentityAuthorityDenial:
+        denial = _authority_denial(
+            scope,
+            identity_provider=identity_provider,
+            identity_ref=identity_ref,
+            mapping_ref=mapping_ref,
+            team_ref=team_ref,
+            deny_through_revision=deny_through_revision,
+            reason=reason,
+            denied_at=denied_at,
+            idempotency_key=idempotency_key,
+        )
+        key = (scope.site_id, denial.notice_id)
+        existing = self._denials.get(key)
+        if existing is not None:
+            if _denial_authority_values(existing) == _denial_authority_values(denial):
+                return existing
+            raise IdentityAuthorityDenialConflict("identity authority denial conflict")
+        self._denials[key] = denial
+        return denial
+
+    def is_denied(
+        self,
+        scope: TenantScope,
+        identity_provider: str,
+        identity_ref: str,
+        team_ref: str,
+        mapping_ref: str,
+        *,
+        mapping_revision: int,
+    ) -> bool:
+        _validate_denial_lookup(
+            scope,
+            identity_provider,
+            identity_ref,
+            team_ref,
+            mapping_ref,
+            mapping_revision,
+        )
+        return any(
+            denial.site_id == scope.site_id
+            and denial.identity_provider == identity_provider
+            and denial.identity_ref == identity_ref
+            and denial.team_ref == team_ref
+            and denial.mapping_ref == mapping_ref
+            and denial.deny_through_revision >= mapping_revision
+            for denial in self._denials.values()
+        )
 
     def enqueue(
         self,
@@ -572,6 +719,109 @@ class PostgresIdentityResolutionWorkRepository:
 
     def __repr__(self) -> str:
         return "PostgresIdentityResolutionWorkRepository(connection=<redacted>)"
+
+    def record_authority_denial(
+        self,
+        scope: TenantScope,
+        *,
+        identity_provider: str,
+        identity_ref: str,
+        mapping_ref: str,
+        team_ref: str,
+        deny_through_revision: int,
+        reason: IdentityAuthorityDenialReason,
+        denied_at: datetime,
+        idempotency_key: str,
+    ) -> IdentityAuthorityDenial:
+        denial = _authority_denial(
+            scope,
+            identity_provider=identity_provider,
+            identity_ref=identity_ref,
+            mapping_ref=mapping_ref,
+            team_ref=team_ref,
+            deny_through_revision=deny_through_revision,
+            reason=reason,
+            denied_at=denied_at,
+            idempotency_key=idempotency_key,
+        )
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            _set_scope(cursor, scope)
+            cursor.execute(
+                f"""
+                INSERT INTO observer.identity_authority_denials (
+                    site_id, notice_id, identity_provider, identity_ref,
+                    mapping_ref, team_ref, deny_through_revision, reason, denied_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (site_id, notice_id) DO NOTHING
+                RETURNING {_DENIAL_COLUMNS}
+                """,
+                _denial_values(denial),
+            )
+            row = cursor.fetchone()
+            if row is not None:
+                return _denial_from_row(row)
+            cursor.execute(
+                f"""
+                SELECT {_DENIAL_COLUMNS}
+                FROM observer.identity_authority_denials
+                WHERE site_id = %s AND notice_id = %s
+                """,
+                (scope.site_id, denial.notice_id),
+            )
+            existing_row = cursor.fetchone()
+            if existing_row is None:
+                raise IdentityAuthorityDenialConflict("identity authority denial write rejected")
+            existing = _denial_from_row(existing_row)
+            if _denial_authority_values(existing) != _denial_authority_values(denial):
+                raise IdentityAuthorityDenialConflict("identity authority denial conflict")
+            return existing
+
+    def is_denied(
+        self,
+        scope: TenantScope,
+        identity_provider: str,
+        identity_ref: str,
+        team_ref: str,
+        mapping_ref: str,
+        *,
+        mapping_revision: int,
+    ) -> bool:
+        _validate_denial_lookup(
+            scope,
+            identity_provider,
+            identity_ref,
+            team_ref,
+            mapping_ref,
+            mapping_revision,
+        )
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            _set_scope(cursor, scope)
+            cursor.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM observer.identity_authority_denials AS denial
+                    WHERE denial.site_id = %s
+                      AND denial.identity_provider = %s
+                      AND denial.identity_ref = %s
+                      AND denial.team_ref = %s
+                      AND denial.mapping_ref = %s
+                      AND denial.deny_through_revision >= %s
+                )
+                """,
+                (
+                    scope.site_id,
+                    identity_provider,
+                    identity_ref,
+                    team_ref,
+                    mapping_ref,
+                    mapping_revision,
+                ),
+            )
+            row = cursor.fetchone()
+            if row is None or len(row) != 1 or not isinstance(row[0], bool):
+                raise RuntimeError("identity authority denial lookup returned an invalid row")
+            return row[0]
 
     def enqueue(
         self,
@@ -1080,6 +1330,91 @@ def _work_id(site_id: str, provider: str, identity_ref: str, team_ref: str) -> s
     return f"IRW-{digest}"
 
 
+def _authority_denial(
+    scope: TenantScope,
+    *,
+    identity_provider: str,
+    identity_ref: str,
+    mapping_ref: str,
+    team_ref: str,
+    deny_through_revision: int,
+    reason: IdentityAuthorityDenialReason,
+    denied_at: datetime,
+    idempotency_key: str,
+) -> IdentityAuthorityDenial:
+    _validate_scope(scope)
+    if not isinstance(idempotency_key, str) or _IDEMPOTENCY_KEY.fullmatch(idempotency_key) is None:
+        raise ValueError("invalid identity authority denial idempotency key")
+    digest = hashlib.sha256(
+        f"identity-authority-denial-v1\x1f{scope.site_id}\x1f{idempotency_key}".encode()
+    ).hexdigest()
+    return IdentityAuthorityDenial(
+        site_id=scope.site_id,
+        notice_id=f"IAD-{digest}",
+        identity_provider=identity_provider,
+        identity_ref=identity_ref,
+        mapping_ref=mapping_ref,
+        team_ref=team_ref,
+        deny_through_revision=deny_through_revision,
+        reason=reason,
+        denied_at=denied_at,
+    )
+
+
+def _validate_denial_lookup(
+    scope: TenantScope,
+    identity_provider: str,
+    identity_ref: str,
+    team_ref: str,
+    mapping_ref: str,
+    mapping_revision: int,
+) -> None:
+    _validate_scope(scope)
+    _validate_identity(identity_provider, identity_ref)
+    _safe_identifier(team_ref, "team")
+    _safe_identifier(mapping_ref, "mapping", pattern=_MAPPING_REF)
+    _bounded_integer(
+        mapping_revision,
+        "mapping revision",
+        minimum=1,
+        maximum=2_147_483_647,
+    )
+
+
+def _denial_values(denial: IdentityAuthorityDenial) -> tuple[Any, ...]:
+    return (
+        denial.site_id,
+        denial.notice_id,
+        denial.identity_provider,
+        denial.identity_ref,
+        denial.mapping_ref,
+        denial.team_ref,
+        denial.deny_through_revision,
+        denial.reason,
+        denial.denied_at,
+    )
+
+
+def _denial_authority_values(denial: IdentityAuthorityDenial) -> tuple[Any, ...]:
+    return _denial_values(denial)[:-1]
+
+
+def _denial_from_row(row: tuple[Any, ...]) -> IdentityAuthorityDenial:
+    if len(row) != 9:
+        raise RuntimeError("identity authority denial returned an invalid row")
+    return IdentityAuthorityDenial(
+        site_id=str(row[0]),
+        notice_id=str(row[1]),
+        identity_provider=str(row[2]),
+        identity_ref=str(row[3]),
+        mapping_ref=str(row[4]),
+        team_ref=str(row[5]),
+        deny_through_revision=int(row[6]),
+        reason=str(row[7]),  # type: ignore[arg-type]
+        denied_at=row[8],
+    )
+
+
 def _validate_enqueue(
     scope: TenantScope,
     provider: str,
@@ -1304,6 +1639,8 @@ def _lease_conflict() -> IdentityResolutionLeaseConflict:
 
 
 __all__ = [
+    "IdentityAuthorityDenial",
+    "IdentityAuthorityDenialConflict",
     "IdentityResolutionLeaseConflict",
     "IdentityResolutionWorkClaim",
     "IdentityResolutionWorkItem",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -23,6 +24,13 @@ _DB_SET_PROTECTED_FIELDS = frozenset(
         "revision",
     }
 )
+_AUTHORITY_MAPPING_FIELDS = [
+    "name",
+    "revision",
+    "team",
+    "identity_provider",
+    "external_subject",
+]
 
 
 def validate_external_subject(provider: object, external_subject: object) -> None:
@@ -70,6 +78,134 @@ def _value(source: object, fieldname: str, default: Any = None) -> Any:
     return getattr(source, fieldname, default)
 
 
+def _active_authority_mappings(filters: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    page_size = 500
+    while True:
+        page = frappe.get_all(
+            "GBOS External Identity",
+            filters={
+                **filters,
+                "review_status": "Approved",
+                "business_status": "Active",
+            },
+            fields=_AUTHORITY_MAPPING_FIELDS,
+            limit_start=len(rows),
+            limit_page_length=page_size,
+        )
+        rows.extend(dict(row) for row in page)
+        if len(page) < page_size:
+            return rows
+
+
+def _deny_mapping_authority(
+    mapping: object,
+    *,
+    reason: str,
+    mapping_revision: int | None = None,
+) -> None:
+    revision = (
+        int(_value(mapping, "revision") or 0) if mapping_revision is None else mapping_revision
+    )
+    mapping_ref = str(_value(mapping, "name") or "")
+    digest = hashlib.sha256(
+        f"identity-authority-denial-v1\0{mapping_ref}\0{revision}\0{reason}".encode()
+    ).hexdigest()
+    idempotency_key = f"identity-authority-deny-{digest}"
+    payload = {
+        "identity_provider": _value(mapping, "identity_provider"),
+        "external_subject_ref": _value(mapping, "external_subject"),
+        "mapping_ref": mapping_ref,
+        "team_ref": _value(mapping, "team"),
+        "deny_through_revision": revision,
+        "reason": reason,
+        "idempotency_key": idempotency_key,
+    }
+    from esan_gbos.api.v4.gateway import call_local
+
+    response = call_local(
+        "Observer",
+        method="POST",
+        path="/internal/v1/identity-authority/deny",
+        purpose="identity_authority",
+        payload=payload,
+        idempotency_key=idempotency_key,
+    )
+    if response != {
+        "denial": {
+            "mapping_ref": mapping_ref,
+            "deny_through_revision": revision,
+            "status": "denied",
+        }
+    }:
+        frappe.throw(
+            "Observer identity authority denial could not be verified",
+            title="Identity authority unavailable",
+        )
+
+
+def deny_ineligible_user_mappings(doc: object, method: str | None = None) -> None:
+    if method != "on_trash" and int(_value(doc, "enabled") or 0) == 1:
+        return
+    for mapping in _active_authority_mappings(
+        {"identity_type": "User", "user": str(_value(doc, "name") or "")}
+    ):
+        _deny_mapping_authority(mapping, reason="target_ineligible")
+
+
+def deny_ineligible_team_member_mappings(doc: object, method: str | None = None) -> None:
+    memberships: set[tuple[str, str]] = set()
+    parent = str(_value(doc, "parent") or "")
+    user = str(_value(doc, "user") or "")
+    if method == "on_trash" or int(_value(doc, "enabled") or 0) != 1:
+        memberships.add((parent, user))
+    before_getter = getattr(doc, "get_doc_before_save", None)
+    before = before_getter() if callable(before_getter) else None
+    if before is not None:
+        previous = (str(_value(before, "parent") or ""), str(_value(before, "user") or ""))
+        if int(_value(before, "enabled") or 0) == 1 and (
+            previous != (parent, user) or int(_value(doc, "enabled") or 0) != 1
+        ):
+            memberships.add(previous)
+    for team_ref, user_ref in sorted(memberships):
+        for mapping in _active_authority_mappings(
+            {"identity_type": "User", "user": user_ref, "team": team_ref}
+        ):
+            _deny_mapping_authority(mapping, reason="target_ineligible")
+
+
+def _enabled_member_users(doc: object) -> set[str]:
+    members = _value(doc, "members", ()) or ()
+    return {
+        str(_value(member, "user") or "")
+        for member in members
+        if int(_value(member, "enabled") or 0) == 1 and _value(member, "user")
+    }
+
+
+def deny_removed_team_member_mappings(doc: object, method: str | None = None) -> None:
+    before_getter = getattr(doc, "get_doc_before_save", None)
+    before = before_getter() if callable(before_getter) else None
+    previous_members = _enabled_member_users(before or doc)
+    current_members = set() if method == "on_trash" else _enabled_member_users(doc)
+    team_ref = str(_value(doc, "name") or "")
+    for user_ref in sorted(previous_members - current_members):
+        for mapping in _active_authority_mappings(
+            {"identity_type": "User", "user": user_ref, "team": team_ref}
+        ):
+            _deny_mapping_authority(mapping, reason="target_ineligible")
+
+
+def deny_ineligible_party_mappings(doc: object, method: str | None = None) -> None:
+    party_ref = str(_value(doc, "name") or "")
+    current_team = str(_value(doc, "team") or "")
+    for mapping in _active_authority_mappings(
+        {"identity_type": "Party", "party_profile": party_ref}
+    ):
+        if method == "on_trash" or str(mapping.get("team") or "") != current_team:
+            _deny_mapping_authority(mapping, reason="target_ineligible")
+
+
 class GBOSExternalIdentity(GBOSDocument):
     def on_trash(self) -> None:
         raise frappe.PermissionError
@@ -99,6 +235,7 @@ class GBOSExternalIdentity(GBOSDocument):
         self._validate_duplicate()
         self._protect_governed_state()
         super().validate()
+        self._deny_observer_self_access_before_authority_loss()
 
     def _validate_subject_reference(self) -> None:
         try:
@@ -121,19 +258,28 @@ class GBOSExternalIdentity(GBOSDocument):
         if not valid_target:
             frappe.throw("identity target does not match its closed type", title="Invalid target")
 
-        if identity_type == "User" and (
-            int(frappe.db.get_value("User", user, "enabled") or 0) != 1
-            or not frappe.db.exists(
-                "GBOS Team Member",
-                {"parent": self.team, "user": user, "enabled": 1},
+        requires_live_target = self.business_status not in {"Revoked", "Archived"} and (
+            self.review_status not in {"Rejected", "Superseded"}
+        )
+        if (
+            requires_live_target
+            and identity_type == "User"
+            and (
+                int(frappe.db.get_value("User", user, "enabled") or 0) != 1
+                or not frappe.db.exists(
+                    "GBOS Team Member",
+                    {"parent": self.team, "user": user, "enabled": 1},
+                )
             )
         ):
             frappe.throw(
                 "identity target must be enabled and belong to the same team",
                 title="Invalid target",
             )
-        if identity_type == "Party" and (
-            frappe.db.get_value("GBOS Party Profile", party_profile, "team") != self.team
+        if (
+            requires_live_target
+            and identity_type == "Party"
+            and (frappe.db.get_value("GBOS Party Profile", party_profile, "team") != self.team)
         ):
             frappe.throw(
                 "identity target must belong to the same team",
@@ -201,10 +347,32 @@ class GBOSExternalIdentity(GBOSDocument):
                 if self.get(fieldname) != _value(before, fieldname):
                     raise frappe.PermissionError
 
+    def _deny_observer_self_access_before_authority_loss(self) -> None:
+        before = self.get_doc_before_save()
+        if before is None:
+            return
+        reason: str | None = None
+        if self.business_status == "Revoked" and _value(before, "business_status") != "Revoked":
+            reason = "revoked"
+        elif self.review_status == "Superseded" and _value(before, "review_status") != "Superseded":
+            reason = "superseded"
+        if reason is None:
+            return
+
+        _deny_mapping_authority(
+            self,
+            reason=reason,
+            mapping_revision=int(_value(before, "revision") or 0),
+        )
+
 
 __all__ = [
     "GBOSExternalIdentity",
     "IDENTITY_PROVIDERS",
+    "deny_ineligible_party_mappings",
+    "deny_ineligible_team_member_mappings",
+    "deny_ineligible_user_mappings",
+    "deny_removed_team_member_mappings",
     "is_authoritative_mapping",
     "review_state_for_decision",
     "validate_external_subject",

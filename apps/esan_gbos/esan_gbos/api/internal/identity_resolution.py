@@ -202,6 +202,8 @@ def _resolve_lookup(site_id: str, lookup: dict[str, Any]) -> dict[str, Any]:
     expected_revision = lookup.get("expected_mapping_revision")
     if expected_revision is not None and revision != expected_revision:
         raise _APIError("mapping_revision_conflict", 409)
+    if row.get("business_status") == "Active" and row.get("target_eligible") != 1:
+        raise _APIError("mapping_not_resolved", 404)
 
     target_type = row.get("target_type")
     user_ref = row.get("user_ref")
@@ -235,18 +237,42 @@ def _mapping_rows(*, provider: str, external_subject: str) -> list[dict[str, Any
     rows = frappe.db.sql(
         """
         select
-            `name` as `mapping_ref`,
-            `revision` as `mapping_revision`,
-            `team` as `team_ref`,
-            `identity_type` as `target_type`,
-            `user` as `user_ref`,
-            `party_profile` as `party_ref`,
-            `review_status`,
-            `business_status`,
-            `modified` as `resolved_at`
-        from `tabGBOS External Identity`
-        where `identity_provider` = %(identity_provider)s
-          and `external_subject` = %(external_subject)s
+            mapping.`name` as `mapping_ref`,
+            mapping.`revision` as `mapping_revision`,
+            mapping.`team` as `team_ref`,
+            mapping.`identity_type` as `target_type`,
+            mapping.`user` as `user_ref`,
+            mapping.`party_profile` as `party_ref`,
+            mapping.`review_status`,
+            mapping.`business_status`,
+            mapping.`modified` as `resolved_at`,
+            case
+                when mapping.`identity_type` = 'User' then
+                    exists (
+                        select 1
+                        from `tabUser` as target_user
+                        where target_user.`name` = mapping.`user`
+                          and target_user.`enabled` = 1
+                    )
+                    and exists (
+                        select 1
+                        from `tabGBOS Team Member` as target_member
+                        where target_member.`parent` = mapping.`team`
+                          and target_member.`user` = mapping.`user`
+                          and target_member.`enabled` = 1
+                    )
+                when mapping.`identity_type` = 'Party' then
+                    exists (
+                        select 1
+                        from `tabGBOS Party Profile` as target_party
+                        where target_party.`name` = mapping.`party_profile`
+                          and target_party.`team` = mapping.`team`
+                    )
+                else 0
+            end as `target_eligible`
+        from `tabGBOS External Identity` as mapping
+        where mapping.`identity_provider` = %(identity_provider)s
+          and mapping.`external_subject` = %(external_subject)s
         limit 3
         """,
         {

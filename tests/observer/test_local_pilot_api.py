@@ -4,6 +4,7 @@ import json
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -119,6 +120,18 @@ class FakeIdentityResolutionMetrics:
         return self.value
 
 
+class FakeIdentityAuthorityDenials:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def record_authority_denial(self, scope: TenantScope, **values: Any) -> Any:
+        self.calls.append({"scope": scope, **values})
+        return SimpleNamespace(
+            mapping_ref=values["mapping_ref"],
+            deny_through_revision=values["deny_through_revision"],
+        )
+
+
 def _metrics_snapshot(
     *,
     ready: bool = True,
@@ -186,6 +199,7 @@ def _app(
     metrics: FakeIdentityResolutionMetrics | None = None,
     clock: Callable[[], datetime] | None = None,
     enabled: bool = True,
+    denials: FakeIdentityAuthorityDenials | None = None,
 ) -> tuple[FastAPI, FakeControlService, FakeReadService]:
     control = FakeControlService()
     reader = FakeReadService()
@@ -196,8 +210,71 @@ def _app(
         guard=LocalPilotRuntimeGuard(enabled=enabled, kill_switch=not enabled),
         clock=clock or (lambda: NOW),
         identity_resolution_metrics=metrics,
+        identity_authority_denials=denials,
     )
     return app, control, reader
+
+
+def test_identity_authority_denial_is_authenticated_idempotent_and_redacted() -> None:
+    denials = FakeIdentityAuthorityDenials()
+    app, _control, _reader = _app(denials=denials)
+    client = TestClient(app)
+    payload = {
+        "identity_provider": "email",
+        "external_subject_ref": "extid:v1:email:opaque-private-sentinel",
+        "mapping_ref": "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "team_ref": "TEM-SALES",
+        "deny_through_revision": 4,
+        "reason": "revoked",
+        "idempotency_key": "identity-authority-deny-0001",
+    }
+
+    unauthenticated = client.post(
+        "/internal/v1/identity-authority/deny",
+        json=payload,
+    )
+    mismatch = client.post(
+        "/internal/v1/identity-authority/deny",
+        headers=_headers(
+            purpose="identity_authority",
+            **{"Idempotency-Key": "identity-authority-deny-other"},
+        ),
+        json=payload,
+    )
+    accepted = client.post(
+        "/internal/v1/identity-authority/deny",
+        headers=_headers(
+            purpose="identity_authority",
+            **{"Idempotency-Key": payload["idempotency_key"]},
+        ),
+        json=payload,
+    )
+
+    assert unauthenticated.status_code == 401
+    assert mismatch.status_code == 409
+    assert accepted.status_code == 200
+    assert accepted.headers["cache-control"] == "no-store"
+    assert accepted.json()["data"] == {
+        "denial": {
+            "mapping_ref": payload["mapping_ref"],
+            "deny_through_revision": 4,
+            "status": "denied",
+        }
+    }
+    assert "opaque-private-sentinel" not in accepted.text
+    assert denials.calls == [
+        {
+            "scope": TenantScope("alpha.example", "observation_processing"),
+            "identity_provider": "email",
+            "identity_ref": payload["external_subject_ref"],
+            "mapping_ref": payload["mapping_ref"],
+            "team_ref": "TEM-SALES",
+            "deny_through_revision": 4,
+            "reason": "revoked",
+            "denied_at": NOW,
+            "idempotency_key": payload["idempotency_key"],
+        }
+    ]
 
 
 def test_identity_resolution_metrics_are_authenticated_db_snapshot_prometheus_text() -> None:

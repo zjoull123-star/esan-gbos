@@ -38,8 +38,13 @@ MODEL = {"name": "deepseek-v4-flash", "version": "2026-08-08"}
 
 
 class _AuthorityFreshness:
-    def __init__(self, fresh_identity_refs: frozenset[str]) -> None:
-        self.fresh_identity_refs = fresh_identity_refs
+    def __init__(
+        self,
+        fresh_identity_refs: frozenset[str],
+        denied_identity_refs: frozenset[str] = frozenset(),
+    ) -> None:
+        self.fresh_identity_refs = set(fresh_identity_refs)
+        self.denied_identity_refs = set(denied_identity_refs)
         self.calls: list[tuple[str, str, str, datetime, timedelta]] = []
 
     def is_confirmed_fresh(
@@ -56,6 +61,22 @@ class _AuthorityFreshness:
         assert identity_provider == "email"
         self.calls.append((identity_ref, team_ref, identity_provider, now, max_age))
         return identity_ref in self.fresh_identity_refs
+
+    def is_denied(
+        self,
+        scope: TenantScope,
+        identity_provider: str,
+        identity_ref: str,
+        team_ref: str,
+        mapping_ref: str,
+        *,
+        mapping_revision: int,
+    ) -> bool:
+        del mapping_ref, mapping_revision
+        assert scope == SCOPE
+        assert identity_provider == "email"
+        assert team_ref == "team-sales"
+        return identity_ref in self.denied_identity_refs
 
 
 class _SqlCursor:
@@ -340,7 +361,59 @@ def test_confirmed_user_projection_grants_self_access_but_raw_participant_never_
     assert actor not in repr(outside_team)
 
 
-def test_postgres_self_access_requires_nonterminal_fresh_confirmed_authority() -> None:
+def test_durable_authority_denial_blocks_self_access_before_worker_polling() -> None:
+    from observer.identity_resolution import InMemoryIdentityResolutionRepository
+    from observer.read_service import InMemoryCommunicationRepository
+
+    subject = "extid:v1:email:user-opaque"
+    actor = "protected-user@example.invalid"
+    resolution = _identity_resolution(
+        subject=subject,
+        target_type="User",
+        target_ref=actor,
+        revision=4,
+    )
+    identity_repository = InMemoryIdentityResolutionRepository()
+    identity_repository.record(SCOPE, resolution)
+    authority = _AuthorityFreshness(frozenset({subject}))
+    repository = InMemoryCommunicationRepository(
+        identity_repository=identity_repository,
+        authority_freshness=authority,
+        clock=lambda: NOW + timedelta(hours=1),
+    )
+    repository.put(
+        SCOPE,
+        CommunicationDetail(
+            summary=replace(SUMMARY, party_ref=None, actor_refs=frozenset()),
+            evidence=(),
+            fact_proposals=(),
+            association_suggestions=(),
+            model=MODEL,
+            original_text=None,
+        ),
+        participant_refs=(subject,),
+    )
+    reader = LocalPilotReadService(repository=repository, cursor_secret=b"x" * 32)
+    self_access = CommunicationAccess(
+        team_refs=frozenset({"team-finance"}),
+        actor_ref=actor,
+    )
+
+    assert [
+        item.observation_id
+        for item in reader.list_communications(SCOPE, self_access).communications
+    ] == ["event-001"]
+
+    authority.denied_identity_refs.add(subject)
+
+    assert reader.list_communications(SCOPE, self_access).communications == ()
+    with pytest.raises(ScopeMismatch):
+        reader.get_communication(SCOPE, self_access, observation_id="event-001")
+    latest = identity_repository.latest(SCOPE, "email", subject)
+    assert latest is resolution and latest.status == "confirmed"
+
+
+def test_postgres_self_access_requires_current_fresh_undenied_confirmed_authority() -> None:
     connection = _SqlConnection([[]])
     repository = PostgresCommunicationRepository(connection=connection)
 
@@ -362,12 +435,14 @@ def test_postgres_self_access_requires_nonterminal_fresh_confirmed_authority() -
 
     query, _params = connection.executed[1]
     assert query.count("observer.identity_resolution_work") >= 2
+    assert query.count("observer.identity_authority_denials") >= 2
     assert "authority.last_resolution_status = 'confirmed'" in query
-    assert "authority.status NOT IN ('conflict', 'dead_letter')" in query
+    assert "authority.status = 'confirmed'" in query
     assert "authority.identity_ref = actor.identity_ref" in query
     assert "authority.team_ref = event.team_ref" in query
     assert "current_timestamp - make_interval" in query
     assert "secs => 7200" in query
+    assert "denial.deny_through_revision >= latest_actor.mapping_revision" in query
     assert timedelta(hours=2) == IDENTITY_SELF_ACCESS_MAX_AGE
 
 
@@ -678,4 +753,11 @@ def test_postgres_detail_projects_closed_identity_and_separate_connector_owner()
     assert "resolution.team_ref = CAST(%s AS text)" in identity_sql
     assert "resolution.target_ref" not in identity_sql
     assert "participant.display_name" not in identity_sql
-    assert identity_params == ("team-sales", SCOPE.site_id, "event-001")
+    assert "observer.identity_authority_denials" in identity_sql
+    assert "deny_through_revision >= latest.mapping_revision" in identity_sql
+    assert identity_params == (
+        "team-sales",
+        "team-sales",
+        SCOPE.site_id,
+        "event-001",
+    )

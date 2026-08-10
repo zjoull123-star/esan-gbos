@@ -20,7 +20,11 @@ from .control_service import (
     IdempotencyConflict,
     RevisionConflict,
 )
-from .identity_resolution_work import IdentityResolutionWorkSnapshot
+from .identity_resolution_work import (
+    IdentityAuthorityDenial,
+    IdentityAuthorityDenialConflict,
+    IdentityResolutionWorkSnapshot,
+)
 from .models import ConnectorKey, TenantScope, _require_aware
 from .read_service import (
     CommunicationAccess,
@@ -153,6 +157,22 @@ class IdentityResolutionMetrics(Protocol):
     ) -> IdentityResolutionWorkSnapshot: ...
 
 
+class IdentityAuthorityDenials(Protocol):
+    def record_authority_denial(
+        self,
+        scope: TenantScope,
+        *,
+        identity_provider: str,
+        identity_ref: str,
+        mapping_ref: str,
+        team_ref: str,
+        deny_through_revision: int,
+        reason: Literal["revoked", "superseded", "target_ineligible"],
+        denied_at: datetime,
+        idempotency_key: str,
+    ) -> IdentityAuthorityDenial: ...
+
+
 class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -193,6 +213,16 @@ class CommunicationGetRequest(_ClosedModel):
     observation_id: str = Field(min_length=1, max_length=256)
 
 
+class IdentityAuthorityDenyRequest(_ClosedModel):
+    identity_provider: Literal["email", "wecom", "whatsapp", "phone", "manual_import"]
+    external_subject_ref: str = Field(min_length=1, max_length=160)
+    mapping_ref: str = Field(pattern=r"^EID-[0-9A-HJKMNP-TV-Z]{26}$")
+    team_ref: str = Field(min_length=1, max_length=256)
+    deny_through_revision: int = Field(ge=1, le=2_147_483_647)
+    reason: Literal["revoked", "superseded", "target_ineligible"]
+    idempotency_key: str = Field(min_length=8, max_length=256)
+
+
 def create_local_pilot_app(
     *,
     config: LocalPilotAPIConfig,
@@ -201,6 +231,7 @@ def create_local_pilot_app(
     guard: LocalPilotRuntimeGuard,
     clock: Clock,
     identity_resolution_metrics: IdentityResolutionMetrics | None = None,
+    identity_authority_denials: IdentityAuthorityDenials | None = None,
 ) -> FastAPI:
     """Create the authenticated Frappe v4 downstream surface without starting I/O."""
 
@@ -211,6 +242,11 @@ def create_local_pilot_app(
         redoc_url=None,
         openapi_url=None,
     )
+    active_identity_authority_denials = identity_authority_denials
+    if active_identity_authority_denials is None and callable(
+        getattr(identity_resolution_metrics, "record_authority_denial", None)
+    ):
+        active_identity_authority_denials = identity_resolution_metrics  # type: ignore[assignment]
 
     @application.middleware("http")
     async def governed_boundary(
@@ -233,6 +269,14 @@ def create_local_pilot_app(
 
     @application.exception_handler(IdempotencyConflict)
     async def idempotency_conflict(request: Request, exc: IdempotencyConflict) -> JSONResponse:
+        del exc
+        return _error(request, 409, "idempotency_conflict")
+
+    @application.exception_handler(IdentityAuthorityDenialConflict)
+    async def authority_denial_conflict(
+        request: Request,
+        exc: IdentityAuthorityDenialConflict,
+    ) -> JSONResponse:
         del exc
         return _error(request, 409, "idempotency_conflict")
 
@@ -442,6 +486,48 @@ def create_local_pilot_app(
             {"communication": detail.as_dict()},
             site_id=scope.site_id,
             request_id=request_id,
+        )
+
+    @application.post("/internal/v1/identity-authority/deny")
+    def deny_identity_authority(
+        request: Request,
+        payload: Annotated[IdentityAuthorityDenyRequest, Body()],
+    ) -> dict[str, object]:
+        guard.require_running()
+        scope, current_request_id = _governed_scope(
+            request,
+            expected_purpose="identity_authority",
+        )
+        header_key = request.headers.get("idempotency-key")
+        if header_key is None:
+            raise ValueError("idempotency key header is required")
+        if not hmac.compare_digest(header_key, payload.idempotency_key):
+            raise IdempotencyConflict("header and body idempotency keys differ")
+        if active_identity_authority_denials is None:
+            raise KillSwitchEngaged("identity authority denial storage is unavailable")
+        denied_at = clock()
+        _require_aware(denied_at, "identity authority clock")
+        denial = active_identity_authority_denials.record_authority_denial(
+            scope,
+            identity_provider=payload.identity_provider,
+            identity_ref=payload.external_subject_ref,
+            mapping_ref=payload.mapping_ref,
+            team_ref=payload.team_ref,
+            deny_through_revision=payload.deny_through_revision,
+            reason=payload.reason,
+            denied_at=denied_at.astimezone(UTC),
+            idempotency_key=payload.idempotency_key,
+        )
+        return _bff_envelope(
+            {
+                "denial": {
+                    "mapping_ref": denial.mapping_ref,
+                    "deny_through_revision": denial.deny_through_revision,
+                    "status": "denied",
+                }
+            },
+            site_id=scope.site_id,
+            request_id=current_request_id,
         )
 
     return application

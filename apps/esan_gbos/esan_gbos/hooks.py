@@ -125,6 +125,44 @@ doc_events = {
 doc_events["User"] = {
     "before_validate": "esan_gbos.ceo_access.ensure_ceo_full_access",
 }
+doc_events["User"]["on_update"] = (
+    "esan_gbos.gbos.doctype.gbos_external_identity.gbos_external_identity."
+    "deny_ineligible_user_mappings"
+)
+doc_events["User"]["on_trash"] = (
+    "esan_gbos.gbos.doctype.gbos_external_identity.gbos_external_identity."
+    "deny_ineligible_user_mappings"
+)
+doc_events["GBOS Team Member"] = {
+    "on_update": (
+        "esan_gbos.gbos.doctype.gbos_external_identity.gbos_external_identity."
+        "deny_ineligible_team_member_mappings"
+    ),
+    "on_trash": (
+        "esan_gbos.gbos.doctype.gbos_external_identity.gbos_external_identity."
+        "deny_ineligible_team_member_mappings"
+    ),
+}
+doc_events["GBOS Team"] = {
+    "on_update": (
+        "esan_gbos.gbos.doctype.gbos_external_identity.gbos_external_identity."
+        "deny_removed_team_member_mappings"
+    ),
+    "on_trash": (
+        "esan_gbos.gbos.doctype.gbos_external_identity.gbos_external_identity."
+        "deny_removed_team_member_mappings"
+    ),
+}
+doc_events["GBOS Party Profile"] = {
+    "on_update": (
+        "esan_gbos.gbos.doctype.gbos_external_identity.gbos_external_identity."
+        "deny_ineligible_party_mappings"
+    ),
+    "on_trash": (
+        "esan_gbos.gbos.doctype.gbos_external_identity.gbos_external_identity."
+        "deny_ineligible_party_mappings"
+    ),
+}
 
 for _draft_doctype in (
     "GBOS Work Item",

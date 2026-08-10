@@ -20,6 +20,8 @@ CONTROLLER = (
     / "gbos_external_identity"
     / "gbos_external_identity.py"
 )
+HOOKS = ROOT / "apps" / "esan_gbos" / "esan_gbos" / "hooks.py"
+MAPPING_REF = "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 
 class _PermissionError(Exception):
@@ -67,11 +69,31 @@ class _Frappe(ModuleType):
         self.PermissionError = _PermissionError
         self.ValidationError = _ValidationError
         self.db = _Database()
+        self.observer_calls: list[dict[str, Any]] = []
+        self.observer_error: Exception | None = None
+        self.mappings: list[dict[str, Any]] = []
 
     @staticmethod
     def throw(message: str, **kwargs: Any) -> None:
         del kwargs
         raise _ValidationError(message)
+
+    def get_all(
+        self,
+        doctype: str,
+        *,
+        filters: dict[str, Any],
+        fields: list[str],
+        limit_page_length: int,
+        limit_start: int = 0,
+    ) -> list[dict[str, Any]]:
+        assert doctype == "GBOS External Identity"
+        matched = [
+            {field: row.get(field) for field in fields}
+            for row in self.mappings
+            if all(row.get(field) == expected for field, expected in filters.items())
+        ]
+        return matched[limit_start : limit_start + limit_page_length]
 
 
 class _Base:
@@ -93,6 +115,8 @@ class _Base:
 
     def validate(self) -> None:
         self.base_validated = True
+        if self._before is not None:
+            self.revision = int(getattr(self, "revision", 0) or 0) + 1
 
     def db_set(self, fieldname: str, value: Any = None, **kwargs: Any) -> None:
         del kwargs
@@ -106,8 +130,26 @@ def authority_module() -> Generator[tuple[Any, _Frappe]]:
     fake_base.GBOSDocument = _Base
     original_frappe = sys.modules.get("frappe")
     original_base = sys.modules.get("esan_gbos.gbos.doctype.base")
+    original_gateway = sys.modules.get("esan_gbos.api.v4.gateway")
+    fake_gateway = ModuleType("esan_gbos.api.v4.gateway")
+
+    def call_local(service: str, **kwargs: Any) -> dict[str, Any]:
+        fake_frappe.observer_calls.append({"service": service, **kwargs})
+        if fake_frappe.observer_error is not None:
+            raise fake_frappe.observer_error
+        payload = kwargs["payload"]
+        return {
+            "denial": {
+                "mapping_ref": payload["mapping_ref"],
+                "deny_through_revision": payload["deny_through_revision"],
+                "status": "denied",
+            }
+        }
+
+    fake_gateway.call_local = call_local  # type: ignore[attr-defined]
     sys.modules["frappe"] = fake_frappe
     sys.modules["esan_gbos.gbos.doctype.base"] = fake_base
+    sys.modules["esan_gbos.api.v4.gateway"] = fake_gateway
     spec = importlib.util.spec_from_file_location("_external_identity_authority_test", CONTROLLER)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -121,6 +163,10 @@ def authority_module() -> Generator[tuple[Any, _Frappe]]:
         sys.modules.pop("esan_gbos.gbos.doctype.base", None)
     else:
         sys.modules["esan_gbos.gbos.doctype.base"] = original_base
+    if original_gateway is None:
+        sys.modules.pop("esan_gbos.api.v4.gateway", None)
+    else:
+        sys.modules["esan_gbos.api.v4.gateway"] = original_gateway
 
 
 @pytest.mark.parametrize(
@@ -173,7 +219,7 @@ def test_external_subject_rejects_raw_mismatched_or_unbounded_values_without_ech
 def _identity(module: Any, **overrides: Any) -> Any:
     values: dict[str, Any] = {
         "doctype": "GBOS External Identity",
-        "name": "EID-01",
+        "name": MAPPING_REF,
         "team": "TEM-01",
         "identity_provider": "email",
         "external_subject": "extid:v1:email:Opaque01",
@@ -367,3 +413,296 @@ def test_review_outcome_rejects_non_decisions(
 
     with pytest.raises(ValueError, match="review decision"):
         module.review_state_for_decision("Pending")
+
+
+@pytest.mark.parametrize(
+    ("before_status", "after_status", "reason"),
+    (
+        (
+            {"review_status": "Approved", "business_status": "Active"},
+            {"review_status": "Approved", "business_status": "Revoked"},
+            "revoked",
+        ),
+        (
+            {"review_status": "Pending", "business_status": "Active"},
+            {"review_status": "Superseded", "business_status": "Archived"},
+            "superseded",
+        ),
+    ),
+)
+def test_revocation_and_supersession_durably_deny_observer_before_save_returns(
+    authority_module: tuple[Any, _Frappe],
+    before_status: dict[str, str],
+    after_status: dict[str, str],
+    reason: str,
+) -> None:
+    module, fake = authority_module
+    before = SimpleNamespace(
+        revision=4,
+        identity_provider="email",
+        external_subject="extid:v1:email:Opaque01",
+        identity_type="User",
+        user="member@example.invalid",
+        party_profile=None,
+        team="TEM-01",
+        **before_status,
+    )
+    mapping = _identity(module, _before=before, revision=4, **after_status)
+    mapping.flags.gbos_identity_status_command = True
+    mapping.flags.gbos_identity_review_decision = reason == "superseded"
+
+    mapping.validate()
+
+    assert mapping.base_validated is True
+    assert mapping.revision == 5
+    assert len(fake.observer_calls) == 1
+    call = fake.observer_calls[0]
+    assert call["service"] == "Observer"
+    assert call["method"] == "POST"
+    assert call["path"] == "/internal/v1/identity-authority/deny"
+    assert call["purpose"] == "identity_authority"
+    assert call["payload"] == {
+        "identity_provider": "email",
+        "external_subject_ref": "extid:v1:email:Opaque01",
+        "mapping_ref": MAPPING_REF,
+        "team_ref": "TEM-01",
+        "deny_through_revision": 4,
+        "reason": reason,
+        "idempotency_key": call["idempotency_key"],
+    }
+    assert call["payload"]["deny_through_revision"] < mapping.revision
+    assert "member@example.invalid" not in repr(call)
+
+
+def test_authority_loss_is_rejected_when_observer_denial_is_not_durable(
+    authority_module: tuple[Any, _Frappe],
+) -> None:
+    module, fake = authority_module
+    before = SimpleNamespace(
+        revision=4,
+        review_status="Approved",
+        business_status="Active",
+        identity_provider="email",
+        external_subject="extid:v1:email:Opaque01",
+        identity_type="User",
+        user="member@example.invalid",
+        party_profile=None,
+        team="TEM-01",
+    )
+    mapping = _identity(
+        module,
+        _before=before,
+        revision=4,
+        review_status="Approved",
+        business_status="Revoked",
+    )
+    mapping.flags.gbos_identity_status_command = True
+    fake.observer_error = RuntimeError("private observer failure")
+
+    with pytest.raises(RuntimeError, match="private observer failure"):
+        mapping.validate()
+
+    assert len(fake.observer_calls) == 1
+
+
+def test_invalid_status_bypass_cannot_emit_an_observer_denial(
+    authority_module: tuple[Any, _Frappe],
+) -> None:
+    module, fake = authority_module
+    before = SimpleNamespace(
+        revision=4,
+        review_status="Approved",
+        business_status="Active",
+        identity_provider="email",
+        external_subject="extid:v1:email:Opaque01",
+        identity_type="User",
+        user="member@example.invalid",
+        party_profile=None,
+        team="TEM-01",
+    )
+    mapping = _identity(
+        module,
+        _before=before,
+        revision=4,
+        review_status="Approved",
+        business_status="Revoked",
+    )
+
+    with pytest.raises(_PermissionError):
+        mapping.validate()
+
+    assert fake.observer_calls == []
+
+
+@pytest.mark.parametrize(
+    ("handler", "document", "method"),
+    (
+        (
+            "deny_ineligible_user_mappings",
+            SimpleNamespace(name="member@example.invalid", enabled=0),
+            "on_update",
+        ),
+        (
+            "deny_ineligible_user_mappings",
+            SimpleNamespace(name="member@example.invalid", enabled=1),
+            "on_trash",
+        ),
+        (
+            "deny_ineligible_team_member_mappings",
+            SimpleNamespace(
+                parent="TEM-01",
+                user="member@example.invalid",
+                enabled=1,
+                get_doc_before_save=lambda: None,
+            ),
+            "on_trash",
+        ),
+        (
+            "deny_ineligible_team_member_mappings",
+            SimpleNamespace(
+                parent="TEM-02",
+                user="member@example.invalid",
+                enabled=1,
+                get_doc_before_save=lambda: SimpleNamespace(
+                    parent="TEM-01",
+                    user="member@example.invalid",
+                    enabled=1,
+                ),
+            ),
+            "on_update",
+        ),
+        (
+            "deny_ineligible_party_mappings",
+            SimpleNamespace(name="PTY-01", team="TEM-OTHER"),
+            "on_update",
+        ),
+        (
+            "deny_ineligible_party_mappings",
+            SimpleNamespace(name="PTY-01", team="TEM-01"),
+            "on_trash",
+        ),
+    ),
+)
+def test_live_target_ineligibility_synchronously_denies_cached_confirmed_mapping(
+    authority_module: tuple[Any, _Frappe],
+    handler: str,
+    document: object,
+    method: str,
+) -> None:
+    module, fake = authority_module
+    fake.mappings = [
+        {
+            "name": MAPPING_REF,
+            "revision": 4,
+            "team": "TEM-01",
+            "identity_provider": "email",
+            "external_subject": "extid:v1:email:Opaque01",
+            "identity_type": "Party" if handler.endswith("party_mappings") else "User",
+            "user": None if handler.endswith("party_mappings") else "member@example.invalid",
+            "party_profile": "PTY-01" if handler.endswith("party_mappings") else None,
+            "review_status": "Approved",
+            "business_status": "Active",
+        }
+    ]
+
+    getattr(module, handler)(document, method)
+
+    assert len(fake.observer_calls) == 1
+    call = fake.observer_calls[0]
+    assert call["payload"]["reason"] == "target_ineligible"
+    assert call["payload"]["deny_through_revision"] == 4
+    assert "member@example.invalid" not in repr(call)
+    assert "PTY-01" not in repr(call)
+
+
+def test_target_ineligibility_denial_failure_raises_to_abort_the_frappe_transaction(
+    authority_module: tuple[Any, _Frappe],
+) -> None:
+    module, fake = authority_module
+    fake.mappings = [
+        {
+            "name": MAPPING_REF,
+            "revision": 4,
+            "team": "TEM-01",
+            "identity_provider": "email",
+            "external_subject": "extid:v1:email:Opaque01",
+            "identity_type": "User",
+            "user": "member@example.invalid",
+            "party_profile": None,
+            "review_status": "Approved",
+            "business_status": "Active",
+        }
+    ]
+    fake.observer_error = RuntimeError("private observer failure")
+
+    with pytest.raises(RuntimeError, match="private observer failure"):
+        module.deny_ineligible_user_mappings(
+            SimpleNamespace(name="member@example.invalid", enabled=0),
+            "on_update",
+        )
+
+    assert len(fake.observer_calls) == 1
+
+
+def test_team_parent_save_denies_a_removed_child_membership_before_commit(
+    authority_module: tuple[Any, _Frappe],
+) -> None:
+    module, fake = authority_module
+    fake.mappings = [
+        {
+            "name": MAPPING_REF,
+            "revision": 4,
+            "team": "TEM-01",
+            "identity_provider": "email",
+            "external_subject": "extid:v1:email:Opaque01",
+            "identity_type": "User",
+            "user": "member@example.invalid",
+            "party_profile": None,
+            "review_status": "Approved",
+            "business_status": "Active",
+        }
+    ]
+    before = SimpleNamespace(members=[SimpleNamespace(user="member@example.invalid", enabled=1)])
+    team = SimpleNamespace(
+        name="TEM-01",
+        members=[],
+        get_doc_before_save=lambda: before,
+    )
+
+    module.deny_removed_team_member_mappings(team, "on_update")
+
+    assert len(fake.observer_calls) == 1
+    assert fake.observer_calls[0]["payload"]["reason"] == "target_ineligible"
+    assert "member@example.invalid" not in repr(fake.observer_calls[0])
+
+
+def test_authority_loss_enumeration_does_not_leave_mappings_past_one_page_stale(
+    authority_module: tuple[Any, _Frappe],
+) -> None:
+    module, fake = authority_module
+    fake.mappings = [
+        {
+            "name": f"mapping-{index}",
+            "review_status": "Approved",
+            "business_status": "Active",
+        }
+        for index in range(501)
+    ]
+
+    rows = module._active_authority_mappings({})
+
+    assert len(rows) == 501
+
+
+def test_live_target_authority_hooks_cover_disable_transfer_and_delete_events() -> None:
+    source = HOOKS.read_text(encoding="utf-8")
+
+    assert 'doc_events["User"]["on_update"]' in source
+    assert 'doc_events["User"]["on_trash"]' in source
+    assert 'doc_events["GBOS Team Member"]' in source
+    assert 'doc_events["GBOS Team"]' in source
+    assert 'doc_events["GBOS Party Profile"]' in source
+    assert "deny_ineligible_user_mappings" in source
+    assert "deny_ineligible_team_member_mappings" in source
+    assert "deny_removed_team_member_mappings" in source
+    assert "deny_ineligible_party_mappings" in source

@@ -150,6 +150,7 @@ def _approved_row(**overrides: Any) -> dict[str, Any]:
         "party_ref": None,
         "review_status": "Approved",
         "business_status": "Active",
+        "target_eligible": 1,
         "resolved_at": "2026-08-09T00:00:00Z",
         "crm_phone": "+8613800138000",
         "display_name": "Sensitive Name",
@@ -243,6 +244,61 @@ def test_revoked_resolution_returns_only_the_frozen_contract_fields(
     }
     assert "+8613800138000" not in repr(response)
     assert "Sensitive Name" not in repr(response)
+
+
+@pytest.mark.parametrize(
+    "row",
+    (
+        _approved_row(target_type="User", target_eligible=0),
+        _approved_row(
+            target_type="Party",
+            user_ref=None,
+            party_ref="PTY-01",
+            target_eligible=0,
+        ),
+    ),
+)
+def test_approved_active_mapping_fails_closed_when_live_target_is_ineligible(
+    resolution_api: tuple[Any, _Frappe],
+    row: dict[str, Any],
+) -> None:
+    api, fake = resolution_api
+    fake.db.rows[("email", SUBJECT)] = [row]
+
+    response = api.resolve(_payload())
+
+    assert fake.local.response["http_status_code"] == 404
+    assert response == {"error": {"code": "mapping_not_resolved"}}
+    for protected_ref in (row.get("user_ref"), row.get("party_ref")):
+        if protected_ref is not None:
+            assert protected_ref not in repr(response)
+
+
+def test_resolver_reads_live_user_membership_and_party_team_eligibility_in_one_query(
+    resolution_api: tuple[Any, _Frappe],
+) -> None:
+    api, fake = resolution_api
+    fake.db.rows[("email", SUBJECT)] = [_approved_row()]
+
+    api.resolve(_payload())
+
+    query = fake.db.sql_calls[0][0]
+    assert "`tabUser`" in query
+    assert "`tabGBOS Team Member`" in query
+    assert "`tabGBOS Party Profile`" in query
+    assert "target_eligible" in query
+
+
+def test_revoked_mapping_remains_resolvable_as_revoked_after_target_loses_eligibility(
+    resolution_api: tuple[Any, _Frappe],
+) -> None:
+    api, fake = resolution_api
+    fake.db.rows[("email", SUBJECT)] = [_approved_row(business_status="Revoked", target_eligible=0)]
+
+    response = api.resolve(_payload())
+
+    assert fake.local.response.get("http_status_code") is None
+    assert response["resolutions"][0]["status"] == "revoked"
 
 
 @pytest.mark.parametrize(

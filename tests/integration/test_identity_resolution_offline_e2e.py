@@ -204,6 +204,8 @@ class _Frappe(ModuleType):
         self.executions: dict[str, int] = {}
         self.external_identity: Any = None
         self.review_case: Any = None
+        self.identity_denial_repository: InMemoryIdentityResolutionWorkRepository | None = None
+        self.identity_denial_clock: Callable[[], datetime] = lambda: NOW
         self.db = _Database(self)
         self._counters: dict[str, int] = {}
 
@@ -298,6 +300,34 @@ def frappe_identity_domain(
         "frappe.utils": utils_module,
         base_module.__name__: base_module,
     }
+    gateway_module = ModuleType("esan_gbos.api.v4.gateway")
+
+    def call_local(service: str, **kwargs: Any) -> dict[str, Any]:
+        assert service == "Observer"
+        repository = fake.identity_denial_repository
+        assert repository is not None
+        payload = kwargs["payload"]
+        denial = repository.record_authority_denial(
+            SCOPE,
+            identity_provider=payload["identity_provider"],
+            identity_ref=payload["external_subject_ref"],
+            mapping_ref=payload["mapping_ref"],
+            team_ref=payload["team_ref"],
+            deny_through_revision=payload["deny_through_revision"],
+            reason=payload["reason"],
+            denied_at=fake.identity_denial_clock(),
+            idempotency_key=payload["idempotency_key"],
+        )
+        return {
+            "denial": {
+                "mapping_ref": denial.mapping_ref,
+                "deny_through_revision": denial.deny_through_revision,
+                "status": "denied",
+            }
+        }
+
+    gateway_module.call_local = call_local  # type: ignore[attr-defined]
+    injected[gateway_module.__name__] = gateway_module
     module_names = (
         "esan_gbos.gbos.doctype.gbos_external_identity.gbos_external_identity",
         "esan_gbos.gbos.doctype.gbos_review_case.gbos_review_case",
@@ -446,10 +476,29 @@ class _WorkAuthorityFreshness:
             and item.identity_provider == identity_provider
             and item.identity_ref == identity_ref
             and item.team_ref == team_ref
-            and item.status not in {"conflict", "dead_letter"}
+            and item.status == "confirmed"
             and item.last_resolution_status == "confirmed"
             and item.last_resolution_success_at is not None
             and now - max_age <= item.last_resolution_success_at <= now
+        )
+
+    def is_denied(
+        self,
+        scope: TenantScope,
+        identity_provider: str,
+        identity_ref: str,
+        team_ref: str,
+        mapping_ref: str,
+        *,
+        mapping_revision: int,
+    ) -> bool:
+        return self.repository.is_denied(
+            scope,
+            identity_provider,
+            identity_ref,
+            team_ref,
+            mapping_ref,
+            mapping_revision=mapping_revision,
         )
 
 
@@ -614,6 +663,8 @@ def test_email_identity_resolution_offline_e2e(
 
     clock = _Clock()
     work = InMemoryIdentityResolutionWorkRepository()
+    fake_frappe.identity_denial_repository = work
+    fake_frappe.identity_denial_clock = clock
     projection = InMemoryIdentityResolutionRepository()
     queued = work.enqueue(
         SCOPE,
@@ -774,6 +825,13 @@ def test_email_identity_resolution_offline_e2e(
     assert revoked_mapping.business_status == "Revoked"
     assert int(revoked_mapping.revision) > confirmed.mapping_revision
     assert external_identity.is_authoritative_mapping(revoked_mapping) is False
+    assert reader.list_communications(SCOPE, self_access).communications == ()
+    with pytest.raises(ScopeMismatch):
+        reader.get_communication(SCOPE, self_access, observation_id="OBS-EMAIL-0001")
+    assert projection.latest(SCOPE, "email", identity_ref) is confirmed
+    before_poll = work.get(SCOPE, queued.work_id)
+    assert before_poll is not None
+    assert before_poll.last_resolution_status == "confirmed"
     clock.advance(timedelta(hours=1))
     assert restarted.run_once(SCOPE).status is IdentityResolutionRunStatus.REVOKED
     history = projection.history(SCOPE, "email", identity_ref)

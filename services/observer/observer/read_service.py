@@ -312,6 +312,17 @@ class IdentityAuthorityFreshness(Protocol):
         max_age: timedelta,
     ) -> bool: ...
 
+    def is_denied(
+        self,
+        scope: TenantScope,
+        identity_provider: str,
+        identity_ref: str,
+        team_ref: str,
+        mapping_ref: str,
+        *,
+        mapping_revision: int,
+    ) -> bool: ...
+
 
 class PostgresCommunicationRepository:
     """Read 005 observations/evidence joined to durable 006 model projections."""
@@ -555,7 +566,22 @@ class PostgresCommunicationRepository:
                 SELECT DISTINCT
                        participant.identity_ref,
                        split_part(participant.identity_ref, ':', 3),
-                       COALESCE(latest.status, 'unresolved'),
+                       CASE
+                         WHEN latest.status IS NULL THEN 'unresolved'
+                         WHEN EXISTS (
+                           SELECT 1
+                           FROM observer.identity_authority_denials AS denial
+                           WHERE denial.site_id = participant.site_id
+                             AND denial.identity_provider = split_part(
+                                 participant.identity_ref, ':', 3
+                             )
+                             AND denial.identity_ref = participant.identity_ref
+                             AND denial.team_ref = CAST(%s AS text)
+                             AND denial.mapping_ref = latest.mapping_ref
+                             AND denial.deny_through_revision >= latest.mapping_revision
+                         ) THEN 'revoked'
+                         ELSE latest.status
+                       END,
                        latest.mapping_ref,
                        latest.mapping_revision,
                        latest.target_type
@@ -587,7 +613,7 @@ class PostgresCommunicationRepository:
                   )
                 ORDER BY participant.identity_ref ASC
                 """,
-                (row[7], scope.site_id, observation_id),
+                (row[7], row[7], scope.site_id, observation_id),
             )
             participant_identity_rows = cursor.fetchall()
         summary = _summary_from_row(row[:11])
@@ -758,6 +784,7 @@ class InMemoryCommunicationRepository:
                 resolution is None
                 or resolution.status != "confirmed"
                 or resolution.team_ref != record.detail.summary.team_ref
+                or self._authority_denied(record, resolution)
             ):
                 continue
             if resolution.target_type == "User" and self._has_fresh_user_authority(
@@ -795,6 +822,22 @@ class InMemoryCommunicationRepository:
             max_age=IDENTITY_SELF_ACCESS_MAX_AGE,
         )
 
+    def _authority_denied(
+        self,
+        record: _InMemoryCommunicationRecord,
+        resolution: Any,
+    ) -> bool:
+        if self._authority_freshness is None:
+            return False
+        return self._authority_freshness.is_denied(
+            record.scope,
+            resolution.identity_provider,
+            resolution.external_subject_ref,
+            resolution.team_ref,
+            resolution.mapping_ref,
+            mapping_revision=resolution.mapping_revision,
+        )
+
     def _project_participant_identities(
         self,
         record: _InMemoryCommunicationRecord,
@@ -821,11 +864,14 @@ class InMemoryCommunicationRepository:
                     )
                 )
                 continue
+            effective_status = (
+                "revoked" if self._authority_denied(record, resolution) else resolution.status
+            )
             identities.append(
                 ParticipantIdentityView(
                     identity_ref=participant_ref,
                     provider=provider,
-                    status=resolution.status,
+                    status=effective_status,
                     mapping_ref=resolution.mapping_ref,
                     mapping_revision=resolution.mapping_revision,
                     target_type=resolution.target_type,
@@ -1027,7 +1073,9 @@ _COMMUNICATION_COLUMNS = f"""
         SELECT resolution.target_ref,
                resolution.target_type,
                resolution.status,
-               resolution.team_ref
+               resolution.team_ref,
+               resolution.mapping_ref,
+               resolution.mapping_revision
         FROM observer.participant_identity_resolutions AS resolution
         WHERE resolution.site_id = party_participant.site_id
           AND resolution.external_subject_ref = party_participant.identity_ref
@@ -1042,6 +1090,18 @@ _COMMUNICATION_COLUMNS = f"""
         AND latest_party.status = 'confirmed'
         AND latest_party.target_type = 'Party'
         AND latest_party.team_ref = event.team_ref
+        AND NOT EXISTS (
+          SELECT 1
+          FROM observer.identity_authority_denials AS denial
+          WHERE denial.site_id = party_participant.site_id
+            AND denial.identity_provider = split_part(
+                party_participant.identity_ref, ':', 3
+            )
+            AND denial.identity_ref = party_participant.identity_ref
+            AND denial.team_ref = latest_party.team_ref
+            AND denial.mapping_ref = latest_party.mapping_ref
+            AND denial.deny_through_revision >= latest_party.mapping_revision
+        )
       ORDER BY party_participant.participant_id ASC
       LIMIT 1
     ),
@@ -1058,7 +1118,9 @@ _COMMUNICATION_COLUMNS = f"""
         SELECT resolution.target_ref,
                resolution.target_type,
                resolution.status,
-               resolution.team_ref
+               resolution.team_ref,
+               resolution.mapping_ref,
+               resolution.mapping_revision
         FROM observer.participant_identity_resolutions AS resolution
         WHERE resolution.site_id = actor_participant.site_id
           AND resolution.external_subject_ref = actor_participant.identity_ref
@@ -1073,6 +1135,18 @@ _COMMUNICATION_COLUMNS = f"""
         AND latest_actor.status = 'confirmed'
         AND latest_actor.target_type = 'User'
         AND latest_actor.team_ref = event.team_ref
+        AND NOT EXISTS (
+          SELECT 1
+          FROM observer.identity_authority_denials AS denial
+          WHERE denial.site_id = actor_participant.site_id
+            AND denial.identity_provider = split_part(
+                actor_participant.identity_ref, ':', 3
+            )
+            AND denial.identity_ref = actor_participant.identity_ref
+            AND denial.team_ref = latest_actor.team_ref
+            AND denial.mapping_ref = latest_actor.mapping_ref
+            AND denial.deny_through_revision >= latest_actor.mapping_revision
+        )
         AND EXISTS (
           SELECT 1
           FROM observer.identity_resolution_work AS authority
@@ -1083,7 +1157,7 @@ _COMMUNICATION_COLUMNS = f"""
             AND authority.identity_ref = actor_participant.identity_ref
             AND authority.team_ref = event.team_ref
             AND authority.last_resolution_status = 'confirmed'
-            AND authority.status NOT IN ('conflict', 'dead_letter')
+            AND authority.status = 'confirmed'
             AND authority.last_resolution_success_at >=
                 current_timestamp - make_interval(
                     secs => {_IDENTITY_SELF_ACCESS_MAX_AGE_SECONDS}
@@ -1107,7 +1181,9 @@ def _confirmed_access_predicate() -> str:
                 SELECT resolution.target_ref,
                        resolution.target_type,
                        resolution.status,
-                       resolution.team_ref
+                       resolution.team_ref,
+                       resolution.mapping_ref,
+                       resolution.mapping_revision
                 FROM observer.participant_identity_resolutions AS resolution
                 WHERE resolution.site_id = actor.site_id
                   AND resolution.external_subject_ref = actor.identity_ref
@@ -1123,6 +1199,18 @@ def _confirmed_access_predicate() -> str:
                 AND latest_actor.target_type = 'User'
                 AND latest_actor.team_ref = event.team_ref
                 AND latest_actor.target_ref = %s
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM observer.identity_authority_denials AS denial
+                  WHERE denial.site_id = actor.site_id
+                    AND denial.identity_provider = split_part(
+                        actor.identity_ref, ':', 3
+                    )
+                    AND denial.identity_ref = actor.identity_ref
+                    AND denial.team_ref = latest_actor.team_ref
+                    AND denial.mapping_ref = latest_actor.mapping_ref
+                    AND denial.deny_through_revision >= latest_actor.mapping_revision
+                )
                 AND EXISTS (
                   SELECT 1
                   FROM observer.identity_resolution_work AS authority
@@ -1133,7 +1221,7 @@ def _confirmed_access_predicate() -> str:
                     AND authority.identity_ref = actor.identity_ref
                     AND authority.team_ref = event.team_ref
                     AND authority.last_resolution_status = 'confirmed'
-                    AND authority.status NOT IN ('conflict', 'dead_letter')
+                    AND authority.status = 'confirmed'
                     AND authority.last_resolution_success_at >=
                         current_timestamp - make_interval(
                             secs => {_IDENTITY_SELF_ACCESS_MAX_AGE_SECONDS}
