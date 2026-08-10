@@ -37,7 +37,8 @@ WORKFLOWS = {
 }
 
 
-class GBOSDocument(Document):
+# Frappe is installed in the application image, not the root CI type-check environment.
+class GBOSDocument(Document):  # type: ignore[misc]
     def autoname(self) -> None:
         self.name = make_gbos_name(PREFIXES[self.doctype])
 
