@@ -63,6 +63,14 @@ _CHAIN_FIELDS = frozenset(
         "fatal_or_mismatch_invocation_count",
         "context_chain_count",
         "intelligence_ref_sha256",
+        "email_delivery_count",
+        "delivery_ref_sha256",
+        "raw_body_sha256",
+        "observation_ref_sha256",
+        "participant_ref_sha256",
+        "identity_resolution_status",
+        "identity_target_type",
+        "observer_authority_active",
         "invocation_ordinal",
         "review_status",
         "model_name",
@@ -120,6 +128,7 @@ class ContextChainProjection:
     processing_purpose: str
     invocation_ref_sha256: str
     intelligence_ref_sha256: str
+    observation_ref_sha256: str
     invocation_ordinal: int
     review_status: str
     model_name: str
@@ -137,6 +146,28 @@ class ContextChainProjection:
 
     def __repr__(self) -> str:
         return "ContextChainProjection(fields=<redacted>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ObserverChainProjection:
+    site_id: str
+    processing_purpose: str
+    delivery_ref_sha256: str
+    raw_body_sha256: str
+    delivery_status: str
+    observation_ref_sha256: str
+    connector: str
+    channel: str
+    participant_ref_sha256: str
+    identity_work_status: str
+    resolution_status: str
+    target_type: str
+    authority_active: bool
+    received_at: datetime
+    ingested_at: datetime
+
+    def __repr__(self) -> str:
+        return "ObserverChainProjection(fields=<redacted>)"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -173,6 +204,16 @@ class ContextProjectionRepository(Protocol):
 
 
 class ObserverProjectionRepository(Protocol):
+    def bounded_window(
+        self,
+        *,
+        site_id: str,
+        processing_purpose: str,
+        window_start: datetime,
+        window_end: datetime,
+        limit: int,
+    ) -> tuple[ObserverChainProjection, ...]: ...
+
     def latch(
         self,
         *,
@@ -292,6 +333,7 @@ class PostgresContextCanaryRepository:
                     intelligence.processing_purpose,
                     invocation.invocation_ref,
                     intelligence.intelligence_id,
+                    intelligence.observation_id,
                     invocation.ordinal,
                     intelligence.review_status,
                     intelligence.model_name,
@@ -334,27 +376,28 @@ class PostgresContextCanaryRepository:
                 processing_purpose=str(row[1]),
                 invocation_ref_sha256=_technical_ref_digest(row[2]),
                 intelligence_ref_sha256=_technical_ref_digest(row[3]),
-                invocation_ordinal=int(row[4]),
-                review_status=str(row[5]),
-                model_name=str(row[6]),
-                model_version=str(row[7]),
-                draft_state_bound=row[8] is True,
-                draft_status=str(row[9]),
-                receipt_doctype=None if row[10] is None else str(row[10]),
-                receipt_name_present=row[11] is True,
-                receipt_revision=None if row[12] is None else int(row[12]),
-                receipt_request_present=row[13] is True,
-                receipt_request_bound=row[14] is True,
-                receipt_digest=None if row[15] is None else str(row[15]),
-                created_at=row[16],
-                updated_at=row[17],
+                observation_ref_sha256=_technical_ref_digest(row[4]),
+                invocation_ordinal=int(row[5]),
+                review_status=str(row[6]),
+                model_name=str(row[7]),
+                model_version=str(row[8]),
+                draft_state_bound=row[9] is True,
+                draft_status=str(row[10]),
+                receipt_doctype=None if row[11] is None else str(row[11]),
+                receipt_name_present=row[12] is True,
+                receipt_revision=None if row[13] is None else int(row[13]),
+                receipt_request_present=row[14] is True,
+                receipt_request_bound=row[15] is True,
+                receipt_digest=None if row[16] is None else str(row[16]),
+                created_at=row[17],
+                updated_at=row[18],
             )
             for row in rows
         )
 
 
 class PostgresObserverCanaryRepository:
-    """Exact-scope Observer fatal-latch reader."""
+    """Exact-scope content-free Email, identity, and fatal-latch reader."""
 
     __slots__ = ("_connection",)
 
@@ -363,6 +406,104 @@ class PostgresObserverCanaryRepository:
 
     def __repr__(self) -> str:
         return "PostgresObserverCanaryRepository(connection=<redacted>)"
+
+    def bounded_window(
+        self,
+        *,
+        site_id: str,
+        processing_purpose: str,
+        window_start: datetime,
+        window_end: datetime,
+        limit: int,
+    ) -> tuple[ObserverChainProjection, ...]:
+        _query_limit(limit)
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (site_id,))
+            cursor.execute(
+                "SELECT set_config('app.processing_purpose', %s, true)",
+                (processing_purpose,),
+            )
+            cursor.execute(
+                """
+                SELECT
+                    event.site_id,
+                    event.processing_purpose,
+                    delivery.delivery_id,
+                    delivery.exact_body_sha256,
+                    delivery.processing_status,
+                    event.event_id,
+                    event.connector,
+                    event.channel,
+                    participant.identity_ref,
+                    work.last_resolution_status,
+                    resolution.status,
+                    resolution.target_type,
+                    NOT EXISTS (
+                        SELECT 1
+                        FROM observer.identity_authority_denials AS denial
+                        WHERE denial.site_id = resolution.site_id
+                          AND denial.identity_provider = resolution.identity_provider
+                          AND denial.identity_ref = resolution.external_subject_ref
+                          AND denial.team_ref = resolution.team_ref
+                          AND denial.mapping_ref = resolution.mapping_ref
+                          AND denial.deny_through_revision >= resolution.mapping_revision
+                    ),
+                    delivery.received_at,
+                    event.ingested_at
+                FROM observer.observation_events AS event
+                JOIN observer.inbound_deliveries AS delivery
+                  ON delivery.site_id = event.site_id
+                 AND delivery.connector = event.connector
+                 AND delivery.connector_instance_id = event.connector_instance_id
+                 AND delivery.delivery_id = event.delivery_id
+                JOIN observer.participants AS participant
+                  ON participant.site_id = event.site_id
+                 AND participant.event_id = event.event_id
+                JOIN observer.identity_resolution_work AS work
+                  ON work.site_id = event.site_id
+                 AND work.identity_ref = participant.identity_ref
+                 AND work.team_ref = event.team_ref
+                JOIN LATERAL (
+                    SELECT candidate.*
+                    FROM observer.participant_identity_resolutions AS candidate
+                    WHERE candidate.site_id = event.site_id
+                      AND candidate.external_subject_ref = participant.identity_ref
+                      AND candidate.team_ref = event.team_ref
+                    ORDER BY candidate.mapping_revision DESC
+                    LIMIT 1
+                ) AS resolution ON TRUE
+                WHERE event.site_id = %s
+                  AND event.processing_purpose = %s
+                  AND event.connector = 'email'
+                  AND event.channel = 'email'
+                  AND event.ingested_at >= %s
+                  AND event.ingested_at <= %s
+                ORDER BY event.ingested_at, event.event_id, participant.participant_id
+                LIMIT %s
+                """,
+                (site_id, processing_purpose, window_start, window_end, limit),
+            )
+            rows = cursor.fetchall()
+        return tuple(
+            ObserverChainProjection(
+                site_id=str(row[0]),
+                processing_purpose=str(row[1]),
+                delivery_ref_sha256=_technical_ref_digest(row[2]),
+                raw_body_sha256=str(row[3]),
+                delivery_status=str(row[4]),
+                observation_ref_sha256=_technical_ref_digest(row[5]),
+                connector=str(row[6]),
+                channel=str(row[7]),
+                participant_ref_sha256=_technical_ref_digest(row[8]),
+                identity_work_status=str(row[9]),
+                resolution_status=str(row[10]),
+                target_type=str(row[11]),
+                authority_active=row[12] is True,
+                received_at=row[13],
+                ingested_at=row[14],
+            )
+            for row in rows
+        )
 
     def latch(
         self,
@@ -515,6 +656,20 @@ def verify_canary_chain(
         if context.invocation_ref_sha256 != agent.invocation_ref_sha256:
             raise CanaryChainVerificationError("cross_projection_binding_invalid")
 
+        observer_rows = repositories.observer.bounded_window(
+            site_id=bindings["site_id"],
+            processing_purpose=_PURPOSE,
+            window_start=start,
+            window_end=end,
+            limit=2,
+        )
+        if len(observer_rows) != 1:
+            raise CanaryChainVerificationError("observer_chain_count_invalid")
+        observer = observer_rows[0]
+        _validate_observer(observer, site_id=bindings["site_id"], start=start, end=end)
+        if context.observation_ref_sha256 != observer.observation_ref_sha256:
+            raise CanaryChainVerificationError("cross_projection_binding_invalid")
+
         latch = repositories.observer.latch(
             site_id=bindings["site_id"],
             processing_purpose=_PURPOSE,
@@ -559,6 +714,14 @@ def verify_canary_chain(
             "fatal_or_mismatch_invocation_count": 0,
             "context_chain_count": 1,
             "intelligence_ref_sha256": context.intelligence_ref_sha256,
+            "email_delivery_count": 1,
+            "delivery_ref_sha256": observer.delivery_ref_sha256,
+            "raw_body_sha256": observer.raw_body_sha256,
+            "observation_ref_sha256": observer.observation_ref_sha256,
+            "participant_ref_sha256": observer.participant_ref_sha256,
+            "identity_resolution_status": observer.resolution_status,
+            "identity_target_type": observer.target_type,
+            "observer_authority_active": observer.authority_active,
             "invocation_ordinal": context.invocation_ordinal,
             "review_status": context.review_status,
             "model_name": context.model_name,
@@ -648,6 +811,14 @@ def validate_canary_chain_attestation(
         or chain.get("fatal_or_mismatch_invocation_count") != 0
         or chain.get("context_chain_count") != 1
         or not _nonzero_hex(chain.get("intelligence_ref_sha256"))
+        or chain.get("email_delivery_count") != 1
+        or not _nonzero_hex(chain.get("delivery_ref_sha256"))
+        or not _nonzero_hex(chain.get("raw_body_sha256"))
+        or not _nonzero_hex(chain.get("observation_ref_sha256"))
+        or not _nonzero_hex(chain.get("participant_ref_sha256"))
+        or chain.get("identity_resolution_status") != "confirmed"
+        or chain.get("identity_target_type") not in {"User", "Party"}
+        or chain.get("observer_authority_active") is not True
         or chain.get("invocation_ordinal") != 1
         or chain.get("review_status") != "AI Draft"
         or chain.get("model_name") != _MODEL
@@ -838,6 +1009,7 @@ def _validate_context(
         or row.processing_purpose != _PURPOSE
         or _HEX.fullmatch(row.invocation_ref_sha256) is None
         or _HEX.fullmatch(row.intelligence_ref_sha256) is None
+        or _HEX.fullmatch(row.observation_ref_sha256) is None
         or row.invocation_ordinal != 1
         or row.review_status != "AI Draft"
         or row.model_name != _MODEL
@@ -856,6 +1028,34 @@ def _validate_context(
         or not start <= created_at <= updated_at <= end
     ):
         raise CanaryChainVerificationError("context_chain_invalid")
+
+
+def _validate_observer(
+    row: ObserverChainProjection,
+    *,
+    site_id: str,
+    start: datetime,
+    end: datetime,
+) -> None:
+    received_at = _aware(row.received_at, "observer_chain_invalid")
+    ingested_at = _aware(row.ingested_at, "observer_chain_invalid")
+    if (
+        row.site_id != site_id
+        or row.processing_purpose != _PURPOSE
+        or not _nonzero_hex(row.delivery_ref_sha256)
+        or not _nonzero_hex(row.raw_body_sha256)
+        or row.delivery_status != "succeeded"
+        or not _nonzero_hex(row.observation_ref_sha256)
+        or row.connector != "email"
+        or row.channel != "email"
+        or not _nonzero_hex(row.participant_ref_sha256)
+        or row.identity_work_status != "confirmed"
+        or row.resolution_status != "confirmed"
+        or row.target_type not in {"User", "Party"}
+        or row.authority_active is not True
+        or not start <= received_at <= ingested_at <= end
+    ):
+        raise CanaryChainVerificationError("observer_chain_invalid")
 
 
 def _external_private_directory(path: Path, repo_root: Path, code: str) -> Path:
@@ -1040,6 +1240,7 @@ __all__ = [
     "CanaryChainVerificationError",
     "CanaryProjectionRepositories",
     "ContextChainProjection",
+    "ObserverChainProjection",
     "ObserverLatchProjection",
     "PostgresAgentCanaryRepository",
     "PostgresContextCanaryRepository",

@@ -34,7 +34,7 @@ from services.observer.observer.models import TenantScope
 
 NOW = datetime(2026, 8, 10, 9, tzinfo=UTC)
 SCOPE = TenantScope("alpha.example", "observation_processing")
-IDENTITY_REF = "extid:v1:email:OpaqueSender01"
+IDENTITY_REF = "extid:v1:email:N6juwc4ZaH0TL-KQUdymKdFk4sSVi6FB1fQTOjPwaI8"
 MAPPING_REF = "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 
@@ -306,7 +306,9 @@ def test_client_maps_exact_404_to_unresolved_and_timeout_to_safe_error() -> None
         lambda value: value.update(extra="field"),
         lambda value: value.update(schema_version="2.0"),
         lambda value: value.update(site_id="other.example"),
-        lambda value: value.update(external_subject_ref="extid:v1:email:Other"),
+        lambda value: value.update(
+            external_subject_ref="extid:v1:email:p5N7ZLjKpY8Dchu2us9ceMsjX-vg5wsbhM2ZVBRhoI4"
+        ),
         lambda value: value.update(team_ref="team-other"),
         lambda value: value.update(identity_provider="wecom"),
         lambda value: value.update(status="pending"),

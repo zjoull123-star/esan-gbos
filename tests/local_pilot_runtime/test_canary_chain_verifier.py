@@ -16,6 +16,7 @@ from services.local_pilot_runtime.canary_chain_verifier import (
     CanaryChainVerificationError,
     CanaryProjectionRepositories,
     ContextChainProjection,
+    ObserverChainProjection,
     ObserverLatchProjection,
     PostgresAgentCanaryRepository,
     PostgresContextCanaryRepository,
@@ -36,8 +37,15 @@ GENERATED_AT = datetime(2026, 8, 11, 11, 1, tzinfo=UTC)
 INVOCATION_DIGEST = "1" * 64
 INTELLIGENCE_DIGEST = "2" * 64
 RECEIPT_DIGEST = "3" * 64
+OBSERVATION_DIGEST = "4" * 64
+DELIVERY_DIGEST = "5" * 64
+PARTICIPANT_DIGEST = "6" * 64
+RAW_BODY_DIGEST = "7" * 64
 RAW_INVOCATION_REF = "invocation-technical-ref"
 RAW_INTELLIGENCE_REF = "intelligence-technical-ref"
+RAW_OBSERVATION_REF = "observation-technical-ref"
+RAW_DELIVERY_REF = "delivery-technical-ref"
+RAW_PARTICIPANT_REF = "extid:v1:email:" + "A" * 43
 
 
 def _private_json(path: Path, value: object) -> None:
@@ -109,6 +117,7 @@ def _context(**changes: object) -> ContextChainProjection:
         processing_purpose=PURPOSE,
         invocation_ref_sha256=INVOCATION_DIGEST,
         intelligence_ref_sha256=INTELLIGENCE_DIGEST,
+        observation_ref_sha256=OBSERVATION_DIGEST,
         invocation_ordinal=1,
         review_status="AI Draft",
         model_name=MODEL,
@@ -123,6 +132,27 @@ def _context(**changes: object) -> ContextChainProjection:
         receipt_digest=RECEIPT_DIGEST,
         created_at=WINDOW_START + timedelta(minutes=7),
         updated_at=WINDOW_START + timedelta(minutes=8),
+    )
+    return replace(value, **changes)
+
+
+def _observer_chain(**changes: object) -> ObserverChainProjection:
+    value = ObserverChainProjection(
+        site_id=SITE_ID,
+        processing_purpose=PURPOSE,
+        delivery_ref_sha256=DELIVERY_DIGEST,
+        raw_body_sha256=RAW_BODY_DIGEST,
+        delivery_status="succeeded",
+        observation_ref_sha256=OBSERVATION_DIGEST,
+        connector="email",
+        channel="email",
+        participant_ref_sha256=PARTICIPANT_DIGEST,
+        identity_work_status="confirmed",
+        resolution_status="confirmed",
+        target_type="User",
+        authority_active=True,
+        received_at=WINDOW_START + timedelta(minutes=1),
+        ingested_at=WINDOW_START + timedelta(minutes=2),
     )
     return replace(value, **changes)
 
@@ -144,8 +174,16 @@ class _ContextRepository:
 
 
 class _ObserverRepository:
-    def __init__(self, row: ObserverLatchProjection) -> None:
+    def __init__(
+        self,
+        row: ObserverLatchProjection,
+        chains: tuple[ObserverChainProjection, ...],
+    ) -> None:
         self.row = row
+        self.chains = chains
+
+    def bounded_window(self, **_: object) -> tuple[ObserverChainProjection, ...]:
+        return self.chains
 
     def latch(self, **_: object) -> ObserverLatchProjection:
         return self.row
@@ -155,6 +193,7 @@ def _repositories(
     *,
     agents: tuple[AgentInvocationProjection, ...] = (_agent(),),
     contexts: tuple[ContextChainProjection, ...] = (_context(),),
+    observer_chains: tuple[ObserverChainProjection, ...] = (_observer_chain(),),
     latch: ObserverLatchProjection | None = None,
 ) -> CanaryProjectionRepositories:
     return CanaryProjectionRepositories(
@@ -166,7 +205,8 @@ def _repositories(
                 site_id=SITE_ID,
                 processing_purpose=PURPOSE,
                 is_open=True,
-            )
+            ),
+            observer_chains,
         ),
         close=lambda: None,
     )
@@ -203,6 +243,13 @@ def test_exact_machine_projection_chain_writes_private_content_free_attestation(
     assert chain["response_reported_observed_model"] == MODEL
     assert chain["invocation_ref_sha256"] == INVOCATION_DIGEST
     assert chain["intelligence_ref_sha256"] == INTELLIGENCE_DIGEST
+    assert chain["observation_ref_sha256"] == OBSERVATION_DIGEST
+    assert chain["email_delivery_count"] == 1
+    assert chain["delivery_ref_sha256"] == DELIVERY_DIGEST
+    assert chain["raw_body_sha256"] == RAW_BODY_DIGEST
+    assert chain["participant_ref_sha256"] == PARTICIPANT_DIGEST
+    assert chain["identity_resolution_status"] == "confirmed"
+    assert chain["identity_target_type"] == "User"
     assert chain["receipt_digest"] == RECEIPT_DIGEST
     assert chain["fatal_or_mismatch_invocation_count"] == 0
     assert chain["observer_fatal_latch_open"] is True
@@ -211,7 +258,7 @@ def test_exact_machine_projection_chain_writes_private_content_free_attestation(
     for forbidden in (
         "prompt",
         "response_body",
-        "raw_body",
+        '"raw_body":',
         "tokenization",
         "mapping",
         'receipt_name"',
@@ -234,6 +281,15 @@ def test_exact_machine_projection_chain_writes_private_content_free_attestation(
             "agent_invocation_invalid",
         ),
         (_repositories(contexts=()), "context_chain_count_invalid"),
+        (_repositories(observer_chains=()), "observer_chain_count_invalid"),
+        (
+            _repositories(observer_chains=(_observer_chain(), _observer_chain())),
+            "observer_chain_count_invalid",
+        ),
+        (
+            _repositories(observer_chains=(_observer_chain(observation_ref_sha256="9" * 64),)),
+            "cross_projection_binding_invalid",
+        ),
         (
             _repositories(contexts=(_context(invocation_ref_sha256="4" * 64),)),
             "cross_projection_binding_invalid",
@@ -409,6 +465,7 @@ class _Cursor:
                     PURPOSE,
                     RAW_INVOCATION_REF,
                     RAW_INTELLIGENCE_REF,
+                    RAW_OBSERVATION_REF,
                     1,
                     "AI Draft",
                     MODEL,
@@ -423,6 +480,26 @@ class _Cursor:
                     RECEIPT_DIGEST,
                     WINDOW_START + timedelta(minutes=7),
                     WINDOW_START + timedelta(minutes=8),
+                )
+            ]
+        elif "FROM observer.observation_events AS event" in query:
+            self.rows = [
+                (
+                    SITE_ID,
+                    PURPOSE,
+                    RAW_DELIVERY_REF,
+                    RAW_BODY_DIGEST,
+                    "succeeded",
+                    RAW_OBSERVATION_REF,
+                    "email",
+                    "email",
+                    RAW_PARTICIPANT_REF,
+                    "confirmed",
+                    "confirmed",
+                    "User",
+                    True,
+                    WINDOW_START + timedelta(minutes=1),
+                    WINDOW_START + timedelta(minutes=2),
                 )
             ]
         elif "FROM observer.model_fatal_latches" in query:
@@ -471,7 +548,15 @@ def test_postgres_projection_queries_return_only_bounded_content_free_fields() -
         window_end=WINDOW_END,
         limit=2,
     )
-    latch = PostgresObserverCanaryRepository(observer_connection).latch(
+    observer_repository = PostgresObserverCanaryRepository(observer_connection)
+    observer_rows = observer_repository.bounded_window(
+        site_id=SITE_ID,
+        processing_purpose=PURPOSE,
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+        limit=2,
+    )
+    latch = observer_repository.latch(
         site_id=SITE_ID,
         processing_purpose=PURPOSE,
     )
@@ -483,6 +568,14 @@ def test_postgres_projection_queries_return_only_bounded_content_free_fields() -
         _context(
             invocation_ref_sha256=expected_invocation_digest,
             intelligence_ref_sha256=expected_intelligence_digest,
+            observation_ref_sha256=sha256(RAW_OBSERVATION_REF.encode()).hexdigest(),
+        ),
+    )
+    assert observer_rows == (
+        _observer_chain(
+            delivery_ref_sha256=sha256(RAW_DELIVERY_REF.encode()).hexdigest(),
+            participant_ref_sha256=sha256(RAW_PARTICIPANT_REF.encode()).hexdigest(),
+            observation_ref_sha256=sha256(RAW_OBSERVATION_REF.encode()).hexdigest(),
         ),
     )
     assert latch == ObserverLatchProjection(SITE_ID, PURPOSE, True)
@@ -498,9 +591,9 @@ def test_postgres_projection_queries_return_only_bounded_content_free_fields() -
         "observation_event_refs",
         "tokenization_receipt_refs",
         "summary_zh",
-        "subject",
-        "team_ref",
-        "observation_id",
+        "target_ref",
+        "display_name",
+        "event.document",
         "receipt_name,",
         "receipt_request_id,",
     ):
@@ -638,7 +731,10 @@ def test_verifier_converts_database_error_to_safe_closed_failure(tmp_path: Path)
     repositories = CanaryProjectionRepositories(
         agent=FailingAgent(),
         context=_ContextRepository((_context(),)),
-        observer=_ObserverRepository(ObserverLatchProjection(SITE_ID, PURPOSE, True)),
+        observer=_ObserverRepository(
+            ObserverLatchProjection(SITE_ID, PURPOSE, True),
+            (_observer_chain(),),
+        ),
         close=lambda: None,
     )
     with pytest.raises(CanaryChainVerificationError) as error:

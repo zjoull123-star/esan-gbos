@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import stat
 import subprocess
@@ -189,9 +190,32 @@ def _run_preflight(fixture: CanaryFixture) -> subprocess.CompletedProcess[str]:
 
 def _write_valid_artifacts(fixture: CanaryFixture) -> dict[str, object]:
     _private_json(fixture.checkpoint, fixture.checkpoint_value)
+    credential = json.loads((fixture.secrets / "email_credential").read_text(encoding="utf-8"))
+    binding_payload = {
+        field: credential[field]
+        for field in (
+            "account_user_ref",
+            "agent_task_type",
+            "folder",
+            "host",
+            "instance_id",
+            "mailbox",
+            "port",
+            "team_ref",
+            "username",
+        )
+    }
+    canonical_binding = (
+        json.dumps(binding_payload, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
     receipt = {
         "activation_time": "2026-08-11T17:00:00+08:00",
         "checkpoint_sha256": hashlib.sha256(fixture.checkpoint.read_bytes()).hexdigest(),
+        "credential_binding_hmac_sha256": hmac.new(
+            (fixture.secrets / "identity_hmac_key").read_bytes(),
+            canonical_binding,
+            hashlib.sha256,
+        ).hexdigest(),
         "observed_at": "2026-08-11T09:30:00Z",
         "operation": "STATUS_UIDVALIDITY_UIDNEXT",
         "read_only": True,
@@ -241,6 +265,19 @@ def test_preflight_accepts_closed_bound_checkpoint_receipt(tmp_path: Path) -> No
     assert payload["ready"] is True
 
 
+def test_preflight_binding_excludes_rotated_email_password(tmp_path: Path) -> None:
+    fixture = _prepared_canary(tmp_path)
+    _write_valid_artifacts(fixture)
+    credential_path = fixture.secrets / "email_credential"
+    credential = json.loads(credential_path.read_text(encoding="utf-8"))
+    credential["password"] = "rotated-password-private-sentinel"
+    _private_json(credential_path, credential)
+
+    result = _run_preflight(fixture)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_preflight_rejects_missing_checkpoint_receipt_pair(tmp_path: Path) -> None:
     fixture = _prepared_canary(tmp_path)
 
@@ -278,6 +315,8 @@ def test_preflight_rejects_missing_checkpoint_receipt_pair(tmp_path: Path) -> No
         "operation_drift",
         "read_only_drift",
         "checkpoint_digest_tamper",
+        "credential_binding_tamper",
+        "credential_identity_drift",
         "checkpoint_value_drift",
         "checkpoint_version_drift",
         "receipt_schema_drift",
@@ -360,6 +399,14 @@ def test_preflight_rejects_unsafe_or_unbound_checkpoint_receipt(
     elif case == "checkpoint_digest_tamper":
         receipt["checkpoint_sha256"] = "0" * 64
         _private_json(fixture.receipt, receipt)
+    elif case == "credential_binding_tamper":
+        receipt["credential_binding_hmac_sha256"] = "0" * 64
+        _private_json(fixture.receipt, receipt)
+    elif case == "credential_identity_drift":
+        credential_path = fixture.secrets / "email_credential"
+        credential = json.loads(credential_path.read_text(encoding="utf-8"))
+        credential["folder"] = "Pilot-Changed"
+        _private_json(credential_path, credential)
     elif case == "checkpoint_value_drift":
         _private_json(fixture.checkpoint, {**fixture.checkpoint_value, "uid": 901})
         receipt["checkpoint_sha256"] = hashlib.sha256(fixture.checkpoint.read_bytes()).hexdigest()

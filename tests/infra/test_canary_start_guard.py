@@ -37,6 +37,18 @@ def test_start_guard_runs_after_migrations_and_before_model_profile_or_egress() 
     assert running_guard < prepare_secrets < migrate
     assert "model-projection-worker" in start[running_guard:prepare_secrets]
     assert "agent-worker" in start[running_guard:prepare_secrets]
+    for producer in (
+        "communication-draft-worker",
+        "connector-worker",
+        "email-poller",
+        "identity-resolution-worker",
+        "materialization-worker",
+        "media-worker",
+        "retention-scheduler",
+        "wecom-poller",
+        "webhook-ingress",
+    ):
+        assert producer in start[running_guard:prepare_secrets]
 
 
 def test_guard_and_chain_verifier_are_private_one_shot_compose_services() -> None:
@@ -51,8 +63,13 @@ def test_guard_and_chain_verifier_are_private_one_shot_compose_services() -> Non
     assert "ports:" not in guard
     assert 'restart: "no"' in guard
     assert "canary-start-guard.json:/config/canary-start-guard.json:ro" in guard
-    assert "target: postgres_observer_password" in guard
-    assert "mode: 0600" in guard
+    for secret in (
+        "postgres_observer_password",
+        "postgres_context_password",
+        "postgres_agent_password",
+    ):
+        assert f"target: {secret}" in guard
+    assert guard.count("mode: 0600") >= 4
 
     assert 'profiles: ["canary-verifier"]' in verifier
     assert "services.local_pilot_runtime.canary_verifier_runtime" in verifier

@@ -19,6 +19,7 @@ REQUIRED_LIVE_CHECKS = {
     "retention_verified",
     "emergency_stop_verified",
     "fault_drills_verified",
+    "runtime_health_verified",
     "zero_prohibited_actions",
 }
 
@@ -46,6 +47,16 @@ def test_runbook_uses_the_private_compose_verifier_and_complete_evidence_ledger(
     ]
     commands = sequence.split("```sh", maxsplit=1)[1].split("```", maxsplit=1)[0]
 
+    assert "/Users/ericesan/Documents/GBOS" not in commands
+    assert 'REPO_ROOT="$(git rev-parse --show-toplevel)"' in commands
+    assert "EXPECTED_SOURCE_COMMIT" in commands
+    assert "git status --porcelain" in commands
+    assert "SECRET_DIR=" not in commands
+    assert "scripts/local-pilot/canary-preflight" not in commands
+    assert "IDENTITY_BINDING_KEY_FILE=" in commands
+    assert "--binding-key-file" in commands
+    assert "--enable-retention-scheduler" in commands
+    assert "--acknowledge-periodic-expired-local-data-deletion" in commands
     assert "--repo-root" not in commands
     assert "scripts/local-pilot/canary_verifier_runtime" in commands
     assert "scripts/local-pilot/verify-canary-chain" not in commands
@@ -54,8 +65,14 @@ def test_runbook_uses_the_private_compose_verifier_and_complete_evidence_ledger(
     assert "status-after.json" in commands
     for kind in REQUIRED_LIVE_CHECKS:
         assert f"--kind {kind}" in commands
+    assert commands.count("--check-attestation") == len(REQUIRED_LIVE_CHECKS) - 1
+    assert "CHECK_TIME" not in commands
     assert commands.index("status-before.json") < commands.index("--kind model_identity_exact")
     assert commands.index("--kind model_identity_exact") < commands.index("status-after.json")
     assert commands.index("status-after.json") < commands.index(
+        "scripts/local-pilot/canary-evidence finalize"
+    )
+    assert "trap cleanup EXIT HUP INT TERM" in commands
+    assert commands.rindex("scripts/local-pilot/stop") > commands.index(
         "scripts/local-pilot/canary-evidence finalize"
     )

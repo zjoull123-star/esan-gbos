@@ -403,7 +403,7 @@ const syntheticCommunicationDetailEnvelope = v4Envelope({
     ],
     participant_identities: [
       {
-        identity_ref: "extid:v1:email:opaque-e2e-participant",
+        identity_ref: "extid:v1:email:N6juwc4ZaH0TL-KQUdymKdFk4sSVi6FB1fQTOjPwaI8",
         provider: "email",
         status: "unresolved",
       },
@@ -421,7 +421,7 @@ const syntheticAiDraftEnvelope = v4Envelope({
 const syntheticIdentityStateEnvelope = v4Envelope({
   identities: [
     {
-      identity_ref: "extid:v1:email:opaque-e2e-participant",
+      identity_ref: "extid:v1:email:N6juwc4ZaH0TL-KQUdymKdFk4sSVi6FB1fQTOjPwaI8",
       provider: "email",
       status: "unresolved",
     },
@@ -1150,7 +1150,7 @@ test("管理员撤回经二次确认，stale 409 刷新后可成功重试", asyn
 }, testInfo) => {
   test.skip(!isHarness(testInfo), "身份撤回使用前端严格 harness");
   await setHarnessSession(page, ["GBOS Admin"]);
-  const identityRef = "extid:v1:email:opaque-revoke-e2e";
+  const identityRef = "extid:v1:email:p5N7ZLjKpY8Dchu2us9ceMsjX-vg5wsbhM2ZVBRhoI4";
   const mappingRef = "MAPPING-REVOKE-E2E-MUST-NOT-RENDER";
   let stateReads = 0;
   let revokeCalls = 0;

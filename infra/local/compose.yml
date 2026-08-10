@@ -80,6 +80,12 @@ services:
       - source: postgres_observer_password
         target: postgres_observer_password
         mode: 0600
+      - source: postgres_context_password
+        target: postgres_context_password
+        mode: 0600
+      - source: postgres_agent_password
+        target: postgres_agent_password
+        mode: 0600
       - source: email_credential
         target: email_credential
         mode: 0600

@@ -159,21 +159,31 @@ credential 文件都必须在仓库外，secrets outside the repository 只进�
 严格按以下顺序执行（最终代码 → governed current-image rebuild/record → prepare
 external canary dir/control → probe-email-checkpoint with activation-time → copy exact
 checkpoint JSON value into Keychain Email credential `initial_checkpoint` →
-canary-preflight requiring receipt → start narrow real canary → verify-canary-chain with
+guarded start（内部生成临时 secrets 并执行 canary-preflight）→ verify-canary-chain with
 projection config/window/output → canary-evidence record with `--chain-attestation` →
 finalize）：
 
 ```sh
-# The governed commands below run from the canonical repository root.
-REPO_ROOT=/Users/ericesan/Documents/GBOS
+# Run from the exact checkout being validated; never jump to another clone/worktree.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
+test "$(git rev-parse --show-toplevel)" = "$REPO_ROOT"
+test -z "$(git status --porcelain --untracked-files=all)"
 
 # 1. final code: commit/checkout the exact source to validate.
-git rev-parse HEAD
+SOURCE_COMMIT="$(git rev-parse HEAD)"
+test -n "$SOURCE_COMMIT"
 
 # 2. governed current-image rebuild/record (both commands update image lock only on success).
 scripts/local-pilot/build-frappe-image --confirm-network-build
 scripts/local-pilot/build-runtime-image --confirm-network-build
+# Image recording changes only the lock. Review and commit that governed fact before
+# formal preflight, which intentionally rejects a dirty checkout.
+git diff --check
+test -z "$(git status --porcelain --untracked-files=all -- . ':!infra/local/images.lock.json')"
+git commit --only -m "build(local-pilot): record canary images" -- infra/local/images.lock.json
+EXPECTED_SOURCE_COMMIT="$(git rev-parse HEAD)"
+test -z "$(git status --porcelain --untracked-files=all)"
 
 # 3. prepare external canary dir/control as a new, empty repo-external directory.
 CANARY_DIR=/absolute/path/outside/repo/gbos-task13-canary
@@ -187,11 +197,20 @@ scripts/local-pilot/prepare-email-deepseek-canary \
   --activation-time "$ACTIVATION_TIME" \
   --email-credential-ref "$EMAIL_KEYCHAIN_REF" \
   --deepseek-keychain-ref "$DEEPSEEK_KEYCHAIN_REF"
+test "$(jq -r .source_commit "$CANARY_DIR/canary-run.json")" = "$EXPECTED_SOURCE_COMMIT"
 
 # 4. probe-email-checkpoint with activation-time: only STATUS/UIDVALIDITY/UIDNEXT; no BODY fetch/backfill.
+# IDENTITY_BINDING_KEY_FILE is a temporary repo-external 0600 export of the exact
+# 32-byte Keychain identity-hmac-key that `start` will materialize for preflight.
+# It binds the probe result to account/team/task/server/mailbox/folder/username; the
+# Email password is deliberately excluded so password rotation does not invalidate it.
 EMAIL_CREDENTIAL_FILE=/absolute/path/outside/repo/private-email-credential.json
+IDENTITY_BINDING_KEY_FILE=/absolute/path/outside/repo/private-identity-hmac-key
+test "$(stat -f '%Lp' "$IDENTITY_BINDING_KEY_FILE")" = 600
+test "$(wc -c < "$IDENTITY_BINDING_KEY_FILE" | tr -d ' ')" = 32
 scripts/local-pilot/probe-email-checkpoint \
   --credential-file "$EMAIL_CREDENTIAL_FILE" \
+  --binding-key-file "$IDENTITY_BINDING_KEY_FILE" \
   --output-dir "$CANARY_DIR" \
   --activation-time "$ACTIVATION_TIME"
 
@@ -199,21 +218,28 @@ scripts/local-pilot/probe-email-checkpoint \
 #    $CANARY_DIR/email-checkpoint.json into the Email credential's
 #    initial_checkpoint field, then update the whole credential JSON in its Keychain item.
 
-# 6. canary-preflight validates the private manifest/control and checkpoint pair.
-SECRET_DIR=/absolute/path/outside/repo/private-canary-secrets
-scripts/local-pilot/canary-preflight \
-  --manifest "$CANARY_DIR/pilot-manifest.json" \
-  --run-control "$CANARY_DIR/canary-run.json" \
-  --secret-dir "$SECRET_DIR" \
-  --json
-#    It must require and verify the checkpoint receipt before returning ready.
-
-# 7. Start only the narrow real Email + DeepSeek shadow canary.
+# 6. Start only the narrow real Email + DeepSeek shadow canary. The start command
+#    materializes one private temporary secret directory, runs the internal
+#    canary-preflight against the bound checkpoint receipt before any Compose
+#    mutation, and cleans it on failure/stop.
+CANARY_STARTED=false
+cleanup() {
+  original_status=$?
+  trap - EXIT HUP INT TERM
+  if [[ "$CANARY_STARTED" == true ]]; then
+    scripts/local-pilot/stop || original_status=1
+  fi
+  exit "$original_status"
+}
+trap cleanup EXIT HUP INT TERM
 scripts/local-pilot/start-email-deepseek-canary \
   --acknowledge-real-email-and-model \
+  --enable-retention-scheduler \
+  --acknowledge-periodic-expired-local-data-deletion \
   --canary-dir "$CANARY_DIR"
+CANARY_STARTED=true
 
-# 8. Capture the first source/image/container-bound status sample.
+# 7. Capture the first source/image/container-bound status sample.
 umask 077
 STATUS_BEFORE="$CANARY_DIR/status-before.json"
 scripts/local-pilot/status \
@@ -224,7 +250,7 @@ scripts/local-pilot/canary-evidence sample \
   --canary-dir "$CANARY_DIR" \
   --status-json "$STATUS_BEFORE"
 
-# 9. Run the machine chain verifier inside Compose local-internal. It reads the
+# 8. Run the machine chain verifier inside Compose local-internal. It reads the
 #    already-rendered private config and 0600 DB secrets recorded by start;
 #    never run verify-canary-chain directly on the host with postgres:5432 or
 #    /run/secrets paths.
@@ -238,7 +264,7 @@ scripts/local-pilot/canary_verifier_runtime \
   --output "$CHAIN_ATTESTATION"
 #    The output binds exactly one observation window to the current run.
 
-# 10. Record the machine chain attestation. It is the only source for
+# 9. Record the machine chain attestation. It is the only source for
 #     response_reported_observed_model; do not pass --observed-at or free-form observed model text.
 scripts/local-pilot/canary-evidence record \
   --canary-dir "$CANARY_DIR" \
@@ -246,26 +272,27 @@ scripts/local-pilot/canary-evidence record \
   --source system_query \
   --chain-attestation "$CHAIN_ATTESTATION"
 
-# 11. Produce the remaining 0600, repo-external artifacts from authenticated
-#     local system queries, browser captures and controlled drills. They must
-#     contain only bounded summaries/checksums and no raw identity, message,
-#     credential or model prompt. Record every required check explicitly.
+# 10. Produce the remaining 0600, repo-external artifacts and their closed
+#     attestations from authenticated local system queries, browser captures
+#     and controlled drills. Each attestation binds the run/site/source commit,
+#     exact evidence SHA-256, observed time and kind-specific bounded facts;
+#     hand-entered timestamps and a bare artifact hash are rejected.
 CHECK_DIR="$CANARY_DIR/checks"
-CHECK_TIME=__RFC3339_CHECK_TIME__
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind email_body_peek_no_backfill --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/email-body-peek.json"
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind user_mapping_reviewed --source browser_capture --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/user-mapping-review.png"
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind party_mapping_reviewed --source browser_capture --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/party-mapping-review.png"
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind user_second_message_auto_resolved --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/user-second-message.json"
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind party_second_message_auto_resolved --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/party-second-message.json"
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind model_input_tokenized --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/model-input-tokenized.json"
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind ai_draft_review_visible --source browser_capture --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/ai-draft-review.png"
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind budget_limits_verified --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/budget-limits.json"
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind retention_verified --source controlled_drill --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/retention-drill.json"
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind emergency_stop_verified --source controlled_drill --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/emergency-stop-drill.json"
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind fault_drills_verified --source controlled_drill --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/fault-drills.json"
-scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind zero_prohibited_actions --source system_query --observed-at "$CHECK_TIME" --evidence-file "$CHECK_DIR/zero-prohibited-actions.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind email_body_peek_no_backfill --source system_query --evidence-file "$CHECK_DIR/email-body-peek.json" --check-attestation "$CHECK_DIR/email-body-peek-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind user_mapping_reviewed --source browser_capture --evidence-file "$CHECK_DIR/user-mapping-review.png" --check-attestation "$CHECK_DIR/user-mapping-review-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind party_mapping_reviewed --source browser_capture --evidence-file "$CHECK_DIR/party-mapping-review.png" --check-attestation "$CHECK_DIR/party-mapping-review-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind user_second_message_auto_resolved --source system_query --evidence-file "$CHECK_DIR/user-second-message.json" --check-attestation "$CHECK_DIR/user-second-message-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind party_second_message_auto_resolved --source system_query --evidence-file "$CHECK_DIR/party-second-message.json" --check-attestation "$CHECK_DIR/party-second-message-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind model_input_tokenized --source system_query --evidence-file "$CHECK_DIR/model-input-tokenized.json" --check-attestation "$CHECK_DIR/model-input-tokenized-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind ai_draft_review_visible --source browser_capture --evidence-file "$CHECK_DIR/ai-draft-review.png" --check-attestation "$CHECK_DIR/ai-draft-review-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind budget_limits_verified --source system_query --evidence-file "$CHECK_DIR/budget-limits.json" --check-attestation "$CHECK_DIR/budget-limits-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind retention_verified --source controlled_drill --evidence-file "$CHECK_DIR/retention-drill.json" --check-attestation "$CHECK_DIR/retention-drill-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind emergency_stop_verified --source controlled_drill --evidence-file "$CHECK_DIR/emergency-stop-drill.json" --check-attestation "$CHECK_DIR/emergency-stop-drill-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind fault_drills_verified --source controlled_drill --evidence-file "$CHECK_DIR/fault-drills.json" --check-attestation "$CHECK_DIR/fault-drills-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind runtime_health_verified --source system_query --evidence-file "$CHECK_DIR/runtime-health.json" --check-attestation "$CHECK_DIR/runtime-health-attestation.json"
+scripts/local-pilot/canary-evidence record --canary-dir "$CANARY_DIR" --kind zero_prohibited_actions --source system_query --evidence-file "$CHECK_DIR/zero-prohibited-actions.json" --check-attestation "$CHECK_DIR/zero-prohibited-actions-attestation.json"
 
-# 12. Capture a later healthy status sample, then close the ledger. 72 hours is not
+# 11. Capture a later healthy status sample, then close the ledger. 72 hours is not
 #     required, but sample order must be increasing and every live check must
 #     fall between the two samples.
 STATUS_AFTER="$CANARY_DIR/status-after.json"
@@ -277,6 +304,9 @@ scripts/local-pilot/canary-evidence sample \
   --canary-dir "$CANARY_DIR" \
   --status-json "$STATUS_AFTER"
 scripts/local-pilot/canary-evidence finalize --canary-dir "$CANARY_DIR"
+scripts/local-pilot/stop
+CANARY_STARTED=false
+trap - EXIT HUP INT TERM
 ```
 
 The sequence never enables checked-in Email/DeepSeek, Kingdee, cloud, external send or

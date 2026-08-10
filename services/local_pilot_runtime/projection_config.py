@@ -32,7 +32,7 @@ _CONNECTION_FIELDS = frozenset(
         "connect_timeout_seconds",
     }
 )
-_START_GUARD_FIELDS = frozenset({"schema_version", "site_id", "processing_purpose", "postgres"})
+_START_GUARD_FIELDS = frozenset({"schema_version", "site_id", "processing_purpose", "connections"})
 _ROLE_USERS = {
     "observer": "gbos_observer_app",
     "context": "gbos_context_app",
@@ -67,14 +67,14 @@ class ProjectionConfig:
 class CanaryStartGuardConfig:
     site_id: str
     processing_purpose: str
-    postgres: PostgresSettings
-    schema_version: Literal["1.0"] = "1.0"
+    connections: Mapping[str, PostgresSettings]
+    schema_version: Literal["1.1"] = "1.1"
 
     def __repr__(self) -> str:
         return (
             "CanaryStartGuardConfig("
             f"site_id={self.site_id!r}, processing_purpose={self.processing_purpose!r}, "
-            "postgres=<redacted>)"
+            "connections=<redacted>)"
         )
 
 
@@ -117,14 +117,26 @@ def load_projection_config(path: Path, *, expected_site_id: str) -> ProjectionCo
 
 
 def load_canary_start_guard_config(path: Path) -> CanaryStartGuardConfig:
-    """Load the private one-role pre-egress database guard configuration."""
+    """Load three independent read-only-role canary guard connections."""
 
     value = _read_private_json(Path(path))
-    if set(value) != _START_GUARD_FIELDS or value.get("schema_version") != "1.0":
-        raise ProjectionConfigError("canary start guard config must use the closed v1 schema")
-    raw_postgres = value.get("postgres")
-    if not isinstance(raw_postgres, dict) or set(raw_postgres) != _CONNECTION_FIELDS:
-        raise ProjectionConfigError("canary start guard connection must use the closed schema")
+    if set(value) != _START_GUARD_FIELDS or value.get("schema_version") != "1.1":
+        raise ProjectionConfigError("canary start guard config must use the closed v1.1 schema")
+    raw_connections = value.get("connections")
+    if not isinstance(raw_connections, dict) or set(raw_connections) != set(_ROLE_USERS):
+        raise ProjectionConfigError("canary start guard requires exactly three roles")
+    connections: dict[str, PostgresSettings] = {}
+    password_paths: set[Path] = set()
+    for role in ("observer", "context", "agent"):
+        raw = raw_connections.get(role)
+        if not isinstance(raw, dict) or set(raw) != _CONNECTION_FIELDS:
+            raise ProjectionConfigError("canary start guard connection must use the closed schema")
+        connection = _connection(raw, expected_user=_ROLE_USERS[role])
+        resolved_password = connection.password_file.resolve(strict=True)
+        if resolved_password in password_paths:
+            raise ProjectionConfigError("canary start guard roles cannot reuse credentials")
+        password_paths.add(resolved_password)
+        connections[role] = connection
     return CanaryStartGuardConfig(
         site_id=_text(value.get("site_id"), "site_id", maximum=140),
         processing_purpose=_text(
@@ -132,7 +144,7 @@ def load_canary_start_guard_config(path: Path) -> CanaryStartGuardConfig:
             "processing purpose",
             maximum=80,
         ),
-        postgres=_connection(raw_postgres, expected_user=_ROLE_USERS["observer"]),
+        connections=MappingProxyType(connections),
     )
 
 

@@ -13,7 +13,9 @@ import pytest
 
 from services.local_pilot_runtime.canary_start_guard import (
     CanaryStartGuardError,
+    PostgresAgentCanaryStartGuardRepository,
     PostgresCanaryStartGuardRepository,
+    PostgresContextCanaryStartGuardRepository,
     run_canary_start_guard,
 )
 from services.local_pilot_runtime.canary_verifier_runtime import read_only_postgres_connector
@@ -42,15 +44,27 @@ class _Cursor:
         normalized = " ".join(query.split())
         self.connection.queries.append((normalized, params))
         if "current_user" in normalized:
-            self.row = ("gbos_observer_app", "on")
+            self.row = (self.connection.role, "on")
         elif "FROM observer.context_publication_outbox" in normalized:
             self.row = (self.connection.backlog,)
+        elif "FROM observer.inbound_deliveries" in normalized:
+            self.row = (self.connection.inbound_backlog,)
+        elif "FROM observer.processing_jobs" in normalized:
+            self.row = (self.connection.processing_backlog,)
+        elif "FROM observer.identity_resolution_work" in normalized:
+            self.row = (self.connection.identity_backlog,)
         elif "FROM observer.model_fatal_latches" in normalized:
             self.row = (self.connection.fatal_latches,)
         elif "FROM observer.connector_instances AS instance" in normalized:
             self.row = self.connection.checkpoint_row
         elif "FROM observer.connector_control_commands" in normalized:
             self.row = (self.connection.control_commands,)
+        elif "FROM context.communication_draft_outbox" in normalized:
+            self.row = (self.connection.draft_backlog,)
+        elif "FROM agent_runtime.agent_tasks" in normalized:
+            self.row = (self.connection.agent_task_backlog,)
+        elif "FROM agent_runtime.proposal_materialization_outbox" in normalized:
+            self.row = (self.connection.materialization_backlog,)
         else:
             self.row = None
 
@@ -62,15 +76,29 @@ class _Connection:
     def __init__(
         self,
         *,
+        role: str = "gbos_observer_app",
         backlog: int = 0,
+        inbound_backlog: int = 0,
+        processing_backlog: int = 0,
+        identity_backlog: int = 0,
         fatal_latches: int = 0,
         checkpoint_row: tuple[Any, ...] | None = None,
         control_commands: int = 0,
+        draft_backlog: int = 0,
+        agent_task_backlog: int = 0,
+        materialization_backlog: int = 0,
     ) -> None:
+        self.role = role
         self.backlog = backlog
+        self.inbound_backlog = inbound_backlog
+        self.processing_backlog = processing_backlog
+        self.identity_backlog = identity_backlog
         self.fatal_latches = fatal_latches
         self.checkpoint_row = checkpoint_row
         self.control_commands = control_commands
+        self.draft_backlog = draft_backlog
+        self.agent_task_backlog = agent_task_backlog
+        self.materialization_backlog = materialization_backlog
         self.queries: list[tuple[str, object]] = []
         self.closed = False
 
@@ -90,9 +118,12 @@ def _private_json(path: Path, value: object) -> None:
 
 
 def _files(tmp_path: Path) -> dict[str, Path]:
-    password = tmp_path / "postgres_observer_password"
-    password.write_text("observer-password", encoding="utf-8")
-    password.chmod(0o600)
+    passwords: dict[str, Path] = {}
+    for role in ("observer", "context", "agent"):
+        password = tmp_path / f"postgres_{role}_password"
+        password.write_text(f"{role}-password", encoding="utf-8")
+        password.chmod(0o600)
+        passwords[role] = password
     credential = tmp_path / "email_credential"
     _private_json(
         credential,
@@ -180,16 +211,19 @@ def _files(tmp_path: Path) -> dict[str, Path]:
     _private_json(
         config,
         {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "site_id": SITE_ID,
             "processing_purpose": PURPOSE,
-            "postgres": {
-                "host": "postgres",
-                "port": 5432,
-                "database": "gbos_local_pilot",
-                "user": "gbos_observer_app",
-                "password_file": str(password),
-                "connect_timeout_seconds": 5,
+            "connections": {
+                role: {
+                    "host": "postgres",
+                    "port": 5432,
+                    "database": "gbos_local_pilot",
+                    "user": f"gbos_{role}_app",
+                    "password_file": str(passwords[role]),
+                    "connect_timeout_seconds": 5,
+                }
+                for role in ("observer", "context", "agent")
             },
         },
     )
@@ -236,12 +270,69 @@ def test_repository_proves_read_only_role_empty_backlog_open_latch_and_clean_bin
     sql = "\n".join(query for query, _params in connection.queries)
     assert "SET TRANSACTION READ ONLY" in sql
     assert "status IN ('queued', 'leased', 'retry_wait')" in sql
+    assert "observer.inbound_deliveries" in sql
+    assert "observer.processing_jobs" in sql
+    assert "observer.identity_resolution_work" in sql
     assert "lease_expires_at" not in next(
         query for query, _params in connection.queries if "context_publication_outbox" in query
     )
     assert "model_fatal_latches" in sql
     assert "connector_checkpoints" in sql
     assert "connector_control_commands" in sql
+
+
+@pytest.mark.parametrize(
+    ("field", "code"),
+    [
+        ("inbound_backlog", "inbound_delivery_backlog_not_empty"),
+        ("processing_backlog", "processing_job_backlog_not_empty"),
+        ("identity_backlog", "identity_resolution_backlog_not_empty"),
+    ],
+)
+def test_any_active_observer_queue_fails_closed(field: str, code: str) -> None:
+    connection = _Connection(**{field: 1})
+
+    with pytest.raises(CanaryStartGuardError, match=code):
+        PostgresCanaryStartGuardRepository(connection).assert_safe(
+            site_id=SITE_ID,
+            processing_purpose=PURPOSE,
+            connector="email",
+            connector_instance_id="email-primary",
+            initial_checkpoint=INITIAL_CHECKPOINT,
+        )
+
+
+@pytest.mark.parametrize(
+    ("repository", "connection", "code"),
+    [
+        (
+            PostgresContextCanaryStartGuardRepository,
+            _Connection(role="gbos_context_app", draft_backlog=1),
+            "communication_draft_backlog_not_empty",
+        ),
+        (
+            PostgresAgentCanaryStartGuardRepository,
+            _Connection(role="gbos_agent_app", agent_task_backlog=1),
+            "agent_task_backlog_not_empty",
+        ),
+        (
+            PostgresAgentCanaryStartGuardRepository,
+            _Connection(role="gbos_agent_app", materialization_backlog=1),
+            "materialization_backlog_not_empty",
+        ),
+    ],
+)
+def test_any_active_downstream_queue_fails_closed(
+    repository: type[PostgresContextCanaryStartGuardRepository]
+    | type[PostgresAgentCanaryStartGuardRepository],
+    connection: _Connection,
+    code: str,
+) -> None:
+    with pytest.raises(CanaryStartGuardError, match=code):
+        repository(connection).assert_safe(
+            site_id=SITE_ID,
+            processing_purpose=PURPOSE,
+        )
 
 
 @pytest.mark.parametrize("backlog_status", ["queued", "retry_wait", "leased", "expired_leased"])
@@ -286,17 +377,21 @@ def test_unsafe_latch_checkpoint_or_control_fails_closed(
 
 def test_guard_binds_manifest_control_and_closes_database_connection(tmp_path: Path) -> None:
     files = _files(tmp_path)
-    connection = _Connection()
+    connections = {
+        "gbos_observer_app": _Connection(role="gbos_observer_app"),
+        "gbos_context_app": _Connection(role="gbos_context_app"),
+        "gbos_agent_app": _Connection(role="gbos_agent_app"),
+    }
 
     run_canary_start_guard(
         config_path=files["config"],
         manifest_path=files["manifest"],
         control_path=files["control"],
         connector_config_path=files["connectors"],
-        connector=lambda **_kwargs: connection,
+        connector=lambda **kwargs: connections[str(kwargs["user"])],
     )
 
-    assert connection.closed is True
+    assert all(connection.closed for connection in connections.values())
 
 
 def test_guard_rejects_changed_manifest_before_connecting(tmp_path: Path) -> None:

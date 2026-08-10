@@ -50,15 +50,58 @@ class PostgresCanaryStartGuardRepository:
     ) -> None:
         try:
             with self._connection.transaction(), self._connection.cursor() as cursor:
-                cursor.execute("SET TRANSACTION READ ONLY")
-                cursor.execute("SELECT set_config('app.site_id', %s, true)", (site_id,))
-                cursor.execute(
-                    "SELECT set_config('app.processing_purpose', %s, true)",
-                    (processing_purpose,),
+                _bind_read_only_session(
+                    cursor,
+                    site_id=site_id,
+                    processing_purpose=processing_purpose,
+                    expected_user="gbos_observer_app",
                 )
-                cursor.execute("SELECT current_user, current_setting('transaction_read_only')")
-                if cursor.fetchone() != ("gbos_observer_app", "on"):
-                    raise CanaryStartGuardError("least_privilege_read_only_role_required")
+
+                cursor.execute(
+                    """
+                    SELECT count(*)
+                    FROM observer.inbound_deliveries
+                    WHERE site_id = %s
+                      AND connector = %s
+                      AND connector_instance_id = %s
+                      AND processing_status IN (
+                          'received', 'authenticated', 'queued', 'processing'
+                      )
+                    """,
+                    (site_id, connector, connector_instance_id),
+                )
+                if _count(cursor.fetchone()) != 0:
+                    raise CanaryStartGuardError("inbound_delivery_backlog_not_empty")
+
+                cursor.execute(
+                    """
+                    SELECT count(*)
+                    FROM observer.processing_jobs
+                    WHERE site_id = %s
+                      AND status IN ('queued', 'processing', 'retry_wait')
+                    """,
+                    (site_id,),
+                )
+                if _count(cursor.fetchone()) != 0:
+                    raise CanaryStartGuardError("processing_job_backlog_not_empty")
+
+                cursor.execute(
+                    """
+                    SELECT count(*)
+                    FROM observer.identity_resolution_work
+                    WHERE site_id = %s
+                      AND (
+                          status IN ('queued', 'leased', 'retry_wait')
+                          OR (
+                              status IN ('unresolved', 'confirmed', 'revoked')
+                              AND next_attempt_at <= now()
+                          )
+                      )
+                    """,
+                    (site_id,),
+                )
+                if _count(cursor.fetchone()) != 0:
+                    raise CanaryStartGuardError("identity_resolution_backlog_not_empty")
 
                 cursor.execute(
                     """
@@ -130,6 +173,91 @@ class PostgresCanaryStartGuardRepository:
             raise CanaryStartGuardError("database_guard_failed") from exc
 
 
+class PostgresContextCanaryStartGuardRepository:
+    """Context-role proof that no old draft can enter the canary window."""
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    def assert_safe(self, *, site_id: str, processing_purpose: str) -> None:
+        try:
+            with self._connection.transaction(), self._connection.cursor() as cursor:
+                _bind_read_only_session(
+                    cursor,
+                    site_id=site_id,
+                    processing_purpose=processing_purpose,
+                    expected_user="gbos_context_app",
+                )
+                cursor.execute(
+                    """
+                    SELECT count(*)
+                    FROM context.communication_draft_outbox
+                    WHERE site_id = %s
+                      AND status IN ('pending', 'running', 'retry')
+                    """,
+                    (site_id,),
+                )
+                if _count(cursor.fetchone()) != 0:
+                    raise CanaryStartGuardError("communication_draft_backlog_not_empty")
+        except CanaryStartGuardError:
+            raise
+        except Exception as exc:
+            raise CanaryStartGuardError("database_guard_failed") from exc
+
+
+class PostgresAgentCanaryStartGuardRepository:
+    """Agent-role proof that no old task or materialization can run."""
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    def assert_safe(self, *, site_id: str, processing_purpose: str) -> None:
+        try:
+            with self._connection.transaction(), self._connection.cursor() as cursor:
+                _bind_read_only_session(
+                    cursor,
+                    site_id=site_id,
+                    processing_purpose=processing_purpose,
+                    expected_user="gbos_agent_app",
+                )
+                cursor.execute(
+                    """
+                    SELECT count(*)
+                    FROM agent_runtime.agent_tasks
+                    WHERE site_id = %s
+                      AND (
+                          status IN ('leased', 'running')
+                          OR (
+                              status IN ('queued', 'recheck')
+                              AND due_at <= now()
+                          )
+                      )
+                    """,
+                    (site_id,),
+                )
+                if _count(cursor.fetchone()) != 0:
+                    raise CanaryStartGuardError("agent_task_backlog_not_empty")
+                cursor.execute(
+                    """
+                    SELECT count(*)
+                    FROM agent_runtime.proposal_materialization_outbox
+                    WHERE site_id = %s
+                      AND status IN ('pending', 'running', 'retry')
+                    """,
+                    (site_id,),
+                )
+                if _count(cursor.fetchone()) != 0:
+                    raise CanaryStartGuardError("materialization_backlog_not_empty")
+        except CanaryStartGuardError:
+            raise
+        except Exception as exc:
+            raise CanaryStartGuardError("database_guard_failed") from exc
+
+
 def run_canary_start_guard(
     *,
     config_path: Path,
@@ -169,22 +297,35 @@ def run_canary_start_guard(
     except (ChannelConfigError, OSError, TypeError, ValueError) as exc:
         raise CanaryStartGuardError("canary_binding_invalid") from exc
 
-    connection: object | None = None
+    connections: list[object] = []
     try:
-        connection = connect_postgres(config.postgres, connector=connector)
-        PostgresCanaryStartGuardRepository(connection).assert_safe(
+        observer_connection = connect_postgres(config.connections["observer"], connector=connector)
+        connections.append(observer_connection)
+        context_connection = connect_postgres(config.connections["context"], connector=connector)
+        connections.append(context_connection)
+        agent_connection = connect_postgres(config.connections["agent"], connector=connector)
+        connections.append(agent_connection)
+        PostgresCanaryStartGuardRepository(observer_connection).assert_safe(
             site_id=config.site_id,
             processing_purpose=config.processing_purpose,
             connector="email",
             connector_instance_id=credential.instance_id,
             initial_checkpoint=credential.initial_checkpoint,
         )
+        PostgresContextCanaryStartGuardRepository(context_connection).assert_safe(
+            site_id=config.site_id,
+            processing_purpose=config.processing_purpose,
+        )
+        PostgresAgentCanaryStartGuardRepository(agent_connection).assert_safe(
+            site_id=config.site_id,
+            processing_purpose=config.processing_purpose,
+        )
     except CanaryStartGuardError:
         raise
     except Exception as exc:
         raise CanaryStartGuardError("database_guard_failed") from exc
     finally:
-        if connection is not None:
+        for connection in connections:
             close = getattr(connection, "close", None)
             if callable(close):
                 with suppress(Exception):
@@ -293,6 +434,24 @@ def _count(row: object) -> int:
     return row[0]
 
 
+def _bind_read_only_session(
+    cursor: Any,
+    *,
+    site_id: str,
+    processing_purpose: str,
+    expected_user: str,
+) -> None:
+    cursor.execute("SET TRANSACTION READ ONLY")
+    cursor.execute("SELECT set_config('app.site_id', %s, true)", (site_id,))
+    cursor.execute(
+        "SELECT set_config('app.processing_purpose', %s, true)",
+        (processing_purpose,),
+    )
+    cursor.execute("SELECT current_user, current_setting('transaction_read_only')")
+    if cursor.fetchone() != (expected_user, "on"):
+        raise CanaryStartGuardError("least_privilege_read_only_role_required")
+
+
 def _safe_checkpoint(row: object, *, initial_checkpoint: str) -> bool:
     if not isinstance(row, tuple) or len(row) != 8:
         return False
@@ -347,7 +506,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 __all__ = [
     "CanaryStartGuardError",
+    "PostgresAgentCanaryStartGuardRepository",
     "PostgresCanaryStartGuardRepository",
+    "PostgresContextCanaryStartGuardRepository",
     "main",
     "run_canary_start_guard",
 ]

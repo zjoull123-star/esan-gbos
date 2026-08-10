@@ -105,7 +105,7 @@ if [[ -n "${CANARY_CONTROL}" ]]; then
   running_services="$(compose ps --status running --services)"
   while IFS= read -r running_service; do
     case "${running_service}" in
-      agent-worker|communication-draft-worker|connector-worker|email-poller|identity-resolution-worker|model-projection-worker)
+      agent-worker|communication-draft-worker|connector-worker|email-poller|identity-resolution-worker|materialization-worker|media-worker|model-projection-worker|retention-scheduler|wecom-poller|webhook-ingress)
         echo "A canary producer or model worker is already running; stop it before guarded startup." >&2
         exit 78
         ;;

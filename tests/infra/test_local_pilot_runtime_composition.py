@@ -977,6 +977,12 @@ def test_secret_materialization_covers_runtime_crypto_frappe_and_channels() -> N
         r"write_optional_keychain_secret\s+\\?\s*frappe_demo_password",
         prepare,
     )
+    unconditional, manifest_gated = prepare.split(
+        "while IFS=$'\\t' read -r output_name keychain_ref; do",
+        maxsplit=1,
+    )
+    assert "media_runtime_key" not in unconditional
+    assert 'channels["media"]["enabled"]' in manifest_gated
     assert not re.search(r"(?m)^\s*(?:DEEPSEEK_API_KEY|PASSWORD|TOKEN):", compose)
     assert os.environ.get("DEEPSEEK_API_KEY") is None or "DEEPSEEK_API_KEY" not in compose
     assert "postgres_app_password" not in prepare

@@ -496,13 +496,80 @@ def test_email_deepseek_canary_start_is_explicit_and_accepts_no_secret_values() 
     script = _read(SCRIPTS / "start-email-deepseek-canary")
 
     assert "--acknowledge-real-email-and-model" in script
+    assert "--enable-retention-scheduler" in script
+    assert "--acknowledge-periodic-expired-local-data-deletion" in script
     assert "pilot-manifest.json" in script
     assert "canary-run.json" in script
     assert "--manifest" in script
     assert "--canary-control" in script
+    forwarded = script.split('exec "${SCRIPT_DIR}/start"', maxsplit=1)[1]
+    assert "--enable-retention-scheduler" in forwarded
+    assert "--acknowledge-periodic-expired-local-data-deletion" in forwarded
     assert "prepare-email-deepseek-canary" not in script
     for forbidden in ("password", "api-key", "token", "secret"):
         assert f"--{forbidden}" not in script.lower()
+
+
+def test_email_deepseek_canary_forwards_the_double_acknowledged_retention_gate(
+    tmp_path: Path,
+) -> None:
+    scripts = tmp_path / "scripts" / "local-pilot"
+    scripts.mkdir(parents=True)
+    shutil.copy2(
+        SCRIPTS / "start-email-deepseek-canary",
+        scripts / "start-email-deepseek-canary",
+    )
+    argument_log = tmp_path / "start-arguments"
+    _write_executable(
+        scripts / "start",
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$GBOS_ARGUMENT_LOG"\n',
+    )
+    canary = tmp_path / "canary"
+    canary.mkdir()
+    (canary / "pilot-manifest.json").write_text("{}\n", encoding="utf-8")
+    (canary / "canary-run.json").write_text("{}\n", encoding="utf-8")
+    environment = {**os.environ, "GBOS_ARGUMENT_LOG": str(argument_log)}
+
+    refused = subprocess.run(
+        [
+            str(scripts / "start-email-deepseek-canary"),
+            "--acknowledge-real-email-and-model",
+            "--canary-dir",
+            str(canary),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert refused.returncode == 64
+    assert not argument_log.exists()
+
+    accepted = subprocess.run(
+        [
+            str(scripts / "start-email-deepseek-canary"),
+            "--acknowledge-real-email-and-model",
+            "--enable-retention-scheduler",
+            "--acknowledge-periodic-expired-local-data-deletion",
+            "--canary-dir",
+            str(canary),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+    assert argument_log.read_text(encoding="utf-8").splitlines() == [
+        "--manifest",
+        str(canary / "pilot-manifest.json"),
+        "--canary-control",
+        str(canary / "canary-run.json"),
+        "--enable-retention-scheduler",
+        "--acknowledge-periodic-expired-local-data-deletion",
+    ]
 
 
 def test_retention_wrapper_is_dry_run_first_and_requires_double_opt_in_for_deletion() -> None:

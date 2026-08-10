@@ -263,16 +263,19 @@ def _projection_config(
 
 def _canary_start_guard_config(manifest: dict[str, Any]) -> dict[str, Any]:
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "site_id": manifest["site_id"],
         "processing_purpose": "observation_processing",
-        "postgres": {
-            "host": "postgres",
-            "port": 5432,
-            "database": "gbos_local_pilot",
-            "user": _ROLES["observer"],
-            "password_file": _ROLE_PASSWORD_FILES["observer"],
-            "connect_timeout_seconds": 5,
+        "connections": {
+            role: {
+                "host": "postgres",
+                "port": 5432,
+                "database": "gbos_local_pilot",
+                "user": _ROLES[role],
+                "password_file": _ROLE_PASSWORD_FILES[role],
+                "connect_timeout_seconds": 5,
+            }
+            for role in ("observer", "context", "agent")
         },
     }
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import stat
@@ -12,6 +14,7 @@ from services.local_pilot_runtime.canary_chain_verifier import (
     AgentInvocationProjection,
     CanaryProjectionRepositories,
     ContextChainProjection,
+    ObserverChainProjection,
     ObserverLatchProjection,
     verify_canary_chain,
 )
@@ -40,8 +43,132 @@ REQUIRED_CANARY_CHECKS = {
     "retention_verified": "controlled_drill",
     "emergency_stop_verified": "controlled_drill",
     "fault_drills_verified": "controlled_drill",
+    "runtime_health_verified": "system_query",
     "zero_prohibited_actions": "system_query",
 }
+
+
+def _valid_check_facts(kind: str) -> dict[str, object]:
+    facts: dict[str, dict[str, object]] = {
+        "email_body_peek_no_backfill": {
+            "body_peek_only": True,
+            "backfill_count": 0,
+            "checkpoint_advanced": True,
+            "delivery_count": 1,
+        },
+        "user_mapping_reviewed": {
+            "target_type": "User",
+            "review_status": "Approved",
+            "mapping_revision": 1,
+            "raw_identity_visible": False,
+        },
+        "party_mapping_reviewed": {
+            "target_type": "Party",
+            "review_status": "Approved",
+            "mapping_revision": 1,
+            "raw_identity_visible": False,
+        },
+        "user_second_message_auto_resolved": {
+            "target_type": "User",
+            "auto_resolved": True,
+            "new_review_case_count": 0,
+            "mapping_revision": 1,
+        },
+        "party_second_message_auto_resolved": {
+            "target_type": "Party",
+            "auto_resolved": True,
+            "new_review_case_count": 0,
+            "mapping_revision": 1,
+        },
+        "model_input_tokenized": {
+            "raw_identity_count": 0,
+            "obvious_pii_count": 0,
+            "tokenized_reference_count": 1,
+        },
+        "ai_draft_review_visible": {
+            "review_status": "AI Draft",
+            "is_official_metric": False,
+            "draft_count": 1,
+            "safe_target_visible": True,
+        },
+        "budget_limits_verified": {
+            "warning_limit_usd": 50,
+            "hard_limit_usd": 100,
+            "settled_within_limit": True,
+            "reservation_within_limit": True,
+        },
+        "retention_verified": {
+            "retention_days": 30,
+            "legal_hold_preserved": True,
+            "expired_metadata_deleted": True,
+            "cas_tombstone_processed": True,
+        },
+        "emergency_stop_verified": {
+            "latch_activated": True,
+            "producer_count_after_stop": 0,
+            "receipt_verified": True,
+        },
+        "fault_drills_verified": {
+            "email_duplicate_safe": True,
+            "model_failure_latched": True,
+            "identity_restart_safe": True,
+            "database_restart_safe": True,
+        },
+        "runtime_health_verified": {
+            "email_polling_healthy": True,
+            "identity_worker_ready": True,
+            "identity_heartbeat_age_seconds": 5,
+            "observer_backlog_count": 0,
+            "identity_backlog_count": 0,
+            "model_backlog_count": 0,
+            "prometheus_target_up": True,
+            "critical_alert_count": 0,
+        },
+        "zero_prohibited_actions": {
+            "external_send_count": 0,
+            "formal_command_count": 0,
+            "deal_update_count": 0,
+            "quotation_count": 0,
+            "order_count": 0,
+        },
+    }
+    return facts[kind]
+
+
+def _non_model_check_fields(
+    *,
+    kind: str,
+    source: str,
+    common: dict[str, object],
+    evidence_sha256: str,
+    observed_at: str,
+) -> dict[str, object]:
+    body: dict[str, object] = {
+        "schema_version": "1.0",
+        "attestation_type": "gbos_canary_live_check",
+        "kind": kind,
+        "source": source,
+        "observed_at": observed_at,
+        "run_id": common["run_id"],
+        "site_id": "gbos.localhost",
+        "source_commit": common["source_commit"],
+        "manifest_sha256": common["manifest_sha256"],
+        "status": "pass",
+        "artifact_sha256": evidence_sha256,
+        "facts": _valid_check_facts(kind),
+    }
+    payload_sha256 = hashlib.sha256(
+        json.dumps(body, separators=(",", ":"), sort_keys=True).encode()
+    ).hexdigest()
+    attestation = {**body, "payload_sha256": payload_sha256}
+    attestation_sha256 = hashlib.sha256(
+        json.dumps(attestation, separators=(",", ":"), sort_keys=True).encode()
+    ).hexdigest()
+    return {
+        "evidence_sha256": evidence_sha256,
+        "check_attestation": attestation,
+        "check_attestation_sha256": attestation_sha256,
+    }
 
 
 def test_canary_chain_launcher_binds_repository_from_its_own_file() -> None:
@@ -487,12 +614,35 @@ def _prepared_canary(tmp_path: Path) -> tuple[Path, Path, Path]:
     checkpoint_bytes = json.dumps(checkpoint, separators=(",", ":")).encode()
     _private(output / "email-checkpoint.json", checkpoint_bytes)
     control = json.loads((output / "canary-run.json").read_text(encoding="utf-8"))
+    credential_binding = (
+        json.dumps(
+            {
+                "account_user_ref": "ceo@example.invalid",
+                "agent_task_type": "sales",
+                "folder": "INBOX",
+                "host": "imap.example.invalid",
+                "instance_id": "email-canary-v1",
+                "mailbox": "pilot@example.invalid",
+                "port": 993,
+                "team_ref": "TEAM-SALES",
+                "username": "pilot@example.invalid",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
     _private(
         output / "email-checkpoint-receipt.json",
         json.dumps(
             {
                 "activation_time": control["activation_time"],
                 "checkpoint_sha256": __import__("hashlib").sha256(checkpoint_bytes).hexdigest(),
+                "credential_binding_hmac_sha256": hmac.new(
+                    b"i" * 32,
+                    credential_binding,
+                    hashlib.sha256,
+                ).hexdigest(),
                 "observed_at": "2026-08-11T09:30:00Z",
                 "operation": "STATUS_UIDVALIDITY_UIDNEXT",
                 "read_only": True,
@@ -557,6 +707,7 @@ def _machine_chain_attestation(tmp_path: Path, manifest: Path, control_path: Pat
     control = json.loads(control_path.read_text(encoding="utf-8"))
     started_at = datetime(2026, 8, 11, 10, 20, tzinfo=UTC)
     invocation_digest = "d" * 64
+    observation_digest = "c" * 64
     repositories = CanaryProjectionRepositories(
         agent=SimpleNamespace(
             bounded_window=lambda **_: (
@@ -583,6 +734,7 @@ def _machine_chain_attestation(tmp_path: Path, manifest: Path, control_path: Pat
                     processing_purpose="observation_processing",
                     invocation_ref_sha256=invocation_digest,
                     intelligence_ref_sha256="e" * 64,
+                    observation_ref_sha256=observation_digest,
                     invocation_ordinal=1,
                     review_status="AI Draft",
                     model_name="deepseek-v4-flash",
@@ -601,11 +753,30 @@ def _machine_chain_attestation(tmp_path: Path, manifest: Path, control_path: Pat
             )
         ),
         observer=SimpleNamespace(
+            bounded_window=lambda **_: (
+                ObserverChainProjection(
+                    site_id="gbos.localhost",
+                    processing_purpose="observation_processing",
+                    delivery_ref_sha256="b" * 64,
+                    raw_body_sha256="a" * 64,
+                    delivery_status="succeeded",
+                    observation_ref_sha256=observation_digest,
+                    connector="email",
+                    channel="email",
+                    participant_ref_sha256="9" * 64,
+                    identity_work_status="confirmed",
+                    resolution_status="confirmed",
+                    target_type="User",
+                    authority_active=True,
+                    received_at=datetime(2026, 8, 11, 10, 18, tzinfo=UTC),
+                    ingested_at=datetime(2026, 8, 11, 10, 19, tzinfo=UTC),
+                ),
+            ),
             latch=lambda **_: ObserverLatchProjection(
                 site_id="gbos.localhost",
                 processing_purpose="observation_processing",
                 is_open=True,
-            )
+            ),
         ),
         close=lambda: None,
     )
@@ -865,7 +1036,7 @@ def test_canary_evidence_sample_appends_private_hash_chained_runtime_state(
         status_path,
         json.dumps(
             {
-                "schema_version": "1.0",
+                "schema_version": "1.1",
                 "captured_at": "2026-08-11T10:00:00Z",
                 "source_commit": control["source_commit"],
                 "composition_status": "composed",
@@ -886,14 +1057,22 @@ def test_canary_evidence_sample_appends_private_hash_chained_runtime_state(
                     {
                         "service": "local-runtime",
                         "reference": "runtime:test",
-                        "local_inspect_digest": "sha256:" + "a" * 64,
+                        "actual_inspect_digest": "sha256:" + "a" * 64,
                     },
                     {
                         "service": "frappe-pwa",
                         "reference": "frappe:test",
-                        "local_inspect_digest": "sha256:" + "b" * 64,
+                        "actual_inspect_digest": "sha256:" + "b" * 64,
                     },
                 ],
+                "runtime_attestation": {
+                    "repository_source_verified": True,
+                    "required_images_verified": True,
+                    "running_images_verified": True,
+                    "image_issues": [],
+                    "running_image_issues": [],
+                    "running_bindings": [],
+                },
                 "verdict": "running",
                 "no_go_reasons": [],
             }
@@ -930,6 +1109,29 @@ def test_canary_evidence_sample_appends_private_hash_chained_runtime_state(
     assert record["image_binding_count"] == 2
     assert "running" not in record
     assert "required" not in record
+
+    legacy = json.loads(status_path.read_text(encoding="utf-8"))
+    legacy["schema_version"] = "1.0"
+    legacy.pop("runtime_attestation")
+    for item in legacy["images"]:
+        item["local_inspect_digest"] = item.pop("actual_inspect_digest")
+    _private(status_path, json.dumps(legacy).encode())
+    rejected = subprocess.run(
+        [
+            str(CANARY_EVIDENCE),
+            "sample",
+            "--canary-dir",
+            str(manifest.parent),
+            "--status-json",
+            str(status_path),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode == 78
+    assert "obsolete" in rejected.stderr.lower()
 
 
 def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_assessment(
@@ -986,7 +1188,13 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
                 **(
                     chain_fields
                     if kind == "model_identity_exact"
-                    else {"evidence_sha256": f"{index + 100:064x}"}
+                    else _non_model_check_fields(
+                        kind=kind,
+                        source=source,
+                        common=common,
+                        evidence_sha256=f"{index + 100:064x}",
+                        observed_at=start.isoformat().replace("+00:00", "Z"),
+                    )
                 ),
             }
         )
@@ -1027,10 +1235,14 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
         "agent_invocation_count": 1,
         "context_chain_count": 1,
         "context_state_bound": True,
+        "email_delivery_count": 1,
         "external_send_count": 0,
         "fatal_or_mismatch_invocation_count": 0,
         "frappe_receipt_bound": True,
+        "identity_resolution_status": "confirmed",
+        "identity_target_type": "User",
         "network_call_count": 1,
+        "observer_authority_active": True,
         "observer_fatal_latch_open": True,
         "tool_call_count": 0,
     }
@@ -1048,7 +1260,13 @@ def test_canary_evidence_finalize_accepts_observed_short_run_and_defers_72_hour_
     for forbidden in ("@", "Bearer ", "password", "api_key", "target_ref"):
         assert forbidden not in serialized
     assert "72-hour continuous stability: deferred by user; not assessed" in serialized
-    assert len(checksums.read_text(encoding="utf-8").splitlines()) == 2
+    assert len(checksums.read_text(encoding="utf-8").splitlines()) == 4
+    assert (evidence_dir / "runtime-samples.jsonl").read_bytes() == (
+        canary_dir / "runtime-samples.jsonl"
+    ).read_bytes()
+    assert (evidence_dir / "live-checks.jsonl").read_bytes() == (
+        canary_dir / "live-checks.jsonl"
+    ).read_bytes()
 
     evidence_dir.rename(canary_dir / "valid-evidence")
     unhealthy_samples = [
@@ -1124,7 +1342,13 @@ def test_canary_evidence_finalize_rejects_machine_receipt_fatal_or_model_drift(
             **(
                 chain_fields
                 if kind == "model_identity_exact"
-                else {"evidence_sha256": f"{index + 100:064x}"}
+                else _non_model_check_fields(
+                    kind=kind,
+                    source=source,
+                    common=common,
+                    evidence_sha256=f"{index + 100:064x}",
+                    observed_at="2026-08-11T10:30:00Z",
+                )
             ),
         }
         for index, (kind, source) in enumerate(REQUIRED_CANARY_CHECKS.items(), start=1)
@@ -1186,7 +1410,13 @@ def test_canary_evidence_requires_two_health_samples_and_brackets_live_checks(
             **(
                 chain_fields
                 if kind == "model_identity_exact"
-                else {"evidence_sha256": f"{index + 100:064x}"}
+                else _non_model_check_fields(
+                    kind=kind,
+                    source=source,
+                    common=common,
+                    evidence_sha256=f"{index + 100:064x}",
+                    observed_at="2026-08-11T10:30:00Z",
+                )
             ),
         }
         for index, (kind, source) in enumerate(REQUIRED_CANARY_CHECKS.items(), start=1)
@@ -1344,6 +1574,93 @@ def test_canary_evidence_requires_exact_machine_chain_and_rejects_hand_entered_m
     serialized = json.dumps(record, sort_keys=True)
     assert "result" not in serialized
     assert str(attestation) not in serialized
+
+
+def test_canary_evidence_rejects_arbitrary_non_model_artifact_without_closed_attestation(
+    tmp_path: Path,
+) -> None:
+    manifest, _control_path, _secrets = _prepared_canary(tmp_path)
+    arbitrary = tmp_path / "arbitrary-check.json"
+    _private(arbitrary, b'{"result":"pass"}\n')
+
+    result = subprocess.run(
+        [
+            str(CANARY_EVIDENCE),
+            "record",
+            "--canary-dir",
+            str(manifest.parent),
+            "--kind",
+            "email_body_peek_no_backfill",
+            "--source",
+            "system_query",
+            "--observed-at",
+            "2026-08-11T10:30:00Z",
+            "--evidence-file",
+            str(arbitrary),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 78
+    assert not (manifest.parent / "live-checks.jsonl").exists()
+
+
+def test_canary_evidence_records_only_closed_bound_non_model_attestation(
+    tmp_path: Path,
+) -> None:
+    manifest, control_path, _secrets = _prepared_canary(tmp_path)
+    control = json.loads(control_path.read_text(encoding="utf-8"))
+    artifact = tmp_path / "email-query-result.json"
+    _private(artifact, b'{"bounded_result":"content_free"}\n')
+    fields = _non_model_check_fields(
+        kind="email_body_peek_no_backfill",
+        source="system_query",
+        common={
+            "run_id": control["run_id"],
+            "source_commit": control["source_commit"],
+            "manifest_sha256": control["manifest_sha256"],
+        },
+        evidence_sha256=hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        observed_at="2026-08-11T10:30:00Z",
+    )
+    attestation_path = tmp_path / "email-query-attestation.json"
+    _private(
+        attestation_path,
+        json.dumps(fields["check_attestation"], sort_keys=True).encode(),
+    )
+
+    result = subprocess.run(
+        [
+            str(CANARY_EVIDENCE),
+            "record",
+            "--canary-dir",
+            str(manifest.parent),
+            "--kind",
+            "email_body_peek_no_backfill",
+            "--source",
+            "system_query",
+            "--evidence-file",
+            str(artifact),
+            "--check-attestation",
+            str(attestation_path),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    record = json.loads((manifest.parent / "live-checks.jsonl").read_text(encoding="utf-8"))
+    assert record["observed_at"] == "2026-08-11T10:30:00Z"
+    assert record["check_attestation"]["facts"] == _valid_check_facts("email_body_peek_no_backfill")
+    assert (
+        record["check_attestation_sha256"]
+        == hashlib.sha256(attestation_path.read_bytes()).hexdigest()
+    )
 
 
 def test_canary_evidence_rejects_tampered_hash_chain_and_missing_model_identity(

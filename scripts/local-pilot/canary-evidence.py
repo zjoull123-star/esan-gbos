@@ -47,6 +47,7 @@ _REQUIRED_CHECK_SOURCES = {
     "retention_verified": "controlled_drill",
     "emergency_stop_verified": "controlled_drill",
     "fault_drills_verified": "controlled_drill",
+    "runtime_health_verified": "system_query",
     "zero_prohibited_actions": "system_query",
 }
 _LIVE_CHECK_BASE_FIELDS = frozenset(
@@ -65,6 +66,94 @@ _LIVE_CHECK_BASE_FIELDS = frozenset(
         "record_sha256",
     }
 )
+_CHECK_ATTESTATION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "attestation_type",
+        "kind",
+        "source",
+        "observed_at",
+        "run_id",
+        "site_id",
+        "source_commit",
+        "manifest_sha256",
+        "status",
+        "artifact_sha256",
+        "facts",
+        "payload_sha256",
+    }
+)
+_CHECK_FACT_FIELDS = {
+    "email_body_peek_no_backfill": frozenset(
+        {"body_peek_only", "backfill_count", "checkpoint_advanced", "delivery_count"}
+    ),
+    "user_mapping_reviewed": frozenset(
+        {"target_type", "review_status", "mapping_revision", "raw_identity_visible"}
+    ),
+    "party_mapping_reviewed": frozenset(
+        {"target_type", "review_status", "mapping_revision", "raw_identity_visible"}
+    ),
+    "user_second_message_auto_resolved": frozenset(
+        {"target_type", "auto_resolved", "new_review_case_count", "mapping_revision"}
+    ),
+    "party_second_message_auto_resolved": frozenset(
+        {"target_type", "auto_resolved", "new_review_case_count", "mapping_revision"}
+    ),
+    "model_input_tokenized": frozenset(
+        {"raw_identity_count", "obvious_pii_count", "tokenized_reference_count"}
+    ),
+    "ai_draft_review_visible": frozenset(
+        {"review_status", "is_official_metric", "draft_count", "safe_target_visible"}
+    ),
+    "budget_limits_verified": frozenset(
+        {
+            "warning_limit_usd",
+            "hard_limit_usd",
+            "settled_within_limit",
+            "reservation_within_limit",
+        }
+    ),
+    "retention_verified": frozenset(
+        {
+            "retention_days",
+            "legal_hold_preserved",
+            "expired_metadata_deleted",
+            "cas_tombstone_processed",
+        }
+    ),
+    "emergency_stop_verified": frozenset(
+        {"latch_activated", "producer_count_after_stop", "receipt_verified"}
+    ),
+    "fault_drills_verified": frozenset(
+        {
+            "email_duplicate_safe",
+            "model_failure_latched",
+            "identity_restart_safe",
+            "database_restart_safe",
+        }
+    ),
+    "runtime_health_verified": frozenset(
+        {
+            "email_polling_healthy",
+            "identity_worker_ready",
+            "identity_heartbeat_age_seconds",
+            "observer_backlog_count",
+            "identity_backlog_count",
+            "model_backlog_count",
+            "prometheus_target_up",
+            "critical_alert_count",
+        }
+    ),
+    "zero_prohibited_actions": frozenset(
+        {
+            "external_send_count",
+            "formal_command_count",
+            "deal_update_count",
+            "quotation_count",
+            "order_count",
+        }
+    ),
+}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -83,6 +172,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     record.add_argument("--observed-at")
     record.add_argument("--evidence-file", type=Path)
+    record.add_argument("--check-attestation", type=Path)
     record.add_argument("--chain-attestation", type=Path)
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--canary-dir", required=True, type=Path)
@@ -188,11 +278,149 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return value
 
 
+def _validate_check_attestation(
+    value: object,
+    *,
+    expected_kind: str,
+    expected_source: str,
+    expected_run_id: str,
+    expected_site_id: str,
+    expected_source_commit: str,
+    expected_manifest_sha256: str,
+    expected_artifact_sha256: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _CHECK_ATTESTATION_FIELDS:
+        raise ValueError("live check attestation schema is invalid")
+    payload_sha256 = value.get("payload_sha256")
+    body = {key: item for key, item in value.items() if key != "payload_sha256"}
+    facts = value.get("facts")
+    if (
+        value.get("schema_version") != "1.0"
+        or value.get("attestation_type") != "gbos_canary_live_check"
+        or value.get("kind") != expected_kind
+        or value.get("source") != expected_source
+        or value.get("run_id") != expected_run_id
+        or value.get("site_id") != expected_site_id
+        or value.get("source_commit") != expected_source_commit
+        or value.get("manifest_sha256") != expected_manifest_sha256
+        or value.get("status") != "pass"
+        or value.get("artifact_sha256") != expected_artifact_sha256
+        or not isinstance(payload_sha256, str)
+        or _HEX.fullmatch(payload_sha256) is None
+        or payload_sha256 == _ZERO_HASH
+        or hashlib.sha256(_canonical(body)).hexdigest() != payload_sha256
+        or not isinstance(facts, dict)
+        or set(facts) != _CHECK_FACT_FIELDS.get(expected_kind)
+    ):
+        raise ValueError("live check attestation binding is invalid")
+    _timestamp(value.get("observed_at"), "live check")
+    _validate_check_facts(expected_kind, facts)
+    return value
+
+
+def _validate_check_facts(kind: str, facts: Mapping[str, Any]) -> None:
+    valid = False
+    if kind == "email_body_peek_no_backfill":
+        valid = (
+            facts.get("body_peek_only") is True
+            and facts.get("backfill_count") == 0
+            and facts.get("checkpoint_advanced") is True
+            and _positive_int(facts.get("delivery_count"))
+        )
+    elif kind in {"user_mapping_reviewed", "party_mapping_reviewed"}:
+        expected_type = "User" if kind.startswith("user_") else "Party"
+        valid = (
+            facts.get("target_type") == expected_type
+            and facts.get("review_status") == "Approved"
+            and _positive_int(facts.get("mapping_revision"))
+            and facts.get("raw_identity_visible") is False
+        )
+    elif kind in {
+        "user_second_message_auto_resolved",
+        "party_second_message_auto_resolved",
+    }:
+        expected_type = "User" if kind.startswith("user_") else "Party"
+        valid = (
+            facts.get("target_type") == expected_type
+            and facts.get("auto_resolved") is True
+            and facts.get("new_review_case_count") == 0
+            and _positive_int(facts.get("mapping_revision"))
+        )
+    elif kind == "model_input_tokenized":
+        valid = (
+            facts.get("raw_identity_count") == 0
+            and facts.get("obvious_pii_count") == 0
+            and _positive_int(facts.get("tokenized_reference_count"))
+        )
+    elif kind == "ai_draft_review_visible":
+        valid = (
+            facts.get("review_status") == "AI Draft"
+            and facts.get("is_official_metric") is False
+            and facts.get("draft_count") == 1
+            and facts.get("safe_target_visible") is True
+        )
+    elif kind == "budget_limits_verified":
+        valid = (
+            facts.get("warning_limit_usd") == 50
+            and facts.get("hard_limit_usd") == 100
+            and facts.get("settled_within_limit") is True
+            and facts.get("reservation_within_limit") is True
+        )
+    elif kind == "retention_verified":
+        valid = (
+            facts.get("retention_days") == 30
+            and facts.get("legal_hold_preserved") is True
+            and facts.get("expired_metadata_deleted") is True
+            and facts.get("cas_tombstone_processed") is True
+        )
+    elif kind == "emergency_stop_verified":
+        valid = (
+            facts.get("latch_activated") is True
+            and facts.get("producer_count_after_stop") == 0
+            and facts.get("receipt_verified") is True
+        )
+    elif kind == "fault_drills_verified":
+        valid = all(
+            facts.get(field) is True
+            for field in (
+                "email_duplicate_safe",
+                "model_failure_latched",
+                "identity_restart_safe",
+                "database_restart_safe",
+            )
+        )
+    elif kind == "runtime_health_verified":
+        heartbeat_age = facts.get("identity_heartbeat_age_seconds")
+        valid = (
+            facts.get("email_polling_healthy") is True
+            and facts.get("identity_worker_ready") is True
+            and _non_negative_int(heartbeat_age)
+            and int(heartbeat_age) <= 30
+            and facts.get("observer_backlog_count") == 0
+            and facts.get("identity_backlog_count") == 0
+            and facts.get("model_backlog_count") == 0
+            and facts.get("prometheus_target_up") is True
+            and facts.get("critical_alert_count") == 0
+        )
+    elif kind == "zero_prohibited_actions":
+        valid = all(value == 0 for value in facts.values())
+    if not valid:
+        raise ValueError("live check attestation facts are invalid")
+
+
+def _positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _non_negative_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def _status_attestation_issues(status: Mapping[str, Any]) -> list[str]:
-    """Require machine bindings from current status while retaining schema 1.0 history."""
+    """Require current machine bindings; historical status cannot prove this run."""
 
     if status.get("schema_version") != "1.1":
-        return []
+        return ["status runtime attestation schema is obsolete"]
     attestation = status.get("runtime_attestation")
     if not isinstance(attestation, Mapping):
         return ["status runtime attestation is unavailable"]
@@ -358,8 +586,7 @@ def _sample(canary_dir: Path, status_path: Path) -> int:
         raise ValueError("status snapshot shape is invalid")
     missing = services.get("missing")
     if (
-        status.get("schema_version") not in {"1.0", "1.1"}
-        or status.get("source_commit") != control["source_commit"]
+        status.get("source_commit") != control["source_commit"]
         or status.get("composition_status") != "composed"
         or manifest.get("sha256") != control["manifest_sha256"]
         or manifest.get("local_pilot_go") is not True
@@ -378,11 +605,7 @@ def _sample(canary_dir: Path, status_path: Path) -> int:
         if not isinstance(item, Mapping):
             raise ValueError("status image binding is invalid")
         service = item.get("service")
-        digest = item.get(
-            "actual_inspect_digest"
-            if status.get("schema_version") == "1.1"
-            else "local_inspect_digest"
-        )
+        digest = item.get("actual_inspect_digest")
         if isinstance(service, str) and isinstance(digest, str):
             if _IMAGE_DIGEST.fullmatch(digest) is None or digest == "sha256:" + _ZERO_HASH:
                 raise ValueError("status image binding is invalid")
@@ -421,6 +644,7 @@ def _record(
     source: str,
     observed_at: str | None,
     evidence_file: Path | None,
+    check_attestation: Path | None,
     chain_attestation: Path | None,
 ) -> int:
     directory, manifest, control = _canary_context(canary_dir)
@@ -429,7 +653,12 @@ def _record(
     repo_root = Path(__file__).resolve().parents[2]
     attestation: dict[str, Any] | None = None
     if kind == "model_identity_exact":
-        if observed_at is not None or evidence_file is not None or chain_attestation is None:
+        if (
+            observed_at is not None
+            or evidence_file is not None
+            or check_attestation is not None
+            or chain_attestation is None
+        ):
             raise ValueError("model identity requires only a machine chain attestation")
         artifact, candidate, evidence_sha256 = _object_with_sha256(
             chain_attestation, "machine chain attestation", maximum=1024 * 1024
@@ -456,13 +685,38 @@ def _record(
             raise ValueError("machine chain attestation is invalid")
         observed = _timestamp(window.get("ended_at"), "machine chain attestation")
     else:
-        if observed_at is None or evidence_file is None or chain_attestation is not None:
+        if (
+            observed_at is not None
+            or evidence_file is None
+            or check_attestation is None
+            or chain_attestation is not None
+        ):
             raise ValueError("live check artifact inputs are invalid")
-        observed = _timestamp(observed_at, "live check")
         artifact = _private_file(evidence_file, "live check artifact")
         if os.path.commonpath((str(artifact), str(repo_root))) == str(repo_root):
             raise ValueError("live check artifact must be outside the repository")
         evidence_sha256 = _sha256(artifact)
+        check_path, candidate, check_attestation_sha256 = _object_with_sha256(
+            check_attestation,
+            "live check attestation",
+            maximum=1024 * 1024,
+        )
+        if os.path.commonpath((str(check_path), str(repo_root))) == str(repo_root):
+            raise ValueError("live check attestation must be outside the repository")
+        site_id = manifest.get("site_id")
+        if not isinstance(site_id, str):
+            raise ValueError("canary manifest site binding is invalid")
+        attestation = _validate_check_attestation(
+            candidate,
+            expected_kind=kind,
+            expected_source=source,
+            expected_run_id=str(control["run_id"]),
+            expected_site_id=site_id,
+            expected_source_commit=str(control["source_commit"]),
+            expected_manifest_sha256=str(control["manifest_sha256"]),
+            expected_artifact_sha256=evidence_sha256,
+        )
+        observed = _timestamp(attestation.get("observed_at"), "live check")
     payload: dict[str, Any] = {
         "observed_at": observed.isoformat().replace("+00:00", "Z"),
         "run_id": control["run_id"],
@@ -481,6 +735,11 @@ def _record(
             raise ValueError("machine chain attestation is invalid")
         payload["response_reported_observed_model"] = chain["response_reported_observed_model"]
         payload["chain_attestation"] = attestation
+    else:
+        if attestation is None:
+            raise ValueError("live check attestation is invalid")
+        payload["check_attestation"] = attestation
+        payload["check_attestation_sha256"] = check_attestation_sha256
     record = _append(directory / "live-checks.jsonl", "live_check", payload)
     print(f"Recorded canary live check {record['sequence']}.")
     return 0
@@ -569,6 +828,11 @@ def _finalize(canary_dir: Path) -> int:
                 "response_reported_observed_model",
                 "chain_attestation",
             }
+        else:
+            expected_fields = expected_fields | {
+                "check_attestation",
+                "check_attestation_sha256",
+            }
         if set(check) != expected_fields:
             raise ValueError("live check schema is invalid")
         if kind == "model_identity_exact":
@@ -598,6 +862,27 @@ def _finalize(canary_dir: Path) -> int:
                 != chain.get("response_reported_observed_model")
             ):
                 raise ValueError("machine chain attestation period or facts are invalid")
+        else:
+            check_attestation = check.get("check_attestation")
+            check_attestation_sha256 = check.get("check_attestation_sha256")
+            if (
+                not isinstance(check_attestation_sha256, str)
+                or _HEX.fullmatch(check_attestation_sha256) is None
+                or check_attestation_sha256 == _ZERO_HASH
+            ):
+                raise ValueError("live check attestation evidence is invalid")
+            validated = _validate_check_attestation(
+                check_attestation,
+                expected_kind=str(kind),
+                expected_source=str(check["source"]),
+                expected_run_id=str(control["run_id"]),
+                expected_site_id=site_id,
+                expected_source_commit=str(control["source_commit"]),
+                expected_manifest_sha256=str(control["manifest_sha256"]),
+                expected_artifact_sha256=str(digest),
+            )
+            if observed != _timestamp(validated.get("observed_at"), "live check"):
+                raise ValueError("live check attestation period is invalid")
         previous = latest.get(str(kind))
         if previous is None or observed >= _timestamp(previous.get("observed_at"), "live check"):
             latest[str(kind)] = check
@@ -622,7 +907,7 @@ def _finalize(canary_dir: Path) -> int:
         "run_id": control["run_id"],
         "source_commit": control["source_commit"],
         "manifest_sha256": control["manifest_sha256"],
-        "evidence_basis": "local_private_hash_bound",
+        "evidence_basis": "closed_attested_private_hash_bound",
         "runtime_window": {
             "duration_hours": _duration_value(duration_seconds),
             "max_gap_seconds": maximum_gap,
@@ -639,6 +924,10 @@ def _finalize(canary_dir: Path) -> int:
         "canary_chain": {
             "agent_invocation_count": model_chain["agent_invocation_count"],
             "context_chain_count": model_chain["context_chain_count"],
+            "email_delivery_count": model_chain["email_delivery_count"],
+            "identity_resolution_status": model_chain["identity_resolution_status"],
+            "identity_target_type": model_chain["identity_target_type"],
+            "observer_authority_active": model_chain["observer_authority_active"],
             "network_call_count": model_chain["network_call_count"],
             "tool_call_count": model_chain["tool_call_count"],
             "external_send_count": model_chain["external_send_count"],
@@ -672,11 +961,30 @@ def _finalize(canary_dir: Path) -> int:
     ).encode()
     evidence_path = evidence_dir / "task13-canary-evidence.json"
     summary_path = evidence_dir / "task13-canary-summary.md"
+    runtime_ledger_path = evidence_dir / "runtime-samples.jsonl"
+    checks_ledger_path = evidence_dir / "live-checks.jsonl"
     _atomic_private(evidence_path, evidence_bytes)
     _atomic_private(summary_path, summary)
-    sums = (
-        f"{hashlib.sha256(evidence_bytes).hexdigest()}  {evidence_path.name}\n"
-        f"{hashlib.sha256(summary).hexdigest()}  {summary_path.name}\n"
+    _runtime_source, runtime_ledger = _private_bytes(
+        directory / "runtime-samples.jsonl",
+        "status_sample ledger",
+        maximum=8 * 1024 * 1024,
+    )
+    _checks_source, checks_ledger = _private_bytes(
+        directory / "live-checks.jsonl",
+        "live_check ledger",
+        maximum=8 * 1024 * 1024,
+    )
+    _atomic_private(runtime_ledger_path, runtime_ledger)
+    _atomic_private(checks_ledger_path, checks_ledger)
+    sums = "".join(
+        f"{hashlib.sha256(content).hexdigest()}  {path.name}\n"
+        for path, content in (
+            (evidence_path, evidence_bytes),
+            (summary_path, summary),
+            (runtime_ledger_path, runtime_ledger),
+            (checks_ledger_path, checks_ledger),
+        )
     ).encode("ascii")
     _atomic_private(evidence_dir / "SHA256SUMS", sums)
     print(f"Finalized private Task 13 canary evidence in {evidence_dir}.")
@@ -695,6 +1003,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source=args.source,
                 observed_at=args.observed_at,
                 evidence_file=args.evidence_file,
+                check_attestation=args.check_attestation,
                 chain_attestation=args.chain_attestation,
             )
         if args.command == "finalize":

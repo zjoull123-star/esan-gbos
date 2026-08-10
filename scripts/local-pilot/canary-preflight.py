@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -36,9 +37,21 @@ _EMAIL_FIELDS = {
     "initial_checkpoint",
 }
 _CHECKPOINT_FIELDS = {"mailbox", "uid", "uidvalidity", "version"}
+_CREDENTIAL_BINDING_FIELDS = (
+    "account_user_ref",
+    "agent_task_type",
+    "folder",
+    "host",
+    "instance_id",
+    "mailbox",
+    "port",
+    "team_ref",
+    "username",
+)
 _RECEIPT_FIELDS = {
     "activation_time",
     "checkpoint_sha256",
+    "credential_binding_hmac_sha256",
     "observed_at",
     "operation",
     "read_only",
@@ -309,7 +322,7 @@ def _bounded_integer(value: object, *, minimum: int, maximum: int) -> int:
     return value
 
 
-def _validate_email(path: Path) -> dict[str, object]:
+def _validate_email(path: Path) -> tuple[dict[str, object], dict[str, object]]:
     value = _object(path, maximum=65_536, private=True)
     if set(value) != _EMAIL_FIELDS:
         raise ValueError("email credential schema is invalid")
@@ -366,7 +379,18 @@ def _validate_email(path: Path) -> dict[str, object]:
         or checkpoint["uidvalidity"] < 1
     ):
         raise ValueError("email initial checkpoint is invalid")
-    return checkpoint
+    credential_identity = {field: value[field] for field in _CREDENTIAL_BINDING_FIELDS}
+    return checkpoint, credential_identity
+
+
+def _credential_binding_hmac_sha256(
+    credential_identity: Mapping[str, object],
+    binding_key: bytes,
+) -> str:
+    canonical_identity = (
+        json.dumps(credential_identity, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    return hmac.new(binding_key, canonical_identity, hashlib.sha256).hexdigest()
 
 
 def _canary_directory(manifest: Path, control: Path) -> Path:
@@ -395,6 +419,8 @@ def _canary_directory(manifest: Path, control: Path) -> Path:
 def _validate_checkpoint_receipt(
     directory: Path,
     *,
+    binding_key: bytes,
+    credential_identity: Mapping[str, object],
     initial_checkpoint: Mapping[str, object],
     activation: datetime,
     now: datetime,
@@ -429,6 +455,10 @@ def _validate_checkpoint_receipt(
         or receipt.get("read_only") is not True
         or receipt.get("source_commit") != source_commit
         or receipt.get("checkpoint_sha256") != hashlib.sha256(checkpoint_bytes).hexdigest()
+        or not hmac.compare_digest(
+            str(receipt.get("credential_binding_hmac_sha256")),
+            _credential_binding_hmac_sha256(credential_identity, binding_key),
+        )
     ):
         raise ValueError("email checkpoint receipt validation failed")
     receipt_activation = _timestamp(receipt.get("activation_time"))
@@ -484,16 +514,20 @@ def main(argv: list[str] | None = None) -> int:
             or stat.S_IMODE(details.st_mode) != 0o700
         ):
             raise ValueError("secret directory is unsafe")
-        initial_checkpoint = _validate_email(directory / "email_credential")
+        initial_checkpoint, credential_identity = _validate_email(directory / "email_credential")
+        identity_hmac_key = _private_bytes(
+            directory / "identity_hmac_key", minimum=32, maximum=32, exact=32
+        )
         _validate_checkpoint_receipt(
             canary_directory,
+            binding_key=identity_hmac_key,
+            credential_identity=credential_identity,
             initial_checkpoint=initial_checkpoint,
             activation=_timestamp(control.get("activation_time")),
             now=current_time,
             source_commit=source_commit,
         )
         _private_bytes(directory / "deepseek_api_key", minimum=1, maximum=4096)
-        _private_bytes(directory / "identity_hmac_key", minimum=32, maximum=4096)
         _private_bytes(directory / "tokenizer_hmac_key", minimum=32, maximum=32, exact=32)
         _private_bytes(directory / "mapping_vault_key", minimum=32, maximum=32, exact=32)
         for name in (

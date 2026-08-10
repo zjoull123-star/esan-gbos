@@ -3,12 +3,39 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
-if [[ "${1:-}" != "--acknowledge-real-email-and-model" || "${2:-}" != "--canary-dir" || $# -ne 3 ]]; then
-  echo "Usage: scripts/local-pilot/start-email-deepseek-canary --acknowledge-real-email-and-model --canary-dir PATH" >&2
+ACKNOWLEDGE_REAL="false"
+ENABLE_RETENTION="false"
+ACKNOWLEDGE_RETENTION="false"
+CANARY_DIR=""
+while (( $# > 0 )); do
+  case "$1" in
+    --acknowledge-real-email-and-model)
+      ACKNOWLEDGE_REAL="true"
+      ;;
+    --enable-retention-scheduler)
+      ENABLE_RETENTION="true"
+      ;;
+    --acknowledge-periodic-expired-local-data-deletion)
+      ACKNOWLEDGE_RETENTION="true"
+      ;;
+    --canary-dir)
+      [[ $# -ge 2 ]] || { echo "--canary-dir requires a path" >&2; exit 64; }
+      CANARY_DIR="$2"
+      shift
+      ;;
+    *)
+      echo "Unknown canary start argument." >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+if [[ "${ACKNOWLEDGE_REAL}" != "true" || "${ENABLE_RETENTION}" != "true" || "${ACKNOWLEDGE_RETENTION}" != "true" || -z "${CANARY_DIR}" ]]; then
+  echo "Usage: scripts/local-pilot/start-email-deepseek-canary --acknowledge-real-email-and-model --enable-retention-scheduler --acknowledge-periodic-expired-local-data-deletion --canary-dir PATH" >&2
   exit 64
 fi
 
-CANARY_DIR="$3"
 if [[ ! -d "${CANARY_DIR}" || -L "${CANARY_DIR}" ]]; then
   echo "Canary directory must be a real directory." >&2
   exit 78
@@ -22,4 +49,6 @@ fi
 
 exec "${SCRIPT_DIR}/start" \
   --manifest "${MANIFEST}" \
-  --canary-control "${CONTROL}"
+  --canary-control "${CONTROL}" \
+  --enable-retention-scheduler \
+  --acknowledge-periodic-expired-local-data-deletion
