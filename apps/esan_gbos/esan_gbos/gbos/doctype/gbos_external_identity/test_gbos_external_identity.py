@@ -10,6 +10,7 @@ from frappe.tests import IntegrationTestCase
 from werkzeug.wrappers import Request
 
 from esan_gbos.api.internal import identity_resolution as identity_resolution_api
+from esan_gbos.api.v1.common import BFFError
 from esan_gbos.api.v2.review_case import decide
 from esan_gbos.domain.permissions import IDENTITY_RESOLVER_ROLE
 from esan_gbos.domain.review_dto import canonical_payload_hash
@@ -221,10 +222,12 @@ class TestGBOSExternalIdentityAuthority(IntegrationTestCase):
         case.flags.gbos_review_command = True
         case.business_status = "Superseded"
         case.review_status = "Superseded"
+        savepoint = "before_unavailable_observer_denial"
+        frappe.db.savepoint(savepoint)
 
-        with self.assertRaisesRegex(Exception, "Local Observer service is not configured"):
+        with self.assertRaisesRegex(BFFError, "Local Observer service is not configured"):
             case.save(ignore_permissions=True)
-        frappe.db.rollback()
+        frappe.db.rollback(save_point=savepoint)
 
         identity.reload()
         case.reload()

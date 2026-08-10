@@ -345,6 +345,23 @@ def test_persisted_mapping_revision_conflict_precedes_authoritative_state_filter
     assert response == {"error": {"code": "mapping_revision_conflict"}}
 
 
+def test_structurally_invalid_target_is_conflict_before_dynamic_eligibility(
+    resolution_api: tuple[Any, _Frappe],
+) -> None:
+    api, fake = resolution_api
+    fake.db.rows[("email", SUBJECT)] = [
+        _approved_row(
+            target_type="Channel",
+            target_eligible=0,
+        )
+    ]
+
+    response = api.resolve(_payload())
+
+    assert fake.local.response["http_status_code"] == 409
+    assert response == {"error": {"code": "mapping_conflict"}}
+
+
 @pytest.mark.parametrize(
     ("mutation", "status", "code"),
     (

@@ -201,9 +201,6 @@ def _resolve_lookup(site_id: str, lookup: dict[str, Any]) -> dict[str, Any]:
     team_ref = _bounded_row_text(row.get("team_ref"), maximum=256)
     if team_ref != lookup["expected_team_ref"]:
         raise _APIError("team_scope_mismatch", 403)
-    if row.get("business_status") == "Active" and row.get("target_eligible") != 1:
-        raise _APIError("mapping_not_resolved", 404)
-
     target_type = row.get("target_type")
     user_ref = row.get("user_ref")
     party_ref = row.get("party_ref")
@@ -216,6 +213,8 @@ def _resolve_lookup(site_id: str, lookup: dict[str, Any]) -> dict[str, Any]:
     mapping_ref = _bounded_row_text(row.get("mapping_ref"), maximum=30)
     if _MAPPING_REF.fullmatch(mapping_ref) is None:
         raise _APIError("mapping_conflict", 409)
+    if row.get("business_status") == "Active" and row.get("target_eligible") != 1:
+        raise _APIError("mapping_not_resolved", 404)
     return {
         "schema_version": "1.0",
         "site_id": site_id,
