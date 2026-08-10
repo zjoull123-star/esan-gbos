@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import imaplib
 import json
+import ssl
 from collections.abc import Callable
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
@@ -9,6 +11,7 @@ from typing import NoReturn
 
 import pytest
 
+from services.local_pilot_runtime import pollers as pollers_module
 from services.local_pilot_runtime.pollers import (
     EmailCredentials,
     compose_email_poller,
@@ -204,6 +207,44 @@ def _email_config() -> EmailImapConfig:
         rescan_max_window=timedelta(days=7),
         rescan_max_uids=100,
     )
+
+
+def test_default_imap_factory_requires_modern_verified_tls_and_bounded_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    client = object()
+
+    def fake_imap_client(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> object:
+        captured.update(
+            host=host,
+            port=port,
+            ssl_context=ssl_context,
+            timeout=timeout,
+        )
+        return client
+
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", fake_imap_client)
+
+    result = pollers_module._stdlib_imap_factory("imap.example.invalid", 993)
+
+    assert result is client
+    assert captured["host"] == "imap.example.invalid"
+    assert captured["port"] == 993
+    context = captured["ssl_context"]
+    assert isinstance(context, ssl.SSLContext)
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    assert context.minimum_version >= ssl.TLSVersion.TLSv1_2
+    timeout = captured["timeout"]
+    assert isinstance(timeout, int | float)
+    assert 0 < timeout <= 30
 
 
 def test_email_poller_uses_injected_tls_factory_and_never_backfills_before_activation() -> None:

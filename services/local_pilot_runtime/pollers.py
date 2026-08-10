@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import imaplib
 import os
+import ssl
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -72,6 +73,7 @@ from .runtime_support import (
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
 DEFAULT_CONNECTORS_CONFIG = Path("/config/connectors.json")
+DEFAULT_IMAP_CONNECT_TIMEOUT_SECONDS = 10.0
 StorageFactory = Callable[[object], LocalPilotStorage]
 WeComSdkFactory = Callable[[WeComCredentialConfig], OfficialWeComArchiveSDK]
 
@@ -583,7 +585,17 @@ def _ensure_initial_checkpoint(
 
 
 def _stdlib_imap_factory(host: str, port: int) -> Any:
-    return imaplib.IMAP4_SSL(host, port)
+    ssl_context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
+    ssl_context.verify_mode = ssl.CERT_REQUIRED
+    ssl_context.check_hostname = True
+    if ssl_context.minimum_version < ssl.TLSVersion.TLSv1_2:
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return imaplib.IMAP4_SSL(
+        host,
+        port,
+        ssl_context=ssl_context,
+        timeout=DEFAULT_IMAP_CONNECT_TIMEOUT_SECONDS,
+    )
 
 
 def _utc_now() -> datetime:
