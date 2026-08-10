@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import imaplib
 import json
 import os
 import re
 import ssl
 import stat
+import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -43,6 +47,12 @@ _MAX_CREDENTIAL_BYTES = 65_536
 _MAX_IMAP_VALUE = 4_294_967_295
 _TIMEOUT_SECONDS = 10.0
 _OUTPUT_NAME = "email-checkpoint.json"
+_RECEIPT_NAME = "email-checkpoint-receipt.json"
+_RECEIPT_SCHEMA = "gbos.email_checkpoint_receipt"
+_RECEIPT_VERSION = 1
+_OPERATION = "STATUS_UIDVALIDITY_UIDNEXT"
+_MAX_OUTPUT_BYTES = 8_192
+_COMMIT = re.compile(r"[0-9a-f]{40}")
 _STATUS_VALUE = re.compile(rb"(?:^|[\s(])([A-Z]+)\s+([0-9]+)(?=[\s)])", re.IGNORECASE)
 
 
@@ -104,20 +114,88 @@ def probe_email_checkpoint(
     *,
     repo_root: Path,
     client_factory: ImapClientFactory | None = None,
+    activation_time: datetime | str | None = None,
+    now: Callable[[], datetime] | None = None,
 ) -> EmailCheckpoint:
-    """Read UID metadata only and atomically persist an exact closed checkpoint."""
+    """Read UID metadata and publish a checkpoint before its closed receipt."""
 
     try:
         root = _real_directory(Path(repo_root))
+        clock = _system_utc_now if now is None else now
+        started_at = _utc_now(clock)
+        activation = _activation_timestamp(activation_time)
+        if activation > started_at:
+            raise EmailCheckpointProbeError("email checkpoint activation is invalid")
         credential_path = _external_file(Path(credential_file), root)
         credential = _load_credential(credential_path)
+        source_commit = _source_commit(root)
         output = _private_external_output(Path(output_dir), root)
         destination = output / _OUTPUT_NAME
-        _require_safe_destination(destination)
+        receipt_destination = output / _RECEIPT_NAME
+        checkpoint_exists = _safe_destination_exists(destination)
+        receipt_exists = _safe_destination_exists(receipt_destination)
+        if receipt_exists and not checkpoint_exists:
+            raise EmailCheckpointProbeError("email checkpoint output conflicts")
+
+        existing_checkpoint_bytes: bytes | None = None
+        existing_checkpoint: EmailCheckpoint | None = None
+        if checkpoint_exists:
+            existing_checkpoint_bytes = _read_private_output(destination)
+            existing_checkpoint = _checkpoint_from_bytes(existing_checkpoint_bytes)
+            if existing_checkpoint.mailbox != credential.mailbox:
+                raise EmailCheckpointProbeError("email checkpoint output conflicts")
+
+        if receipt_exists:
+            if existing_checkpoint_bytes is None or existing_checkpoint is None:
+                raise EmailCheckpointProbeError("email checkpoint output conflicts")
+            receipt_bytes = _read_private_output(receipt_destination)
+            _validate_receipt(
+                receipt_bytes,
+                activation=activation,
+                checkpoint_bytes=existing_checkpoint_bytes,
+                source_commit=source_commit,
+            )
+            return existing_checkpoint
+
         context = _verified_tls_context()
         factory = _default_client_factory if client_factory is None else client_factory
         checkpoint = _probe_status(credential, context=context, factory=factory)
-        _atomic_private_json(destination, checkpoint)
+        checkpoint_bytes = _checkpoint_bytes(checkpoint)
+        if existing_checkpoint_bytes is not None and existing_checkpoint_bytes != checkpoint_bytes:
+            raise EmailCheckpointProbeError("email checkpoint output conflicts")
+
+        observed_at = _utc_now(clock)
+        if observed_at < activation:
+            raise EmailCheckpointProbeError("email checkpoint activation is invalid")
+        receipt_bytes = _receipt_bytes(
+            activation=activation,
+            checkpoint_bytes=checkpoint_bytes,
+            observed_at=observed_at,
+            source_commit=source_commit,
+        )
+        checkpoint_published = False
+        receipt_published = False
+        try:
+            if existing_checkpoint_bytes is None:
+                _publish_new_private_bytes(destination, checkpoint_bytes)
+                checkpoint_published = True
+            if _read_private_output(destination) != checkpoint_bytes:
+                raise EmailCheckpointProbeError("email checkpoint output conflicts")
+            _publish_new_private_bytes(receipt_destination, receipt_bytes)
+            receipt_published = True
+            if (
+                _read_private_output(destination) != checkpoint_bytes
+                or _read_private_output(receipt_destination) != receipt_bytes
+            ):
+                raise EmailCheckpointProbeError("email checkpoint output conflicts")
+        except Exception:
+            if receipt_published:
+                _remove_publication(receipt_destination)
+            if (checkpoint_published or existing_checkpoint_bytes is None) and not _path_lexists(
+                receipt_destination
+            ):
+                _remove_publication(destination)
+            raise
         return checkpoint
     except EmailCheckpointProbeError:
         raise
@@ -369,6 +447,69 @@ def _real_directory(path: Path) -> Path:
     return resolved
 
 
+def _system_utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _utc_now(clock: Callable[[], datetime]) -> datetime:
+    try:
+        value = clock()
+    except Exception:
+        raise EmailCheckpointProbeError("email checkpoint clock is invalid") from None
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise EmailCheckpointProbeError("email checkpoint clock is invalid")
+    return value.astimezone(UTC)
+
+
+def _activation_timestamp(value: datetime | str | None) -> datetime:
+    if isinstance(value, str):
+        if not value or value != value.strip() or len(value) > 64:
+            raise EmailCheckpointProbeError("email checkpoint activation is invalid")
+        candidate = value[:-1] + "+00:00" if value.endswith("Z") else value
+        try:
+            value = datetime.fromisoformat(candidate)
+        except ValueError:
+            raise EmailCheckpointProbeError("email checkpoint activation is invalid") from None
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise EmailCheckpointProbeError("email checkpoint activation is invalid")
+    return value.astimezone(UTC)
+
+
+def _format_utc(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _source_commit(repo_root: Path) -> str:
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "rev-parse",
+                "--show-toplevel",
+                "--verify",
+                "HEAD^{commit}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if len(result.stdout) > 8_192:
+            raise ValueError
+        lines = result.stdout.splitlines()
+        if (
+            len(lines) != 2
+            or Path(lines[0]).resolve(strict=True) != repo_root
+            or _COMMIT.fullmatch(lines[1]) is None
+        ):
+            raise ValueError
+        return lines[1]
+    except OSError, subprocess.SubprocessError, ValueError:
+        raise EmailCheckpointProbeError("repository source commit is unavailable") from None
+
+
 def _external_file(path: Path, repo_root: Path) -> Path:
     try:
         details = path.lstat()
@@ -419,11 +560,11 @@ def _require_external(path: Path, repo_root: Path) -> None:
         )
 
 
-def _require_safe_destination(path: Path) -> None:
+def _safe_destination_exists(path: Path) -> bool:
     try:
         details = path.lstat()
     except FileNotFoundError:
-        return
+        return False
     except OSError:
         raise EmailCheckpointProbeError("email checkpoint output is unavailable") from None
     if (
@@ -432,24 +573,170 @@ def _require_safe_destination(path: Path) -> None:
         or stat.S_IMODE(details.st_mode) != 0o600
     ):
         raise EmailCheckpointProbeError("email checkpoint output is unsafe")
+    return True
 
 
-def _atomic_private_json(path: Path, checkpoint: EmailCheckpoint) -> None:
-    payload = (
-        json.dumps(
-            {
-                "mailbox": checkpoint.mailbox,
-                "uid": checkpoint.uid,
-                "uidvalidity": checkpoint.uidvalidity,
-                "version": checkpoint.version,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
+def _path_lexists(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _read_private_output(path: Path) -> bytes:
+    descriptor = -1
+    try:
+        before = path.lstat()
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
         )
-        + "\n"
-    ).encode("utf-8")
+        details = os.fstat(descriptor)
+        if (
+            stat.S_ISLNK(before.st_mode)
+            or before.st_dev != details.st_dev
+            or before.st_ino != details.st_ino
+            or not stat.S_ISREG(details.st_mode)
+            or stat.S_IMODE(details.st_mode) != 0o600
+            or not 0 < details.st_size <= _MAX_OUTPUT_BYTES
+        ):
+            raise EmailCheckpointProbeError("email checkpoint output is unsafe")
+        chunks: list[bytes] = []
+        remaining = details.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, _MAX_OUTPUT_BYTES + 1))
+            if not chunk:
+                raise EmailCheckpointProbeError("email checkpoint output is unsafe")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if (
+            len(payload) != details.st_size
+            or after.st_dev != details.st_dev
+            or after.st_ino != details.st_ino
+            or after.st_size != details.st_size
+        ):
+            raise EmailCheckpointProbeError("email checkpoint output is unsafe")
+        return payload
+    except EmailCheckpointProbeError:
+        raise
+    except OSError:
+        raise EmailCheckpointProbeError("email checkpoint output is unavailable") from None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _json_bytes(value: dict[str, object]) -> bytes:
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _checkpoint_bytes(checkpoint: EmailCheckpoint) -> bytes:
+    return _json_bytes(
+        {
+            "mailbox": checkpoint.mailbox,
+            "uid": checkpoint.uid,
+            "uidvalidity": checkpoint.uidvalidity,
+            "version": checkpoint.version,
+        }
+    )
+
+
+def _checkpoint_from_bytes(payload: bytes) -> EmailCheckpoint:
+    try:
+        value = json.loads(payload, object_pairs_hook=_unique_object)
+    except UnicodeDecodeError, json.JSONDecodeError, ValueError:
+        raise EmailCheckpointProbeError("email checkpoint output conflicts") from None
+    if (
+        not isinstance(value, dict)
+        or set(value) != _CHECKPOINT_FIELDS
+        or not isinstance(value.get("mailbox"), str)
+        or not value["mailbox"]
+        or len(value["mailbox"].encode("utf-8")) > 256
+        or type(value.get("uid")) is not int
+        or not 0 <= value["uid"] < _MAX_IMAP_VALUE
+        or type(value.get("uidvalidity")) is not int
+        or not 1 <= value["uidvalidity"] <= _MAX_IMAP_VALUE
+        or value.get("version") != 1
+    ):
+        raise EmailCheckpointProbeError("email checkpoint output conflicts")
+    checkpoint = EmailCheckpoint(
+        mailbox=value["mailbox"],
+        uid=value["uid"],
+        uidvalidity=value["uidvalidity"],
+    )
+    if _checkpoint_bytes(checkpoint) != payload:
+        raise EmailCheckpointProbeError("email checkpoint output conflicts")
+    return checkpoint
+
+
+def _receipt_bytes(
+    *,
+    activation: datetime,
+    checkpoint_bytes: bytes,
+    observed_at: datetime,
+    source_commit: str,
+) -> bytes:
+    return _json_bytes(
+        {
+            "activation_time": _format_utc(activation),
+            "checkpoint_sha256": hashlib.sha256(checkpoint_bytes).hexdigest(),
+            "observed_at": _format_utc(observed_at),
+            "operation": _OPERATION,
+            "read_only": True,
+            "schema": _RECEIPT_SCHEMA,
+            "source_commit": source_commit,
+            "version": _RECEIPT_VERSION,
+        }
+    )
+
+
+def _receipt_timestamp(value: object) -> datetime:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise EmailCheckpointProbeError("email checkpoint output conflicts")
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        raise EmailCheckpointProbeError("email checkpoint output conflicts") from None
+    if _format_utc(parsed) != value:
+        raise EmailCheckpointProbeError("email checkpoint output conflicts")
+    return parsed
+
+
+def _validate_receipt(
+    payload: bytes,
+    *,
+    activation: datetime,
+    checkpoint_bytes: bytes,
+    source_commit: str,
+) -> None:
+    try:
+        value = json.loads(payload, object_pairs_hook=_unique_object)
+    except UnicodeDecodeError, json.JSONDecodeError, ValueError:
+        raise EmailCheckpointProbeError("email checkpoint output conflicts") from None
+    expected = _receipt_bytes(
+        activation=activation,
+        checkpoint_bytes=checkpoint_bytes,
+        observed_at=_receipt_timestamp(
+            value.get("observed_at") if isinstance(value, dict) else None
+        ),
+        source_commit=source_commit,
+    )
+    if not isinstance(value, dict) or payload != expected:
+        raise EmailCheckpointProbeError("email checkpoint output conflicts")
+    observed_at = _receipt_timestamp(value["observed_at"])
+    if observed_at < activation:
+        raise EmailCheckpointProbeError("email checkpoint output conflicts")
+
+
+def _publish_new_private_bytes(path: Path, payload: bytes) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
+    published = False
     try:
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as handle:
@@ -457,21 +744,35 @@ def _atomic_private_json(path: Path, checkpoint: EmailCheckpoint) -> None:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        directory = os.open(
-            path.parent,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-        )
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        os.link(temporary, path)
+        published = True
+        temporary.unlink()
+        _fsync_directory(path.parent)
     except OSError:
+        if published:
+            _remove_publication(path)
         raise EmailCheckpointProbeError("email checkpoint output failed closed") from None
     finally:
         if descriptor >= 0:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _remove_publication(path: Path) -> None:
+    with suppress(OSError):
+        path.unlink()
+        _fsync_directory(path.parent)
 
 
 def _is_ok(value: object) -> bool:
@@ -484,6 +785,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--credential-file", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--activation-time", required=True)
     return parser
 
 
@@ -495,11 +797,12 @@ def main(argv: list[str] | None = None) -> int:
             args.credential_file,
             args.output_dir,
             repo_root=repo_root,
+            activation_time=args.activation_time,
         )
     except EmailCheckpointProbeError:
         print("EMAIL CHECKPOINT PROBE FAILED", file=sys.stderr)
         return 78
-    print("Email checkpoint probe completed with read-only UID metadata.")
+    print("Email checkpoint probe completed with a read-only UID metadata receipt.")
     return 0
 
 
