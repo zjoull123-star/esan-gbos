@@ -139,7 +139,7 @@ def _container_sql(
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 11
+    assert _migration_ledger_count() == 12
     result = _container_sql(
         """
         SELECT count(*)
@@ -161,13 +161,14 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
               'persistent_nonces', 'processing_jobs',
               'context_publication_outbox', 'local_pilot_quarantine',
               'local_pilot_dead_letter', 'participant_identity_resolutions',
-              'identity_resolution_work', 'identity_resolution_worker_metrics'
+              'identity_resolution_work', 'identity_resolution_worker_metrics',
+              'retention_runs', 'retention_cas_tombstones'
           )
           AND c.relrowsecurity
           AND c.relforcerowsecurity
         """
     )
-    assert int(result.stdout.strip()) == 33
+    assert int(result.stdout.strip()) == 35
 
 
 def _migration_ledger_count() -> int:
@@ -186,6 +187,7 @@ def _migration_ledger_count() -> int:
               'observer/008_local_pilot_projection_fencing.sql',
               'observer/009_local_pilot_identity_resolution.sql',
               'observer/010_local_pilot_identity_resolution_worker.sql',
+              'observer/011_local_pilot_retention.sql',
               'context/001_gate3_context.sql'
         )
         """
