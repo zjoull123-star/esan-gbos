@@ -32,7 +32,6 @@ status_args=(
   --entrypoints "${REPO_ROOT}/infra/local/runtime-entrypoints.json" \
   --image-lock "${REPO_ROOT}/infra/local/images.lock.json" \
   --runtime-dir "${RUNTIME_DIR}" \
-  --repo-root "${REPO_ROOT}" \
   --compose-file "${COMPOSE_FILE}" \
   --project-name "${PROJECT_NAME}"
 )

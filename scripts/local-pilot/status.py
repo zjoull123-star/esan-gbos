@@ -14,6 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from canary_attestation import (
+    attest_required_images,
+    attest_running_services,
+    image_service_for_runtime_service,
+    repository_attestation,
+)
+
 
 def _object(path: Path, label: str) -> dict[str, Any]:
     if not path.is_file() or path.is_symlink() or path.stat().st_size > 1_048_576:
@@ -32,7 +39,9 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _running_services(*, compose_file: Path, project_name: str) -> tuple[set[str], str | None]:
+def _running_services(
+    *, compose_file: Path, project_name: str
+) -> tuple[set[str], dict[str, Mapping[str, Any]], str | None]:
     result = subprocess.run(
         [
             "docker",
@@ -52,10 +61,10 @@ def _running_services(*, compose_file: Path, project_name: str) -> tuple[set[str
         text=True,
     )
     if result.returncode != 0:
-        return set(), "compose_status_unavailable"
+        return set(), {}, "compose_status_unavailable"
     output = result.stdout.strip()
     if not output:
-        return set(), None
+        return set(), {}, None
     try:
         decoded = json.loads(output)
         rows = decoded if isinstance(decoded, list) else [decoded]
@@ -63,18 +72,20 @@ def _running_services(*, compose_file: Path, project_name: str) -> tuple[set[str
         try:
             rows = [json.loads(line) for line in output.splitlines() if line.strip()]
         except json.JSONDecodeError:
-            return set(), "compose_status_invalid"
+            return set(), {}, "compose_status_invalid"
     running: set[str] = set()
+    running_rows: dict[str, Mapping[str, Any]] = {}
     for row in rows:
         if not isinstance(row, Mapping):
-            return set(), "compose_status_invalid"
+            return set(), {}, "compose_status_invalid"
         service = row.get("Service")
         state = row.get("State")
         health = row.get("Health")
         health_is_ready = not isinstance(health, str) or not health or health == "healthy"
         if isinstance(service, str) and state == "running" and health_is_ready:
             running.add(service)
-    return running, None
+            running_rows[service] = row
+    return running, running_rows, None
 
 
 def _required_services(manifest: Mapping[str, Any]) -> set[str]:
@@ -136,47 +147,13 @@ def _emergency_state(runtime_dir: Path) -> dict[str, Any]:
     return {"active": True, "containment_verified": verified}
 
 
-def _source_commit(repo_root: Path) -> str | None:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    value = result.stdout.strip()
-    return value if result.returncode == 0 and len(value) == 40 else None
-
-
-def _image_bindings(image_lock: Mapping[str, Any]) -> list[dict[str, Any]]:
-    values = image_lock.get("images")
-    if not isinstance(values, list):
-        return []
-    bindings: list[dict[str, Any]] = []
-    for item in values:
-        if not isinstance(item, Mapping):
-            continue
-        service = item.get("service")
-        reference = item.get("reference")
-        digest = item.get("local_inspect_digest")
-        if isinstance(service, str) and isinstance(reference, str):
-            bindings.append(
-                {
-                    "service": service,
-                    "reference": reference,
-                    "local_inspect_digest": digest if isinstance(digest, str) else None,
-                }
-            )
-    return sorted(bindings, key=lambda value: value["service"])
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--entrypoints", required=True, type=Path)
     parser.add_argument("--image-lock", required=True, type=Path)
     parser.add_argument("--runtime-dir", required=True, type=Path)
-    parser.add_argument("--repo-root", required=True, type=Path)
+    parser.add_argument("--repo-root", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--compose-file", required=True, type=Path)
     parser.add_argument("--project-name", default="esan-gbos-local-pilot")
     parser.add_argument("--json", action="store_true")
@@ -186,6 +163,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        repo_root = Path(__file__).resolve().parents[2]
+        if args.repo_root is not None and args.repo_root.resolve() != repo_root:
+            raise ValueError("repository root override does not match the bound repository")
         manifest = _object(args.manifest, "manifest")
         entrypoints = _object(args.entrypoints, "entrypoints")
         image_lock = _object(args.image_lock, "image lock")
@@ -193,13 +173,48 @@ def main(argv: list[str] | None = None) -> int:
         composition_status = (
             composition.get("status") if isinstance(composition, Mapping) else "missing"
         )
-        running, inspection_error = _running_services(
+        running, running_rows, inspection_error = _running_services(
             compose_file=args.compose_file,
             project_name=args.project_name,
         )
         required = _required_services(manifest)
         missing = sorted(required - running)
         emergency = _emergency_state(args.runtime_dir)
+        repository = repository_attestation(repo_root)
+        formal_lock = isinstance(image_lock.get("recording_scope"), str)
+        formal_attestation = formal_lock or args.repo_root is None
+        required_image_services = {
+            image_service_for_runtime_service(service) for service in required
+        }
+        if formal_attestation:
+            image_bindings, image_issues = attest_required_images(
+                repo_root,
+                image_lock,
+                required_image_services,
+                repository=repository,
+            )
+            running_bindings, running_image_issues = attest_running_services(
+                required,
+                running_rows,
+                image_bindings,
+            )
+        else:
+            image_bindings = []
+            image_issues = []
+            running_bindings = []
+            running_image_issues = []
+        source_groups = repository.get("source_groups")
+        source_verified = (
+            repository.get("dirty") is False
+            and isinstance(source_groups, Mapping)
+            and all(
+                isinstance(source_groups.get(service), Mapping)
+                and source_groups[service].get("dirty") is False
+                for service in {"local-runtime", "frappe-pwa"}
+            )
+        )
+        required_images_verified = formal_attestation and not image_issues
+        running_images_verified = formal_attestation and not running_image_issues and not missing
         reasons: list[str] = []
         if manifest.get("local_pilot_go") is not True:
             reasons.append("manifest_disabled")
@@ -213,11 +228,18 @@ def main(argv: list[str] | None = None) -> int:
                 reasons.append("required_services_not_running")
             if emergency["active"]:
                 reasons.append("emergency_stop_active")
+            if formal_attestation and not source_verified:
+                reasons.append("repository_source_unbound")
+            if formal_attestation and not required_images_verified:
+                reasons.append("required_images_unbound")
+            if formal_attestation and not running_images_verified:
+                reasons.append("running_images_unbound")
             verdict = "running" if not reasons else "no_go"
         payload = {
-            "schema_version": "1.0",
+            "schema_version": "1.1" if formal_attestation else "1.0",
             "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "source_commit": _source_commit(args.repo_root),
+            "source_commit": repository["head"],
+            "source_dirty": repository["dirty"],
             "composition_status": composition_status,
             "manifest": {
                 "sha256": _sha256(args.manifest),
@@ -232,7 +254,15 @@ def main(argv: list[str] | None = None) -> int:
                 "missing": missing,
                 "inspection_error": inspection_error,
             },
-            "images": _image_bindings(image_lock),
+            "images": image_bindings,
+            "runtime_attestation": {
+                "repository_source_verified": source_verified,
+                "required_images_verified": required_images_verified,
+                "running_images_verified": running_images_verified,
+                "image_issues": image_issues,
+                "running_image_issues": running_image_issues,
+                "running_bindings": running_bindings,
+            },
             "verdict": verdict,
             "no_go_reasons": reasons,
         }

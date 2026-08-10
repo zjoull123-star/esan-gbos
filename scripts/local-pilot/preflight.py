@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from canary_attestation import attest_required_images, repository_attestation
 from jsonschema import Draft202012Validator, FormatChecker
 
 SCHEMA_RELATIVE_PATH = Path("contracts/local_pilot/local-pilot-manifest-v1.0.schema.json")
@@ -230,11 +231,13 @@ def _inspect_image(reference: str) -> tuple[str, tuple[str, ...], str] | None:
 
 
 def _image_issues(
+    repo_root: Path,
     configuration: Mapping[str, Any],
     manifest: Mapping[str, Any],
     image_lock: Mapping[str, Any],
     *,
     skip_image_check: bool,
+    verify_source_attestation: bool,
 ) -> list[str]:
     images = image_lock.get("images")
     if not isinstance(images, list) or not images:
@@ -335,6 +338,19 @@ def _image_issues(
                 f"local platform mismatch for {service}: "
                 f"locked {expected_platform}, actual {actual_platform}"
             )
+    if verify_source_attestation:
+        try:
+            repository = repository_attestation(repo_root)
+            _attestations, attestation_issues = attest_required_images(
+                repo_root,
+                image_lock,
+                required_services,
+                repository=repository,
+            )
+        except ValueError as exc:
+            issues.append(str(exc))
+        else:
+            issues.extend(attestation_issues)
     return issues
 
 
@@ -443,7 +459,13 @@ def _synthetic_issues(manifest: Mapping[str, Any], synthetic: bool) -> list[str]
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv or sys.argv[1:])
-    repo_root = args.repo_root.resolve() if args.repo_root else Path(__file__).resolve().parents[2]
+    bound_repo_root = Path(__file__).resolve().parents[2]
+    requested_repo_root = args.repo_root.resolve() if args.repo_root else bound_repo_root
+    repo_root = (
+        bound_repo_root
+        if args.require_go and requested_repo_root != bound_repo_root
+        else requested_repo_root
+    )
     manifest_path = (
         args.manifest.resolve() if args.manifest else repo_root / DEFAULT_MANIFEST_RELATIVE_PATH
     )
@@ -451,6 +473,8 @@ def main(argv: list[str] | None = None) -> int:
         args.image_lock.resolve() if args.image_lock else repo_root / IMAGE_LOCK_RELATIVE_PATH
     )
     issues: list[str] = []
+    if args.require_go and requested_repo_root != bound_repo_root:
+        issues.append("formal preflight repository root must match the bound repository")
     manifest = _load_object(manifest_path, "local-pilot manifest", issues)
     schema = _load_object(repo_root / SCHEMA_RELATIVE_PATH, "local-pilot schema", issues)
     configuration = _load_object(
@@ -480,10 +504,12 @@ def main(argv: list[str] | None = None) -> int:
         issues.extend(_containerfile_lock_issues(repo_root, image_lock))
         issues.extend(
             _image_issues(
+                repo_root,
                 configuration,
                 manifest,
                 image_lock,
                 skip_image_check=args.skip_runtime_image_check,
+                verify_source_attestation=args.require_go and not args.synthetic,
             )
         )
     issues.extend(_media_host_issues(manifest))

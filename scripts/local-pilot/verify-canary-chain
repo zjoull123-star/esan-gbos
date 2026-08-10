@@ -1,19 +1,32 @@
 #!/usr/bin/env python3
-# ruff: noqa: E402, I001
-"""Create a machine-derived local canary chain attestation."""
+"""Launch canary-chain verification with the repository-bound Python runtime."""
 
-from __future__ import annotations
-
+import os
+import subprocess
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+PYTHON = ROOT / ".venv" / "bin" / "python"
+PROGRAM = Path(__file__).with_suffix(".py")
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
-from services.local_pilot_runtime.canary_chain_verifier import cli_main  # noqa: E402
+def main():
+    if not PYTHON.is_file() or not os.access(PYTHON, os.X_OK):
+        print("CANARY ERROR: repository Python 3.14 is unavailable", file=sys.stderr)
+        return 78
+    probe = subprocess.run(
+        [str(PYTHON), "-c", "import sys; raise SystemExit(sys.version_info < (3, 14))"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if probe.returncode != 0:
+        print("CANARY ERROR: repository Python 3.14 is unavailable", file=sys.stderr)
+        return 78
+    os.execv(str(PYTHON), [str(PYTHON), str(PROGRAM), *sys.argv[1:]])
+    return 78
 
 
 if __name__ == "__main__":
-    raise SystemExit(cli_main(repo_root=REPO_ROOT))
+    raise SystemExit(main())
