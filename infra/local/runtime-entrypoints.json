@@ -1,10 +1,10 @@
 {
   "runtime_image": "esan-gbos-local-pilot-runtime:2026-08-08",
   "composition": {
-    "status": "not_composed",
-    "frappe_pwa": "blocked_current_source_image_refresh_required",
+    "status": "composed",
+    "frappe_pwa": "composed",
     "runtime_containerfile": "infra/local/Containerfile.runtime",
-    "reason": "service composition is implemented, but current-source runtime and Frappe images are not yet rebuilt and recorded",
+    "reason": "service topology is implemented and current-source runtime and Frappe images are built and recorded; the checked-in formal manifest remains No-Go",
     "synthetic_bootstrap": {
       "service": "frappe-synthetic-bootstrap",
       "status": "declared_not_executed",

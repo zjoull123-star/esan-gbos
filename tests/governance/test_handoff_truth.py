@@ -94,7 +94,7 @@ def test_handoff_binds_source_baseline_current_runtime_truth_and_historical_boun
     assert "real call" in handoff.lower()
     assert "model identity" in handoff.lower()
     assert "No-Go" in handoff
-    assert "not_composed" in handoff
+    assert "composition.status=composed" in handoff
     assert "local_pilot_go=false" in handoff
     assert "real channels" in handoff.lower()
     assert "Kingdee" in handoff
@@ -155,5 +155,6 @@ def test_identity_handoff_keeps_the_four_user_relations_separate_and_truthful() 
         assert "未执行" in document
         assert "真实 Frappe" in document
         assert "Prometheus" in document
-        assert "72 小时" in document
         assert "local_pilot_go=false" in document
+    assert "72 小时连续运行不再作为" in handoff
+    assert "72 小时" in plan

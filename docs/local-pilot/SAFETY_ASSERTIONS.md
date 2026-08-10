@@ -52,16 +52,17 @@
 - CAS volume 停止后保留。
 - Prometheus 3.7.3 已实时抓取 authenticated `identity-resolution` target，`up=1`，
   五条低基数规则健康；resolver readiness 为 `0`，因为真实 worker/channel 未启用。
-- Compose config、静态 healthcheck、一次 live scrape 和健康规则都不是 72 小时
-  运行可用性、真实渠道、SLO 达成或 production Go 证据。
+- Compose config、静态 healthcheck、一次 live scrape 和健康规则都不是持续运行
+  可用性、真实渠道、SLO 达成或 production Go 证据。72 小时窗口已明确延后且不再
+  作为本阶段退出条件；只记录实际采样时长。
 
-## NOT-COMPOSED
+## COMPOSED-BUT-NO-GO
 
-- `composition.status=not_composed`
+- `composition.status=composed`
 - `local_pilot_go=false`
 - 正式 preflight 必须返回 78；synthetic preflight 不放宽正式门。
-- 本地 synthetic core 已使用记录的 runtime/Frappe 镜像运行过一次，但这不改变
-  formal composition 状态，也不构成生产、真实渠道、DeepSeek、Kingdee 或云 Go。
+- 当前源码 runtime/Frappe 镜像已经构建并记录；这不改变 formal No-Go，也不构成
+  生产、真实渠道、DeepSeek、Kingdee 或云 Go。
 
 ## SYNTHETIC-CORE-SNAPSHOT
 
@@ -84,8 +85,8 @@
 
 ## EVIDENCE-SNAPSHOT-LIMITS
 
-- 证据是本地 synthetic 快照，不是 72 小时试点完成或最终签字；全量测试结果仍需
-  主代理复跑确认。
+- 证据是本地 synthetic 快照，不是连续稳定性结论或最终签字；72 小时项已延后、
+  未评估且不作为本阶段门禁，全量测试结果仍需主代理复跑确认。
 - 不得将 synthetic 数据、loopback 健康、浏览器成功或静态检查解释为真实渠道、
   DeepSeek、Kingdee、云部署、生产可用性或外发授权。
 

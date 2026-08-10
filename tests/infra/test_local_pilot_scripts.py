@@ -735,7 +735,34 @@ def test_preflight_fails_closed_when_runtime_composition_is_unavailable(tmp_path
     candidate = tmp_path / "manifest.json"
     candidate.write_text(json.dumps(manifest), encoding="utf-8")
 
-    result = _run_preflight("--manifest", str(candidate))
+    candidate_root = tmp_path / "repo"
+    (candidate_root / "infra" / "local").mkdir(parents=True)
+    for directory in ("apps", "contracts", "services"):
+        (candidate_root / directory).symlink_to(ROOT / directory, target_is_directory=True)
+    shutil.copy2(
+        ROOT / "infra" / "local" / "Containerfile.runtime",
+        candidate_root / "infra" / "local" / "Containerfile.runtime",
+    )
+    entrypoints = json.loads(_read(ROOT / "infra" / "local" / "runtime-entrypoints.json"))
+    entrypoints["composition"].update(
+        {
+            "status": "not_composed",
+            "frappe_pwa": "blocked_current_source_image_refresh_required",
+        }
+    )
+    (candidate_root / "infra" / "local" / "runtime-entrypoints.json").write_text(
+        json.dumps(entrypoints),
+        encoding="utf-8",
+    )
+
+    result = _run_preflight(
+        "--repo-root",
+        str(candidate_root),
+        "--manifest",
+        str(candidate),
+        "--image-lock",
+        str(IMAGE_LOCK),
+    )
 
     assert result.returncode != 0
     assert "未组合，不可启动" in result.stderr

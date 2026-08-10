@@ -323,7 +323,7 @@ def test_compose_declares_full_isolated_topology_and_filesystem_cas_truth() -> N
         assert "/var/lib/gbos/evidence" in _service_block(compose, service)
     assert "filesystem CAS" in _read(INFRA / "runtime-entrypoints.json")
     assert "MinIO is not part of the required runtime" in readme
-    assert "not_composed" in readme
+    assert "composition state is `composed`" in readme
     assert "filesystem CAS" in readme
 
     assert "0.0.0.0:" not in compose
@@ -567,15 +567,13 @@ def test_real_renderer_enables_direct_model_consumers_without_a_durable_queue(
     assert "GBOS_DEEPSEEK_EGRESS_ENABLED" in compose
 
 
-def test_blocked_entrypoints_are_honest_and_webhook_has_no_fake_health() -> None:
+def test_composed_entrypoints_are_honest_and_webhook_has_no_fake_health() -> None:
     entrypoints = json.loads(_read(INFRA / "runtime-entrypoints.json"))
     compose = _read(INFRA / "compose.yml")
     manifest = json.loads(_read(INFRA / "local-pilot-manifest.json"))
 
-    assert entrypoints["composition"]["status"] == "not_composed"
-    assert entrypoints["composition"]["frappe_pwa"] == (
-        "blocked_current_source_image_refresh_required"
-    )
+    assert entrypoints["composition"]["status"] == "composed"
+    assert entrypoints["composition"]["frappe_pwa"] == "composed"
     assert manifest["local_pilot_go"] is False
     for service in ("connector-worker", "webhook-ingress", "email-poller"):
         assert entrypoints["services"][service]["status"] == "executable"

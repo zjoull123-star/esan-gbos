@@ -7,7 +7,7 @@
 
 - 规划来源基线是 `8c40731`（观察身份解析 roadmap）；当前分支为
   `feat/user-identity-resolution-20260810`，实现与最终镜像验证基线为
-  `098d728cc52e27b6f58b051dfeb925efdfc680c4`（`098d728`）。
+  `00a1a0a395d6326688ff131192c9aa332f8d32b1`（`00a1a0a`）。
 - 身份解析离线实现基线 `c98f6a5` 保留为历史里程碑；本轮在其上补齐了真实
   Frappe v16 站点、最终镜像、Prometheus live scrape 与安全扫描证据。
 - `docs/evidence/` 中既有 Gate、local-pilot 和 identity-resolution 文件均是
@@ -46,14 +46,18 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 
 ## 当前验证快照
 
-最终本地镜像都绑定 source revision `098d728`：
+当前本地镜像都绑定 source revision `00a1a0a`：
 
 | Service | Local image digest | Source digest |
 | --- | --- | --- |
-| `frappe-pwa` | `sha256:d9220d580ea36fdc04efbe9e11863f2bfb89d879255f52d6af838ee7c0b3cea5` | `1ce0cce76faa93176a0a0bff6cdcf7f6ece3226f16fb1e6ebeec24782a43b7bd` |
-| `local-runtime` | `sha256:ceaf2daa0a578698c5f0a2df2d94030b84439b78c9e4a1e73110c4e1a3cf2aae` | `9183102aeacb990dc8b22f4a1f9e3027a70b86c3f453a380fedd9ac20105ba58` |
+| `frappe-pwa` | `sha256:94c1bb068a868e0c0c7bb1deda231c2fc5bd13f2928b83036f83802674c5afe6` | `6de42172a68ce9a2f0f7fe9b158a4471d4b5b3a646e33563dedc48e364092e7c` |
+| `local-runtime` | `sha256:705012abe856dbe33298e508c79e121831585e1036dca701a93553ebe0186c8b` | `a1e4f3a068ab88c54d3cf7753cfa75147b31843f2799144ab1e3a7e23f497894` |
 
-已观察的当前验证：
+两套镜像已构建并写入本地 image lock；当前提交尚未用真实凭据启动正式
+渠道/模型 profile。下列 synthetic/Frappe/监控观察来自历史证据快照，不能被新镜像
+构建动作自动继承为新的运行证据。
+
+已观察的历史运行验证（不自动升级为 `00a1a0a` 的 live proof）：
 
 - 新建隔离 Frappe site 安装 `frappe 16.30.0`、`erpnext 16.31.0`、
   `crm 1.81.0`、`esan_gbos 0.1.0`；最终 Frappe 镜像运行原生 app 测试
@@ -66,9 +70,10 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
   管理台账只由 owner role 查询，application role 保持最小权限。
 - Prometheus 3.7.3 live target `identity-resolution` 为 `up=1`，5 条规则健康；
   `gbos_identity_resolver_ready=0` 是预期结果，因为真实身份 worker/渠道未启用。
-- 固定 Trivy 0.73.0 对源码锁文件、两个 Containerfile 和最终两套镜像的结果均为
-  0 个未豁免 High/Critical、0 secrets、0 misconfigurations；运行时仍为 Python
-  3.14.2，但构建时安装了当前 Debian 12.15 安全更新。
+- 固定 Trivy 0.73.0 已在本轮对源码锁文件、两个 Containerfile 和 `00a1a0a`
+  两套镜像重新执行；结果均为 0 个未豁免 High/Critical、0 secrets、0
+  misconfigurations。历史 57 条豁免/103 个 exact PURL 仍单独显示且不等于消失；
+  运行时仍为 Python 3.14.2，构建时安装了当前 Debian 12.15 安全更新。
 
 详见 [当前身份解析运行证据](evidence/identity-resolution-runtime/identity-resolution-runtime-summary.md)。
 
@@ -79,7 +84,7 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 ```text
 production_go=false
 local_pilot_go=false
-composition.status=not_composed
+composition.status=composed
 external_send=false
 ```
 
@@ -87,7 +92,8 @@ external_send=false
 - Task 13 真实 Email + DeepSeek shadow canary **未执行**；缺少 IMAP 凭据、
   DeepSeek API Key/余额、启用时间、目标 team/account user 和人工批准的 names/org
   lexicon。real channels、real model call/model identity 仍为 No-Go/unknown。
-- 72 小时常驻试点及真实 UIDVALIDITY、429、超时、断网恢复演练未执行。
+- 72 小时连续运行不再作为本阶段退出条件；该稳定性窗口未执行、未评估，也不再
+  单独阻塞 local pilot。真实 UIDVALIDITY、429、超时和断网恢复演练仍未执行。
 - Kingdee、cloud、production、外发和正式业务命令继续 No-Go。
 
 ## 后续实施顺序
@@ -97,7 +103,8 @@ external_send=false
    checked-in manifest 不修改。
 3. 先做一封新测试邮件，再验证去重、身份 unresolved → review → confirmed/revoked、
    模型标记化、费用台账和 kill switch；不得回补历史。
-4. 完成 72 小时常驻、故障演练和新 evidence package 后，才可讨论
-   `local_pilot_go`；production Go 仍需独立审批。
+4. 完成短时健康采样、故障演练和新 evidence package 后，才可讨论
+   `local_pilot_go`；证据记录实际运行时长但不要求 72 小时，production Go 仍需
+   独立审批。
 
 本 handoff 不包含凭据、token、cookie、原始消息、模型响应或生产业务数据。

@@ -2,11 +2,11 @@
 
 ## 当前结论
 
-正式 production composition 仍是 **未组合，不可启动**：
-`composition.status=not_composed`、`local_pilot_go=false`，而
-`scripts/local-pilot/preflight --require-go` 必须返回 78。生产、真实渠道、
-真实 DeepSeek、Kingdee 与云部署均保持 No-Go。正式路径仍是“已声明但未运行验证”，
-不能把 synthetic 运行快照解释为正式可用性证据。
+本地服务拓扑和当前源码镜像现已 **组合并记录**：
+`composition.status=composed`。这不是运行放行；正式 manifest 仍为
+`local_pilot_go=false`，`scripts/local-pilot/preflight --require-go` 必须返回 78。
+生产、真实渠道、真实 DeepSeek、Kingdee 与云部署均保持 No-Go。不能把镜像构建或
+synthetic 运行快照解释为正式可用性证据。
 
 与正式门分开，当前 Mac 已完成一次本地、禁用态 synthetic core 运行快照。它使用
 已构建的本地 runtime/Frappe 镜像，启动 Frappe PWA、Context、Agent、Observer；
@@ -20,11 +20,12 @@ pilot UI。
 容器访问 `api.deepseek.com:443` 均 blocked，`webhook-tunnel` 仍为 internal。
 这只证明本地 synthetic core 的隔离边界，不改变正式 No-Go。
 
-Frappe image lock 为
-`sha256:d9220d580ea36fdc04efbe9e11863f2bfb89d879255f52d6af838ee7c0b3cea5`，
+当前 Frappe image lock 为
+`sha256:94c1bb068a868e0c0c7bb1deda231c2fc5bd13f2928b83036f83802674c5afe6`，
 local runtime image lock 为
-`sha256:ceaf2daa0a578698c5f0a2df2d94030b84439b78c9e4a1e73110c4e1a3cf2aae`；
-两者均绑定 source revision `098d728`。
+`sha256:705012abe856dbe33298e508c79e121831585e1036dca701a93553ebe0186c8b`；
+两者均绑定 source revision `00a1a0a`。它们已完成构建和本地 inspect，但尚未用真实
+渠道/模型凭据运行。以下 site、浏览器和监控观察来自先前 synthetic 快照：
 site `setup_complete=1`，Frappe/ERPNext/CRM/esan_gbos 版本分别为
 `16.30.0`/`16.31.0`/`1.81.0`/`0.1.0`。连续两次 migrations
 checksum-consistent，materializer bootstrap 为 skipped/idempotent；fixture
@@ -46,9 +47,9 @@ WhatsApp webhook、Email poller 与 connector worker 已有默认组合；WeCom
 因缺少官方 SDK factory 继续 fail closed；model projection 代码已有 closed
 lexicon resolver，但因没有当前用户的有效 attested lexicon 和真实 credentials
 继续阻断；media 仍缺环境驱动的本地 runtime composition。
-`local_pilot_go=false` 与 `composition.status=not_composed` 不得提前修改。
-真实连接器默认关闭，DeepSeek 默认关闭。runtime entrypoint 的文件存在或
-Compose config 仅证明语法，均不能解除运行门。
+`local_pilot_go=false` 不得因 `composition.status=composed` 而提前修改。真实连接器默认关闭，
+DeepSeek 默认关闭。runtime entrypoint、Compose config 和源绑定镜像只
+证明组合条件，均不能解除运行门。
 
 `docker compose ... config --quiet` 仅证明 YAML 和 Compose 模型可以解析，
 不证明镜像存在、secret 可读、服务健康或试点可以启动。
@@ -62,8 +63,9 @@ Compose config 仅证明语法，均不能解除运行门。
   MinIO 不属于 required runtime，也没有对象存储控制台。
 - Prometheus 是可选 profile；固定 3.7.3 镜像已完成 `promtool` 配置/规则校验，
   live scrape 中 `identity-resolution` target 为 `up=1`，5 条低基数规则健康。
-  `gbos_identity_resolver_ready=0` 是预期禁用态结果，不可解释为真实 worker 已就绪、
-  SLO 已达成或 72 小时试点已完成。
+  `gbos_identity_resolver_ready=0` 是预期禁用态结果，不可解释为真实 worker 已就绪或
+  SLO 已达成。72 小时连续运行已按用户决定延后且不作为本阶段退出条件；证据只记录
+  实际采样时长。
 - PostgreSQL、MariaDB、API、PWA、webhook 与可选 Prometheus 的宿主机端口
   只绑定 `127.0.0.1`；本次 synthetic core 的已验证端口见上方快照。
 - `local-internal` 使用 bridge 网络并关闭 `enable_ip_masquerade`，不使用
@@ -84,12 +86,13 @@ digest。`scripts/local-pilot/build-runtime-image --confirm-network-build`
 `uv sync --frozen` 也可能需要下载 lock 中的依赖。构建成功后脚本才原子记录
 Python base、uv builder 与 local runtime 的本机 image ID、RepoDigest 和平台。
 
-Frappe 使用独立的本地 image ref。本次 snapshot 已记录
-`sha256:d9220d580ea36fdc04efbe9e11863f2bfb89d879255f52d6af838ee7c0b3cea5`，
+Frappe 使用独立的本地 image ref。当前 lock 已记录
+`sha256:94c1bb068a868e0c0c7bb1deda231c2fc5bd13f2928b83036f83802674c5afe6`，
 local runtime 已记录
-`sha256:ceaf2daa0a578698c5f0a2df2d94030b84439b78c9e4a1e73110c4e1a3cf2aae`，
-并在该镜像上完成 synthetic site setup 与 `/gbos/ceo` 浏览器验证；这不等于正式
-composition 已 go。后续重建仍必须显式运行
+`sha256:705012abe856dbe33298e508c79e121831585e1036dca701a93553ebe0186c8b`，
+两者仅完成当前源码构建、inspect 和安全扫描。synthetic site setup 与 `/gbos/ceo`
+浏览器验证来自较早的 `098d728` 快照，不自动证明新镜像 live runtime；这也不等于
+正式 composition 已 go。后续重建仍必须显式运行
 `scripts/local-pilot/build-frappe-image --confirm-network-build`，只在成功后记录
 新的本机 image ID。
 
@@ -254,8 +257,8 @@ disabled manifest 生成临时、仓库外的 core-only runtime manifest。该 m
 保持 production、Kingdee、cloud、external send、所有 channel 与 DeepSeek
 关闭；只启动 Context/Agent/Observer API 和 Frappe worker/scheduler/PWA，
 不启动 connector、model、media 或 tunnel。它不会更改 checked-in manifest、
-`composition.status` 或 formal `start --require-go` 门。本次 snapshot 已按该路径
-运行并完成上述本地验证；这不是 72 小时试点完成，也不是正式 Go。
+`composition.status` 或 formal `start --require-go` 门。历史 snapshot 曾按该路径
+运行并完成上述本地验证；它不是当前镜像的真实渠道/模型证据，也不是正式 Go。
 
 状态与停止：
 

@@ -38,10 +38,11 @@ DeepSeek gateway 已实现并完成配置边界（endpoint 为
 
 以下能力保持关闭、不代表已验证或不存在：真实金蝶连接及任何金蝶写入、生产
 渠道采集、真实 AI 模型调用、自动外发、自动报价、正式订单创建、腾讯云部署和
-生产发布。正式 local pilot 仍保持 `local_pilot_go=false` 与
-`composition.status=not_composed`（No-Go）；real channels、real model、Kingdee、
-cloud 和 production 均未验证。Observer profile 承载 Gate 3–6 的 PostgreSQL
-本地验证，但仍不是核心 CRM/PWA 的启动依赖。
+生产发布。本地拓扑与当前源码镜像现已记录为 `composition.status=composed`；这只
+表示声明的服务和源绑定镜像具备组合条件。正式 manifest 仍保持
+`local_pilot_go=false`（No-Go），real channels、real model、Kingdee、cloud 和
+production 均未验证。Observer profile 承载 Gate 3–6 的 PostgreSQL 本地验证，
+但仍不是核心 CRM/PWA 的启动依赖。
 
 Gate 5 的 CEO 页面读取受治理 Metrics API，但当前来源仍是确定性合成数据；
 界面明确显示“演示 / 合成数据”，不得解读为实时经营结果。
