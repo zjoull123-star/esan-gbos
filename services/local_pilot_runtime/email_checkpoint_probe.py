@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import imaplib
 import json
 import os
@@ -44,6 +45,7 @@ _EMAIL_FIELDS = frozenset(
 _CHECKPOINT_FIELDS = frozenset({"mailbox", "uid", "uidvalidity", "version"})
 _TASK_TYPES = frozenset({"sales", "purchase", "product_sample", "ceo"})
 _MAX_CREDENTIAL_BYTES = 65_536
+_BINDING_KEY_BYTES = 32
 _MAX_IMAP_VALUE = 4_294_967_295
 _TIMEOUT_SECONDS = 10.0
 _OUTPUT_NAME = "email-checkpoint.json"
@@ -78,6 +80,10 @@ class EmailCheckpoint:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class _EmailCredential:
+    instance_id: str
+    team_ref: str | None
+    agent_task_type: str | None
+    account_user_ref: str | None
     host: str
     port: int
     mailbox: str
@@ -112,6 +118,7 @@ def probe_email_checkpoint(
     credential_file: Path,
     output_dir: Path,
     *,
+    binding_key_file: Path,
     repo_root: Path,
     client_factory: ImapClientFactory | None = None,
     activation_time: datetime | str | None = None,
@@ -128,6 +135,9 @@ def probe_email_checkpoint(
             raise EmailCheckpointProbeError("email checkpoint activation is invalid")
         credential_path = _external_file(Path(credential_file), root)
         credential = _load_credential(credential_path)
+        binding_key_path = _external_binding_key_file(Path(binding_key_file), root)
+        binding_key = _read_binding_key(binding_key_path)
+        credential_binding = _credential_binding_hmac_sha256(credential, binding_key)
         source_commit = _source_commit(root)
         output = _private_external_output(Path(output_dir), root)
         destination = output / _OUTPUT_NAME
@@ -153,6 +163,7 @@ def probe_email_checkpoint(
                 receipt_bytes,
                 activation=activation,
                 checkpoint_bytes=existing_checkpoint_bytes,
+                credential_binding=credential_binding,
                 source_commit=source_commit,
             )
             return existing_checkpoint
@@ -170,6 +181,7 @@ def probe_email_checkpoint(
         receipt_bytes = _receipt_bytes(
             activation=activation,
             checkpoint_bytes=checkpoint_bytes,
+            credential_binding=credential_binding,
             observed_at=observed_at,
             source_commit=source_commit,
         )
@@ -294,7 +306,7 @@ def _load_credential(path: Path) -> _EmailCredential:
     value = _read_private_json(path)
     if set(value) != _EMAIL_FIELDS:
         raise EmailCheckpointProbeError("email checkpoint credential is invalid")
-    _text(value, "instance_id", maximum=256)
+    instance_id = _text(value, "instance_id", maximum=256)
     team_ref = _optional_text(value.get("team_ref"), maximum=256)
     task = value.get("agent_task_type")
     if task is not None and (task not in _TASK_TYPES or team_ref is None):
@@ -319,6 +331,10 @@ def _load_credential(path: Path) -> _EmailCredential:
     _integer(value, "rescan_max_uids", minimum=1, maximum=10_000)
     _optional_checkpoint(value.get("initial_checkpoint"), mailbox=mailbox)
     return _EmailCredential(
+        instance_id=instance_id,
+        team_ref=team_ref,
+        agent_task_type=task,
+        account_user_ref=account_user_ref,
         host=host,
         port=port,
         mailbox=mailbox,
@@ -399,6 +415,51 @@ def _read_private_json(path: Path) -> dict[str, Any]:
     if not isinstance(decoded, dict):
         raise EmailCheckpointProbeError("email checkpoint credential is invalid")
     return decoded
+
+
+def _read_binding_key(path: Path) -> bytes:
+    descriptor = -1
+    try:
+        before = path.lstat()
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+        )
+        details = os.fstat(descriptor)
+        if (
+            stat.S_ISLNK(before.st_mode)
+            or before.st_dev != details.st_dev
+            or before.st_ino != details.st_ino
+            or not stat.S_ISREG(details.st_mode)
+            or stat.S_IMODE(details.st_mode) != 0o600
+            or details.st_size != _BINDING_KEY_BYTES
+        ):
+            raise EmailCheckpointProbeError("email checkpoint binding key is invalid")
+        chunks: list[bytes] = []
+        remaining = _BINDING_KEY_BYTES
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                raise EmailCheckpointProbeError("email checkpoint binding key is invalid")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if (
+            len(payload) != _BINDING_KEY_BYTES
+            or after.st_dev != details.st_dev
+            or after.st_ino != details.st_ino
+            or after.st_size != details.st_size
+        ):
+            raise EmailCheckpointProbeError("email checkpoint binding key is invalid")
+        return payload
+    except EmailCheckpointProbeError:
+        raise
+    except OSError:
+        raise EmailCheckpointProbeError("email checkpoint binding key is unavailable") from None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def _text(value: dict[str, Any], key: str, *, maximum: int) -> str:
@@ -518,6 +579,18 @@ def _external_file(path: Path, repo_root: Path) -> Path:
         raise EmailCheckpointProbeError("email checkpoint credential is unavailable") from None
     if path.is_symlink() or not stat.S_ISREG(details.st_mode):
         raise EmailCheckpointProbeError("email checkpoint credential is invalid")
+    _require_external(resolved, repo_root)
+    return path.absolute()
+
+
+def _external_binding_key_file(path: Path, repo_root: Path) -> Path:
+    try:
+        details = path.lstat()
+        resolved = path.resolve(strict=True)
+    except OSError:
+        raise EmailCheckpointProbeError("email checkpoint binding key is unavailable") from None
+    if path.is_symlink() or not stat.S_ISREG(details.st_mode):
+        raise EmailCheckpointProbeError("email checkpoint binding key is invalid")
     _require_external(resolved, repo_root)
     return path.absolute()
 
@@ -674,10 +747,31 @@ def _checkpoint_from_bytes(payload: bytes) -> EmailCheckpoint:
     return checkpoint
 
 
+def _credential_binding_hmac_sha256(
+    credential: _EmailCredential,
+    binding_key: bytes,
+) -> str:
+    canonical_identity = _json_bytes(
+        {
+            "account_user_ref": credential.account_user_ref,
+            "agent_task_type": credential.agent_task_type,
+            "folder": credential.folder,
+            "host": credential.host,
+            "instance_id": credential.instance_id,
+            "mailbox": credential.mailbox,
+            "port": credential.port,
+            "team_ref": credential.team_ref,
+            "username": credential.username,
+        }
+    )
+    return hmac.new(binding_key, canonical_identity, hashlib.sha256).hexdigest()
+
+
 def _receipt_bytes(
     *,
     activation: datetime,
     checkpoint_bytes: bytes,
+    credential_binding: str,
     observed_at: datetime,
     source_commit: str,
 ) -> bytes:
@@ -685,6 +779,7 @@ def _receipt_bytes(
         {
             "activation_time": _format_utc(activation),
             "checkpoint_sha256": hashlib.sha256(checkpoint_bytes).hexdigest(),
+            "credential_binding_hmac_sha256": credential_binding,
             "observed_at": _format_utc(observed_at),
             "operation": _OPERATION,
             "read_only": True,
@@ -712,6 +807,7 @@ def _validate_receipt(
     *,
     activation: datetime,
     checkpoint_bytes: bytes,
+    credential_binding: str,
     source_commit: str,
 ) -> None:
     try:
@@ -721,12 +817,13 @@ def _validate_receipt(
     expected = _receipt_bytes(
         activation=activation,
         checkpoint_bytes=checkpoint_bytes,
+        credential_binding=credential_binding,
         observed_at=_receipt_timestamp(
             value.get("observed_at") if isinstance(value, dict) else None
         ),
         source_commit=source_commit,
     )
-    if not isinstance(value, dict) or payload != expected:
+    if not isinstance(value, dict) or not hmac.compare_digest(payload, expected):
         raise EmailCheckpointProbeError("email checkpoint output conflicts")
     observed_at = _receipt_timestamp(value["observed_at"])
     if observed_at < activation:
@@ -784,6 +881,7 @@ def _is_ok(value: object) -> bool:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--credential-file", required=True, type=Path)
+    parser.add_argument("--binding-key-file", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--activation-time", required=True)
     return parser
@@ -796,6 +894,7 @@ def main(argv: list[str] | None = None) -> int:
         probe_email_checkpoint(
             args.credential_file,
             args.output_dir,
+            binding_key_file=args.binding_key_file,
             repo_root=repo_root,
             activation_time=args.activation_time,
         )

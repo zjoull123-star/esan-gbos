@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -27,6 +28,7 @@ PASSWORD = "password-SENTINEL"
 MAILBOX = "mailbox-SENTINEL"
 ACTIVATION = datetime(2026, 8, 11, 1, 2, 3, tzinfo=UTC)
 NOW = ACTIVATION + timedelta(minutes=5)
+BINDING_KEY = b"0123456789abcdef0123456789abcdef"
 
 
 def _clock() -> datetime:
@@ -57,6 +59,28 @@ def _credential(path: Path, **changes: object) -> Path:
     path.write_text(json.dumps(value), encoding="utf-8")
     path.chmod(0o600)
     return path
+
+
+def _binding_key(path: Path, value: bytes = BINDING_KEY) -> Path:
+    path.write_bytes(value)
+    path.chmod(0o600)
+    return path
+
+
+def _canonical_identity(**changes: object) -> bytes:
+    identity: dict[str, object] = {
+        "account_user_ref": "owner@example.invalid",
+        "agent_task_type": "sales",
+        "folder": "INBOX",
+        "host": HOST,
+        "instance_id": "email-primary",
+        "mailbox": MAILBOX,
+        "port": 993,
+        "team_ref": "team:sales",
+        "username": USERNAME,
+    }
+    identity.update(changes)
+    return (json.dumps(identity, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
 class FakeImap:
@@ -122,6 +146,185 @@ def _capturing_factory(
     return factory, captured
 
 
+def test_probe_receipt_binds_canonical_credential_identity(tmp_path: Path) -> None:
+    credential = _credential(tmp_path / "email.json")
+    binding_key = _binding_key(tmp_path / "binding.key")
+    output = tmp_path / "output"
+    factory, _ = _capturing_factory(FakeImap())
+
+    probe_email_checkpoint(
+        credential,
+        output,
+        binding_key_file=binding_key,
+        repo_root=ROOT,
+        client_factory=factory,
+        activation_time=ACTIVATION,
+        now=_clock,
+    )
+
+    receipt = json.loads((output / "email-checkpoint-receipt.json").read_bytes())
+    assert (
+        receipt["credential_binding_hmac_sha256"]
+        == hmac.new(
+            BINDING_KEY,
+            _canonical_identity(),
+            hashlib.sha256,
+        ).hexdigest()
+    )
+
+
+@pytest.mark.parametrize("unsafe", ["missing", "symlink", "mode", "short", "inside_repo"])
+def test_probe_rejects_unsafe_binding_key_before_network(
+    tmp_path: Path,
+    unsafe: str,
+) -> None:
+    repo_root = ROOT
+    binding_key = tmp_path / "binding.key"
+    if unsafe == "symlink":
+        target = _binding_key(tmp_path / "target.key")
+        binding_key.symlink_to(target)
+    elif unsafe == "mode":
+        _binding_key(binding_key).chmod(0o640)
+    elif unsafe == "short":
+        _binding_key(binding_key, b"too-short")
+    elif unsafe == "inside_repo":
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        binding_key = _binding_key(repo_root / "binding.key")
+    network_calls = 0
+
+    def forbidden_factory(**_kwargs: Any) -> FakeImap:
+        nonlocal network_calls
+        network_calls += 1
+        raise AssertionError("unsafe binding key must fail before network")
+
+    with pytest.raises(EmailCheckpointProbeError) as caught:
+        probe_email_checkpoint(
+            _credential(tmp_path / "email.json"),
+            tmp_path / "output",
+            binding_key_file=binding_key,
+            repo_root=repo_root,
+            client_factory=forbidden_factory,
+            activation_time=ACTIVATION,
+            now=_clock,
+        )
+
+    assert network_calls == 0
+    assert not (tmp_path / "output").exists()
+    rendered = f"{caught.value!s} {caught.value!r}"
+    assert all(secret not in rendered for secret in (HOST, USERNAME, PASSWORD, MAILBOX))
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"instance_id": "email-secondary"},
+        {"team_ref": "team:purchase", "agent_task_type": "purchase"},
+        {"agent_task_type": "ceo"},
+        {"account_user_ref": "other@example.invalid"},
+        {"host": "other.invalid"},
+        {"port": 1993},
+        {"mailbox": "other-mailbox"},
+        {"folder": "Archive"},
+        {"username": "other@example.invalid"},
+    ],
+)
+def test_probe_replay_rejects_credential_identity_drift_without_network(
+    tmp_path: Path,
+    changes: dict[str, object],
+) -> None:
+    credential = _credential(tmp_path / "email.json")
+    binding_key = _binding_key(tmp_path / "binding.key")
+    output = tmp_path / "output"
+    factory, _ = _capturing_factory(FakeImap())
+    probe_email_checkpoint(
+        credential,
+        output,
+        binding_key_file=binding_key,
+        repo_root=ROOT,
+        client_factory=factory,
+        activation_time=ACTIVATION,
+        now=_clock,
+    )
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
+    _credential(credential, **changes)
+
+    with pytest.raises(EmailCheckpointProbeError):
+        probe_email_checkpoint(
+            credential,
+            output,
+            binding_key_file=binding_key,
+            repo_root=ROOT,
+            client_factory=lambda **_kwargs: pytest.fail("drifted replay must remain offline"),
+            activation_time=ACTIVATION,
+            now=_clock,
+        )
+
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == before
+
+
+def test_probe_replay_rejects_wrong_binding_key_without_network(tmp_path: Path) -> None:
+    credential = _credential(tmp_path / "email.json")
+    binding_key = _binding_key(tmp_path / "binding.key")
+    output = tmp_path / "output"
+    factory, _ = _capturing_factory(FakeImap())
+    probe_email_checkpoint(
+        credential,
+        output,
+        binding_key_file=binding_key,
+        repo_root=ROOT,
+        client_factory=factory,
+        activation_time=ACTIVATION,
+        now=_clock,
+    )
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
+    _binding_key(binding_key, b"fedcba9876543210fedcba9876543210")
+
+    with pytest.raises(EmailCheckpointProbeError):
+        probe_email_checkpoint(
+            credential,
+            output,
+            binding_key_file=binding_key,
+            repo_root=ROOT,
+            client_factory=lambda **_kwargs: pytest.fail("wrong key replay must remain offline"),
+            activation_time=ACTIVATION,
+            now=_clock,
+        )
+
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == before
+
+
+def test_probe_binding_excludes_password_value(tmp_path: Path) -> None:
+    credential = _credential(tmp_path / "email.json")
+    binding_key = _binding_key(tmp_path / "binding.key")
+    output = tmp_path / "output"
+    factory, _ = _capturing_factory(FakeImap())
+    first = probe_email_checkpoint(
+        credential,
+        output,
+        binding_key_file=binding_key,
+        repo_root=ROOT,
+        client_factory=factory,
+        activation_time=ACTIVATION,
+        now=_clock,
+    )
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
+    _credential(credential, password="rotated-password-SENTINEL")
+
+    second = probe_email_checkpoint(
+        credential,
+        output,
+        binding_key_file=binding_key,
+        repo_root=ROOT,
+        client_factory=lambda **_kwargs: pytest.fail("password-only replay must remain offline"),
+        activation_time=ACTIVATION,
+        now=_clock,
+    )
+
+    assert second == first
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == before
+
+
 def test_probe_uses_verified_tls_status_only_and_publishes_closed_receipt_last(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -142,6 +345,7 @@ def test_probe_uses_verified_tls_status_only_and_publishes_closed_receipt_last(
     checkpoint = probe_email_checkpoint(
         credential,
         output,
+        binding_key_file=_binding_key(tmp_path / "binding.key"),
         repo_root=ROOT,
         client_factory=factory,
         activation_time=ACTIVATION,
@@ -184,6 +388,11 @@ def test_probe_uses_verified_tls_status_only_and_publishes_closed_receipt_last(
     assert receipt == {
         "activation_time": "2026-08-11T01:02:03.000000Z",
         "checkpoint_sha256": hashlib.sha256(checkpoint_bytes).hexdigest(),
+        "credential_binding_hmac_sha256": hmac.new(
+            BINDING_KEY,
+            _canonical_identity(),
+            hashlib.sha256,
+        ).hexdigest(),
         "observed_at": "2026-08-11T01:07:03.000000Z",
         "operation": "STATUS_UIDVALIDITY_UIDNEXT",
         "read_only": True,
@@ -217,6 +426,8 @@ def test_probe_uses_verified_tls_status_only_and_publishes_closed_receipt_last(
         hashlib.sha256(value.encode()).hexdigest().encode() not in receipt_bytes
         for value in forbidden_values
     )
+    assert BINDING_KEY not in receipt_bytes
+    assert hashlib.sha256(BINDING_KEY).hexdigest().encode() not in receipt_bytes
     assert not {
         "host",
         "username",
@@ -228,7 +439,10 @@ def test_probe_uses_verified_tls_status_only_and_publishes_closed_receipt_last(
         "identity",
         "raw",
     } & set(receipt)
-    assert {key for key in receipt if "sha" in key or "digest" in key} == {"checkpoint_sha256"}
+    assert {key for key in receipt if "sha" in key or "digest" in key} == {
+        "checkpoint_sha256",
+        "credential_binding_hmac_sha256",
+    }
     assert stat.S_IMODE(output.stat().st_mode) == 0o700
     assert stat.S_IMODE(checkpoint_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(receipt_path.stat().st_mode) == 0o600
@@ -258,6 +472,7 @@ def test_probe_accepts_closed_imap_boundaries(
     checkpoint = probe_email_checkpoint(
         _credential(tmp_path / "email.json"),
         tmp_path / "output",
+        binding_key_file=_binding_key(tmp_path / "binding.key"),
         repo_root=ROOT,
         client_factory=factory,
         activation_time=ACTIVATION,
@@ -294,6 +509,7 @@ def test_probe_rejects_unsafe_or_nonclosed_credentials_before_network(
         probe_email_checkpoint(
             credential,
             tmp_path / "output",
+            binding_key_file=_binding_key(tmp_path / "binding.key"),
             repo_root=ROOT,
             client_factory=forbidden_factory,
             activation_time=ACTIVATION,
@@ -312,6 +528,7 @@ def test_probe_rejects_credential_symlink_before_network(tmp_path: Path) -> None
         probe_email_checkpoint(
             credential,
             tmp_path / "output",
+            binding_key_file=_binding_key(tmp_path / "binding.key"),
             repo_root=ROOT,
             client_factory=lambda **_kwargs: pytest.fail("network must remain unused"),
             activation_time=ACTIVATION,
@@ -341,6 +558,7 @@ def test_probe_bounded_read_loop_accepts_short_reads(
     checkpoint = probe_email_checkpoint(
         credential,
         tmp_path / "output",
+        binding_key_file=_binding_key(tmp_path / "binding.key"),
         repo_root=ROOT,
         client_factory=factory,
         activation_time=ACTIVATION,
@@ -383,6 +601,7 @@ def test_probe_short_read_early_eof_fails_before_output_or_network(
         probe_email_checkpoint(
             credential,
             output,
+            binding_key_file=_binding_key(tmp_path / "binding.key"),
             repo_root=ROOT,
             client_factory=forbidden_factory,
             activation_time=ACTIVATION,
@@ -411,6 +630,7 @@ def test_probe_rejects_unsafe_closed_credential_values_before_network(
         probe_email_checkpoint(
             _credential(tmp_path / "email.json", **changes),
             tmp_path / "output",
+            binding_key_file=_binding_key(tmp_path / "binding.key"),
             repo_root=ROOT,
             client_factory=lambda **_kwargs: pytest.fail("network must remain unused"),
             activation_time=ACTIVATION,
@@ -441,6 +661,7 @@ def test_probe_errors_and_repr_never_expose_provider_or_mailbox_values(
         probe_email_checkpoint(
             _credential(tmp_path / "email.json"),
             tmp_path / "output",
+            binding_key_file=_binding_key(tmp_path / "binding.key"),
             repo_root=ROOT,
             client_factory=factory,
             activation_time=ACTIVATION,
@@ -474,6 +695,7 @@ def test_probe_requires_real_repo_external_mode_0700_output_before_network(
         probe_email_checkpoint(
             credential,
             output,
+            binding_key_file=_binding_key(tmp_path / "binding.key"),
             repo_root=repo_root,
             client_factory=lambda **_kwargs: pytest.fail("network must remain unused"),
             activation_time=ACTIVATION,
@@ -493,6 +715,7 @@ def test_probe_rejects_existing_unsafe_checkpoint_target_before_network(tmp_path
         probe_email_checkpoint(
             _credential(tmp_path / "email.json"),
             output,
+            binding_key_file=_binding_key(tmp_path / "binding.key"),
             repo_root=ROOT,
             client_factory=lambda **_kwargs: pytest.fail("network must remain unused"),
             activation_time=ACTIVATION,
@@ -529,6 +752,7 @@ def test_probe_rejects_missing_malformed_future_activation_or_clock_before_netwo
         probe_email_checkpoint(
             _credential(tmp_path / "email.json"),
             output,
+            binding_key_file=_binding_key(tmp_path / "binding.key"),
             repo_root=ROOT,
             client_factory=forbidden_factory,
             activation_time=activation_time,
@@ -548,6 +772,7 @@ def test_probe_idempotent_replay_returns_identical_files_without_network(tmp_pat
     first = probe_email_checkpoint(
         credential,
         output,
+        binding_key_file=_binding_key(tmp_path / "binding.key"),
         repo_root=ROOT,
         client_factory=factory,
         activation_time=ACTIVATION,
@@ -558,6 +783,7 @@ def test_probe_idempotent_replay_returns_identical_files_without_network(tmp_pat
     second = probe_email_checkpoint(
         credential,
         output,
+        binding_key_file=tmp_path / "binding.key",
         repo_root=ROOT,
         client_factory=lambda **_kwargs: pytest.fail("replay must remain offline"),
         activation_time=ACTIVATION,
@@ -578,6 +804,7 @@ def test_probe_conflicting_receipt_fails_closed_without_overwrite_or_network(
     probe_email_checkpoint(
         credential,
         output,
+        binding_key_file=_binding_key(tmp_path / "binding.key"),
         repo_root=ROOT,
         client_factory=factory,
         activation_time=ACTIVATION,
@@ -596,6 +823,7 @@ def test_probe_conflicting_receipt_fails_closed_without_overwrite_or_network(
         probe_email_checkpoint(
             credential,
             output,
+            binding_key_file=tmp_path / "binding.key",
             repo_root=ROOT,
             client_factory=lambda **_kwargs: pytest.fail("conflict must fail before network"),
             activation_time=ACTIVATION,
@@ -615,6 +843,7 @@ def test_probe_source_commit_drift_replay_fails_closed_without_overwrite_or_netw
     probe_email_checkpoint(
         credential,
         output,
+        binding_key_file=_binding_key(tmp_path / "binding.key"),
         repo_root=ROOT,
         client_factory=factory,
         activation_time=ACTIVATION,
@@ -630,6 +859,7 @@ def test_probe_source_commit_drift_replay_fails_closed_without_overwrite_or_netw
         probe_email_checkpoint(
             credential,
             output,
+            binding_key_file=tmp_path / "binding.key",
             repo_root=ROOT,
             client_factory=lambda **_kwargs: pytest.fail("drifted replay must remain offline"),
             activation_time=ACTIVATION,
@@ -648,6 +878,7 @@ def test_probe_recovers_matching_checkpoint_only_crash_state_without_overwrite(
     probe_email_checkpoint(
         credential,
         output,
+        binding_key_file=_binding_key(tmp_path / "binding.key"),
         repo_root=ROOT,
         client_factory=factory,
         activation_time=ACTIVATION,
@@ -663,6 +894,7 @@ def test_probe_recovers_matching_checkpoint_only_crash_state_without_overwrite(
     checkpoint = probe_email_checkpoint(
         credential,
         output,
+        binding_key_file=tmp_path / "binding.key",
         repo_root=ROOT,
         client_factory=replay_factory,
         activation_time=ACTIVATION,
@@ -695,6 +927,7 @@ def test_probe_checkpoint_only_conflict_fails_without_overwrite(tmp_path: Path) 
         probe_email_checkpoint(
             credential,
             output,
+            binding_key_file=_binding_key(tmp_path / "binding.key"),
             repo_root=ROOT,
             client_factory=factory,
             activation_time=ACTIVATION,
@@ -724,6 +957,7 @@ def test_probe_receipt_publication_failure_removes_new_checkpoint(
         probe_email_checkpoint(
             _credential(tmp_path / "email.json"),
             output,
+            binding_key_file=_binding_key(tmp_path / "binding.key"),
             repo_root=ROOT,
             client_factory=factory,
             activation_time=ACTIVATION,
@@ -751,6 +985,7 @@ def test_probe_rejects_receipt_symlink_and_receipt_only_before_network(tmp_path:
             probe_email_checkpoint(
                 credential,
                 output,
+                binding_key_file=_binding_key(tmp_path / "binding.key"),
                 repo_root=ROOT,
                 client_factory=lambda **_kwargs: pytest.fail("unsafe state must remain offline"),
                 activation_time=ACTIVATION,
@@ -769,6 +1004,7 @@ def test_probe_script_help_is_offline_and_executable() -> None:
 
     assert result.returncode == 0
     assert "--credential-file" in result.stdout
+    assert "--binding-key-file" in result.stdout
     assert "--output-dir" in result.stdout
     assert "--activation-time" in result.stdout
     assert "--repo-root" not in result.stdout
@@ -782,6 +1018,8 @@ def test_probe_script_requires_explicit_activation_before_probe(tmp_path: Path) 
             str(SCRIPT),
             "--credential-file",
             str(tmp_path / "missing.json"),
+            "--binding-key-file",
+            str(tmp_path / "missing.key"),
             "--output-dir",
             str(tmp_path / "output"),
         ],
@@ -796,6 +1034,28 @@ def test_probe_script_requires_explicit_activation_before_probe(tmp_path: Path) 
     assert not (tmp_path / "output").exists()
 
 
+def test_probe_script_requires_explicit_binding_key_before_probe(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            str(SCRIPT),
+            "--credential-file",
+            str(tmp_path / "missing.json"),
+            "--output-dir",
+            str(tmp_path / "output"),
+            "--activation-time",
+            "2026-08-11T01:02:03Z",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "--binding-key-file" in result.stderr
+    assert not (tmp_path / "output").exists()
+
+
 def test_probe_script_rejects_caller_controlled_repo_root(tmp_path: Path) -> None:
     fake_root = tmp_path / "fake-repo"
     fake_root.mkdir()
@@ -805,6 +1065,8 @@ def test_probe_script_rejects_caller_controlled_repo_root(tmp_path: Path) -> Non
             str(SCRIPT),
             "--credential-file",
             str(tmp_path / "missing.json"),
+            "--binding-key-file",
+            str(tmp_path / "missing.key"),
             "--output-dir",
             str(tmp_path / "output"),
             "--activation-time",
