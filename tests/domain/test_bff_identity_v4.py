@@ -232,14 +232,36 @@ def identity_module(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, FakeFrappe, S
         communication=_communication(),
         observer_calls=[],
         materialize_calls=[],
+        rematerialize_calls=[],
         submit_calls=[],
+        submit_error=False,
         idempotency={},
     )
 
     common = ModuleType("esan_gbos.api.v1.common")
     common.BFFError = TestBFFError
-    common.bff_endpoint = lambda _method: lambda function: function
     common.request_id = lambda: "REQ-identity-001"
+
+    def bff_endpoint(method: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def decorate(function: Callable[..., Any]) -> Callable[..., Any]:
+            if method != "POST":
+                return function
+
+            def transactional(*args: Any, **kwargs: Any) -> Any:
+                tables_before = copy.deepcopy(fake.tables)
+                idempotency_before = copy.deepcopy(state.idempotency)
+                try:
+                    return function(*args, **kwargs)
+                except Exception:
+                    fake.tables = tables_before
+                    state.idempotency = idempotency_before
+                    raise
+
+            return transactional
+
+        return decorate
+
+    common.bff_endpoint = bff_endpoint
 
     def require_roles(allowed: set[str] | frozenset[str]) -> None:
         if not set(fake.get_roles()) & set(allowed):
@@ -306,20 +328,36 @@ def identity_module(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, FakeFrappe, S
             "request_id": payload["request_id"],
         }
 
+    def rematerialize(payload: dict[str, Any]) -> dict[str, Any]:
+        state.rematerialize_calls.append(copy.deepcopy(payload))
+        mapping = fake.get_doc("GBOS External Identity", payload["name"], for_update=True)
+        mapping.review_status = "AI Draft"
+        mapping.revision = int(payload["expected_revision"]) + 1
+        return {
+            "doctype": "GBOS External Identity",
+            "name": payload["name"],
+            "review_status": "AI Draft",
+            "revision": int(payload["expected_revision"]) + 1,
+            "request_id": payload["request_id"],
+        }
+
     def submit(payload: dict[str, Any]) -> dict[str, Any]:
         state.submit_calls.append(copy.deepcopy(payload))
+        if state.submit_error:
+            raise IdentityReviewError("simulated review case failure")
         return {
             "doctype": "GBOS Review Case",
             "name": "REV-01",
             "review_status": "Pending",
             "revision": 1,
-            "subject_name": "EID-01",
-            "subject_revision": 2,
+            "subject_name": payload["name"],
+            "subject_revision": int(payload["expected_revision"]) + 1,
             "request_id": payload["request_id"],
         }
 
     review.IdentityReviewError = IdentityReviewError
     review.materialize_association_suggestion = materialize
+    review.rematerialize_rejected_association_suggestion = rematerialize
     review.submit_for_review = submit
 
     module_names = {
@@ -591,11 +629,11 @@ def _mapping(
     }
 
 
-def test_identity_states_overlay_local_draft_pending_confirmed_and_revoked_without_raw_refs(
+def test_identity_states_include_rejected_without_raw_refs(
     identity_module: tuple[Any, FakeFrappe, SimpleNamespace],
 ) -> None:
     identity, fake, state = identity_module
-    refs = [f"extid:v1:email:opaque-{index}" for index in range(5)]
+    refs = [f"extid:v1:email:opaque-{index}" for index in range(6)]
     state.communication = _communication(
         identities=[
             {"identity_ref": refs[0], "provider": "email", "status": "unresolved"},
@@ -612,9 +650,14 @@ def test_identity_states_overlay_local_draft_pending_confirmed_and_revoked_witho
             {
                 "identity_ref": refs[4],
                 "provider": "email",
+                "status": "unresolved",
+            },
+            {
+                "identity_ref": refs[5],
+                "provider": "email",
                 "status": "revoked",
-                "mapping_ref": "EID-04",
-                "mapping_revision": 4,
+                "mapping_ref": "EID-05",
+                "mapping_revision": 5,
                 "target_type": "Party",
             },
         ]
@@ -623,12 +666,13 @@ def test_identity_states_overlay_local_draft_pending_confirmed_and_revoked_witho
         _mapping(refs[1], name="EID-01", review_status="AI Draft"),
         _mapping(refs[2], name="EID-02", review_status="Pending", revision=2),
         _mapping(refs[3], name="EID-03", review_status="Approved", revision=3),
+        _mapping(refs[4], name="EID-04", review_status="Rejected", revision=4),
         _mapping(
-            refs[4],
-            name="EID-04",
+            refs[5],
+            name="EID-05",
             review_status="Approved",
             business_status="Revoked",
-            revision=4,
+            revision=5,
         ),
     ]
 
@@ -640,15 +684,61 @@ def test_identity_states_overlay_local_draft_pending_confirmed_and_revoked_witho
         "proposed",
         "pending",
         "confirmed",
+        "rejected",
         "revoked",
     ]
     assert rendered["identities"][3]["display_label"] == "Acme Same Team"
+    assert rendered["identities"][4] == {
+        "identity_ref": refs[4],
+        "provider": "email",
+        "status": "rejected",
+        "mapping_ref": "EID-04",
+        "mapping_revision": 4,
+    }
     assert rendered["connector_account_owner"] == {"display_label": "Mailbox Owner"}
     assert "external_subject" not in repr(rendered)
     assert "target_ref" not in repr(rendered)
     assert "MODEL-PROVENANCE-ONLY" not in repr(rendered)
     assert state.observer_calls[0]["payload"]["observation_id"] == "OBS-01"
     assert state.observer_calls[0]["payload"]["allowed_team_refs"] == ["TEM-01"]
+
+
+def test_rejected_state_remains_visible_when_the_old_user_target_is_disabled(
+    identity_module: tuple[Any, FakeFrappe, SimpleNamespace],
+) -> None:
+    identity, fake, state = identity_module
+    state.communication = _communication(
+        identities=[
+            {
+                "identity_ref": IDENTITY_USER,
+                "provider": "email",
+                "status": "unresolved",
+            }
+        ]
+    )
+    fake.tables["GBOS External Identity"] = [
+        {
+            **_mapping(
+                IDENTITY_USER,
+                name="EID-REJECTED-USER",
+                review_status="Rejected",
+                identity_type="User",
+                revision=7,
+            ),
+            "user": "disabled@example.invalid",
+        }
+    ]
+
+    result = identity.get_state("OBS-01", IDENTITY_USER)["data"]["identity"]
+
+    assert result == {
+        "identity_ref": IDENTITY_USER,
+        "provider": "email",
+        "status": "rejected",
+        "mapping_ref": "EID-REJECTED-USER",
+        "mapping_revision": 7,
+    }
+    assert "disabled@example.invalid" not in repr(result)
 
 
 def test_identity_state_fails_closed_on_duplicate_or_cross_team_mapping(
@@ -680,14 +770,6 @@ def test_identity_state_fails_closed_on_duplicate_or_cross_team_mapping(
 @pytest.mark.parametrize(
     ("candidate_type", "expected"),
     [
-        (
-            "User",
-            {
-                "candidate_type": "User",
-                "candidate_ref": "sales@example.invalid",
-                "display_label": "Sales User",
-            },
-        ),
         (
             "Party",
             {
@@ -735,6 +817,75 @@ def test_candidate_queries_return_only_same_team_eligible_rows(
     assert "CON-02" not in rendered
 
 
+@pytest.mark.parametrize("sales_role", ["Sales User", "Sales Manager"])
+def test_sales_roles_cannot_list_or_submit_user_candidates(
+    identity_module: tuple[Any, FakeFrappe, SimpleNamespace],
+    sales_role: str,
+) -> None:
+    identity, fake, state = identity_module
+    fake.roles[fake.session.user] = {sales_role}
+
+    with pytest.raises(TestBFFError) as listed:
+        identity.list_candidates("OBS-01", IDENTITY_PARTY, "User")
+    assert listed.value.status == 403
+    assert listed.value.code == "candidate_type_forbidden"
+
+    with pytest.raises(TestBFFError) as submitted:
+        identity.submit_for_review(
+            observation_id="OBS-01",
+            identity_ref=IDENTITY_PARTY,
+            suggestion_key=SUGGESTION_KEY,
+            selected_candidate_type="User",
+            selected_candidate_ref="sales@example.invalid",
+            assigned_reviewer="reviewer@example.invalid",
+            expected_state="unresolved",
+            expected_revision=0,
+            idempotency_key="identity-submit-user-denied",
+        )
+    assert submitted.value.status == 403
+    assert submitted.value.code == "candidate_type_forbidden"
+    assert state.materialize_calls == []
+    assert state.rematerialize_calls == []
+
+
+@pytest.mark.parametrize(
+    "roles",
+    [
+        {"Integration Admin"},
+        {"GBOS Admin"},
+        {"CEO"},
+        {"Sales User", "Integration Admin"},
+    ],
+)
+def test_administrative_capability_can_list_and_submit_same_team_user_candidates(
+    identity_module: tuple[Any, FakeFrappe, SimpleNamespace],
+    roles: set[str],
+) -> None:
+    identity, fake, state = identity_module
+    fake.roles[fake.session.user] = roles
+
+    listed = identity.list_candidates("OBS-01", IDENTITY_PARTY, "User")["data"]
+    assert {
+        "candidate_type": "User",
+        "candidate_ref": "sales@example.invalid",
+        "display_label": "Sales User",
+    } in listed["candidates"]
+
+    response = identity.submit_for_review(
+        observation_id="OBS-01",
+        identity_ref=IDENTITY_PARTY,
+        suggestion_key=SUGGESTION_KEY,
+        selected_candidate_type="User",
+        selected_candidate_ref="sales@example.invalid",
+        assigned_reviewer="reviewer@example.invalid",
+        expected_state="unresolved",
+        expected_revision=0,
+        idempotency_key="identity-submit-user-admin",
+    )
+    assert response["data"]["status"] == "pending"
+    assert state.materialize_calls[0]["selected_candidate_type"] == "User"
+
+
 def test_submit_for_review_uses_scoped_participant_suggestion_candidate_and_reviewer(
     identity_module: tuple[Any, FakeFrappe, SimpleNamespace],
 ) -> None:
@@ -770,6 +921,185 @@ def test_submit_for_review_uses_scoped_participant_suggestion_candidate_and_revi
     assert state.submit_calls[0]["assigned_reviewer"] == "reviewer@example.invalid"
     assert materialize["idempotency_key"] != "identity-submit-001"
     assert state.submit_calls[0]["idempotency_key"] != materialize["idempotency_key"]
+
+
+def test_rejected_mapping_is_corrected_in_place_and_resubmitted_at_exact_revision(
+    identity_module: tuple[Any, FakeFrappe, SimpleNamespace],
+) -> None:
+    identity, fake, state = identity_module
+    fake.tables["GBOS External Identity"] = [
+        _mapping(
+            IDENTITY_PARTY,
+            name="EID-REJECTED",
+            review_status="Rejected",
+            revision=4,
+        )
+    ]
+
+    response = identity.submit_for_review(
+        observation_id="OBS-01",
+        identity_ref=IDENTITY_PARTY,
+        suggestion_key=SUGGESTION_KEY,
+        selected_candidate_type="Contact",
+        selected_candidate_ref="CON-01",
+        assigned_reviewer="reviewer@example.invalid",
+        expected_state="rejected",
+        expected_revision=4,
+        idempotency_key="identity-resubmit-001",
+    )
+
+    assert response["data"] == {
+        "status": "pending",
+        "mapping_ref": "EID-REJECTED",
+        "mapping_revision": 6,
+        "review_case_ref": "REV-01",
+        "review_case_revision": 1,
+    }
+    assert state.materialize_calls == []
+    assert state.rematerialize_calls == [
+        {
+            "name": "EID-REJECTED",
+            "team": "TEM-01",
+            "identity_provider": "email",
+            "external_subject_ref": IDENTITY_PARTY,
+            "observation_id": "OBS-01",
+            "suggestion_key": SUGGESTION_KEY,
+            "association_type": "party",
+            "model_suggested_target_ref": "MODEL-PROVENANCE-ONLY",
+            "selected_candidate_type": "Contact",
+            "selected_candidate_ref": "CON-01",
+            "expected_revision": 4,
+            "evidence_refs": ["EVD-01"],
+            "policy_version": "identity-resolution-v1",
+            "idempotency_key": state.rematerialize_calls[0]["idempotency_key"],
+            "request_id": "REQ-identity-001",
+        }
+    ]
+    assert state.submit_calls[0]["name"] == "EID-REJECTED"
+    assert state.submit_calls[0]["expected_revision"] == 5
+
+
+def test_rejected_resubmission_failure_does_not_leave_a_half_reopened_mapping(
+    identity_module: tuple[Any, FakeFrappe, SimpleNamespace],
+) -> None:
+    identity, fake, state = identity_module
+    fake.tables["GBOS External Identity"] = [
+        _mapping(
+            IDENTITY_PARTY,
+            name="EID-REJECTED",
+            review_status="Rejected",
+            revision=4,
+        )
+    ]
+    state.submit_error = True
+
+    with pytest.raises(TestBFFError) as raised:
+        identity.submit_for_review(
+            observation_id="OBS-01",
+            identity_ref=IDENTITY_PARTY,
+            suggestion_key=SUGGESTION_KEY,
+            selected_candidate_type="Party",
+            selected_candidate_ref="PTY-01",
+            assigned_reviewer="reviewer@example.invalid",
+            expected_state="rejected",
+            expected_revision=4,
+            idempotency_key="identity-resubmit-failure",
+        )
+
+    assert raised.value.code == "validation_error"
+    assert fake.tables["GBOS External Identity"] == [
+        _mapping(
+            IDENTITY_PARTY,
+            name="EID-REJECTED",
+            review_status="Rejected",
+            revision=4,
+        )
+    ]
+    assert state.idempotency == {}
+
+
+def test_rejected_resubmission_replays_once_and_payload_drift_conflicts(
+    identity_module: tuple[Any, FakeFrappe, SimpleNamespace],
+) -> None:
+    identity, fake, state = identity_module
+    fake.tables["GBOS External Identity"] = [
+        _mapping(
+            IDENTITY_PARTY,
+            name="EID-REJECTED",
+            review_status="Rejected",
+            revision=4,
+        )
+    ]
+    command = {
+        "observation_id": "OBS-01",
+        "identity_ref": IDENTITY_PARTY,
+        "suggestion_key": SUGGESTION_KEY,
+        "selected_candidate_type": "Party",
+        "selected_candidate_ref": "PTY-01",
+        "assigned_reviewer": "reviewer@example.invalid",
+        "expected_state": "rejected",
+        "expected_revision": 4,
+        "idempotency_key": "identity-resubmit-replay",
+    }
+
+    first = identity.submit_for_review(**command)
+    replay = identity.submit_for_review(**command)
+
+    assert replay["data"] == first["data"]
+    assert replay["meta"]["replayed"] is True
+    assert len(state.rematerialize_calls) == 1
+    assert len(state.submit_calls) == 1
+    with pytest.raises(TestBFFError) as conflict:
+        identity.submit_for_review(
+            **{
+                **command,
+                "selected_candidate_type": "Contact",
+                "selected_candidate_ref": "CON-01",
+            }
+        )
+    assert conflict.value.code == "idempotency_conflict"
+
+
+@pytest.mark.parametrize(
+    ("expected_state", "expected_revision"),
+    [
+        ("rejected", 3),
+        ("rejected", 0),
+        ("unresolved", 0),
+        ("pending", 4),
+    ],
+)
+def test_rejected_resubmission_rejects_stale_or_invalid_state_revision_pairs(
+    identity_module: tuple[Any, FakeFrappe, SimpleNamespace],
+    expected_state: str,
+    expected_revision: int,
+) -> None:
+    identity, fake, state = identity_module
+    fake.tables["GBOS External Identity"] = [
+        _mapping(
+            IDENTITY_PARTY,
+            name="EID-REJECTED",
+            review_status="Rejected",
+            revision=4,
+        )
+    ]
+
+    with pytest.raises(TestBFFError) as raised:
+        identity.submit_for_review(
+            observation_id="OBS-01",
+            identity_ref=IDENTITY_PARTY,
+            suggestion_key=SUGGESTION_KEY,
+            selected_candidate_type="Party",
+            selected_candidate_ref="PTY-01",
+            assigned_reviewer="reviewer@example.invalid",
+            expected_state=expected_state,
+            expected_revision=expected_revision,
+            idempotency_key=f"identity-resubmit-{expected_state}-{expected_revision}",
+        )
+
+    assert raised.value.code == "revision_conflict"
+    assert state.materialize_calls == []
+    assert state.rematerialize_calls == []
 
 
 def test_submit_replays_original_and_changed_payload_conflicts(
@@ -895,6 +1225,7 @@ def test_revoke_requires_admin_role_and_approved_active_current_mapping(
         "mapping_ref": "EID-01",
         "mapping_revision": 4,
     }
+    mapping = fake.get_doc("GBOS External Identity", "EID-01")
     assert mapping.review_status == "Approved"
     assert mapping.business_status == "Revoked"
     assert mapping.flags.gbos_identity_status_command is True

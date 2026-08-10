@@ -230,6 +230,7 @@ def test_v4_identity_contract_freezes_closed_states_candidates_reviews_and_comma
         "proposed",
         "pending",
         "confirmed",
+        "rejected",
         "revoked",
     ]
     assert "external_subject" not in state["properties"]
@@ -258,7 +259,18 @@ def test_v4_identity_contract_freezes_closed_states_candidates_reviews_and_comma
 
     submit = schemas["IdentitySubmitForReviewCommand"]
     assert submit["additionalProperties"] is False
-    assert submit["properties"]["expected_state"]["const"] == "unresolved"
+    assert submit["properties"]["expected_state"]["enum"] == ["unresolved", "rejected"]
+    assert submit["properties"]["expected_revision"] == {"type": "integer", "minimum": 0}
+    assert submit["allOf"] == [
+        {
+            "if": {"properties": {"expected_state": {"const": "unresolved"}}},
+            "then": {"properties": {"expected_revision": {"const": 0}}},
+        },
+        {
+            "if": {"properties": {"expected_state": {"const": "rejected"}}},
+            "then": {"properties": {"expected_revision": {"minimum": 1}}},
+        },
+    ]
     assert {"expected_revision", "idempotency_key", "assigned_reviewer"} <= set(submit["required"])
 
     revoke = schemas["IdentityRevokeCommand"]
@@ -279,6 +291,22 @@ def test_v4_identity_operations_freeze_roles_scope_csrf_no_store_and_safe_errors
         "Sales Manager",
         "Integration Admin",
         "GBOS Admin",
+        "CEO",
+    ]
+    candidate_list = paths["/api/method/esan_gbos.api.v4.identity.list_candidates"]["get"]
+    assert candidate_list["x-gbos-roles"] == submit["x-gbos-roles"]
+    candidate_policy = {
+        "sales_roles": ["Sales User", "Sales Manager"],
+        "sales_candidate_types": ["Party", "Contact"],
+        "administrative_roles": ["Integration Admin", "GBOS Admin", "CEO"],
+        "administrative_candidate_types": ["User", "Party", "Contact"],
+        "mixed_role_precedence": "administrative",
+    }
+    assert candidate_list["x-gbos-candidate-policy"] == candidate_policy
+    assert submit["x-gbos-candidate-policy"] == candidate_policy
+    assert submit["x-gbos-transition"] == [
+        "unresolved -> AI Draft -> Pending",
+        "Rejected Active -> AI Draft Active -> Pending Active",
     ]
     assert revoke["x-gbos-roles"] == ["Integration Admin", "GBOS Admin"]
     for operation in (submit, revoke):
@@ -296,6 +324,7 @@ def test_v4_identity_operations_freeze_roles_scope_csrf_no_store_and_safe_errors
         "identity_mismatch",
         "suggestion_mismatch",
         "candidate_ineligible",
+        "candidate_type_forbidden",
         "reviewer_ineligible",
         "revision_conflict",
         "idempotency_conflict",

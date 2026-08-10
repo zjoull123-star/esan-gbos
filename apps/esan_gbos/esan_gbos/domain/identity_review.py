@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any
 
 import frappe
 
@@ -39,6 +39,13 @@ _MATERIALIZE_FIELDS = frozenset(
         "policy_version",
         "idempotency_key",
         "request_id",
+    }
+)
+_REMATERIALIZE_FIELDS = frozenset(
+    {
+        *_MATERIALIZE_FIELDS,
+        "name",
+        "expected_revision",
     }
 )
 _SUBMIT_FIELDS = frozenset(
@@ -123,7 +130,57 @@ def materialize_association_suggestion(request: Mapping[str, Any]) -> dict[str, 
         execute,
         api_version="domain",
     )
-    return cast("dict[str, Any]", result)
+    return result
+
+
+def rematerialize_rejected_association_suggestion(
+    request: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Correct one rejected AI mapping in place without rewriting review history."""
+    payload = _rematerialize_payload(request)
+    _require_actor_team(str(payload["team"]))
+
+    def execute() -> dict[str, Any]:
+        mapping = _locked_mapping(str(payload["name"]))
+        if (
+            mapping.get("origin") != "AI"
+            or mapping.get("review_status") != "Rejected"
+            or mapping.get("business_status") != "Active"
+            or mapping.get("team") != payload["team"]
+            or mapping.get("identity_provider") != payload["identity_provider"]
+            or mapping.get("external_subject") != payload["external_subject_ref"]
+            or int(mapping.get("revision") or 0) != payload["expected_revision"]
+        ):
+            raise IdentityReviewError("rejected identity mapping is stale or unavailable")
+        try:
+            validate_external_subject(
+                mapping.get("identity_provider"), mapping.get("external_subject")
+            )
+        except ValueError:
+            raise IdentityReviewError("rejected identity mapping is invalid") from None
+        target = _resolve_candidate(
+            team=str(payload["team"]),
+            candidate_type=str(payload["selected_candidate_type"]),
+            candidate_ref=str(payload["selected_candidate_ref"]),
+        )
+        mapping.flags.gbos_ai_reopen_command = True
+        mapping.identity_type = target["identity_type"]
+        mapping.user = target["user"]
+        mapping.party_profile = target["party_profile"]
+        mapping.origin_reference = _origin_reference(payload)
+        mapping.review_status = "AI Draft"
+        mapping.last_request_id = payload["request_id"]
+        mapping.save(ignore_permissions=True)
+        return _mapping_receipt(mapping, str(payload["request_id"]))
+
+    result, _replayed, _original_request_id = run_idempotent(
+        "identity_review.rematerialize",
+        str(payload["idempotency_key"]),
+        payload,
+        execute,
+        api_version="domain",
+    )
+    return result
 
 
 def submit_for_review(request: Mapping[str, Any]) -> dict[str, Any]:
@@ -138,13 +195,24 @@ def submit_for_review(request: Mapping[str, Any]) -> dict[str, Any]:
             team=str(payload["team"]),
             reviewer=str(payload["assigned_reviewer"]),
         )
-        if frappe.db.exists(
+        pending_case = frappe.db.exists(
             "GBOS Review Case",
             {
                 "subject_doctype": "GBOS External Identity",
                 "subject_name": mapping.name,
+                "business_status": "Pending",
+                "review_status": "Pending",
             },
-        ):
+        )
+        same_revision_case = frappe.db.exists(
+            "GBOS Review Case",
+            {
+                "subject_doctype": "GBOS External Identity",
+                "subject_name": mapping.name,
+                "subject_revision": int(mapping.revision),
+            },
+        )
+        if pending_case or same_revision_case:
             raise IdentityReviewError("identity draft was already submitted")
 
         mapping.flags.gbos_ai_draft_command = True
@@ -203,7 +271,7 @@ def submit_for_review(request: Mapping[str, Any]) -> dict[str, Any]:
         execute,
         api_version="domain",
     )
-    return cast("dict[str, Any]", result)
+    return result
 
 
 def _materialize_payload(request: Mapping[str, Any]) -> dict[str, Any]:
@@ -219,6 +287,26 @@ def _materialize_payload(request: Mapping[str, Any]) -> dict[str, Any]:
         )
     except ValueError as error:
         raise IdentityReviewError(str(error)) from None
+    return normalized
+
+
+def _rematerialize_payload(request: Mapping[str, Any]) -> dict[str, Any]:
+    payload = _closed_object(request, _REMATERIALIZE_FIELDS)
+    normalized = _common_proposal_fields(payload)
+    normalized["name"] = _text(payload["name"], "mapping name", maximum=140)
+    normalized["identity_provider"] = _text(
+        payload["identity_provider"], "identity provider", maximum=32
+    )
+    try:
+        validate_external_subject(
+            normalized["identity_provider"], normalized["external_subject_ref"]
+        )
+    except ValueError as error:
+        raise IdentityReviewError(str(error)) from None
+    revision = payload["expected_revision"]
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        raise IdentityReviewError("expected revision must be a positive integer")
+    normalized["expected_revision"] = revision
     return normalized
 
 
@@ -441,5 +529,6 @@ def _json(value: object) -> str:
 __all__ = [
     "IdentityReviewError",
     "materialize_association_suggestion",
+    "rematerialize_rejected_association_suggestion",
     "submit_for_review",
 ]

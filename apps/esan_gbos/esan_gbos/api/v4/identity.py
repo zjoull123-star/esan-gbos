@@ -15,6 +15,7 @@ from esan_gbos.api.v4.gateway import call_local, v4_success
 from esan_gbos.domain.identity_review import (
     IdentityReviewError,
     materialize_association_suggestion,
+    rematerialize_rejected_association_suggestion,
 )
 from esan_gbos.domain.identity_review import (
     submit_for_review as submit_identity_draft,
@@ -25,12 +26,15 @@ IDENTITY_READ_ROLES = frozenset(
     {"Sales User", "Sales Manager", "Integration Admin", "GBOS Admin", "CEO"}
 )
 IDENTITY_SUBMIT_ROLES = frozenset(
-    {"Sales User", "Sales Manager", "Integration Admin", "GBOS Admin"}
+    {"Sales User", "Sales Manager", "Integration Admin", "GBOS Admin", "CEO"}
 )
 IDENTITY_REVOKE_ROLES = frozenset({"Integration Admin", "GBOS Admin"})
 IDENTITY_REVIEW_ROLES = frozenset({"Reviewer", "GBOS Admin"})
 
 _POLICY_VERSION = "identity-resolution-v1"
+_CANDIDATE_TYPES = frozenset({"User", "Party", "Contact"})
+_ADMIN_CANDIDATE_ROLES = frozenset({"Integration Admin", "GBOS Admin", "CEO"})
+_SALES_CANDIDATE_TYPES = frozenset({"Party", "Contact"})
 _MAPPING_FIELDS = [
     "name",
     "team",
@@ -164,7 +168,9 @@ def _mapping_state(mapping: object) -> str:
         return "pending"
     if review == "Approved" and business == "Active":
         return "confirmed"
-    if business in {"Revoked", "Archived"} or review in {"Rejected", "Superseded"}:
+    if review == "Rejected" and business == "Active":
+        return "rejected"
+    if business in {"Revoked", "Archived"} or review == "Superseded":
         return "revoked"
     raise BFFError("internal_error", "Identity mapping state is invalid", status=503)
 
@@ -234,6 +240,24 @@ def _candidate(candidate_type: str, candidate_ref: str, team: str) -> dict[str, 
     return None
 
 
+def _require_candidate_type_for_actor(candidate_type: str, *, query: bool) -> None:
+    if candidate_type not in _CANDIDATE_TYPES:
+        raise BFFError(
+            "invalid_query" if query else "invalid_dto",
+            "candidate_type is not allowed",
+        )
+    roles = set(frappe.get_roles())
+    if roles & _ADMIN_CANDIDATE_ROLES:
+        return
+    if candidate_type in _SALES_CANDIDATE_TYPES:
+        return
+    raise BFFError(
+        "candidate_type_forbidden",
+        "Candidate type is not permitted for the current role",
+        status=403,
+    )
+
+
 def _mapping_target(mapping: object, team: str) -> dict[str, str]:
     if str(_value(mapping, "team") or "") != team:
         raise BFFError(
@@ -274,11 +298,26 @@ def _identity_state(
     observer_mapping_ref = participant.get("mapping_ref")
     if observer_mapping_ref is not None and observer_mapping_ref != mapping.get("name"):
         raise BFFError("internal_error", "Identity projection does not match authority", status=503)
+    state = _mapping_state(mapping)
+    if state == "rejected":
+        if observer_mapping_ref is not None:
+            raise BFFError(
+                "internal_error",
+                "Rejected identity mapping remains resolved by Observer",
+                status=503,
+            )
+        return {
+            "identity_ref": identity_ref,
+            "provider": provider,
+            "status": state,
+            "mapping_ref": str(mapping["name"]),
+            "mapping_revision": int(mapping["revision"]),
+        }
     target = _mapping_target(mapping, team)
     return {
         "identity_ref": identity_ref,
         "provider": provider,
-        "status": _mapping_state(mapping),
+        "status": state,
         "mapping_ref": str(mapping["name"]),
         "mapping_revision": int(mapping["revision"]),
         "target_type": str(mapping["identity_type"]),
@@ -402,6 +441,7 @@ def list_candidates(
     communication = _fetch_communication(observation_id)
     _participant(communication, identity_ref)
     kind = _text(candidate_type, "candidate_type", maximum=16, query=True)
+    _require_candidate_type_for_actor(kind, query=True)
     query = "" if search in (None, "") else _text(search, "search", maximum=100, query=True)
     number = _integer(page, "page", minimum=1, maximum=1000, query=True)
     size = _integer(page_size, "page_size", minimum=1, maximum=50, query=True)
@@ -538,7 +578,7 @@ def submit_for_review(
     idempotency_key: str,
 ) -> dict[str, Any]:
     require_roles(IDENTITY_SUBMIT_ROLES)
-    payload = {
+    payload: dict[str, Any] = {
         "observation_id": _text(observation_id, "observation_id", maximum=48),
         "identity_ref": _text(identity_ref, "identity_ref", maximum=160),
         "suggestion_key": _text(suggestion_key, "suggestion_key", maximum=78),
@@ -553,14 +593,23 @@ def submit_for_review(
         "expected_revision": _integer(expected_revision, "expected_revision", minimum=0),
         "idempotency_key": _idempotency_key(idempotency_key),
     }
+    _require_candidate_type_for_actor(str(payload["selected_candidate_type"]), query=False)
 
     def execute() -> dict[str, Any]:
-        if payload["expected_state"] != "unresolved" or payload["expected_revision"] != 0:
+        expected_state = str(payload["expected_state"])
+        expected_revision_value = int(payload["expected_revision"])
+        if not (
+            (expected_state == "unresolved" and expected_revision_value == 0)
+            or (expected_state == "rejected" and expected_revision_value > 0)
+        ):
             raise BFFError("revision_conflict", "Identity state changed", status=409)
         communication = _fetch_communication(payload["observation_id"])
         participant = _participant(communication, payload["identity_ref"])
         current = _identity_state(communication, participant)
-        if current["status"] != "unresolved":
+        if current["status"] != expected_state or (
+            expected_state == "rejected"
+            and int(current.get("mapping_revision") or 0) != expected_revision_value
+        ):
             raise BFFError("revision_conflict", "Identity state changed", status=409)
         suggestions = [
             item
@@ -585,23 +634,40 @@ def submit_for_review(
         current_request_id = request_id()
         evidence_refs = [str(item["ref"]) for item in communication["evidence"]]
         try:
-            mapping = materialize_association_suggestion(
-                {
-                    "team": team,
-                    "identity_provider": participant["provider"],
-                    "external_subject_ref": participant["identity_ref"],
-                    "observation_id": communication["observation_id"],
-                    "suggestion_key": suggestions[0]["suggestion_key"],
-                    "association_type": suggestions[0]["type"],
-                    "model_suggested_target_ref": suggestions[0]["target_ref"],
-                    "selected_candidate_type": candidate["candidate_type"],
-                    "selected_candidate_ref": candidate["candidate_ref"],
-                    "evidence_refs": evidence_refs,
-                    "policy_version": _POLICY_VERSION,
-                    "idempotency_key": _derived_key(str(payload["idempotency_key"]), "materialize"),
-                    "request_id": current_request_id,
-                }
-            )
+            proposal = {
+                "team": team,
+                "identity_provider": participant["provider"],
+                "external_subject_ref": participant["identity_ref"],
+                "observation_id": communication["observation_id"],
+                "suggestion_key": suggestions[0]["suggestion_key"],
+                "association_type": suggestions[0]["type"],
+                "model_suggested_target_ref": suggestions[0]["target_ref"],
+                "selected_candidate_type": candidate["candidate_type"],
+                "selected_candidate_ref": candidate["candidate_ref"],
+                "evidence_refs": evidence_refs,
+                "policy_version": _POLICY_VERSION,
+                "request_id": current_request_id,
+            }
+            if expected_state == "unresolved":
+                mapping = materialize_association_suggestion(
+                    {
+                        **proposal,
+                        "idempotency_key": _derived_key(
+                            str(payload["idempotency_key"]), "materialize"
+                        ),
+                    }
+                )
+            else:
+                mapping = rematerialize_rejected_association_suggestion(
+                    {
+                        **proposal,
+                        "name": current["mapping_ref"],
+                        "expected_revision": expected_revision_value,
+                        "idempotency_key": _derived_key(
+                            str(payload["idempotency_key"]), "rematerialize"
+                        ),
+                    }
+                )
             review = submit_identity_draft(
                 {
                     "name": mapping["name"],

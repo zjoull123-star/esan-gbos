@@ -235,7 +235,14 @@
         "operationId": "identity.list_candidates",
         "x-gbos-cache": "no-store",
         "x-gbos-scope": "communication_and_same_team",
-        "x-gbos-roles": ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin"],
+        "x-gbos-roles": ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin", "CEO"],
+        "x-gbos-candidate-policy": {
+          "sales_roles": ["Sales User", "Sales Manager"],
+          "sales_candidate_types": ["Party", "Contact"],
+          "administrative_roles": ["Integration Admin", "GBOS Admin", "CEO"],
+          "administrative_candidate_types": ["User", "Party", "Contact"],
+          "mixed_role_precedence": "administrative"
+        },
         "security": [{"FrappeSession": []}],
         "parameters": [
           {"name": "observation_id", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 48}},
@@ -290,8 +297,18 @@
         "x-gbos-cache": "no-store",
         "x-gbos-scope": "communication_and_same_team",
         "x-gbos-audit": "request_id_and_idempotency",
-        "x-gbos-transition": "unresolved -> AI Draft -> Pending",
-        "x-gbos-roles": ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin"],
+        "x-gbos-transition": [
+          "unresolved -> AI Draft -> Pending",
+          "Rejected Active -> AI Draft Active -> Pending Active"
+        ],
+        "x-gbos-roles": ["Sales User", "Sales Manager", "Integration Admin", "GBOS Admin", "CEO"],
+        "x-gbos-candidate-policy": {
+          "sales_roles": ["Sales User", "Sales Manager"],
+          "sales_candidate_types": ["Party", "Contact"],
+          "administrative_roles": ["Integration Admin", "GBOS Admin", "CEO"],
+          "administrative_candidate_types": ["User", "Party", "Contact"],
+          "mixed_role_precedence": "administrative"
+        },
         "security": [{"FrappeSession": [], "FrappeCsrf": []}],
         "requestBody": {
           "required": true,
@@ -375,6 +392,7 @@
                   "identity_mismatch",
                   "suggestion_mismatch",
                   "candidate_ineligible",
+                  "candidate_type_forbidden",
                   "reviewer_ineligible",
                   "revision_conflict",
                   "invalid_transition",
@@ -599,7 +617,7 @@
         "properties": {
           "identity_ref": {"type": "string", "maxLength": 160},
           "provider": {"type": "string", "enum": ["email", "wecom", "whatsapp", "phone", "manual_import"]},
-          "status": {"type": "string", "enum": ["unresolved", "proposed", "pending", "confirmed", "revoked"]},
+          "status": {"type": "string", "enum": ["unresolved", "proposed", "pending", "confirmed", "rejected", "revoked"]},
           "mapping_ref": {"type": "string"},
           "mapping_revision": {"type": "integer", "minimum": 1},
           "target_type": {"type": "string", "enum": ["User", "Party"]},
@@ -652,6 +670,16 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["observation_id", "identity_ref", "suggestion_key", "selected_candidate_type", "selected_candidate_ref", "assigned_reviewer", "expected_state", "expected_revision", "idempotency_key"],
+        "allOf": [
+          {
+            "if": {"properties": {"expected_state": {"const": "unresolved"}}},
+            "then": {"properties": {"expected_revision": {"const": 0}}}
+          },
+          {
+            "if": {"properties": {"expected_state": {"const": "rejected"}}},
+            "then": {"properties": {"expected_revision": {"minimum": 1}}}
+          }
+        ],
         "properties": {
           "observation_id": {"type": "string", "minLength": 1, "maxLength": 48},
           "identity_ref": {"type": "string", "maxLength": 160},
@@ -659,8 +687,8 @@
           "selected_candidate_type": {"type": "string", "enum": ["User", "Party", "Contact"]},
           "selected_candidate_ref": {"type": "string", "minLength": 1, "maxLength": 256},
           "assigned_reviewer": {"type": "string", "minLength": 1, "maxLength": 140},
-          "expected_state": {"const": "unresolved"},
-          "expected_revision": {"type": "integer", "const": 0},
+          "expected_state": {"type": "string", "enum": ["unresolved", "rejected"]},
+          "expected_revision": {"type": "integer", "minimum": 0},
           "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 256}
         }
       },

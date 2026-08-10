@@ -357,6 +357,199 @@ def test_generic_db_set_cannot_bypass_identity_status_boundary(
     assert identity.review_status == "Pending"
 
 
+def test_rejected_ai_mapping_can_only_be_reopened_by_the_dedicated_command(
+    authority_module: tuple[Any, _Frappe],
+) -> None:
+    module, _fake = authority_module
+    before = SimpleNamespace(
+        revision=4,
+        review_status="Rejected",
+        business_status="Active",
+        origin="AI",
+        origin_reference="association:v1:old",
+        last_request_id="REQ-old",
+        identity_provider="email",
+        external_subject="extid:v1:email:Opaque01",
+        identity_type="User",
+        user="member@example.invalid",
+        party_profile=None,
+        team="TEM-01",
+    )
+    mapping = _identity(
+        module,
+        _before=before,
+        revision=4,
+        origin="AI",
+        origin_reference="association:v1:corrected",
+        last_request_id="REQ-corrected",
+        review_status="AI Draft",
+        identity_type="Party",
+        user=None,
+        party_profile="PTY-01",
+    )
+    mapping.flags.gbos_ai_reopen_command = True
+
+    mapping.validate()
+
+    assert mapping.review_status == "AI Draft"
+    assert mapping.business_status == "Active"
+    assert mapping.revision == 5
+    assert mapping.identity_provider == before.identity_provider
+    assert mapping.external_subject == before.external_subject
+    assert mapping.team == before.team
+
+    direct_target_change = _identity(
+        module,
+        _before=before,
+        revision=4,
+        origin="AI",
+        origin_reference="association:v1:changed-without-command",
+        last_request_id="REQ-illegal",
+        review_status="Rejected",
+        identity_type="Party",
+        user=None,
+        party_profile="PTY-01",
+    )
+    with pytest.raises(_PermissionError):
+        direct_target_change.validate()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    (
+        {
+            "identity_provider": "wecom",
+            "external_subject": "extid:v1:wecom:Opaque01",
+        },
+        {"external_subject": "extid:v1:email:DifferentOpaque"},
+        {"team": "TEM-02", "identity_type": "Channel", "user": None},
+    ),
+)
+def test_rejected_mapping_scope_cannot_be_mutated_without_reopen_command(
+    authority_module: tuple[Any, _Frappe],
+    changes: dict[str, Any],
+) -> None:
+    module, _fake = authority_module
+    before = SimpleNamespace(
+        revision=4,
+        review_status="Rejected",
+        business_status="Active",
+        origin="AI",
+        origin_reference="association:v1:old",
+        last_request_id="REQ-old",
+        identity_provider="email",
+        external_subject="extid:v1:email:Opaque01",
+        identity_type="User",
+        user="member@example.invalid",
+        party_profile=None,
+        team="TEM-01",
+    )
+    mapping = _identity(
+        module,
+        _before=before,
+        revision=4,
+        origin="AI",
+        origin_reference="association:v1:old",
+        last_request_id="REQ-old",
+        review_status="Rejected",
+        **changes,
+    )
+
+    with pytest.raises(_PermissionError):
+        mapping.validate()
+
+
+@pytest.mark.parametrize(
+    ("before_review", "before_business"),
+    (
+        ("Approved", "Active"),
+        ("Pending", "Active"),
+        ("AI Draft", "Active"),
+        ("Rejected", "Revoked"),
+        ("Superseded", "Archived"),
+    ),
+)
+def test_reopen_command_cannot_reopen_non_rejected_active_mapping(
+    authority_module: tuple[Any, _Frappe],
+    before_review: str,
+    before_business: str,
+) -> None:
+    module, _fake = authority_module
+    before = SimpleNamespace(
+        revision=4,
+        review_status=before_review,
+        business_status=before_business,
+        origin="AI",
+        origin_reference="association:v1:old",
+        last_request_id="REQ-old",
+        identity_provider="email",
+        external_subject="extid:v1:email:Opaque01",
+        identity_type="User",
+        user="member@example.invalid",
+        party_profile=None,
+        team="TEM-01",
+    )
+    mapping = _identity(
+        module,
+        _before=before,
+        revision=4,
+        origin="AI",
+        origin_reference="association:v1:corrected",
+        last_request_id="REQ-corrected",
+        review_status="AI Draft",
+    )
+    mapping.flags.gbos_ai_reopen_command = True
+
+    with pytest.raises(_PermissionError):
+        mapping.validate()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    (
+        {
+            "identity_provider": "wecom",
+            "external_subject": "extid:v1:wecom:Opaque01",
+        },
+        {"external_subject": "extid:v1:email:DifferentOpaque"},
+        {"team": "TEM-02", "identity_type": "Channel", "user": None},
+    ),
+)
+def test_reopen_command_keeps_provider_subject_and_team_immutable(
+    authority_module: tuple[Any, _Frappe],
+    changes: dict[str, Any],
+) -> None:
+    module, _fake = authority_module
+    before = SimpleNamespace(
+        revision=4,
+        review_status="Rejected",
+        business_status="Active",
+        origin="AI",
+        origin_reference="association:v1:old",
+        last_request_id="REQ-old",
+        identity_provider="email",
+        external_subject="extid:v1:email:Opaque01",
+        identity_type="User",
+        user="member@example.invalid",
+        party_profile=None,
+        team="TEM-01",
+    )
+    mapping = _identity(
+        module,
+        _before=before,
+        revision=4,
+        origin="AI",
+        origin_reference="association:v1:corrected",
+        last_request_id="REQ-corrected",
+        review_status="AI Draft",
+        **changes,
+    )
+    mapping.flags.gbos_ai_reopen_command = True
+
+    with pytest.raises(_PermissionError):
+        mapping.validate()
+
+
 @pytest.mark.parametrize(
     ("review_status", "business_status", "expected"),
     (

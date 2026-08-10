@@ -66,7 +66,9 @@ class _Doc:
     def save(self, *, ignore_permissions: bool) -> _Doc:
         assert ignore_permissions is True
         if self.doctype == "GBOS External Identity":
-            assert getattr(self.flags, "gbos_ai_draft_command", False)
+            assert getattr(self.flags, "gbos_ai_draft_command", False) or getattr(
+                self.flags, "gbos_ai_reopen_command", False
+            )
         if self.doctype == "GBOS Review Case":
             assert getattr(self.flags, "gbos_review_command", False)
             assert getattr(self.flags, "gbos_ai_draft_command", False)
@@ -334,6 +336,18 @@ def _submit_request(name: str, **overrides: Any) -> dict[str, Any]:
     return request
 
 
+def _rematerialize_request(name: str, **overrides: Any) -> dict[str, Any]:
+    request = {
+        **_materialize_request(),
+        "name": name,
+        "expected_revision": 3,
+        "idempotency_key": "rematerialize-0001",
+        "request_id": "REQ-0003",
+    }
+    request.update(overrides)
+    return request
+
+
 @pytest.mark.parametrize(
     (
         "association_type",
@@ -502,6 +516,137 @@ def test_materialization_response_loss_retry_returns_the_original_draft(
     assert fake.idempotent_executions["identity_review.materialize"] == 1
 
 
+def test_rejected_mapping_is_corrected_in_place_with_monotonic_revision_and_history_preserved(
+    identity_review: tuple[Any, _Frappe],
+) -> None:
+    service, fake = identity_review
+    first_mapping = service.materialize_association_suggestion(_materialize_request())
+    first_submit_request = _submit_request(first_mapping["name"])
+    first_case = service.submit_for_review(first_submit_request)
+    mapping = fake.docs[("GBOS External Identity", first_mapping["name"])]
+    rejected_case = fake.docs[("GBOS Review Case", first_case["name"])]
+    mapping.review_status = "Rejected"
+    mapping.revision = 3
+    rejected_case.review_status = "Rejected"
+    rejected_case.business_status = "Rejected"
+    rejected_history = deepcopy(rejected_case.values)
+
+    corrected = service.rematerialize_rejected_association_suggestion(
+        _rematerialize_request(
+            mapping.name,
+            association_type="party",
+            model_suggested_target_ref="model-party-hint",
+            selected_candidate_type="Party",
+            selected_candidate_ref="PTY-01",
+        )
+    )
+
+    assert corrected == {
+        "doctype": "GBOS External Identity",
+        "name": mapping.name,
+        "review_status": "AI Draft",
+        "revision": 4,
+        "request_id": "REQ-0003",
+    }
+    assert mapping.identity_provider == "email"
+    assert mapping.external_subject == SUBJECT
+    assert mapping.team == "TEM-01"
+    assert mapping.identity_type == "Party"
+    assert mapping.user is None
+    assert mapping.party_profile == "PTY-01"
+    assert mapping.flags.gbos_ai_reopen_command is True
+    assert rejected_case.values == rejected_history
+
+    second_case = service.submit_for_review(
+        _submit_request(
+            mapping.name,
+            association_type="party",
+            model_suggested_target_ref="model-party-hint",
+            selected_candidate_type="Party",
+            selected_candidate_ref="PTY-01",
+            expected_revision=4,
+            idempotency_key="submit-review-0002",
+            request_id="REQ-0004",
+        )
+    )
+
+    assert second_case["name"] == "REV-0002"
+    assert second_case["subject_name"] == mapping.name
+    assert second_case["subject_revision"] == 5
+    assert mapping.review_status == "Pending"
+    assert mapping.revision == 5
+    assert rejected_case.values == rejected_history
+    assert rejected_case.subject_revision == 2
+    assert rejected_case.subject_revision != mapping.revision
+    assert len([key for key in fake.docs if key[0] == "GBOS External Identity"]) == 1
+    assert len([key for key in fake.docs if key[0] == "GBOS Review Case"]) == 2
+
+    old_submit_replay = service.submit_for_review(first_submit_request)
+    assert old_submit_replay["name"] == first_case["name"]
+    assert mapping.review_status == "Pending"
+    assert mapping.party_profile == "PTY-01"
+    mapping.review_status = "Approved"
+    mapping.revision = 6
+    assert mapping.review_status == "Approved"
+    assert mapping.revision > second_case["subject_revision"]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {"expected_revision": 2},
+        {"team": "TEM-02"},
+        {"identity_provider": "wecom"},
+        {"external_subject_ref": "extid:v1:email:OtherOpaque"},
+        {"selected_candidate_ref": "disabled@example.invalid"},
+        {"selected_candidate_type": "Party", "selected_candidate_ref": "PTY-02"},
+    ),
+)
+def test_rejected_rematerialization_fails_closed_without_mutating_mapping(
+    identity_review: tuple[Any, _Frappe],
+    overrides: dict[str, Any],
+) -> None:
+    service, fake = identity_review
+    first = service.materialize_association_suggestion(_materialize_request())
+    mapping = fake.docs[("GBOS External Identity", first["name"])]
+    mapping.review_status = "Rejected"
+    mapping.revision = 3
+    before = deepcopy(mapping.values)
+
+    with pytest.raises((service.IdentityReviewError, _PermissionError)):
+        service.rematerialize_rejected_association_suggestion(
+            _rematerialize_request(mapping.name, **overrides)
+        )
+
+    assert mapping.values == before
+    assert not any(key[0] == "GBOS Review Case" for key in fake.docs)
+
+
+def test_rejected_rematerialization_replays_after_response_loss_without_second_mapping(
+    identity_review: tuple[Any, _Frappe],
+) -> None:
+    service, fake = identity_review
+    first = service.materialize_association_suggestion(_materialize_request())
+    mapping = fake.docs[("GBOS External Identity", first["name"])]
+    mapping.review_status = "Rejected"
+    mapping.revision = 3
+    request = _rematerialize_request(mapping.name)
+    fake.fail_after_store = True
+
+    with pytest.raises(_ResponseLost):
+        service.rematerialize_rejected_association_suggestion(request)
+    replay = service.rematerialize_rejected_association_suggestion(request)
+
+    assert replay["name"] == mapping.name
+    assert replay["revision"] == 4
+    assert fake.idempotent_executions["identity_review.rematerialize"] == 1
+    assert len([key for key in fake.docs if key[0] == "GBOS External Identity"]) == 1
+    with pytest.raises(ValueError, match="idempotency_conflict"):
+        service.rematerialize_rejected_association_suggestion(
+            {**request, "policy_version": "identity-association-v2"}
+        )
+
+
 def test_submit_revalidates_target_and_creates_one_revision_pinned_pending_case(
     identity_review: tuple[Any, _Frappe],
 ) -> None:
@@ -544,6 +689,40 @@ def test_submit_revalidates_target_and_creates_one_revision_pinned_pending_case(
         for key, doc in fake.docs.items()
         if key[0] in {"GBOS Party Profile", "Contact"}
     }
+
+
+@pytest.mark.parametrize("blocker", ["pending", "same_revision"])
+def test_new_review_round_rejects_only_pending_or_same_revision_cases(
+    identity_review: tuple[Any, _Frappe],
+    blocker: str,
+) -> None:
+    service, fake = identity_review
+    first = service.materialize_association_suggestion(_materialize_request())
+    mapping = fake.docs[("GBOS External Identity", first["name"])]
+    mapping.review_status = "Rejected"
+    mapping.revision = 3
+    service.rematerialize_rejected_association_suggestion(_rematerialize_request(mapping.name))
+    fake._add_doc(
+        "GBOS Review Case",
+        "REV-BLOCKER",
+        subject_doctype="GBOS External Identity",
+        subject_name=mapping.name,
+        subject_revision=2 if blocker == "pending" else 4,
+        business_status="Pending" if blocker == "pending" else "Rejected",
+        review_status="Pending" if blocker == "pending" else "Rejected",
+    )
+
+    with pytest.raises(service.IdentityReviewError, match="submitted"):
+        service.submit_for_review(
+            _submit_request(
+                mapping.name,
+                expected_revision=4,
+                idempotency_key=f"submit-{blocker}-blocker",
+            )
+        )
+
+    assert mapping.review_status == "AI Draft"
+    assert mapping.revision == 4
 
 
 @pytest.mark.parametrize(

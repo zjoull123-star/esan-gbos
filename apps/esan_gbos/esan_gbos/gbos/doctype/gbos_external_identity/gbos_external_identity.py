@@ -315,9 +315,11 @@ class GBOSExternalIdentity(GBOSDocument):
             raise frappe.PermissionError
         review_changed = self.review_status != _value(before, "review_status")
         business_changed = self.business_status != _value(before, "business_status")
+        reopen_command = bool(getattr(self.flags, "gbos_ai_reopen_command", False))
         review_command = bool(
             getattr(self.flags, "gbos_identity_review_decision", False)
             or getattr(self.flags, "gbos_ai_draft_command", False)
+            or reopen_command
         )
         status_command = bool(
             review_command or getattr(self.flags, "gbos_identity_status_command", False)
@@ -334,10 +336,40 @@ class GBOSExternalIdentity(GBOSDocument):
             and not business_changed
         ):
             raise frappe.PermissionError
+        if reopen_command and not (
+            _value(before, "origin") == "AI"
+            and self.origin == "AI"
+            and _value(before, "review_status") == "Rejected"
+            and _value(before, "business_status") == "Active"
+            and self.review_status == "AI Draft"
+            and self.business_status == "Active"
+            and self.team == _value(before, "team")
+            and self.identity_provider == _value(before, "identity_provider")
+            and self.external_subject == _value(before, "external_subject")
+        ):
+            raise frappe.PermissionError
         if getattr(
             self.flags, "gbos_identity_review_decision", False
         ) and self.review_status not in {"Approved", "Rejected", "Superseded"}:
             raise frappe.PermissionError
+
+        if (
+            _value(before, "review_status") == "Rejected"
+            and _value(before, "business_status") == "Active"
+            and not reopen_command
+        ):
+            for fieldname in (
+                "team",
+                "identity_provider",
+                "external_subject",
+                "identity_type",
+                "user",
+                "party_profile",
+                "origin_reference",
+                "last_request_id",
+            ):
+                if self.get(fieldname) != _value(before, fieldname):
+                    raise frappe.PermissionError
 
         if is_authoritative_mapping(self) and self.review_status != "Approved":
             raise frappe.PermissionError
