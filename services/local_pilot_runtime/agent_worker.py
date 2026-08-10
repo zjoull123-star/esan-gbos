@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
 from typing import Any, cast
@@ -24,6 +25,7 @@ from services.agent_runtime.context_resolver import (
     ContextEndpoint,
     HttpContextResolver,
 )
+from services.agent_runtime.invocations import PostgresModelInvocationRepository
 from services.agent_runtime.local_entrypoint import (
     LocalEntrypointDisabled,
     load_local_manifest,
@@ -43,6 +45,12 @@ from services.agent_runtime.worker import (
     ContextResolutionRequest,
     ThreadedHeartbeatRunner,
 )
+from services.model_gateway.runtime import (
+    PostgresMonthlyUsageLedger,
+    _read_exact_private_key_file,
+    create_deepseek_agent_provider_factory,
+)
+from services.model_gateway.tokenization import EncryptedFileMappingVault
 
 from .runtime_support import (
     RuntimeConfig,
@@ -56,13 +64,45 @@ from .runtime_support import (
     reject_plaintext_secret_environment,
     validate_manifest_binding,
 )
+from .trusted_phrase_lexicon import (
+    TrustedPhraseLexiconError,
+    TrustedPhraseLexiconResolver,
+    load_trusted_phrase_resolver,
+)
 
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
+DEFAULT_DEEPSEEK_API_KEY_FILE = Path("/run/secrets/deepseek_api_key")
+DEFAULT_TOKENIZER_HMAC_KEY_FILE = Path("/run/secrets/tokenizer_hmac_key")
+DEFAULT_MAPPING_VAULT_KEY_FILE = Path("/run/secrets/mapping_vault_key")
+DEFAULT_TRUSTED_PHRASE_LEXICON_FILE = Path("/run/secrets/trusted_phrase_lexicon")
+DEFAULT_TOKENIZER_VAULT_ROOT = Path("/var/lib/gbos/tokenizer-vault")
 _CONTEXT_INTERNAL_BASE_URL = "http://context-api:8001"
 _CONTEXT_INTERNAL_HOSTS = frozenset({"context-api"})
 WorkerRunner = Callable[[AgentWorker, Event, float], None]
 DeepSeekProviderFactory = Callable[[Mapping[str, Any], RuntimeConfig], ModelProvider]
+TransportFactory = Callable[[], httpx.BaseTransport]
+Clock = Callable[[], datetime]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class AgentSecretPaths:
+    deepseek_api_key: Path
+    tokenizer_hmac_key: Path
+    mapping_vault_key: Path
+
+    def __repr__(self) -> str:
+        return "AgentSecretPaths(paths=<redacted>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _DeepSeekPreflight:
+    secret_paths: AgentSecretPaths
+    vault: EncryptedFileMappingVault
+    phrase_resolver: TrustedPhraseLexiconResolver
+
+    def __repr__(self) -> str:
+        return "_DeepSeekPreflight(secrets=<redacted>, vault=<redacted>, phrases=<redacted>)"
 
 
 class PostgresTaskContextBindingResolver:
@@ -201,6 +241,11 @@ def main(
     stop_event: Event | None = None,
     deepseek_provider_factory: DeepSeekProviderFactory | None = None,
     context_transport: httpx.BaseTransport | None = None,
+    secret_paths: AgentSecretPaths | None = None,
+    trusted_phrase_lexicon_path: Path | None = None,
+    tokenizer_vault_root: Path | None = None,
+    transport_factory: TransportFactory | None = None,
+    clock: Clock | None = None,
 ) -> int:
     environment = os.environ if environ is None else environ
     connection: object | None = None
@@ -215,13 +260,49 @@ def main(
         config = load_runtime_config(runtime_config_path)
         validate_manifest_binding(manifest, config)
         _context_endpoint(config)
-        provider = compose_agent_provider(
-            manifest,
-            config,
-            deepseek_provider_factory=deepseek_provider_factory,
-        )
+        configured = component_settings(config, "agent_worker")
+        default_preflight: _DeepSeekPreflight | None = None
+        if configured.provider_mode == "deepseek":
+            _require_deepseek_network_enabled(environment)
+            validate_deepseek_manifest(manifest)
+            if deepseek_provider_factory is None:
+                if transport_factory is not None and not callable(transport_factory):
+                    raise RuntimeSupportError("DeepSeek transport factory is invalid")
+                active_clock = clock or _utc_now
+                active_paths = secret_paths or AgentSecretPaths(
+                    deepseek_api_key=DEFAULT_DEEPSEEK_API_KEY_FILE,
+                    tokenizer_hmac_key=DEFAULT_TOKENIZER_HMAC_KEY_FILE,
+                    mapping_vault_key=DEFAULT_MAPPING_VAULT_KEY_FILE,
+                )
+                default_preflight = _preflight_default_deepseek(
+                    config=config,
+                    secret_paths=active_paths,
+                    trusted_phrase_lexicon_path=(
+                        trusted_phrase_lexicon_path or DEFAULT_TRUSTED_PHRASE_LEXICON_FILE
+                    ),
+                    tokenizer_vault_root=(tokenizer_vault_root or DEFAULT_TOKENIZER_VAULT_ROOT),
+                    clock=active_clock,
+                )
         context_bearer = load_secret_file(config.auth.context_client_bearer_file)
+        load_secret_file(config.postgres.password_file)
+        provider: ModelProvider | None = None
+        if default_preflight is None:
+            provider = compose_agent_provider(
+                manifest,
+                config,
+                deepseek_provider_factory=deepseek_provider_factory,
+            )
         connection = connect_postgres(config.postgres, connector=connector)
+        if default_preflight is not None:
+            provider = _compose_default_deepseek_provider(
+                manifest=manifest,
+                config=config,
+                connection=cast(Connection, connection),
+                preflight=default_preflight,
+                transport_factory=transport_factory,
+                clock=clock or _utc_now,
+            )
+        assert provider is not None
         worker = build_worker(
             connection=connection,
             config=config,
@@ -241,12 +322,113 @@ def main(
         LocalEntrypointDisabled,
         LocalRuntimeError,
         RuntimeSupportError,
+        TrustedPhraseLexiconError,
         ValueError,
+        OSError,
     ):
         return 78
     finally:
         if connection is not None:
             close_connection(connection)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _require_deepseek_network_enabled(environment: Mapping[str, str]) -> None:
+    if environment.get("GBOS_MODEL_KILL_SWITCH", "true") != "false":
+        raise LocalEntrypointDisabled("Agent model path is disabled by kill switch")
+    if environment.get("GBOS_DEEPSEEK_EGRESS_ENABLED") != "true":
+        raise LocalEntrypointDisabled("DeepSeek controlled egress is disabled by default")
+
+
+def _preflight_default_deepseek(
+    *,
+    config: RuntimeConfig,
+    secret_paths: AgentSecretPaths,
+    trusted_phrase_lexicon_path: Path,
+    tokenizer_vault_root: Path,
+    clock: Clock,
+) -> _DeepSeekPreflight:
+    """Validate every local boundary before PostgreSQL or HTTP construction."""
+
+    load_secret_file(secret_paths.deepseek_api_key)
+    _read_exact_private_key_file(secret_paths.tokenizer_hmac_key)
+    _read_exact_private_key_file(secret_paths.mapping_vault_key)
+    phrase_resolver = load_trusted_phrase_resolver(
+        trusted_phrase_lexicon_path,
+        expected_site_id=config.site_id,
+        clock=clock,
+    )
+    root = _validated_vault_root(tokenizer_vault_root)
+    vault = EncryptedFileMappingVault.from_key_file(
+        root=root,
+        key_file=secret_paths.mapping_vault_key,
+        clock=clock,
+    )
+    return _DeepSeekPreflight(
+        secret_paths=secret_paths,
+        vault=vault,
+        phrase_resolver=phrase_resolver,
+    )
+
+
+def _compose_default_deepseek_provider(
+    *,
+    manifest: Mapping[str, Any],
+    config: RuntimeConfig,
+    connection: Connection,
+    preflight: _DeepSeekPreflight,
+    transport_factory: TransportFactory | None,
+    clock: Clock,
+) -> ModelProvider:
+    ledger = PostgresMonthlyUsageLedger(
+        connection=connection,
+        site_id=config.site_id,
+        clock=clock,
+    )
+    audit = PostgresModelInvocationRepository(connection)
+    factory = create_deepseek_agent_provider_factory(
+        tokenizer_hmac_key_file=preflight.secret_paths.tokenizer_hmac_key,
+        phrase_resolver=preflight.phrase_resolver.agent_phrases,
+        audit_repository=audit,
+        transport_factory=transport_factory,
+        network_enabled=True,
+        clock=clock,
+    )
+    provider = compose_local_provider(
+        manifest,
+        runtime_enabled=True,
+        provider_mode="deepseek",
+        model_kill_switch=False,
+        key_file=preflight.secret_paths.deepseek_api_key,
+        budget_ledger=ledger,
+        tokenizer_vault=preflight.vault,
+        controlled_egress=True,
+        deepseek_factory=factory,
+    )
+    if not isinstance(provider, ModelProvider) or provider.tool_version != "no-tools-v1":
+        raise RuntimeSupportError("Agent worker provider must enforce no-tools")
+    return provider
+
+
+def _validated_vault_root(path: Path) -> Path:
+    candidate = Path(path)
+    try:
+        details = candidate.lstat()
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeSupportError("tokenizer vault root is absent or unsafe") from exc
+    if (
+        not candidate.is_absolute()
+        or candidate.is_symlink()
+        or not candidate.is_dir()
+        or resolved != candidate
+        or details.st_mode & 0o002
+    ):
+        raise RuntimeSupportError("tokenizer vault root is absent or unsafe")
+    return candidate
 
 
 def _context_endpoint(config: RuntimeConfig) -> ContextEndpoint:
@@ -274,6 +456,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "AgentSecretPaths",
     "PostgresTaskContextBindingResolver",
     "ScopedAgentExecutor",
     "build_worker",

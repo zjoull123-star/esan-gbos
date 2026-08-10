@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from services.agent_runtime.agents import AgentInput
     from services.observer.observer.models import TenantScope
 
     from .model_projection_worker import TrustedPhraseResolution
@@ -82,14 +83,23 @@ class TrustedPhraseLexiconResolver:
         raw_text: str,
     ) -> TrustedPhraseResolution:
         del observation_id, raw_text
+        self._validate_site_and_time(scope.site_id)
+        return _resolution(self._lexicon)
+
+    def agent_phrases(self, request: AgentInput) -> tuple[str, ...]:
+        """Return attested phrases for one site-bound Agent request."""
+
+        self._validate_site_and_time(request.site_id)
+        return self._lexicon.names + self._lexicon.organizations
+
+    def _validate_site_and_time(self, site_id: str) -> None:
         now = _clock_value(self._clock)
-        if scope.site_id != self._lexicon.site_id:
+        if site_id != self._lexicon.site_id:
             raise TrustedPhraseLexiconError("trusted phrase lexicon site binding is invalid")
         if not self._lexicon.approved_at <= now < self._lexicon.expires_at:
             raise TrustedPhraseLexiconError(
                 "trusted phrase lexicon has expired or is not yet valid"
             )
-        return _resolution(self._lexicon)
 
 
 def load_trusted_phrase_resolver(
