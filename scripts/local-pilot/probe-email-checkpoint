@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+exec "$ROOT/.venv/bin/python" -m services.local_pilot_runtime.email_checkpoint_probe "$@"
