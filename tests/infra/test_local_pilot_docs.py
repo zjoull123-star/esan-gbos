@@ -78,7 +78,9 @@ def test_no_cloud_no_kingdee_no_outbound_assertions_are_operator_visible() -> No
     assert "controlled-egress" in assertions
     assert "filesystem CAS" in assertions
     assert "MinIO" in assertions
-    assert "Prometheus 仅抓取自身" in assertions
+    assert "identity-resolution" in assertions
+    assert "up=1" in assertions
+    assert "readiness 为 `0`" in assertions
     assert "Frappe PWA 尚未组合进" not in assertions
     assert "local runtime 没有 Containerfile" not in assertions
     assert "frappe-materializer-bootstrap" in assertions

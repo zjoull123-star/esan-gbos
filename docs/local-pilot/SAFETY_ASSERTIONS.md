@@ -50,8 +50,10 @@
 
 - evidence truth 是 content-addressed filesystem CAS。
 - CAS volume 停止后保留。
-- Prometheus 仅抓取自身；空 alerts 不代表业务 metrics 或 SLO 已接线。
-- Compose config、静态 healthcheck 声明和空告警都不是运行可用性证据。
+- Prometheus 3.7.3 已实时抓取 authenticated `identity-resolution` target，`up=1`，
+  五条低基数规则健康；resolver readiness 为 `0`，因为真实 worker/channel 未启用。
+- Compose config、静态 healthcheck、一次 live scrape 和健康规则都不是 72 小时
+  运行可用性、真实渠道、SLO 达成或 production Go 证据。
 
 ## NOT-COMPOSED
 
@@ -67,7 +69,9 @@
   均 disabled。PWA `127.0.0.1:58080`，Context `58001`，Agent `58002`，Observer
   `58003`，PostgreSQL `55432`，MariaDB `53306`，均为 loopback。
 - Frappe image lock digest 为
-  `sha256:8e62faa8f76cf60348fde64c68e6b4820f6a602b9140f973bfffffb6efa87415`；
+  `sha256:d9220d580ea36fdc04efbe9e11863f2bfb89d879255f52d6af838ee7c0b3cea5`，
+  local runtime digest 为
+  `sha256:ceaf2daa0a578698c5f0a2df2d94030b84439b78c9e4a1e73110c4e1a3cf2aae`；
   `setup_complete=1`，Frappe/ERPNext/CRM/esan_gbos 为
   `16.30.0`/`16.31.0`/`1.81.0`/`0.1.0`。
 - migrations 连续两次 checksum-consistent；materializer bootstrap

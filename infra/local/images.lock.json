@@ -1,5 +1,5 @@
 {
-  "recorded_at": "2026-08-08T20:06:13.596810+00:00",
+  "recorded_at": "2026-08-10T16:54:52.140245+00:00",
   "recording_scope": "local docker image inspect after an explicit build or local image installation; null means not yet recorded and is fail-closed",
   "images": [
     {
@@ -31,7 +31,7 @@
       "source": "local-build",
       "platform": "linux/arm64",
       "reference": "esan-gbos-local-pilot-frappe:2026-08-08",
-      "local_inspect_digest": "sha256:fdbaf8af7da81958de22798e33d9bade3c7c09d57c59faa69d39b56ab4e99542",
+      "local_inspect_digest": "sha256:d9220d580ea36fdc04efbe9e11863f2bfb89d879255f52d6af838ee7c0b3cea5",
       "local_repo_digest": null
     },
     {
@@ -39,8 +39,8 @@
       "source": "remote",
       "platform": "linux/arm64",
       "reference": "prom/prometheus:v3.7.3@sha256:49214755b6153f90a597adcbff0252cc61069f8ab69ce8411285cd4a560e8038",
-      "local_inspect_digest": null,
-      "local_repo_digest": null
+      "local_inspect_digest": "sha256:49214755b6153f90a597adcbff0252cc61069f8ab69ce8411285cd4a560e8038",
+      "local_repo_digest": "prom/prometheus@sha256:49214755b6153f90a597adcbff0252cc61069f8ab69ce8411285cd4a560e8038"
     },
     {
       "service": "cloudflared",
@@ -55,7 +55,7 @@
       "source": "local-build",
       "platform": "linux/arm64",
       "reference": "esan-gbos-local-pilot-runtime:2026-08-08",
-      "local_inspect_digest": "sha256:7f91afbe932cf1a0e55bcb3936b809754084d4aecbe6b7506b90f7a81b58cb93",
+      "local_inspect_digest": "sha256:ceaf2daa0a578698c5f0a2df2d94030b84439b78c9e4a1e73110c4e1a3cf2aae",
       "local_repo_digest": null
     },
     {

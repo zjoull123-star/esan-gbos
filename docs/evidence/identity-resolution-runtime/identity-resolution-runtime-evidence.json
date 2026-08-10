@@ -1,0 +1,203 @@
+{
+  "schema_version": "1.0",
+  "evidence_id": "identity-resolution-runtime-closure-20260811",
+  "captured_at": "2026-08-10T17:09:57Z",
+  "validation_reference_commit": "098d728cc52e27b6f58b051dfeb925efdfc680c4",
+  "evidence_commit_predecessor": "098d728cc52e27b6f58b051dfeb925efdfc680c4",
+  "implementation_baseline_commit": "c98f6a51c9f4efa6d05c40e640d19bd23edbaefc",
+  "branch": "feat/user-identity-resolution-20260810",
+  "status": "offline_runtime_closure_complete_external_canary_blocked",
+  "historical_evidence_modified": false,
+  "identity_relations": {
+    "team_access": "Observation.team_ref <-> GBOS Team Member.user",
+    "connector_account_owner": "Connector Instance.account_user_ref",
+    "communication_participant": "Participant.identity_ref",
+    "business_assignment": "Deal owner / owner_user / assigned_to",
+    "cross_relation_inference_allowed": false
+  },
+  "images": {
+    "frappe_pwa": {
+      "reference": "esan-gbos-local-pilot-frappe:2026-08-08",
+      "image_id": "sha256:d9220d580ea36fdc04efbe9e11863f2bfb89d879255f52d6af838ee7c0b3cea5",
+      "source_revision": "098d728cc52e27b6f58b051dfeb925efdfc680c4",
+      "source_sha256": "1ce0cce76faa93176a0a0bff6cdcf7f6ece3226f16fb1e6ebeec24782a43b7bd",
+      "created": "2026-08-11T00:54:41.599341618+08:00",
+      "platform": "linux/arm64"
+    },
+    "local_runtime": {
+      "reference": "esan-gbos-local-pilot-runtime:2026-08-08",
+      "image_id": "sha256:ceaf2daa0a578698c5f0a2df2d94030b84439b78c9e4a1e73110c4e1a3cf2aae",
+      "source_revision": "098d728cc52e27b6f58b051dfeb925efdfc680c4",
+      "source_sha256": "9183102aeacb990dc8b22f4a1f9e3027a70b86c3f453a380fedd9ac20105ba58",
+      "created": "2026-08-11T00:51:44.69129869+08:00",
+      "platform": "linux/arm64",
+      "python": "3.14.2",
+      "debian_security_baseline": "12.15"
+    },
+    "prometheus": {
+      "reference": "prom/prometheus:v3.7.3@sha256:49214755b6153f90a597adcbff0252cc61069f8ab69ce8411285cd4a560e8038",
+      "inspect_digest": "sha256:49214755b6153f90a597adcbff0252cc61069f8ab69ce8411285cd4a560e8038"
+    }
+  },
+  "verification": {
+    "backend": {
+      "passed": 2492,
+      "skipped": 39,
+      "failed": 0,
+      "warnings": 1,
+      "warning": "existing Starlette TestClient httpx deprecation"
+    },
+    "native_frappe": {
+      "site": "gbos-identity-native.localhost",
+      "isolated_project": true,
+      "versions": {
+        "frappe": "16.30.0",
+        "erpnext": "16.31.0",
+        "crm": "1.81.0",
+        "esan_gbos": "0.1.0"
+      },
+      "app_tests_passed": 58,
+      "app_tests_failed": 0,
+      "temporary_environment_removed": true
+    },
+    "postgres": {
+      "gate3": {
+        "passed": 20,
+        "skipped": 19,
+        "deselected": 9,
+        "failed": 0
+      },
+      "gate4": {
+        "passed": 13,
+        "failed": 0
+      },
+      "gate5": {
+        "passed": 2,
+        "failed": 0
+      },
+      "media": {
+        "passed": 2,
+        "failed": 0
+      },
+      "context": {
+        "passed": 2,
+        "failed": 0,
+        "owner_role_boundary_verified": true
+      },
+      "migrations_applied_twice": true,
+      "forced_rls_verified": true,
+      "temporary_environment_removed": true
+    },
+    "frontend": {
+      "lint": "pass",
+      "typecheck": "pass",
+      "unit_passed": 187,
+      "production_build": "pass",
+      "frontend_harness_playwright_passed": 22,
+      "live_frappe_playwright_passed": 4,
+      "live_frappe_playwright_skipped": 18,
+      "live_skip_reason": "the command selects the live-site subset; harness-only cases remain skipped"
+    },
+    "synthetic_core": {
+      "recreated_from_final_images": true,
+      "frappe_pwa_healthy": true,
+      "observer_api_healthy": true,
+      "context_api_healthy": true,
+      "agent_api_healthy": true,
+      "datastores_healthy": true,
+      "channels_enabled": false,
+      "models_enabled": false,
+      "media_enabled": false,
+      "tunnel_enabled": false,
+      "preserved_running_for_local_ui": true,
+      "pwa_url": "http://127.0.0.1:58080"
+    },
+    "prometheus": {
+      "promtool_config": "pass",
+      "promtool_rules": "pass",
+      "identity_target_up": 1,
+      "identity_target_url": "http://observer-api:8003/internal/v1/metrics/identity-resolution",
+      "rules_total": 5,
+      "rules_health_ok": 5,
+      "resolver_ready": 0,
+      "resolver_not_ready_alert_state": "firing_expected_channels_and_worker_disabled"
+    },
+    "python_static": {
+      "ruff_check": "pass",
+      "ruff_format_files": 482,
+      "mypy_service_files": 121,
+      "compileall": "pass",
+      "uv_lock_check": "pass",
+      "secret_scan": "pass"
+    },
+    "security": {
+      "scanner": "Trivy 0.73.0 with current database",
+      "initial_runtime_high_critical_findings": 42,
+      "initial_runtime_result": "failed_closed",
+      "root_cause": "stale Debian packages in the frozen Python 3.14.2 base layer",
+      "remediation": "retain Python 3.14.2 and install current Debian 12.15 security updates during the image build",
+      "final_runtime_unwaived_high_critical": 0,
+      "final_frappe_unwaived_high_critical": 0,
+      "final_image_secrets": 0,
+      "final_image_misconfigurations": 0,
+      "repository_vulnerabilities": 0,
+      "repository_secrets": 0,
+      "repository_misconfigurations": 0,
+      "historical_waiver_entries_validated": 57,
+      "historical_exact_purls_validated": 103,
+      "temporary_scanner_cache_removed": true
+    }
+  },
+  "formal_state": {
+    "production_go": false,
+    "local_pilot_go": false,
+    "composition_status": "not_composed",
+    "external_send": false,
+    "kingdee": false,
+    "cloud": false
+  },
+  "go_no_go": {
+    "offline_identity_resolution": "go",
+    "source_bound_local_runtime": "go_for_disabled_synthetic_only",
+    "formal_local_pilot": "no_go",
+    "real_email": "no_go",
+    "real_deepseek": "no_go",
+    "observed_model_identity": "unknown",
+    "seventy_two_hour_pilot": "not_run",
+    "kingdee": "no_go",
+    "cloud": "no_go",
+    "production": "no_go",
+    "external_send": "no_go"
+  },
+  "external_activity": {
+    "real_email_connections": 0,
+    "real_model_api_calls": 0,
+    "observed_model_responses": 0,
+    "external_messages": 0,
+    "kingdee_calls": 0,
+    "cloud_deployments": 0,
+    "production_writes": 0,
+    "real_external_credentials_loaded": 0
+  },
+  "remaining_external_inputs": [
+    "IMAP host, port, mailbox, folder, app password and activation time",
+    "target GBOS team and connector account user",
+    "DeepSeek API key with available balance",
+    "human-approved names and organizations trusted phrase lexicon"
+  ],
+  "limitations": [
+    "No real Email message, attachment, channel credential, DeepSeek request or model response was used.",
+    "Observed DeepSeek response model identity remains unknown until the real canary.",
+    "The live Frappe Playwright command ran only the selected live-site subset; the complete responsive and identity UI matrix is covered by the deterministic frontend harness.",
+    "Prometheus proves one live authenticated scrape and rule loading, not 72-hour readiness or SLO attainment.",
+    "The 72-hour pilot, UIDVALIDITY, 429, timeout, disconnect and recovery drills remain pending.",
+    "Kingdee, cloud deployment, production, outbound messages and formal business commands remain disabled."
+  ],
+  "cleanup": {
+    "isolated_frappe_project_removed_with_volumes": true,
+    "isolated_postgres_project_removed_with_volumes": true,
+    "temporary_trivy_cache_removed": true,
+    "temporary_browser_state_removed": true,
+    "main_synthetic_core_preserved": true
+  }
+}

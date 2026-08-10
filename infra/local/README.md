@@ -33,8 +33,11 @@ rechecked on another container runtime.
 The Frappe, MariaDB, Redis, backend, worker, scheduler, websocket, and PWA
 services use local-pilot-specific volume names. The Frappe services use the
 recorded local image `esan-gbos-local-pilot-frappe:2026-08-08` with inspect digest
-`sha256:8e62faa8f76cf60348fde64c68e6b4820f6a602b9140f973bfffffb6efa87415`; the
-upstream ERPNext image is not treated as a GBOS PWA. Site setup reports
+`sha256:d9220d580ea36fdc04efbe9e11863f2bfb89d879255f52d6af838ee7c0b3cea5`;
+the local runtime digest is
+`sha256:ceaf2daa0a578698c5f0a2df2d94030b84439b78c9e4a1e73110c4e1a3cf2aae`.
+Both images bind source revision `098d728cc52e27b6f58b051dfeb925efdfc680c4`;
+the upstream ERPNext image is not treated as a GBOS PWA. Site setup reports
 `setup_complete=1`, Frappe/ERPNext/CRM/esan_gbos versions
 `16.30.0`/`16.31.0`/`1.81.0`/`0.1.0`, and `bench migrate` was checksum-consistent
 across two runs. The optional `frappe-synthetic-bootstrap` profile reads a
@@ -69,8 +72,11 @@ With the required local images built, recorded, and inspected,
 temporary core-only manifest and starts the three runtime APIs plus Frappe/PWA.
 It never enables connector, model, media, or tunnel profiles and does not alter
 the checked-in manifest, composition state, or formal `start --require-go` gate.
-The current snapshot completed this path once; it is local synthetic evidence,
-not a 72-hour pilot or formal Go.
+The current snapshot completed this path again with the source-bound images.
+The pinned Prometheus profile also observed the authenticated
+`identity-resolution` target as `up=1` with five healthy rules. Resolver
+readiness remained `0` because the real identity worker and channels were
+disabled. This is local synthetic evidence, not a 72-hour pilot or formal Go.
 
 Build the runtime image explicitly with
 `scripts/local-pilot/build-runtime-image --confirm-network-build`. Python and

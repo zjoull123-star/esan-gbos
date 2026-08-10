@@ -21,7 +21,10 @@ pilot UI。
 这只证明本地 synthetic core 的隔离边界，不改变正式 No-Go。
 
 Frappe image lock 为
-`sha256:8e62faa8f76cf60348fde64c68e6b4820f6a602b9140f973bfffffb6efa87415`；
+`sha256:d9220d580ea36fdc04efbe9e11863f2bfb89d879255f52d6af838ee7c0b3cea5`，
+local runtime image lock 为
+`sha256:ceaf2daa0a578698c5f0a2df2d94030b84439b78c9e4a1e73110c4e1a3cf2aae`；
+两者均绑定 source revision `098d728`。
 site `setup_complete=1`，Frappe/ERPNext/CRM/esan_gbos 版本分别为
 `16.30.0`/`16.31.0`/`1.81.0`/`0.1.0`。连续两次 migrations
 checksum-consistent，materializer bootstrap 为 skipped/idempotent；fixture
@@ -32,9 +35,10 @@ Feedback/Demand/Sourcing、280 Work Item、280 Review Case）。
 Playwright 使用 `synthetic.ceo@example.invalid` 登录后访问 `/gbos/ceo` 成功，页面
 显示“经营总览”和“演示 / 合成数据”；375/768/1440 宽度均无横向溢出，console
 errors/warnings 均为 0，cache 只有 21 个静态预缓存条目且 API `cached=false`。
-此前主线全量验证快照为 pytest `2151 passed/37 skipped`、ruff/format/mypy
-（services 117）、frontend lint/typecheck/Vitest `88`/build 全部通过；后续仍需
-由主代理复跑，不能冒充最终签字。首次部分 site 的失败目录已可恢复地移动到数据卷内
+当前验证还包括最终 Frappe 镜像上的新建隔离 site 原生测试 `58 passed`、前端
+Vitest `187 passed`、frontend-harness Playwright `22 passed`，以及真实 synthetic
+site Playwright `4 passed/18 skipped`；后端与静态检查的最终计数写入新的
+`identity-resolution-runtime` 证据包。首次部分 site 的失败目录已可恢复地移动到数据卷内
 `.failed-gbos.localhost-20260808T033521`，未删除。
 
 `infra/local/runtime-entrypoints.json` 如实区分可执行入口和仍受阻入口：
@@ -56,8 +60,10 @@ Compose config 仅证明语法，均不能解除运行门。
 - 编排：`infra/local/compose.yml`
 - 本地不可变 evidence truth 是 `local-pilot-evidence-cas` filesystem CAS。
   MinIO 不属于 required runtime，也没有对象存储控制台。
-- Prometheus 是可选 profile，当前仅抓取自身，空 alerts 文件不宣称业务
-  指标、SLO 或告警已经接线。
+- Prometheus 是可选 profile；固定 3.7.3 镜像已完成 `promtool` 配置/规则校验，
+  live scrape 中 `identity-resolution` target 为 `up=1`，5 条低基数规则健康。
+  `gbos_identity_resolver_ready=0` 是预期禁用态结果，不可解释为真实 worker 已就绪、
+  SLO 已达成或 72 小时试点已完成。
 - PostgreSQL、MariaDB、API、PWA、webhook 与可选 Prometheus 的宿主机端口
   只绑定 `127.0.0.1`；本次 synthetic core 的已验证端口见上方快照。
 - `local-internal` 使用 bridge 网络并关闭 `enable_ip_masquerade`，不使用
@@ -79,7 +85,9 @@ digest。`scripts/local-pilot/build-runtime-image --confirm-network-build`
 Python base、uv builder 与 local runtime 的本机 image ID、RepoDigest 和平台。
 
 Frappe 使用独立的本地 image ref。本次 snapshot 已记录
-`sha256:8e62faa8f76cf60348fde64c68e6b4820f6a602b9140f973bfffffb6efa87415`，
+`sha256:d9220d580ea36fdc04efbe9e11863f2bfb89d879255f52d6af838ee7c0b3cea5`，
+local runtime 已记录
+`sha256:ceaf2daa0a578698c5f0a2df2d94030b84439b78c9e4a1e73110c4e1a3cf2aae`，
 并在该镜像上完成 synthetic site setup 与 `/gbos/ceo` 浏览器验证；这不等于正式
 composition 已 go。后续重建仍必须显式运行
 `scripts/local-pilot/build-frappe-image --confirm-network-build`，只在成功后记录
