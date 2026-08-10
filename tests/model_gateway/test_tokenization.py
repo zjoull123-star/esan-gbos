@@ -11,6 +11,7 @@ from services.model_gateway.tokenization import (
     InMemoryMappingVault,
     PiiResidualError,
     StableTokenizer,
+    contains_obvious_pii,
 )
 
 NOW = datetime(2026, 8, 7, 2, 0, tzinfo=UTC)
@@ -147,6 +148,26 @@ def test_obvious_residual_pii_fails_closed(monkeypatch: pytest.MonkeyPatch) -> N
             purpose="sales_follow_up",
             now=NOW,
         )
+
+
+@pytest.mark.parametrize("punctuation", [".", ",", ";", ":", "!", "?", ")", "]"])
+def test_email_before_sentence_punctuation_is_detected_and_tokenized(
+    punctuation: str,
+) -> None:
+    address = "ada.private@example.invalid"
+    source = f"Reply to {address}{punctuation}"
+
+    assert contains_obvious_pii(source) is True
+    result = tokenizer(InMemoryMappingVault()).tokenize(
+        source,
+        site_id="gbos.localhost",
+        purpose="observation_processing",
+        now=NOW,
+    )
+
+    assert address not in result.text
+    assert result.text.endswith(punctuation)
+    assert result.receipt.source_token_count == 1
 
 
 def test_encrypted_vault_persists_only_ciphertext_and_is_scope_bound(tmp_path: Path) -> None:
