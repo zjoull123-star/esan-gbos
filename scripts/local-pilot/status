@@ -6,7 +6,7 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "${SCRIPT_DIR}/lib.sh"
 
 MANIFEST="${DEFAULT_MANIFEST}"
-json_arg=()
+json_output=false
 while (( $# > 0 )); do
   case "$1" in
     --manifest)
@@ -15,7 +15,7 @@ while (( $# > 0 )); do
       shift
       ;;
     --json)
-      json_arg=(--json)
+      json_output=true
       ;;
     *)
       echo "Usage: scripts/local-pilot/status [--manifest PATH] [--json]" >&2
@@ -27,12 +27,16 @@ done
 
 read_secret_dir
 read_config_dir
-python3 "${SCRIPT_DIR}/status.py" \
+status_args=(
   --manifest "${MANIFEST}" \
   --entrypoints "${REPO_ROOT}/infra/local/runtime-entrypoints.json" \
   --image-lock "${REPO_ROOT}/infra/local/images.lock.json" \
   --runtime-dir "${RUNTIME_DIR}" \
   --repo-root "${REPO_ROOT}" \
   --compose-file "${COMPOSE_FILE}" \
-  --project-name "${PROJECT_NAME}" \
-  "${json_arg[@]}"
+  --project-name "${PROJECT_NAME}"
+)
+if [[ "${json_output}" == true ]]; then
+  status_args+=(--json)
+fi
+python3 "${SCRIPT_DIR}/status.py" "${status_args[@]}"

@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 STATUS = ROOT / "scripts" / "local-pilot" / "status.py"
+STATUS_WRAPPER = ROOT / "scripts" / "local-pilot" / "status"
 MANIFEST = ROOT / "infra" / "local" / "local-pilot-manifest.json"
 CANARY_PREPARE = ROOT / "scripts" / "local-pilot" / "prepare-email-deepseek-canary"
 CANARY_PREFLIGHT = ROOT / "scripts" / "local-pilot" / "canary-preflight"
@@ -93,6 +94,30 @@ def _fixture(tmp_path: Path, *, running: list[str]) -> tuple[list[str], dict[str
         "--json",
     ]
     return command, environment
+
+
+def test_status_wrapper_without_json_flag_is_compatible_with_macos_bash(
+    tmp_path: Path,
+) -> None:
+    docker = tmp_path / "docker"
+    _write_executable(
+        docker,
+        "#!/usr/bin/env python3\nimport json\nprint(json.dumps([]))\n",
+    )
+    environment = os.environ.copy()
+    environment["PATH"] = os.pathsep.join((str(tmp_path), os.defpath))
+
+    result = subprocess.run(
+        [str(STATUS_WRAPPER)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "本地试点状态：disabled" in result.stdout
 
 
 def test_status_json_reports_disabled_formal_manifest_without_stale_fixed_copy(
