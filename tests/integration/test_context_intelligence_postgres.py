@@ -17,14 +17,14 @@ from services.observer.observer.models import TenantScope
 pytestmark = pytest.mark.postgres_integration
 
 
-def _connection() -> Any:
+def _connection(*, user: str = "gbos_context_app") -> Any:
     if os.getenv("GBOS_RUN_CONTEXT_INTELLIGENCE_POSTGRES") != "1":
         pytest.skip("set GBOS_RUN_CONTEXT_INTELLIGENCE_POSTGRES=1 to run")
     return connect_postgres_components(
         host=os.environ["GBOS_GATE3_CONTEXT_HOST"],
         port=int(os.environ["GBOS_GATE3_CONTEXT_PORT"]),
         database=os.environ["GBOS_GATE3_CONTEXT_DATABASE"],
-        user="gbos_context_app",
+        user=user,
         password=os.environ["GBOS_GATE3_CONTEXT_PASSWORD"],
     )
 
@@ -106,7 +106,7 @@ def test_context_intelligence_publish_claim_heartbeat_and_site_fence() -> None:
 
 
 def test_context_intelligence_migration_is_ledgered_and_forces_rls() -> None:
-    connection = _connection()
+    connection = _connection(user=os.getenv("GBOS_GATE3_CONTEXT_OWNER_USER", "gbos_observer"))
     try:
         with connection.transaction(), connection.cursor() as cursor:
             cursor.execute(
