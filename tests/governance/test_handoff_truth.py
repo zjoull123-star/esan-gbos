@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
@@ -16,6 +18,12 @@ CEO_ACCESS = ROOT / "apps" / "esan_gbos" / "esan_gbos" / "ceo_access.py"
 MANIFEST = ROOT / "infra" / "local" / "local-pilot-manifest.json"
 ENTRYPOINTS = ROOT / "infra" / "local" / "runtime-entrypoints.json"
 IMAGE_LOCK = ROOT / "infra" / "local" / "images.lock.json"
+TASK13_CLOSURE_DIR = ROOT / "docs" / "evidence" / "task13-credential-free-closure"
+TASK13_CLOSURE_EVIDENCE = TASK13_CLOSURE_DIR / "task13-evidence.json"
+TASK13_CLOSURE_SUMMARY = TASK13_CLOSURE_DIR / "task13-summary.md"
+TASK13_CLOSURE_SUMS = TASK13_CLOSURE_DIR / "SHA256SUMS"
+
+CURRENT_SOURCE_COMMIT = "ad58ab3ea8c0d521cebd90c2642709d135f98fac"
 
 CEO_ROLES = (
     "CEO",
@@ -158,3 +166,110 @@ def test_identity_handoff_keeps_the_four_user_relations_separate_and_truthful() 
         assert "local_pilot_go=false" in document
     assert "72 小时连续运行不再作为" in handoff
     assert "72 小时" in plan
+
+
+def test_current_task13_closure_snapshot_is_bound_to_code_and_not_a_canary_claim() -> None:
+    evidence = json.loads(_read(TASK13_CLOSURE_EVIDENCE))
+    summary = _read(TASK13_CLOSURE_SUMMARY)
+
+    assert evidence["schema_version"] == "1.0"
+    assert evidence["validation_reference_commit"] == CURRENT_SOURCE_COMMIT
+    captured_at = datetime.fromisoformat(evidence["captured_at"].replace("Z", "+00:00"))
+    assert captured_at.tzinfo is not None
+    assert captured_at.utcoffset() == UTC.utcoffset(captured_at)
+    assert evidence["status"] == "credential_free_closure_external_canary_deferred"
+    assert evidence["stability"] == {
+        "continuous_runtime_required": False,
+        "seventy_two_hour_run": "deferred_by_user",
+    }
+    assert evidence["verification"]["pytest"]["passed"] == 2687
+    assert evidence["verification"]["pytest"]["skipped"] == 42
+    assert evidence["verification"]["pytest"]["failed"] == 0
+    assert evidence["verification"]["pytest"]["warnings"] == 1
+    assert evidence["verification"]["frontend"] == {
+        "unit_passed": 188,
+        "harness_playwright_passed": 22,
+        "lint": "pass",
+        "typecheck": "pass",
+        "build": "pass",
+    }
+    assert evidence["verification"]["python_static"] == {
+        "ruff_check": "pass",
+        "ruff_format": "pass",
+        "mypy": "pass",
+        "compileall": "pass",
+        "secret_scan": "pass",
+    }
+    assert evidence["verification"]["model_fatal_latch"]["status"] == "verified"
+    assert evidence["verification"]["model_fatal_latch"]["real_canary_invocations"] == 0
+    assert (
+        evidence["verification"]["model_fatal_latch"]["database_integration"]
+        == "isolated_fatal_latch_only"
+    )
+    email_checkpoint = evidence["verification"]["email_status_checkpoint"]
+    assert email_checkpoint["status"] == "verified_by_credential_free_tests"
+    assert email_checkpoint["operation"] == "STATUS_UIDVALIDITY_UIDNEXT"
+    assert email_checkpoint["read_only"] is True
+    assert email_checkpoint["source_bound"] is True
+    assert email_checkpoint["receipt_required_by_preflight"] is True
+    assert email_checkpoint["real_imap_connections"] == 0
+    chain_verifier = evidence["verification"]["canary_chain_verifier"]
+    assert chain_verifier["status"] == "machine_db_attested_narrow_window_only"
+    assert chain_verifier["reports_only"] == "response_reported_observed_model"
+    assert chain_verifier["free_form_observed_model"] is False
+    assert chain_verifier["real_canary_runs"] == 0
+    assert evidence["formal_state"] == {
+        "production_go": False,
+        "local_pilot_go": False,
+        "checked_in_email_enabled": False,
+        "checked_in_deepseek_enabled": False,
+        "external_send": False,
+        "kingdee": False,
+        "cloud": False,
+    }
+    assert evidence["go_no_go"] == {
+        "credential_free_closure": "go",
+        "real_email_deepseek_canary": "no_go",
+        "response_reported_observed_model": "unknown",
+        "production": "no_go",
+        "kingdee": "no_go",
+        "cloud": "no_go",
+        "external_send": "no_go",
+    }
+    assert evidence["runtime_images"]["rebuild_required_before_real_canary"] is False
+    assert evidence["runtime_images"]["rebuild_verified"] is True
+    assert evidence["runtime_images"]["frappe_pwa"]["image_id"].startswith("sha256:")
+    assert evidence["runtime_images"]["local_runtime"]["image_id"].startswith("sha256:")
+    assert evidence["missing_external_credentials"]
+    evidence_text = TASK13_CLOSURE_EVIDENCE.read_text(encoding="utf-8")
+    assert "evidence_commit" not in evidence_text
+    assert "sk-" not in evidence_text
+    assert "-----BEGIN" not in evidence_text
+    assert "password" not in evidence_text.lower()
+    assert "real Email" in summary
+    assert "unknown" in summary
+    assert "72 小时" in summary
+    assert "PostgreSQL integration matrix" in summary
+    assert "final evidence commit" in summary
+
+
+def test_current_task13_closure_snapshot_checksums_cover_only_current_files() -> None:
+    entries = {}
+    for line in _read(TASK13_CLOSURE_SUMS).splitlines():
+        digest, name = line.split("  ", maxsplit=1)
+        entries[name] = digest
+
+    assert set(entries) == {TASK13_CLOSURE_EVIDENCE.name, TASK13_CLOSURE_SUMMARY.name}
+    for name, expected in entries.items():
+        assert hashlib.sha256((TASK13_CLOSURE_DIR / name).read_bytes()).hexdigest() == expected
+
+
+def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
+    handoff = _read(HANDOFF)
+
+    assert CURRENT_SOURCE_COMMIT in handoff
+    assert "older-source image" in handoff.lower()
+    assert "governed rebuild/record" in handoff.lower()
+    assert "response_reported_observed_model=unknown" in handoff
+    assert "real_email_deepseek_canary=no_go" in handoff
+    assert "72 小时连续运行不再作为本阶段退出条件" in handoff

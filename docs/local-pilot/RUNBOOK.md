@@ -20,12 +20,15 @@ pilot UI。
 容器访问 `api.deepseek.com:443` 均 blocked，`webhook-tunnel` 仍为 internal。
 这只证明本地 synthetic core 的隔离边界，不改变正式 No-Go。
 
-当前 Frappe image lock 为
-`sha256:94c1bb068a868e0c0c7bb1deda231c2fc5bd13f2928b83036f83802674c5afe6`，
+当前代码 HEAD 是 `ad58ab3ea8c0d521cebd90c2642709d135f98fac`。当前 Frappe image lock 为
+`sha256:22c3a2c129442588d0353c6a8f564aec593afc63b7354b4294d37aa9d40f7625`，
 local runtime image lock 为
-`sha256:705012abe856dbe33298e508c79e121831585e1036dca701a93553ebe0186c8b`；
-两者均绑定 source revision `00a1a0a`。它们已完成构建和本地 inspect，但尚未用真实
-渠道/模型凭据运行。以下 site、浏览器和监控观察来自先前 synthetic 快照：
+`sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee`；
+两者均已从当前 source revision `ad58ab3` governed rebuild/record，revision label
+已复核，image-lock recording commit 为 `e10a780`。它们尚未用真实渠道/模型凭据运行。
+若 final code 再变化，真实 canary 前仍必须
+重复 governed current-image rebuild/record。以下
+site、浏览器和监控观察来自先前 synthetic 快照：
 site `setup_complete=1`，Frappe/ERPNext/CRM/esan_gbos 版本分别为
 `16.30.0`/`16.31.0`/`1.81.0`/`0.1.0`。连续两次 migrations
 checksum-consistent，materializer bootstrap 为 skipped/idempotent；fixture
@@ -36,11 +39,11 @@ Feedback/Demand/Sourcing、280 Work Item、280 Review Case）。
 Playwright 使用 `synthetic.ceo@example.invalid` 登录后访问 `/gbos/ceo` 成功，页面
 显示“经营总览”和“演示 / 合成数据”；375/768/1440 宽度均无横向溢出，console
 errors/warnings 均为 0，cache 只有 21 个静态预缓存条目且 API `cached=false`。
-当前验证还包括最终 Frappe 镜像上的新建隔离 site 原生测试 `58 passed`、前端
-Vitest `187 passed`、frontend-harness Playwright `22 passed`，以及真实 synthetic
-site Playwright `4 passed/18 skipped`；后端与静态检查的最终计数写入新的
-`identity-resolution-runtime` 证据包。首次部分 site 的失败目录已可恢复地移动到数据卷内
-`.failed-gbos.localhost-20260808T033521`，未删除。
+上述是历史 snapshot，不是当前 HEAD 的 live runtime 证明。当前 credential-free
+closure 的 source-bound 计数为 full pytest `2687 passed/42 skipped/1 warning`，
+frontend unit `188 passed`、frontend-harness Playwright `22 passed`，lint/typecheck/
+build、Ruff check/format、mypy、compileall、secret scan 均 green。首次部分 site 的
+失败目录已可恢复地移动到数据卷内 `.failed-gbos.localhost-20260808T033521`，未删除。
 
 `infra/local/runtime-entrypoints.json` 如实区分可执行入口和仍受阻入口：
 WhatsApp webhook、Email poller 与 connector worker 已有默认组合；WeCom
@@ -87,14 +90,143 @@ digest。`scripts/local-pilot/build-runtime-image --confirm-network-build`
 Python base、uv builder 与 local runtime 的本机 image ID、RepoDigest 和平台。
 
 Frappe 使用独立的本地 image ref。当前 lock 已记录
-`sha256:94c1bb068a868e0c0c7bb1deda231c2fc5bd13f2928b83036f83802674c5afe6`，
+`sha256:22c3a2c129442588d0353c6a8f564aec593afc63b7354b4294d37aa9d40f7625`，
 local runtime 已记录
-`sha256:705012abe856dbe33298e508c79e121831585e1036dca701a93553ebe0186c8b`，
-两者仅完成当前源码构建、inspect 和安全扫描。synthetic site setup 与 `/gbos/ceo`
+`sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee`，
+两者均标记当前 source revision `ad58ab3`，完成 inspect 和安全扫描。synthetic site setup 与 `/gbos/ceo`
 浏览器验证来自较早的 `098d728` 快照，不自动证明新镜像 live runtime；这也不等于
-正式 composition 已 go。后续重建仍必须显式运行
+正式 composition 已 go。若 final code 变化，后续重建仍必须显式运行
 `scripts/local-pilot/build-frappe-image --confirm-network-build`，只在成功后记录
 新的本机 image ID。
+
+## Task 13 credential-free closure 与 real-canary operator sequence
+
+当前 source-bound closure 绑定代码 HEAD
+`ad58ab3ea8c0d521cebd90c2642709d135f98fac`：
+
+```text
+production_go=false
+local_pilot_go=false
+checked-in Email/DeepSeek disabled
+real Email + DeepSeek canary 未执行
+response_reported_observed_model=unknown
+```
+
+- Full pytest 为 `2687 passed/42 skipped/1 warning`；Ruff check/format、mypy、
+  compileall、secret scan、frontend lint/typecheck/build 均 green；frontend unit
+  为 `188 passed`，Playwright harness 为 `22 passed`。
+- Model fatal latch 的 fail-closed 行为已验证：fatal/mismatch 会锁住模型外发并在
+  后续 egress 前拒绝；当前没有真实模型调用。machine verifier 只读取低基数 latch
+  状态，不替代真实 provider 证据。
+- Email 只允许 source-bound `STATUS_UIDVALIDITY_UIDNEXT` 只读 checkpoint；probe
+  会写 checkpoint + receipt，且 `canary-preflight` 必须看到绑定 activation-time、
+  source commit、digest 和 receipt 才可继续。当前 real IMAP connections 为 0。
+- `verify-canary-chain` 使用 machine DB-attested narrow observation window、独立
+  projection config 和显式 window/output；`canary-evidence record` 必须使用
+  `--chain-attestation`，只写入 `response_reported_observed_model`，不接受 free-form
+  observed model。真实 canary 未运行，因此该字段当前仍 unknown。
+- Email credential、DeepSeek API key、identity HMAC、trusted phrase lexicon、Frappe
+  identity resolver credentials 仍缺失。此前 older source 的 current locked runtime
+  images blocker 已关闭：当前镜像已在 `ad58ab3` 重建并记录；若 final code 再变化，
+  **rebuild before the real canary** 仍是硬门。72 小时连续运行不再作为本阶段退出条件，
+  按用户决定 deferred/not required for this stage。
+- Root 已完成 isolated PostgreSQL integration matrix：`42 passed, 10 deselected,
+  1 warning`，覆盖 Gate3/4/5、Context、Media；唯一 validation DB/network/volume
+  已移除。该结果仍不等于真实 provider canary 或正式 Go。
+
+所有 canary dir、control、checkpoint、receipt、projection config、attestation 和
+credential 文件都必须在仓库外，secrets outside the repository 只进入 Keychain；以下变量是 operator 在本机
+设置的路径或 Keychain reference，不把任何秘密值写入仓库。
+
+严格按以下顺序执行（最终代码 → governed current-image rebuild/record → prepare
+external canary dir/control → probe-email-checkpoint with activation-time → copy exact
+checkpoint JSON value into Keychain Email credential `initial_checkpoint` →
+canary-preflight requiring receipt → start narrow real canary → verify-canary-chain with
+projection config/window/output → canary-evidence record with `--chain-attestation` →
+finalize）：
+
+```sh
+# The governed commands below run from the canonical repository root.
+REPO_ROOT=/Users/ericesan/Documents/GBOS
+cd "$REPO_ROOT"
+
+# 1. final code: commit/checkout the exact source to validate.
+git rev-parse HEAD
+
+# 2. governed current-image rebuild/record (both commands update image lock only on success).
+scripts/local-pilot/build-frappe-image --confirm-network-build
+scripts/local-pilot/build-runtime-image --confirm-network-build
+
+# 3. prepare external canary dir/control as a new, empty repo-external directory.
+CANARY_DIR=/absolute/path/outside/repo/gbos-task13-canary
+ACTIVATION_TIME=__RFC3339_APPROVED_ACTIVATION_TIME__
+EMAIL_KEYCHAIN_REF=keychain://__SERVICE__/__EMAIL_ACCOUNT__
+DEEPSEEK_KEYCHAIN_REF=keychain://__SERVICE__/__DEEPSEEK_ACCOUNT__
+scripts/local-pilot/prepare-email-deepseek-canary \
+  --acknowledge-shadow-pilot \
+  --output-dir "$CANARY_DIR" \
+  --site-id gbos.localhost \
+  --activation-time "$ACTIVATION_TIME" \
+  --email-credential-ref "$EMAIL_KEYCHAIN_REF" \
+  --deepseek-keychain-ref "$DEEPSEEK_KEYCHAIN_REF"
+
+# 4. probe-email-checkpoint with activation-time: only STATUS/UIDVALIDITY/UIDNEXT; no BODY fetch/backfill.
+EMAIL_CREDENTIAL_FILE=/absolute/path/outside/repo/private-email-credential.json
+scripts/local-pilot/probe-email-checkpoint \
+  --credential-file "$EMAIL_CREDENTIAL_FILE" \
+  --output-dir "$CANARY_DIR" \
+  --activation-time "$ACTIVATION_TIME"
+
+# 5. Operator action outside the repo: copy the exact JSON value from
+#    $CANARY_DIR/email-checkpoint.json into the Email credential's
+#    initial_checkpoint field, then update the whole credential JSON in its Keychain item.
+
+# 6. canary-preflight validates the private manifest/control and checkpoint pair.
+SECRET_DIR=/absolute/path/outside/repo/private-canary-secrets
+scripts/local-pilot/canary-preflight \
+  --manifest "$CANARY_DIR/pilot-manifest.json" \
+  --run-control "$CANARY_DIR/canary-run.json" \
+  --secret-dir "$SECRET_DIR" \
+  --repo-root "$REPO_ROOT" \
+  --json
+#    It must require and verify the checkpoint receipt before returning ready.
+
+# 7. Start only the narrow real Email + DeepSeek shadow canary.
+scripts/local-pilot/start-email-deepseek-canary \
+  --acknowledge-real-email-and-model \
+  --canary-dir "$CANARY_DIR"
+
+# 8. verify-canary-chain with projection config/window/output and one DB-attested observation window.
+CONFIG_DIR=/absolute/path/outside/repo/private-canary-config
+scripts/local-pilot/render-config \
+  --manifest "$CANARY_DIR/pilot-manifest.json" \
+  --output-dir "$CONFIG_DIR"
+PROJECTION_CONFIG="$CONFIG_DIR/projection-connections.json"
+WINDOW_START=__RFC3339_WINDOW_START__
+WINDOW_END=__RFC3339_WINDOW_END__
+CHAIN_ATTESTATION=/absolute/path/outside/repo/task13-chain-attestation.json
+scripts/local-pilot/verify-canary-chain \
+  --canary-dir "$CANARY_DIR" \
+  --projection-config "$PROJECTION_CONFIG" \
+  --window-start "$WINDOW_START" \
+  --window-end "$WINDOW_END" \
+  --output "$CHAIN_ATTESTATION"
+
+# 9. Record the machine chain attestation; do not pass --observed-at or free-form observed model text.
+#    The attestation is the only source for response_reported_observed_model.
+scripts/local-pilot/canary-evidence record \
+  --canary-dir "$CANARY_DIR" \
+  --kind model_identity_exact \
+  --source system_query \
+  --chain-attestation "$CHAIN_ATTESTATION"
+
+# 10. After all required checks and bounded samples, finalize the private evidence package.
+scripts/local-pilot/canary-evidence finalize --canary-dir "$CANARY_DIR"
+```
+
+The sequence never enables checked-in Email/DeepSeek, Kingdee, cloud, external send or
+production. It must stop on any source/image binding mismatch, missing receipt, closed model
+fatal latch, projection ambiguity, or response-reported model mismatch.
 
 ## Keychain 与最小权限
 

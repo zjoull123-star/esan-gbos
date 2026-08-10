@@ -6,15 +6,19 @@
 ## 来源与证据边界
 
 - 规划来源基线是 `8c40731`（观察身份解析 roadmap）；当前分支为
-  `feat/user-identity-resolution-20260810`。当前 host 验证基线是
-  `66a17db87528d67f08bf6692a1f67eb85e03f4e3`（`66a17db`）；最终镜像
-  源码基线是 `00a1a0a395d6326688ff131192c9aa332f8d32b1`（`00a1a0a`）。
-  两者之间没有 `apps/`、`services/`、`contracts/` 或依赖锁文件差异。
+  `feat/user-identity-resolution-20260810`，当前代码 HEAD 是
+  `ad58ab3ea8c0d521cebd90c2642709d135f98fac`（`ad58ab3`）。历史 host 验证基线是
+  `66a17db87528d67f08bf6692a1f67eb85e03f4e3`（`66a17db`）；此前 older-source image
+  lock 已按当前 HEAD 完成 governed rebuild/record（image-lock recording commit
+  `e10a780`），当前镜像 revision label 与
+  `ad58ab3` 一致。真实 canary 仍受外部凭据与正式 go 门阻断。
 - 身份解析离线实现基线 `c98f6a5` 保留为历史里程碑；本轮在其上补齐了真实
-  Frappe v16 站点、最终镜像、Prometheus live scrape 与安全扫描证据。
-- `docs/evidence/` 中既有 Gate、local-pilot 和 identity-resolution 文件均是
-  historical snapshots。**do not modify** historical evidence；本次退出条件调整与
-  现场验证写入独立的 `task13-readiness` 证据包。
+  Frappe v16 站点、最终镜像、Prometheus live scrape 与安全扫描证据；这些历史
+  真实 Frappe 观察不自动代表当前 HEAD live runtime。
+- `docs/evidence/` 中既有 Gate、local-pilot、identity-resolution 和
+  `task13-readiness` 文件均是 historical snapshots。**do not modify** historical
+  evidence；本次 credential-free closure 写入独立的
+  `task13-credential-free-closure` 证据包。
 
 ## 已实现的业务与治理边界
 
@@ -48,34 +52,31 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 
 ## 当前验证快照
 
-当前本地镜像都绑定 source revision `00a1a0a`：
+当前 image lock 中的本地镜像已按当前 source revision `ad58ab3` 重建并记录：
 
-| Service | Local image digest | Source digest |
+| Service | Local image digest | Revision label |
 | --- | --- | --- |
-| `frappe-pwa` | `sha256:94c1bb068a868e0c0c7bb1deda231c2fc5bd13f2928b83036f83802674c5afe6` | `6de42172a68ce9a2f0f7fe9b158a4471d4b5b3a646e33563dedc48e364092e7c` |
-| `local-runtime` | `sha256:705012abe856dbe33298e508c79e121831585e1036dca701a93553ebe0186c8b` | `a1e4f3a068ab88c54d3cf7753cfa75147b31843f2799144ab1e3a7e23f497894` |
+| `frappe-pwa` | `sha256:22c3a2c129442588d0353c6a8f564aec593afc63b7354b4294d37aa9d40f7625` | `ad58ab3ea8c0d521cebd90c2642709d135f98fac` |
+| `local-runtime` | `sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee` | `ad58ab3ea8c0d521cebd90c2642709d135f98fac` |
 
-两套镜像已构建并写入本地 image lock；当前提交尚未用真实凭据启动正式
-渠道/模型 profile。以下是用当前锁定镜像和本地组合栈重新观察的验证结果：
+当前 credential-free closure 的 source-bound 验证快照为：full pytest
+`2687 passed, 42 skipped, 1 warning`；Ruff check/format、mypy、compileall 与
+secret scan 全部 green；frontend unit `188 passed`、Playwright harness `22 passed`、
+lint/typecheck/build 全部 green。模型 fatal latch 的 fail-closed 行为已验证；Email
+只允许 source-bound `STATUS_UIDVALIDITY_UIDNEXT` checkpoint/receipt，preflight
+要求 receipt，未建立真实 IMAP 连接。machine DB-attested narrow-window canary-chain
+verifier 只报告 `response_reported_observed_model`，不接受 free-form observed model。
+Governed Trivy 0.73.0 scans of both rebuilt images reported `0` unwaived High/Critical,
+`0` image secrets and `0` misconfigurations; historical 57 waiver entries/103 exact PURLs
+were displayed separately and are not zero-total-findings claims. Scan services were not
+started.
 
-- 新建临时 Frappe site 安装 `frappe 16.30.0`、`erpnext 16.31.0`、
-  `crm 1.81.0`、`esan_gbos 0.1.0`，连续 migrate 两次并运行身份权限原生测试
-  `12 passed`；临时 site 与数据库随后安全移除。
-- 本地 synthetic core 已用上述最终镜像重新创建；Frappe/PWA、Observer、Context、
-  Agent、MariaDB、PostgreSQL、Redis 均健康，channels/models/media/tunnel 仍关闭。
-- 真实 Frappe synthetic 站点 Playwright 为 `4 passed, 18 skipped`；完整响应式、
-  身份审核与错误态由前端 harness `22 passed` 覆盖，unit 为 `188 passed`。
-- PostgreSQL 隔离矩阵验证了 Gate 3、Gate 4、Gate 5、Media 和 Context；Context
-  管理台账只由 owner role 查询，application role 保持最小权限。
-- 30 天保留策略 dry-run 通过且没有删除数据；紧急停止演练确认处理目标全部停止，
-  随后显式解除 latch 并恢复 synthetic core。仓库外无凭据故障演练覆盖重复 UID、
-  UIDVALIDITY、附件隔离、模型失败与身份撤销。
-- 固定 Trivy 0.73.0 已在本轮对源码锁文件、两个 Containerfile 和 `00a1a0a`
-  两套镜像重新执行；结果均为 0 个未豁免 High/Critical、0 secrets、0
-  misconfigurations。历史 57 条豁免/103 个 exact PURL 仍单独显示且不等于消失；
-  运行时仍为 Python 3.14.2，构建时安装了当前 Debian 12.15 安全更新。
+这些结果不等于真实 Email/DeepSeek canary 或正式 Go。当前镜像已完成
+governed current-image rebuild/record；数据库隔离矩阵结果见 closure evidence，且
+唯一验证 DB/network/volume 已移除。
 
-详见 [Task 13 真实渠道前就绪证据](evidence/task13-readiness/task13-readiness-summary.md)。
+详见 [当前 credential-free closure 证据](evidence/task13-credential-free-closure/task13-evidence.json)
+及 [Task 13 历史真实渠道前就绪证据](evidence/task13-readiness/task13-readiness-summary.md)。
 
 ## 正式状态与剩余门
 
@@ -89,25 +90,36 @@ external_send=false
 credential_free_readiness=go
 real_email_deepseek_canary=no_go
 observed_model_identity=unknown
+response_reported_observed_model=unknown
+checked_in_email_enabled=false
+checked_in_deepseek_enabled=false
 ```
 
-- Task 1–12 的离线、真实本地 Frappe、最终镜像和监控验证已完成。
-- Task 13 的无凭据就绪验证已完成；真实 Email + DeepSeek shadow canary **未执行**。
+- Task 1–12 的离线实现和 credential-free checks 已完成；full pytest、静态检查与
+  frontend 计数见当前 closure evidence。当前 image lock 已按 `ad58ab3` 重建并记录，
+  但这仍不等于真实 Email/DeepSeek canary 或正式 Go。
+- Task 13 的 credential-free closure 已完成；真实 Email + DeepSeek canary **未执行**。
   当前缺少 Email credential、DeepSeek API Key、identity HMAC、人工批准的 trusted
-  phrase lexicon，以及 Frappe identity resolver API key/secret。real channels、
-  real model call/model identity 仍为 No-Go/unknown。
-- 72 小时连续运行不再作为本阶段退出条件；该稳定性窗口未执行、未评估，也不再
-  单独阻塞本阶段。真实 UIDVALIDITY、429、超时和断网恢复演练仍未执行。
+  phrase lexicon，以及 Frappe identity resolver API key/secret。real Email/DeepSeek
+  call、real channels 与 `response_reported_observed_model` 仍为 No-Go/unknown。
+- 72 小时连续运行不再作为本阶段退出条件；该稳定性窗口按用户决定 deferred/not
+  required for this stage，未执行、未评估，也不再单独阻塞本阶段。真实 UIDVALIDITY、
+  429、超时和断网恢复演练仍未执行。
 - Kingdee、cloud、production、外发和正式业务命令继续 No-Go。
 
 ## 后续实施顺序
 
-1. 用户以安全方式提供 Task 13 外部输入；凭据只进入 macOS Keychain，不写仓库。
-2. 创建 repo-external canary manifest，只启用一条 Email instance 和模型投影；正式
-   checked-in manifest 不修改。
-3. 先做一封新测试邮件，再验证去重、身份 unresolved → review → confirmed/revoked、
-   模型标记化、费用台账和 kill switch；不得回补历史。
-4. 完成证据绑定的短时健康采样、真实故障演练和新 evidence package 后，才可讨论
+1. 最终代码与 current image lock 已按 `ad58ab3` 完成 governed rebuild/record；后续
+   canary 仍必须复核 revision label 与 manifest binding。
+2. 用户以安全方式提供 Task 13 外部输入；凭据只进入 macOS Keychain，不写仓库。
+3. 按 [运行手册](local-pilot/RUNBOOK.md) 创建 repo-external canary dir/control，
+   用 activation-time 做 Email STATUS-only checkpoint probe，复制 exact checkpoint
+   JSON value 到 Keychain credential 的 `initial_checkpoint`，然后让 canary-preflight
+   验证 receipt。
+4. 只启动一条 Email instance 与模型投影；用 projection config/window/output 运行
+   machine DB-attested verifier，再用 `canary-evidence record --chain-attestation`
+   记录响应报告模型身份，不接受自由填写的 observed model。
+5. 完成证据绑定的短时健康采样、真实故障演练和新 evidence package 后，才可讨论
    Email + DeepSeek local shadow Go；证据记录实际运行时长但不要求 72 小时。
    正式 `local_pilot_go` 与 production Go 仍需独立审批。
 

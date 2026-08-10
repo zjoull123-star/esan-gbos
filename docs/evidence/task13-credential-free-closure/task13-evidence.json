@@ -1,0 +1,168 @@
+{
+  "schema_version": "1.0",
+  "evidence_id": "task13-credential-free-closure-20260811",
+  "captured_at": "2026-08-10T20:24:50Z",
+  "validation_reference_commit": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
+  "branch": "feat/user-identity-resolution-20260810",
+  "status": "credential_free_closure_external_canary_deferred",
+  "historical_evidence_modified": false,
+  "stability": {
+    "continuous_runtime_required": false,
+    "seventy_two_hour_run": "deferred_by_user"
+  },
+  "source_scope": {
+    "current_code_head": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
+    "validation_reference_commit": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
+    "image_lock_commit": "e10a780",
+    "image_rebuild_recorded": true,
+    "evidence_scope": "credential_free_documentation_and_local_test_contracts",
+    "network_used_for_this_snapshot": false,
+    "containers_started_for_this_snapshot": false,
+    "credentials_loaded_for_this_snapshot": false
+  },
+  "verification": {
+    "pytest": {
+      "command": "uv run --frozen pytest -q",
+      "passed": 2687,
+      "skipped": 42,
+      "failed": 0,
+      "warnings": 1
+    },
+    "python_static": {
+      "ruff_check": "pass",
+      "ruff_format": "pass",
+      "mypy": "pass",
+      "compileall": "pass",
+      "secret_scan": "pass"
+    },
+    "frontend": {
+      "unit_passed": 188,
+      "harness_playwright_passed": 22,
+      "lint": "pass",
+      "typecheck": "pass",
+      "build": "pass"
+    },
+    "model_fatal_latch": {
+      "status": "verified",
+      "behavior": "fatal_or_mismatch_trips_durable_latch_before_future_model_egress",
+      "real_canary_invocations": 0,
+      "database_integration": "isolated_fatal_latch_only"
+    },
+    "email_status_checkpoint": {
+      "status": "verified_by_credential_free_tests",
+      "operation": "STATUS_UIDVALIDITY_UIDNEXT",
+      "read_only": true,
+      "source_bound": true,
+      "receipt_required_by_preflight": true,
+      "activation_time_bound": true,
+      "real_imap_connections": 0
+    },
+    "canary_chain_verifier": {
+      "status": "machine_db_attested_narrow_window_only",
+      "projection_scope": "agent_context_observer_projection_roles",
+      "reports_only": "response_reported_observed_model",
+      "free_form_observed_model": false,
+      "real_canary_runs": 0,
+      "response_reported_observed_model": "unknown"
+    },
+    "database_integration": {
+      "status": "verified_isolated_matrix",
+      "pytest_passed": 42,
+      "pytest_deselected": 10,
+      "warnings": 1,
+      "coverage": [
+        "Gate3",
+        "Gate4",
+        "Gate5",
+        "Context",
+        "Media"
+      ],
+      "validation_database_network_volume_removed": true,
+      "note": "This is the isolated validation matrix only; it is not a real Email/DeepSeek provider canary."
+    }
+  },
+  "runtime_images": {
+    "image_lock_commit": "e10a780",
+    "locked_image_source_revision": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
+    "locked_image_source_revision_short": "ad58ab3",
+    "current_code_revision": "ad58ab3ea8c0d521cebd90c2642709d135f98fac",
+    "older_source_than_validation_reference": false,
+    "rebuild_required_before_real_canary": false,
+    "rebuild_verified": true,
+    "rebuild_required_if_final_code_changes": true,
+    "frappe_pwa": {
+      "image_id": "sha256:22c3a2c129442588d0353c6a8f564aec593afc63b7354b4294d37aa9d40f7625",
+      "revision_label": "ad58ab3ea8c0d521cebd90c2642709d135f98fac"
+    },
+    "local_runtime": {
+      "image_id": "sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee",
+      "revision_label": "ad58ab3ea8c0d521cebd90c2642709d135f98fac"
+    },
+    "security_scan": {
+      "scanner": "Trivy 0.73.0",
+      "frappe_pwa_unwaived_high_critical": 0,
+      "local_runtime_unwaived_high_critical": 0,
+      "image_secrets": 0,
+      "image_misconfigurations": 0,
+      "historical_exact_purl_waivers_displayed": 103,
+      "historical_waiver_entries_displayed": 57,
+      "services_started_for_scan": false
+    },
+    "note": "Both locked images were rebuilt and atomically recorded from the validation reference before this snapshot; image build/inspect/record does not prove a provider canary or formal Go."
+  },
+  "formal_state": {
+    "production_go": false,
+    "local_pilot_go": false,
+    "checked_in_email_enabled": false,
+    "checked_in_deepseek_enabled": false,
+    "external_send": false,
+    "kingdee": false,
+    "cloud": false
+  },
+  "go_no_go": {
+    "credential_free_closure": "go",
+    "real_email_deepseek_canary": "no_go",
+    "response_reported_observed_model": "unknown",
+    "production": "no_go",
+    "kingdee": "no_go",
+    "cloud": "no_go",
+    "external_send": "no_go"
+  },
+  "missing_external_credentials": [
+    "email_credential",
+    "deepseek_api_key",
+    "identity_hmac_key",
+    "trusted_phrase_lexicon",
+    "frappe_identity_resolver_api_key",
+    "frappe_identity_resolver_api_secret"
+  ],
+  "external_activity": {
+    "real_email_connections": 0,
+    "real_model_api_calls": 0,
+    "observed_model_responses": 0,
+    "external_messages": 0,
+    "kingdee_calls": 0,
+    "cloud_deployments": 0,
+    "production_writes": 0
+  },
+  "operator_boundary": {
+    "final_code_then_governed_current_image_rebuild_record": true,
+    "prepare_repo_external_canary_dir_control": true,
+    "probe_email_checkpoint_with_activation_time": true,
+    "copy_exact_checkpoint_json_into_keychain_initial_checkpoint": true,
+    "canary_preflight_requires_checkpoint_receipt": true,
+    "start_narrow_real_canary": true,
+    "verify_canary_chain_with_projection_config_window_output": true,
+    "record_chain_attestation_without_free_form_observed_model": true,
+    "finalize_private_evidence": true,
+    "secrets_outside_repository": true
+  },
+  "limitations": [
+    "Real Email/DeepSeek canary was not run; response_reported_observed_model remains unknown.",
+    "The checked-in Email and DeepSeek declarations remain disabled and formal local_pilot_go and production_go remain false.",
+    "Kingdee, cloud, external send and production remain No-Go.",
+    "The 72-hour run was explicitly deferred by the user and is not a gate for this stage.",
+    "No final evidence commit SHA is asserted in this snapshot.",
+    "Secrets, provider values, raw messages and model responses are not included."
+  ]
+}

@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 DOCS = ROOT / "docs" / "local-pilot"
 INFRA = ROOT / "infra" / "local"
+CURRENT_SOURCE_COMMIT = "ad58ab3ea8c0d521cebd90c2642709d135f98fac"
 
 
 def _read(path: Path) -> str:
@@ -177,3 +178,64 @@ def test_local_pilot_evidence_snapshot_is_redacted_and_checksumable() -> None:
     for path in (evidence_path, summary_path):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         assert expected[path.name] == digest
+
+
+def test_runbook_has_the_current_credential_free_canary_operator_sequence() -> None:
+    runbook = _read(DOCS / "RUNBOOK.md")
+    sequence_section = runbook.split("严格按以下顺序执行", maxsplit=1)[1].split(
+        "## Keychain", maxsplit=1
+    )[0]
+    command_block = sequence_section.split("```sh", maxsplit=1)[1].split("```", maxsplit=1)[0]
+    sequence_text = " ".join(command_block.split())
+
+    sequence = (
+        "final code",
+        "governed current-image rebuild/record",
+        "prepare external canary dir/control",
+        "probe-email-checkpoint",
+        "initial_checkpoint",
+        "canary-preflight",
+        "receipt",
+        "start-email-deepseek-canary",
+        "verify-canary-chain",
+        "projection config",
+        "observation window",
+        "canary-evidence",
+        "--chain-attestation",
+        "finalize",
+    )
+    positions = [sequence_text.lower().find(item.lower()) for item in sequence]
+    assert all(position >= 0 for position in positions), positions
+    assert positions == sorted(positions)
+    assert "response_reported_observed_model" in sequence_section
+    assert "free-form observed model" in sequence_section.lower()
+    invocation_text = "\n".join(
+        line for line in command_block.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "--observed-at" not in invocation_text
+    assert "repo-external" in sequence_section
+    assert "secrets outside" in runbook.lower()
+
+
+def test_runbook_documents_current_truth_boundaries_without_unlocking_formal_state() -> None:
+    runbook = _read(DOCS / "RUNBOOK.md")
+
+    for statement in (
+        CURRENT_SOURCE_COMMIT,
+        "response_reported_observed_model=unknown",
+        "local_pilot_go=false",
+        "production_go=false",
+        "real Email + DeepSeek canary 未执行",
+        "checked-in Email/DeepSeek disabled",
+        "Kingdee",
+        "cloud",
+        "external send",
+        "current locked runtime",
+        "older source",
+        "rebuild before the real canary",
+        "72 小时连续运行不再作为本阶段退出条件",
+        "Model fatal latch",
+        "STATUS_UIDVALIDITY_UIDNEXT",
+        "42 passed, 10 deselected",
+    ):
+        assert statement in runbook
