@@ -36,6 +36,19 @@ _EMAIL_FIELDS = {
     "initial_checkpoint",
 }
 _CHECKPOINT_FIELDS = {"mailbox", "uid", "uidvalidity", "version"}
+_RECEIPT_FIELDS = {
+    "activation_time",
+    "checkpoint_sha256",
+    "observed_at",
+    "operation",
+    "read_only",
+    "schema",
+    "source_commit",
+    "version",
+}
+_RECEIPT_SCHEMA = "gbos.email_checkpoint_receipt"
+_RECEIPT_OPERATION = "STATUS_UIDVALIDITY_UIDNEXT"
+_MAX_CHECKPOINT_ARTIFACT_BYTES = 8_192
 _LEXICON_FIELDS = {
     "schema_version",
     "site_id",
@@ -87,11 +100,76 @@ def _object(path: Path, *, maximum: int, private: bool) -> dict[str, Any]:
     if len(payload) != details.st_size or after.st_size != details.st_size:
         raise ValueError("required private input changed during validation")
     try:
-        value = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        value = json.loads(payload, object_pairs_hook=_unique_object)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise ValueError("required private input is invalid JSON") from exc
     if not isinstance(value, dict):
         raise ValueError("required private input must be an object")
+    return value
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _private_artifact(path: Path) -> bytes:
+    descriptor = -1
+    try:
+        before = path.lstat()
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+        )
+        details = os.fstat(descriptor)
+        if (
+            stat.S_ISLNK(before.st_mode)
+            or before.st_dev != details.st_dev
+            or before.st_ino != details.st_ino
+            or not stat.S_ISREG(details.st_mode)
+            or stat.S_IMODE(details.st_mode) != 0o600
+            or not 0 < details.st_size <= _MAX_CHECKPOINT_ARTIFACT_BYTES
+        ):
+            raise ValueError("email checkpoint receipt validation failed")
+        chunks: list[bytes] = []
+        remaining = details.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, _MAX_CHECKPOINT_ARTIFACT_BYTES + 1))
+            if not chunk:
+                raise ValueError("email checkpoint receipt validation failed")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if (
+            len(payload) != details.st_size
+            or after.st_dev != details.st_dev
+            or after.st_ino != details.st_ino
+            or after.st_size != details.st_size
+            or stat.S_IMODE(after.st_mode) != 0o600
+        ):
+            raise ValueError("email checkpoint receipt validation failed")
+        return payload
+    except ValueError:
+        raise
+    except OSError:
+        raise ValueError("email checkpoint receipt is unavailable") from None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _closed_json_object(payload: bytes) -> dict[str, object]:
+    try:
+        value = json.loads(payload, object_pairs_hook=_unique_object)
+    except UnicodeDecodeError, json.JSONDecodeError, ValueError:
+        raise ValueError("email checkpoint receipt validation failed") from None
+    if not isinstance(value, dict):
+        raise ValueError("email checkpoint receipt validation failed")
     return value
 
 
@@ -231,7 +309,7 @@ def _bounded_integer(value: object, *, minimum: int, maximum: int) -> int:
     return value
 
 
-def _validate_email(path: Path) -> None:
+def _validate_email(path: Path) -> dict[str, object]:
     value = _object(path, maximum=65_536, private=True)
     if set(value) != _EMAIL_FIELDS:
         raise ValueError("email credential schema is invalid")
@@ -274,8 +352,8 @@ def _validate_email(path: Path) -> None:
     ):
         raise ValueError("email initial checkpoint is invalid")
     try:
-        checkpoint = json.loads(checkpoint_value)
-    except json.JSONDecodeError as exc:
+        checkpoint = json.loads(checkpoint_value, object_pairs_hook=_unique_object)
+    except (json.JSONDecodeError, ValueError) as exc:
         raise ValueError("email initial checkpoint is invalid") from exc
     if (
         not isinstance(checkpoint, dict)
@@ -288,6 +366,75 @@ def _validate_email(path: Path) -> None:
         or checkpoint["uidvalidity"] < 1
     ):
         raise ValueError("email initial checkpoint is invalid")
+    return checkpoint
+
+
+def _canary_directory(manifest: Path, control: Path) -> Path:
+    directory = manifest.parent
+    control_directory = control.parent
+    try:
+        details = directory.lstat()
+        control_details = control_directory.lstat()
+        resolved = directory.resolve(strict=True)
+        control_parent = control_directory.resolve(strict=True)
+    except OSError:
+        raise ValueError("email checkpoint receipt directory is unavailable") from None
+    if (
+        directory.is_symlink()
+        or control_directory.is_symlink()
+        or not stat.S_ISDIR(details.st_mode)
+        or not stat.S_ISDIR(control_details.st_mode)
+        or stat.S_IMODE(details.st_mode) != 0o700
+        or stat.S_IMODE(control_details.st_mode) != 0o700
+        or resolved != control_parent
+    ):
+        raise ValueError("email checkpoint receipt directory is unsafe")
+    return resolved
+
+
+def _validate_checkpoint_receipt(
+    directory: Path,
+    *,
+    initial_checkpoint: Mapping[str, object],
+    activation: datetime,
+    now: datetime,
+    source_commit: str,
+) -> None:
+    checkpoint_bytes = _private_artifact(directory / "email-checkpoint.json")
+    receipt_bytes = _private_artifact(directory / "email-checkpoint-receipt.json")
+    checkpoint = _closed_json_object(checkpoint_bytes)
+    receipt = _closed_json_object(receipt_bytes)
+    version = checkpoint.get("version")
+    mailbox = checkpoint.get("mailbox")
+    uid = checkpoint.get("uid")
+    uidvalidity = checkpoint.get("uidvalidity")
+    if (
+        set(checkpoint) != _CHECKPOINT_FIELDS
+        or type(version) is not int
+        or version != 1
+        or not isinstance(mailbox, str)
+        or type(uid) is not int
+        or type(uidvalidity) is not int
+        or checkpoint != initial_checkpoint
+    ):
+        raise ValueError("email checkpoint receipt validation failed")
+    if uid < 0 or uidvalidity < 1:
+        raise ValueError("email checkpoint receipt validation failed")
+    if (
+        set(receipt) != _RECEIPT_FIELDS
+        or receipt.get("schema") != _RECEIPT_SCHEMA
+        or type(receipt.get("version")) is not int
+        or receipt.get("version") != 1
+        or receipt.get("operation") != _RECEIPT_OPERATION
+        or receipt.get("read_only") is not True
+        or receipt.get("source_commit") != source_commit
+        or receipt.get("checkpoint_sha256") != hashlib.sha256(checkpoint_bytes).hexdigest()
+    ):
+        raise ValueError("email checkpoint receipt validation failed")
+    receipt_activation = _timestamp(receipt.get("activation_time"))
+    observed = _timestamp(receipt.get("observed_at"))
+    if receipt_activation != activation or not activation <= observed <= now:
+        raise ValueError("email checkpoint receipt validation failed")
 
 
 def _validate_lexicon(path: Path, *, site_id: object, now: datetime) -> None:
@@ -320,10 +467,12 @@ def main(argv: list[str] | None = None) -> int:
         control = _object(args.run_control, maximum=65_536, private=True)
         if hashlib.sha256(args.manifest.read_bytes()).hexdigest() != control.get("manifest_sha256"):
             raise ValueError("canary manifest digest conflicts")
-        if control.get("source_commit") != _source_commit(args.repo_root):
+        source_commit = _source_commit(args.repo_root)
+        if control.get("source_commit") != source_commit:
             raise ValueError("canary source binding conflicts")
         current_time = _now(args.now)
         _validate_manifest(manifest, control, now=current_time)
+        canary_directory = _canary_directory(args.manifest, args.run_control)
         directory = args.secret_dir
         details = directory.lstat()
         if (
@@ -332,7 +481,14 @@ def main(argv: list[str] | None = None) -> int:
             or stat.S_IMODE(details.st_mode) != 0o700
         ):
             raise ValueError("secret directory is unsafe")
-        _validate_email(directory / "email_credential")
+        initial_checkpoint = _validate_email(directory / "email_credential")
+        _validate_checkpoint_receipt(
+            canary_directory,
+            initial_checkpoint=initial_checkpoint,
+            activation=_timestamp(control.get("activation_time")),
+            now=current_time,
+            source_commit=source_commit,
+        )
         _private_bytes(directory / "deepseek_api_key", minimum=1, maximum=4096)
         _private_bytes(directory / "identity_hmac_key", minimum=32, maximum=4096)
         _private_bytes(directory / "tokenizer_hmac_key", minimum=32, maximum=32, exact=32)
