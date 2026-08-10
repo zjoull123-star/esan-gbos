@@ -14,6 +14,11 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     UV_NO_PROGRESS=1
 
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid 10001 gbos \
     && useradd --uid 10001 --gid gbos --create-home --shell /usr/sbin/nologin gbos
 

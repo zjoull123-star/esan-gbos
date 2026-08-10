@@ -45,6 +45,9 @@ def test_runtime_containerfile_is_frozen_nonroot_and_contains_runtime_sources() 
     assert "pip install" not in containerfile
     assert "latest" not in containerfile
     assert "uv sync --frozen --no-dev" in containerfile
+    assert "apt-get update" in containerfile
+    assert "apt-get upgrade -y" in containerfile
+    assert "rm -rf /var/lib/apt/lists/*" in containerfile
     assert "COPY pyproject.toml uv.lock" in containerfile
     assert re.search(r"(?m)^COPY (?:--chown=[^ ]+ )?services ", containerfile)
     assert re.search(r"(?m)^COPY (?:--chown=[^ ]+ )?contracts ", containerfile)
