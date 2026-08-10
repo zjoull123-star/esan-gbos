@@ -1,0 +1,170 @@
+{
+  "schema_version": "1.0",
+  "evidence_id": "task13-pre-canary-readiness-20260811",
+  "captured_at": "2026-08-10T19:01:53Z",
+  "validation_reference_commit": "66a17db87528d67f08bf6692a1f67eb85e03f4e3",
+  "evidence_commit_predecessor": "66a17db87528d67f08bf6692a1f67eb85e03f4e3",
+  "branch": "feat/user-identity-resolution-20260810",
+  "status": "pre_canary_ready_external_inputs_blocked",
+  "historical_evidence_modified": false,
+  "stability": {
+    "continuous_runtime_required": false,
+    "seventy_two_hour_run": "deferred_by_user"
+  },
+  "source_image_boundary": {
+    "image_source_revision": "00a1a0a395d6326688ff131192c9aa332f8d32b1",
+    "validated_host_revision": "66a17db87528d67f08bf6692a1f67eb85e03f4e3",
+    "app_service_contract_or_lockfile_delta_since_image": false,
+    "newer_host_scope": [
+      "documentation",
+      "image lock evidence",
+      "local lifecycle scripts",
+      "Compose runtime ownership",
+      "tests"
+    ]
+  },
+  "images": {
+    "frappe_pwa": {
+      "reference": "esan-gbos-local-pilot-frappe:2026-08-08",
+      "image_id": "sha256:94c1bb068a868e0c0c7bb1deda231c2fc5bd13f2928b83036f83802674c5afe6",
+      "source_revision": "00a1a0a395d6326688ff131192c9aa332f8d32b1",
+      "source_sha256": "6de42172a68ce9a2f0f7fe9b158a4471d4b5b3a646e33563dedc48e364092e7c"
+    },
+    "local_runtime": {
+      "reference": "esan-gbos-local-pilot-runtime:2026-08-08",
+      "image_id": "sha256:705012abe856dbe33298e508c79e121831585e1036dca701a93553ebe0186c8b",
+      "source_revision": "00a1a0a395d6326688ff131192c9aa332f8d32b1",
+      "source_sha256": "a1e4f3a068ab88c54d3cf7753cfa75147b31843f2799144ab1e3a7e23f497894"
+    }
+  },
+  "verification": {
+    "backend": {
+      "passed": 2557,
+      "skipped": 41,
+      "failed": 0,
+      "warnings": 1
+    },
+    "infra": {
+      "passed": 113,
+      "failed": 0,
+      "compose_config": "pass",
+      "shellcheck": "pass"
+    },
+    "frontend": {
+      "lint": "pass",
+      "typecheck": "pass",
+      "unit_passed": 188,
+      "production_build": "pass",
+      "harness_playwright_passed": 22,
+      "live_frappe_playwright_passed": 4,
+      "live_frappe_playwright_skipped": 18
+    },
+    "fresh_frappe": {
+      "versions": {
+        "frappe": "16.30.0",
+        "erpnext": "16.31.0",
+        "crm": "1.81.0",
+        "esan_gbos": "0.1.0"
+      },
+      "apps_installed_from_current_image": true,
+      "migrations_applied_twice": true,
+      "native_tests_passed": 12,
+      "native_tests_failed": 0,
+      "temporary_site_and_database_removed": true
+    },
+    "postgres": {
+      "local_migration_runner_applied_twice": true,
+      "checksum_ledger_consistent": true,
+      "observer_context_agent_media_chain": "pass"
+    },
+    "runtime": {
+      "required_core_services_running": 12,
+      "health": "pass",
+      "channels_enabled": false,
+      "models_enabled": false,
+      "external_send": false,
+      "persistent_volumes_preserved": true
+    },
+    "retention": {
+      "dry_run": "pass_no_deletion",
+      "retention_days": 30,
+      "evidence_volume_owner": "10001:10001",
+      "tokenizer_vault_owner": "10001:10001",
+      "volume_mode": "0700"
+    },
+    "emergency_stop": {
+      "containment_verified": true,
+      "stop_returncode": 0,
+      "inspection_returncode": 0,
+      "running_target_services_after_stop": 0,
+      "receipt_sha256": "da39c6da4f75fe3a95946f1977c42df0183b62c48fa79095b09374024b478336",
+      "latch_cleared_explicitly": true,
+      "synthetic_core_restored": true
+    },
+    "offline_fault_drills": {
+      "verdict": "pass",
+      "receipt_location": "repository_external_private",
+      "receipt_sha256": "8f678921e96338c0b7c110bed4479692dbea4d98a66540ecb84d0b68b88f1a9e",
+      "drills": [
+        "email_duplicate_uid",
+        "email_uidvalidity_change",
+        "email_attachment_quarantine",
+        "model_retry_and_protocol_failure",
+        "identity_restart_and_revocation"
+      ]
+    },
+    "python_static": {
+      "ruff_check": "pass",
+      "ruff_format_files": 492,
+      "mypy_service_files": 123,
+      "compileall_python": "3.14.2",
+      "uv_lock_check": "pass",
+      "secret_scan": "pass"
+    }
+  },
+  "formal_state": {
+    "production_go": false,
+    "local_pilot_go": false,
+    "composition_status": "composed",
+    "external_send": false
+  },
+  "available_private_inputs": {
+    "frappe_materializer_credentials": true,
+    "tokenizer_hmac_key": true,
+    "mapping_vault_key": true,
+    "frappe_fixture_identity_inputs": true
+  },
+  "missing_external_inputs": [
+    "email_credential",
+    "deepseek_api_key",
+    "identity_hmac_key",
+    "trusted_phrase_lexicon",
+    "frappe_identity_resolver_api_key",
+    "frappe_identity_resolver_api_secret"
+  ],
+  "go_no_go": {
+    "credential_free_readiness": "go",
+    "disabled_synthetic_core": "go",
+    "real_email_deepseek_canary": "no_go",
+    "observed_model_identity": "unknown",
+    "kingdee": "no_go",
+    "cloud": "no_go",
+    "production": "no_go",
+    "external_send": "no_go"
+  },
+  "external_activity": {
+    "real_email_connections": 0,
+    "real_model_api_calls": 0,
+    "external_messages": 0,
+    "kingdee_calls": 0,
+    "cloud_deployments": 0,
+    "production_writes": 0
+  },
+  "limitations": [
+    "No IMAP credential, real message, DeepSeek API key, model response or observed model identity was available.",
+    "The fault drills are credential-free deterministic drills; live provider recovery remains part of the real canary.",
+    "The 41 skipped backend tests are separately gated PostgreSQL integration nodes; the local migration chain was executed twice in the composed runtime.",
+    "The 72-hour continuous run was explicitly deferred by the user and is not an exit gate for this phase.",
+    "This package does not grant production, Kingdee, cloud, outbound messaging or formal business command approval."
+  ]
+}

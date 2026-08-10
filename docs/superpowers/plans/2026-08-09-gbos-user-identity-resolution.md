@@ -12,11 +12,14 @@
 
 ---
 
-## Implementation status snapshot — 2026-08-10
+## Implementation status snapshot — 2026-08-11
 
-The offline implementation baseline is `c98f6a5`. This status section records what
-was actually implemented and verified; it does not rewrite the task checklist below
-or authorize the real canary.
+The original offline implementation baseline is `c98f6a5`. The current host-validation
+reference is `66a17db87528d67f08bf6692a1f67eb85e03f4e3`; the two locked runtime
+images were built from `00a1a0a395d6326688ff131192c9aa332f8d32b1`, with no later
+`apps/`, `services/`, `contracts/` or dependency-lock delta through the validation
+reference. This status section records what was actually implemented and verified;
+it does not authorize the real canary.
 
 The four user relationships remain separate and **禁止相互推导**:
 
@@ -28,16 +31,18 @@ The four user relationships remain separate and **禁止相互推导**:
 | Scope | Current status | Remaining evidence |
 | --- | --- | --- |
 | Task 1–3 | Implemented and verified | None for the offline contract/baseline scope |
-| Task 4–5 | Frappe authority and least-privilege resolver implemented | 真实 Frappe bench/site native run 未执行 |
-| Task 6–8 | Stable identity, projection, self-access and party enrichment implemented | PostgreSQL 17 disposable matrix passed 14/14 after migrations were applied twice |
-| Task 9–11 | Review materialization, BFF and responsive PWA implemented | Real-site workflow remains outside this snapshot |
-| Task 12 | Offline component E2E, worker, metrics contract and alerts implemented | Prometheus image, `promtool` and live scrape 未执行 |
-| Task 13 | **未执行** | Real Email credentials/activation, DeepSeek key/balance, live model identity and 72 小时 pilot |
+| Task 4–5 | Implemented and verified | 真实 Frappe v16 local site, double migrate and native identity tests passed |
+| Task 6–8 | Implemented and verified | PostgreSQL migration/checksum chain ran twice; forced-RLS coverage retained |
+| Task 9–11 | Implemented and verified | Live Frappe subset plus responsive frontend harness passed |
+| Task 12 | Implemented and verified | Local composition, current images, Prometheus/runtime boundaries and offline drills verified |
+| Task 13 | **部分完成** | Credential-free readiness passed; real Email credentials, DeepSeek key, trusted identity inputs and observed model identity remain absent |
 
-The current verdict is only `offline identity resolution technical Go`. The checked-in
-formal state remains `local_pilot_go=false`; real Email, real DeepSeek, 真实 Frappe
-runtime, live Prometheus scrape, 72 小时常驻、Kingdee、cloud、production and external
-send remain No-Go or not run.
+The current verdict is `credential_free_readiness=go` and
+`real_email_deepseek_canary=no_go`. The checked-in formal state remains
+`local_pilot_go=false`; real Email, real DeepSeek, observed model identity, Kingdee,
+cloud, production and external send remain No-Go or not run. 72 小时连续运行不再作为本阶段退出条件；
+it is deferred as an optional later stability observation and does not relax any live
+channel, model, outbound or production gate. 真实 Email + DeepSeek canary 未执行。
 
 ---
 
@@ -282,8 +287,21 @@ Email fixture
 
 **Primary-agent-only external inputs:** IMAP host/port/mailbox/app password/folder, activation time, target team, account user, DeepSeek API key/balance, HMAC key, current trusted phrase lexicon.
 
+**Current boundary:** `credential_free_readiness=go` and
+`real_email_deepseek_canary=no_go`. The disabled synthetic core, current local images,
+fresh Frappe install/migrate/native tests, migration replay, retention dry-run,
+emergency stop and repository-external deterministic fault drills have been verified.
+No real IMAP connection or DeepSeek call has occurred, and observed model identity is
+still unknown. 72 小时连续运行不再作为本阶段退出条件；a shorter evidence-bound health
+sample is sufficient once the real canary can be run.
+
+- [x] Keep committed formal manifest disabled and `external_send=false`.
+- [x] Verify current locked images, fresh Frappe install, double migrations and native permission tests.
+- [x] Verify 30-day retention dry-run, emergency stop and credential-free restart/failure drills.
+- [x] Produce a pre-canary readiness package bound to source SHA and image digests without rewriting historical Gate evidence.
+- [ ] Obtain the missing external inputs and generate a repository-external real canary manifest.
+
 - [ ] Generate a repository-external canary manifest enabling only Email and model projection.
-- [ ] Keep committed formal manifest disabled and `external_send=false`.
 - [ ] Send new test emails from one known internal user and one known customer address after activation time.
 - [ ] Verify BODY.PEEK does not mark read, move, delete or backfill messages.
 - [ ] Approve one User and one Party mapping through the real Review UI.
@@ -291,7 +309,7 @@ Email fixture
 - [ ] Verify DeepSeek request contains no raw email/phone/name/organization sentinel and returns the exact configured model identity; mismatch stops the pilot.
 - [ ] Verify AI Draft/Review output, model usage, $50 warning, $100 stop, 30-day retention and emergency stop.
 - [ ] Run restart, UIDVALIDITY, duplicate UID, attachment quarantine, 429/timeout/invalid JSON and mapping-revocation drills.
-- [ ] Produce a new evidence package bound to source SHA and image digests; do not rewrite historical Gate evidence.
+- [ ] Produce a real-canary evidence package bound to source SHA, image digests and observed model identity; do not rewrite historical Gate evidence.
 - [ ] Declare only `Email + DeepSeek + identity resolution local shadow Go` when all checks pass. Kingdee, cloud, production, external send and formal compliance remain No-Go.
 
 ## Final verification matrix

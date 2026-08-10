@@ -6,13 +6,15 @@
 ## 来源与证据边界
 
 - 规划来源基线是 `8c40731`（观察身份解析 roadmap）；当前分支为
-  `feat/user-identity-resolution-20260810`，实现与最终镜像验证基线为
-  `00a1a0a395d6326688ff131192c9aa332f8d32b1`（`00a1a0a`）。
+  `feat/user-identity-resolution-20260810`。当前 host 验证基线是
+  `66a17db87528d67f08bf6692a1f67eb85e03f4e3`（`66a17db`）；最终镜像
+  源码基线是 `00a1a0a395d6326688ff131192c9aa332f8d32b1`（`00a1a0a`）。
+  两者之间没有 `apps/`、`services/`、`contracts/` 或依赖锁文件差异。
 - 身份解析离线实现基线 `c98f6a5` 保留为历史里程碑；本轮在其上补齐了真实
   Frappe v16 站点、最终镜像、Prometheus live scrape 与安全扫描证据。
 - `docs/evidence/` 中既有 Gate、local-pilot 和 identity-resolution 文件均是
-  historical snapshots。**do not modify** historical evidence；新的现场验证写入
-  独立的 `identity-resolution-runtime` 证据包。
+  historical snapshots。**do not modify** historical evidence；本次退出条件调整与
+  现场验证写入独立的 `task13-readiness` 证据包。
 
 ## 已实现的业务与治理边界
 
@@ -54,28 +56,26 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 | `local-runtime` | `sha256:705012abe856dbe33298e508c79e121831585e1036dca701a93553ebe0186c8b` | `a1e4f3a068ab88c54d3cf7753cfa75147b31843f2799144ab1e3a7e23f497894` |
 
 两套镜像已构建并写入本地 image lock；当前提交尚未用真实凭据启动正式
-渠道/模型 profile。下列 synthetic/Frappe/监控观察来自历史证据快照，不能被新镜像
-构建动作自动继承为新的运行证据。
+渠道/模型 profile。以下是用当前锁定镜像和本地组合栈重新观察的验证结果：
 
-已观察的历史运行验证（不自动升级为 `00a1a0a` 的 live proof）：
-
-- 新建隔离 Frappe site 安装 `frappe 16.30.0`、`erpnext 16.31.0`、
-  `crm 1.81.0`、`esan_gbos 0.1.0`；最终 Frappe 镜像运行原生 app 测试
-  `58 passed`。
+- 新建临时 Frappe site 安装 `frappe 16.30.0`、`erpnext 16.31.0`、
+  `crm 1.81.0`、`esan_gbos 0.1.0`，连续 migrate 两次并运行身份权限原生测试
+  `12 passed`；临时 site 与数据库随后安全移除。
 - 本地 synthetic core 已用上述最终镜像重新创建；Frappe/PWA、Observer、Context、
   Agent、MariaDB、PostgreSQL、Redis 均健康，channels/models/media/tunnel 仍关闭。
 - 真实 Frappe synthetic 站点 Playwright 为 `4 passed, 18 skipped`；完整响应式、
-  身份审核与错误态由前端 harness `22 passed` 覆盖，unit 为 `187 passed`。
+  身份审核与错误态由前端 harness `22 passed` 覆盖，unit 为 `188 passed`。
 - PostgreSQL 隔离矩阵验证了 Gate 3、Gate 4、Gate 5、Media 和 Context；Context
   管理台账只由 owner role 查询，application role 保持最小权限。
-- Prometheus 3.7.3 live target `identity-resolution` 为 `up=1`，5 条规则健康；
-  `gbos_identity_resolver_ready=0` 是预期结果，因为真实身份 worker/渠道未启用。
+- 30 天保留策略 dry-run 通过且没有删除数据；紧急停止演练确认处理目标全部停止，
+  随后显式解除 latch 并恢复 synthetic core。仓库外无凭据故障演练覆盖重复 UID、
+  UIDVALIDITY、附件隔离、模型失败与身份撤销。
 - 固定 Trivy 0.73.0 已在本轮对源码锁文件、两个 Containerfile 和 `00a1a0a`
   两套镜像重新执行；结果均为 0 个未豁免 High/Critical、0 secrets、0
   misconfigurations。历史 57 条豁免/103 个 exact PURL 仍单独显示且不等于消失；
   运行时仍为 Python 3.14.2，构建时安装了当前 Debian 12.15 安全更新。
 
-详见 [当前身份解析运行证据](evidence/identity-resolution-runtime/identity-resolution-runtime-summary.md)。
+详见 [Task 13 真实渠道前就绪证据](evidence/task13-readiness/task13-readiness-summary.md)。
 
 ## 正式状态与剩余门
 
@@ -86,14 +86,18 @@ production_go=false
 local_pilot_go=false
 composition.status=composed
 external_send=false
+credential_free_readiness=go
+real_email_deepseek_canary=no_go
+observed_model_identity=unknown
 ```
 
 - Task 1–12 的离线、真实本地 Frappe、最终镜像和监控验证已完成。
-- Task 13 真实 Email + DeepSeek shadow canary **未执行**；缺少 IMAP 凭据、
-  DeepSeek API Key/余额、启用时间、目标 team/account user 和人工批准的 names/org
-  lexicon。real channels、real model call/model identity 仍为 No-Go/unknown。
+- Task 13 的无凭据就绪验证已完成；真实 Email + DeepSeek shadow canary **未执行**。
+  当前缺少 Email credential、DeepSeek API Key、identity HMAC、人工批准的 trusted
+  phrase lexicon，以及 Frappe identity resolver API key/secret。real channels、
+  real model call/model identity 仍为 No-Go/unknown。
 - 72 小时连续运行不再作为本阶段退出条件；该稳定性窗口未执行、未评估，也不再
-  单独阻塞 local pilot。真实 UIDVALIDITY、429、超时和断网恢复演练仍未执行。
+  单独阻塞本阶段。真实 UIDVALIDITY、429、超时和断网恢复演练仍未执行。
 - Kingdee、cloud、production、外发和正式业务命令继续 No-Go。
 
 ## 后续实施顺序
@@ -103,8 +107,8 @@ external_send=false
    checked-in manifest 不修改。
 3. 先做一封新测试邮件，再验证去重、身份 unresolved → review → confirmed/revoked、
    模型标记化、费用台账和 kill switch；不得回补历史。
-4. 完成短时健康采样、故障演练和新 evidence package 后，才可讨论
-   `local_pilot_go`；证据记录实际运行时长但不要求 72 小时，production Go 仍需
-   独立审批。
+4. 完成证据绑定的短时健康采样、真实故障演练和新 evidence package 后，才可讨论
+   Email + DeepSeek local shadow Go；证据记录实际运行时长但不要求 72 小时。
+   正式 `local_pilot_go` 与 production Go 仍需独立审批。
 
 本 handoff 不包含凭据、token、cookie、原始消息、模型响应或生产业务数据。
