@@ -32,6 +32,8 @@ from esan_gbos.gbos.doctype.gbos_review_case.gbos_review_case import (
 )
 
 REVIEW_ROLES = REVIEW_CASE_ROLES
+_IDENTITY_SUBJECT_DOCTYPE = "GBOS External Identity"
+_PROTECTED_IDENTITY_SUBJECT = "protected:identity-subject"
 
 
 def _parse_json(value: object, *, fallback: Any) -> Any:
@@ -52,6 +54,7 @@ def _scoped_case(name: str, *, for_update: bool = False) -> Any:
 
 
 def _decision_dto(decision: Any) -> dict[str, Any]:
+    subject_doctype = decision.subject_doctype
     return {
         "name": decision.name,
         "review_case": decision.review_case,
@@ -60,8 +63,12 @@ def _decision_dto(decision: Any) -> dict[str, Any]:
         "reason": decision.reason,
         "case_revision": decision.case_revision,
         "case_payload_sha256": decision.case_payload_sha256,
-        "subject_doctype": decision.subject_doctype,
-        "subject_name": decision.subject_name,
+        "subject_doctype": subject_doctype,
+        "subject_name": (
+            _PROTECTED_IDENTITY_SUBJECT
+            if subject_doctype == _IDENTITY_SUBJECT_DOCTYPE
+            else decision.subject_name
+        ),
         "subject_revision": decision.subject_revision,
         "subject_payload_sha256": decision.subject_payload_sha256,
         "evidence_refs": _parse_json(decision.evidence_refs, fallback=[]),
@@ -73,7 +80,8 @@ def _decision_dto(decision: Any) -> dict[str, Any]:
 
 
 def _case_dto(case: Any) -> dict[str, Any]:
-    snapshot = _parse_json(case.subject_snapshot, fallback={})
+    is_identity_review = case.subject_doctype == _IDENTITY_SUBJECT_DOCTYPE
+    snapshot = {} if is_identity_review else _parse_json(case.subject_snapshot, fallback={})
     evidence_refs = _parse_json(case.evidence_refs, fallback=[])
     return {
         "name": case.name,
@@ -86,7 +94,7 @@ def _case_dto(case: Any) -> dict[str, Any]:
         "case_payload_hash": case.case_payload_sha256,
         "subject": {
             "doctype": case.subject_doctype,
-            "name": case.subject_name,
+            "name": (_PROTECTED_IDENTITY_SUBJECT if is_identity_review else case.subject_name),
             "revision": case.subject_revision,
             "payload_hash": case.subject_payload_sha256,
             "snapshot": snapshot,

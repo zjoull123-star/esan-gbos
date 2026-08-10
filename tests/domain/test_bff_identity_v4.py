@@ -346,6 +346,227 @@ def identity_module(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, FakeFrappe, S
                 sys.modules[name] = value
 
 
+@pytest.fixture
+def review_case_module(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, FakeFrappe]:
+    fake = FakeFrappe()
+    fake.session.user = "reviewer@example.invalid"
+
+    common = ModuleType("esan_gbos.api.v1.common")
+    common.BFFError = TestBFFError
+    common.bff_endpoint = lambda _method: lambda function: function
+    common.request_id = lambda: "REQ-review-001"
+    common.require_roles = lambda _roles: None
+    common.success = lambda data, **meta: {
+        "data": data,
+        "meta": {"schema_version": "1.0", "request_id": "REQ-review-001", **meta},
+    }
+
+    audit = ModuleType("esan_gbos.api.v1.audit")
+    audit.run_idempotent = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("decision execution is outside this serialization fixture")
+    )
+
+    access_policy = ModuleType("esan_gbos.domain.access_policy")
+    access_policy.REVIEW_CASE_ROLES = frozenset({"Reviewer", "GBOS Admin"})
+    access_policy.can_access_review_case = lambda **_kwargs: True
+    access_policy.review_case_scope_filters = lambda **_kwargs: {}
+
+    query = ModuleType("esan_gbos.domain.query")
+    query.CursorError = ValueError
+    query.decode_cursor = lambda _value: ("", "")
+    query.encode_cursor = lambda *_values: "cursor"
+
+    review_dto = ModuleType("esan_gbos.domain.review_dto")
+
+    class ReviewDTOValidationError(ValueError):
+        pass
+
+    review_dto.ReviewDTOValidationError = ReviewDTOValidationError
+    review_dto.canonical_payload_hash = lambda _value: "a" * 64
+    review_dto.validate_decision_payload = lambda value: value
+    review_dto.validate_evidence_references = lambda value: value
+
+    review_doctype = ModuleType("esan_gbos.gbos.doctype.gbos_review_case.gbos_review_case")
+    review_doctype.build_case_payload = lambda _case: {}
+    review_doctype.build_subject_snapshot = lambda _subject: {}
+
+    frappe_utils = ModuleType("frappe.utils")
+    frappe_utils.now_datetime = lambda: "2026-08-11T00:00:00+00:00"
+
+    module_names = {
+        "frappe": fake,
+        "frappe.utils": frappe_utils,
+        "esan_gbos.api.v1.common": common,
+        "esan_gbos.api.v1.audit": audit,
+        "esan_gbos.domain.access_policy": access_policy,
+        "esan_gbos.domain.query": query,
+        "esan_gbos.domain.review_dto": review_dto,
+        "esan_gbos.gbos.doctype.gbos_review_case.gbos_review_case": review_doctype,
+    }
+    previous = {name: sys.modules.get(name) for name in module_names}
+    for name, value in module_names.items():
+        monkeypatch.setitem(sys.modules, name, value)
+    sys.modules.pop("esan_gbos.api.v2.review_case", None)
+    try:
+        module = importlib.import_module("esan_gbos.api.v2.review_case")
+        yield module, fake
+    finally:
+        sys.modules.pop("esan_gbos.api.v2.review_case", None)
+        for name, value in previous.items():
+            if value is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = value
+
+
+def _review_case_row(
+    *,
+    name: str,
+    subject_doctype: str,
+    subject_name: str,
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "title": "Identity Resolution"
+        if subject_doctype == "GBOS External Identity"
+        else "General review",
+        "team": "TEM-01",
+        "assigned_reviewer": "reviewer@example.invalid",
+        "business_status": "Pending",
+        "review_status": "Pending",
+        "revision": 4,
+        "case_payload_sha256": "a" * 64,
+        "subject_doctype": subject_doctype,
+        "subject_name": subject_name,
+        "subject_revision": 2,
+        "subject_payload_sha256": "b" * 64,
+        "subject_snapshot": json.dumps(snapshot),
+        "evidence_refs": json.dumps(["EVD-01"]),
+        "policy_version": "identity-resolution-v1",
+        "origin": "Manual",
+        "decision_note": None,
+        "decided_by": None,
+        "decided_at": None,
+        "decision_record": None,
+        "decision_payload_sha256": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("identity_type", "target_field", "target_ref"),
+    [
+        ("User", "user", "identity.user@example.invalid"),
+        ("Party", "party_profile", "PARTY-RAW-TARGET-01"),
+    ],
+)
+def test_generic_review_detail_redacts_identity_subject_target_snapshot_and_model_raw(
+    review_case_module: tuple[Any, FakeFrappe],
+    identity_type: str,
+    target_field: str,
+    target_ref: str,
+) -> None:
+    review_case, fake = review_case_module
+    mapping_ref = f"IDENTITY-MAPPING-{identity_type.upper()}"
+    fake.tables["GBOS Review Case"] = [
+        _review_case_row(
+            name=f"REV-{identity_type.upper()}",
+            subject_doctype="GBOS External Identity",
+            subject_name=mapping_ref,
+            snapshot={
+                "doctype": "GBOS External Identity",
+                "name": mapping_ref,
+                "revision": 2,
+                "external_subject": f"extid:v1:email:{identity_type.lower()}-raw",
+                "identity_type": identity_type,
+                "user": target_ref if target_field == "user" else None,
+                "party_profile": target_ref if target_field == "party_profile" else None,
+                "model": {
+                    "name": "MODEL-RAW-NAME",
+                    "target_ref": "MODEL-RAW-TARGET",
+                },
+            },
+        )
+    ]
+
+    response = review_case.get(f"REV-{identity_type.upper()}")
+
+    rendered = json.dumps(response, sort_keys=True)
+    assert response["data"]["case"]["subject"] == {
+        "doctype": "GBOS External Identity",
+        "name": "protected:identity-subject",
+        "revision": 2,
+        "payload_hash": "b" * 64,
+        "snapshot": {},
+    }
+    for forbidden in (
+        mapping_ref,
+        "subject_snapshot",
+        "external_subject",
+        target_field,
+        target_ref,
+        "MODEL-RAW-NAME",
+        "MODEL-RAW-TARGET",
+    ):
+        assert forbidden not in rendered
+
+
+def test_generic_review_serialization_preserves_non_identity_snapshot_behavior(
+    review_case_module: tuple[Any, FakeFrappe],
+) -> None:
+    review_case, fake = review_case_module
+    snapshot = {
+        "doctype": "GBOS Sample Feedback",
+        "name": "FEEDBACK-01",
+        "revision": 3,
+        "summary": "Pinned non-identity fact",
+    }
+    fake.tables["GBOS Review Case"] = [
+        _review_case_row(
+            name="REV-GENERAL",
+            subject_doctype="GBOS Sample Feedback",
+            subject_name="FEEDBACK-01",
+            snapshot=snapshot,
+        )
+    ]
+
+    response = review_case.get("REV-GENERAL")
+
+    assert response["data"]["case"]["subject"]["name"] == "FEEDBACK-01"
+    assert response["data"]["case"]["subject"]["snapshot"] == snapshot
+
+
+def test_generic_review_decision_dto_redacts_identity_subject_reference(
+    review_case_module: tuple[Any, FakeFrappe],
+) -> None:
+    review_case, _fake = review_case_module
+    decision = FakeDoc(
+        {
+            "name": "DEC-IDENTITY-01",
+            "review_case": "REV-IDENTITY-01",
+            "decision": "Approved",
+            "reviewer": "reviewer@example.invalid",
+            "reason": "Evidence is sufficient.",
+            "case_revision": 4,
+            "case_payload_sha256": "a" * 64,
+            "subject_doctype": "GBOS External Identity",
+            "subject_name": "IDENTITY-MAPPING-RAW-01",
+            "subject_revision": 2,
+            "subject_payload_sha256": "b" * 64,
+            "evidence_refs": json.dumps(["EVD-01"]),
+            "policy_version": "identity-resolution-v1",
+            "payload_sha256": "c" * 64,
+            "request_id": "REQ-review-001",
+            "decided_at": "2026-08-11T00:00:00+00:00",
+        }
+    )
+
+    serialized = review_case._decision_dto(decision)
+
+    assert serialized["subject_name"] == "protected:identity-subject"
+    assert "IDENTITY-MAPPING-RAW-01" not in repr(serialized)
+
+
 def _mapping(
     identity_ref: str,
     *,

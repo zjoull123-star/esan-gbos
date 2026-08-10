@@ -529,6 +529,20 @@ describe("Gate 4 人工审核界面", () => {
   });
 
   it("409 冲突时清除待提交状态并刷新案件，不自动重放旧决定", async () => {
+    const identityConflictFixture = {
+      case: {
+        ...detailFixture.case,
+        name: "IDENTITY-REV-CONFLICT",
+        title: "Identity Resolution",
+        subject: {
+          ...detailFixture.case.subject,
+          doctype: "GBOS External Identity",
+          name: "protected:identity-subject",
+          snapshot: {},
+        },
+      },
+      decision: null,
+    };
     const conflict = new Response(
       JSON.stringify({
         message: {
@@ -544,16 +558,16 @@ describe("Gate 4 人工审核界面", () => {
     );
     const fetcher = vi
       .fn<Fetcher>()
-      .mockResolvedValueOnce(ok(detailFixture))
+      .mockResolvedValueOnce(ok(identityConflictFixture))
       .mockResolvedValueOnce(conflict)
-      .mockResolvedValueOnce(ok(detailFixture, "req-refreshed"));
+      .mockResolvedValueOnce(ok(identityConflictFixture, "req-refreshed"));
     const client = createBffClient({
       fetcher,
       isOnline: () => true,
       getCsrfToken: () => "csrf-review",
     });
     const wrapper = mount(ReviewDetailView, {
-      props: { id: "REVIEW-01HZX" },
+      props: { id: "IDENTITY-REV-CONFLICT" },
       global: { provide: { [BFF_CLIENT_KEY as symbol]: client } },
     });
     await flushPromises();
@@ -567,6 +581,8 @@ describe("Gate 4 人工审核界面", () => {
       expect.stringContaining(BFF_V2_ENDPOINTS.reviewGet),
     );
     expect(wrapper.text()).toContain("案件或主体已更新，请重新审核");
+    expect(wrapper.text()).toContain("身份解析案件");
+    expect(wrapper.text()).not.toContain("protected:identity-subject");
     expect(wrapper.get("textarea").element.value).toBe("");
   });
 
@@ -592,45 +608,88 @@ describe("Gate 4 人工审核界面", () => {
     localSet.mockRestore();
   });
 
-  it("External Identity 案件不转储受保护主体快照，通用案件仍保留现有快照视图", async () => {
-    const identityFixture = {
-      case: {
-        ...detailFixture.case,
-        title: "Identity Resolution",
-        subject: {
-          ...detailFixture.case.subject,
-          doctype: "GBOS External Identity",
-          name: "PROTECTED-MAPPING-REF",
-          snapshot: {
-            external_subject: "RAW-SUBJECT-MUST-NOT-RENDER",
-            target_ref: "PROTECTED-TARGET-MUST-NOT-RENDER",
-            model_target: "MODEL-TARGET-MUST-NOT-RENDER",
+  it.each([
+    ["User", "IDENTITY-REV-USER"],
+    ["Party", "IDENTITY-REV-PARTY"],
+  ])(
+    "External Identity %s 案件只接收脱敏详情并通过治理命令批准",
+    async (_targetType, reviewCaseRef) => {
+      const identityFixture = {
+        case: {
+          ...detailFixture.case,
+          name: reviewCaseRef,
+          title: "Identity Resolution",
+          subject: {
+            ...detailFixture.case.subject,
+            doctype: "GBOS External Identity",
+            name: "protected:identity-subject",
+            snapshot: {},
           },
         },
-      },
-      decision: null,
-    };
-    const wrapper = mount(ReviewDetailView, {
-      props: { id: "IDENTITY-REV-1" },
-      global: {
-        provide: {
-          [BFF_CLIENT_KEY as symbol]: createBffClient({
-            fetcher: vi.fn<Fetcher>().mockResolvedValue(ok(identityFixture)),
-            isOnline: () => true,
-          }),
+        decision: null,
+      };
+      const decidedFixture = {
+        case: {
+          ...identityFixture.case,
+          review_status: "Approved" as const,
+          case_revision: 5,
+          decision_note: "身份映射证据充分。",
         },
-      },
-    });
-    await flushPromises();
+        decision: {
+          name: `DEC-${reviewCaseRef}`,
+          decision: "Approved" as const,
+          subject_doctype: "GBOS External Identity",
+          subject_name: "protected:identity-subject",
+        },
+      };
+      const browserResponses = [identityFixture, decidedFixture];
+      const fetcher = vi
+        .fn<Fetcher>()
+        .mockResolvedValueOnce(ok(identityFixture))
+        .mockResolvedValueOnce(ok(decidedFixture));
+      const wrapper = mount(ReviewDetailView, {
+        props: { id: reviewCaseRef },
+        global: {
+          provide: {
+            [BFF_CLIENT_KEY as symbol]: createBffClient({
+              fetcher,
+              isOnline: () => true,
+              getCsrfToken: () => "csrf-review",
+            }),
+          },
+        },
+      });
+      await flushPromises();
 
-    expect(wrapper.text()).toContain("身份解析案件");
-    expect(wrapper.text()).toContain("身份解析筛选");
-    expect(wrapper.text()).not.toContain("RAW-SUBJECT-MUST-NOT-RENDER");
-    expect(wrapper.text()).not.toContain("PROTECTED-TARGET-MUST-NOT-RENDER");
-    expect(wrapper.text()).not.toContain("MODEL-TARGET-MUST-NOT-RENDER");
-    expect(wrapper.text()).not.toContain("PROTECTED-MAPPING-REF");
-    expect(wrapper.findComponent(ReviewDecisionForm).exists()).toBe(true);
-    expect(wrapper.get('button[data-decision="Approved"]').text()).toContain("批准案件");
-    expect(wrapper.get('button[data-decision="Rejected"]').text()).toContain("拒绝案件");
-  });
+      expect(wrapper.text()).toContain("身份解析案件");
+      expect(wrapper.text()).toContain("可在下方记录批准或拒绝决定");
+      expect(wrapper.text()).not.toContain("请返回审核队列");
+      expect(JSON.stringify(browserResponses)).not.toMatch(
+        /external_subject|subject_snapshot|identity\.user@example\.invalid|PARTY-RAW-TARGET|MODEL-RAW/u,
+      );
+      expect(wrapper.text()).not.toContain("protected:identity-subject");
+      expect(wrapper.findComponent(ReviewDecisionForm).exists()).toBe(true);
+      expect(wrapper.get('button[data-decision="Approved"]').text()).toContain("批准案件");
+      expect(wrapper.get('button[data-decision="Rejected"]').text()).toContain("拒绝案件");
+      await wrapper.get("textarea").setValue("身份映射证据充分。");
+      await wrapper.get('button[data-decision="Approved"]').trigger("click");
+      await flushPromises();
+
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher.mock.calls[1]?.[0]).toBe(BFF_V2_ENDPOINTS.reviewDecide);
+      const body = new URLSearchParams(String(fetcher.mock.calls[1]?.[1]?.body));
+      expect(Object.fromEntries(body)).toMatchObject({
+        name: reviewCaseRef,
+        decision: "Approved",
+        expected_revision: "3",
+        expected_subject_revision: "2",
+        subject_payload_sha256: "b".repeat(64),
+        evidence_refs: JSON.stringify(["EVID-01HZX"]),
+        policy_version: "gbos-action-policy@1.0.0",
+        expected_case_payload_hash: "a".repeat(64),
+      });
+      expect(body.get("idempotency_key")).toMatch(/\S/u);
+      expect(wrapper.text()).toContain("审核决定已记录");
+    },
+  );
 });

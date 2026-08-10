@@ -484,6 +484,40 @@ const v1Envelope = <T>(data: T) => ({
 
 const syntheticReviewCase = syntheticReviewEnvelope.message.data.cases[0];
 const syntheticReviewDetailEnvelope = v1Envelope({ case: syntheticReviewCase });
+const syntheticIdentityGenericReviewCase = {
+  ...syntheticReviewCase,
+  name: "IDENTITY-REVIEW-E2E",
+  title: "Identity Resolution",
+  case_revision: 3,
+  subject: {
+    doctype: "GBOS External Identity",
+    name: "protected:identity-subject",
+    revision: 2,
+    payload_hash: "d".repeat(64),
+    snapshot: {},
+  },
+  evidence: [{ evidence_type: "Evidence", reference: "EVID-IDENTITY-E2E" }],
+  policy_reference: "identity-resolution-v1",
+  origin: "Manual",
+};
+const syntheticIdentityGenericReviewDetailEnvelope = v1Envelope({
+  case: syntheticIdentityGenericReviewCase,
+  decision: null,
+});
+const syntheticIdentityGenericDecisionEnvelope = v1Envelope({
+  case: {
+    ...syntheticIdentityGenericReviewCase,
+    review_status: "Approved",
+    case_revision: 4,
+    decision_note: "身份映射证据充分。",
+  },
+  decision: {
+    name: "IDENTITY-DECISION-E2E",
+    decision: "Approved",
+    subject_doctype: "GBOS External Identity",
+    subject_name: "protected:identity-subject",
+  },
+});
 const syntheticPartyEnvelope = v1Envelope({
   profile: {
     name: "PARTY-E2E",
@@ -1091,12 +1125,22 @@ test("身份解析只显示安全标签并通过服务端审核筛选", async ({
   test.skip(!isHarness(testInfo), "身份解析交互使用前端严格 harness");
   await setHarnessSession(page, ["GBOS Admin"]);
   const identityPosts: string[] = [];
+  const decisionPosts: string[] = [];
+  expect(JSON.stringify(syntheticIdentityGenericReviewDetailEnvelope)).not.toMatch(
+    /external_subject|subject_snapshot|identity\.user@example\.invalid|PARTY-RAW-TARGET|MODEL-RAW/u,
+  );
   page.on("request", (request) => {
     if (
       request.method() === "POST" &&
       new URL(request.url()).pathname === BFF_V4_ENDPOINTS.identitySubmitForReview
     ) {
       identityPosts.push(request.postData() ?? "");
+    }
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === BFF_V2_ENDPOINTS.reviewDecide
+    ) {
+      decisionPosts.push(request.postData() ?? "");
     }
   });
   await page.route(`**${BFF_V4_ENDPOINTS.identitySubmitForReview}`, async (route) => {
@@ -1105,6 +1149,25 @@ test("身份解析只显示安全标签并通过服务端审核筛选", async ({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(syntheticIdentityCommandEnvelope),
+    });
+  });
+  await page.route(`**${BFF_V2_ENDPOINTS.reviewGet}**`, async (route) => {
+    const requestUrl = new URL(route.request().url());
+    if (requestUrl.searchParams.get("name") !== "IDENTITY-REVIEW-E2E") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(syntheticIdentityGenericReviewDetailEnvelope),
+    });
+  });
+  await page.route(`**${BFF_V2_ENDPOINTS.reviewDecide}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(syntheticIdentityGenericDecisionEnvelope),
     });
   });
   await page.goto(harnessEntry);
@@ -1140,6 +1203,20 @@ test("身份解析只显示安全标签并通过服务端审核筛选", async ({
   await page.getByRole("button", { name: "查看固定详情" }).click();
   await expect(page.getByRole("heading", { name: "身份解析固定详情" })).toBeVisible();
   expect(await axeViolations(page)).toEqual([]);
+
+  await page.getByRole("link", { name: "进入治理审核" }).click();
+  await expect(page).toHaveURL(/\/gbos\/review\/IDENTITY-REVIEW-E2E$/u);
+  await expect(page.getByRole("heading", { name: "身份解析案件" })).toBeVisible();
+  await expect(page.getByText("protected:identity-subject", { exact: true })).toHaveCount(0);
+  await page.getByLabel("审核说明").fill("身份映射证据充分。");
+  await page.getByRole("button", { name: "批准案件" }).click();
+  await expect(page.getByText("审核决定已记录。", { exact: true })).toBeVisible();
+  expect(decisionPosts).toHaveLength(1);
+  const decisionBody = new URLSearchParams(decisionPosts[0]);
+  expect(decisionBody.get("name")).toBe("IDENTITY-REVIEW-E2E");
+  expect(decisionBody.get("expected_revision")).toBe("3");
+  expect(decisionBody.get("expected_subject_revision")).toBe("2");
+  expect(decisionBody.get("idempotency_key")).toMatch(/\S/u);
 
   for (const width of [320, 375, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
