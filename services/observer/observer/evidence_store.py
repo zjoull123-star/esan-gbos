@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import tempfile
 from pathlib import Path
 
 from .models import StoredObject, TenantScope
@@ -78,18 +79,58 @@ class ContentAddressedEvidenceStore:
         if path.exists():
             self._verify(path, digest)
         else:
+            temp_path = self._write_temp(path, content)
             try:
-                with path.open("xb") as handle:
-                    handle.write(content)
-                os.chmod(path, 0o400)
-            except FileExistsError:
-                self._verify(path, digest)
+                try:
+                    os.link(temp_path, path, follow_symlinks=False)
+                except FileExistsError:
+                    self._verify(path, digest)
+            finally:
+                temp_path.unlink(missing_ok=True)
+                self._fsync_directory(path.parent)
         return StoredObject(
             object_ref=self._object_ref(scope, digest),
             sha256=digest,
             size=len(content),
             media_type=media_type,
         )
+
+    @classmethod
+    def _write_temp(cls, path: Path, content: bytes) -> Path:
+        fd, temp_name = tempfile.mkstemp(
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+        )
+        temp_path = Path(temp_name)
+        try:
+            try:
+                remaining = memoryview(content)
+                while remaining:
+                    written = os.write(fd, remaining)
+                    if written <= 0:
+                        raise OSError("failed to make progress writing evidence object")
+                    remaining = remaining[written:]
+                os.fchmod(fd, 0o400)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except BaseException:
+            try:
+                temp_path.unlink(missing_ok=True)
+            finally:
+                cls._fsync_directory(path.parent)
+            raise
+        return temp_path
+
+    @staticmethod
+    def _fsync_directory(directory: Path) -> None:
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_fd = os.open(directory, flags)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
 
     @staticmethod
     def _verify(path: Path, expected_digest: str) -> bytes:
