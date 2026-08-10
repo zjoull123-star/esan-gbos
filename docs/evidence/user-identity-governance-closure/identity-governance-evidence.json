@@ -1,0 +1,121 @@
+{
+  "schema_version": "1.0",
+  "evidence_id": "user-identity-governance-closure-20260811",
+  "captured_at": "2026-08-10T22:27:09Z",
+  "status": "credential_free_design_closure_real_canary_deferred",
+  "source_scope": {
+    "branch": "feat/user-identity-resolution-20260810",
+    "frappe_source_reference": "28444b8da334c0e3eae2635352e43da4f7d2477b",
+    "runtime_source_reference": "094e794971e96be4f3f1078e7c70936130f65387",
+    "image_lock_commit": "eb8bb1ebb2c183430ac36ef74cafac09052cf96d",
+    "historical_evidence_modified": false
+  },
+  "runtime_images": {
+    "frappe_pwa": {
+      "reference": "esan-gbos-local-pilot-frappe:2026-08-08",
+      "inspect_digest": "sha256:71d7e7fd074d519b246cc1da7bb72deb97c07bf58ffc2a1946c2abc26576fb34",
+      "revision_label": "28444b8da334c0e3eae2635352e43da4f7d2477b",
+      "source_sha256": "1af8239966dd1947d401fc20a83542278fee7355ca0168cf93f6394828db74de"
+    },
+    "local_runtime": {
+      "reference": "esan-gbos-local-pilot-runtime:2026-08-08",
+      "inspect_digest": "sha256:d79fa3982f727b5a47b1783b3731ed153dc07f6a7f1c4a1c81c9b1a5ef407824",
+      "revision_label": "094e794971e96be4f3f1078e7c70936130f65387",
+      "source_sha256": "fa8a4077e055801da970285810e4bc01a10fdbcedd766dbef4b74a7380e5d6c2"
+    }
+  },
+  "verification": {
+    "pytest": {
+      "passed": 2798,
+      "skipped": 43,
+      "failed": 0,
+      "warnings": 1
+    },
+    "domain_contracts_passed": 786,
+    "postgresql_integration": {
+      "passed": 43,
+      "warnings": 1,
+      "disposable_environment_removed": true
+    },
+    "native_frappe": {
+      "identity_tests_passed": 13,
+      "whole_app_tests_passed": 59,
+      "migrations_completed_twice": true,
+      "disposable_environment_removed": true
+    },
+    "frontend": {
+      "unit_passed": 196,
+      "harness_playwright_passed": 25,
+      "lint": "pass",
+      "typecheck": "pass",
+      "build": "pass"
+    },
+    "infra_passed": 173,
+    "python_static": {
+      "ruff_check": "pass",
+      "ruff_format": "pass",
+      "mypy_services": "pass",
+      "compileall": "pass",
+      "secret_scan": "pass"
+    },
+    "identity_governance": {
+      "immediate_authority_deny": "verified",
+      "dynamic_target_eligibility": "verified",
+      "rejected_mapping_resubmission": "verified",
+      "safe_review_and_revoke_pwa": "verified",
+      "raw_participant_grants_access": false
+    },
+    "operations": {
+      "model_fatal_latch": "verified_fail_closed",
+      "email_checkpoint": "verified_status_uidvalidity_uidnext_only",
+      "canary_start_backlog_guard": "verified",
+      "automatic_retention_scheduler": "verified_default_off_and_bounded",
+      "retention_real_deletion_run": false
+    }
+  },
+  "validation_activity": {
+    "network_used_for_governed_image_build": true,
+    "isolated_postgresql_containers_started": true,
+    "isolated_frappe_containers_started": true,
+    "isolated_test_state_removed": true,
+    "provider_channel_network": false,
+    "pilot_application_stack_started": false
+  },
+  "external_activity": {
+    "real_imap_connections": 0,
+    "real_model_api_calls": 0,
+    "provider_channel_network": false,
+    "pilot_application_stack_started": false,
+    "observed_model_identity": "unknown",
+    "response_reported_observed_model": "unknown"
+  },
+  "stability": {
+    "seventy_two_hour_run": "deferred_by_user",
+    "required_for_this_stage": false
+  },
+  "formal_state": {
+    "production_go": false,
+    "local_pilot_go": false,
+    "checked_in_email_enabled": false,
+    "checked_in_deepseek_enabled": false,
+    "external_send": false,
+    "kingdee": false,
+    "cloud": false
+  },
+  "missing_external_inputs": [
+    "approved Email credential in macOS Keychain",
+    "DeepSeek API key in macOS Keychain",
+    "identity HMAC key in macOS Keychain",
+    "approved current trusted-phrase lexicon",
+    "Frappe identity-resolver API key and secret in macOS Keychain"
+  ],
+  "go_no_go": {
+    "credential_free_design_closure": "go",
+    "real_email_deepseek_canary": "no_go",
+    "formal_local_pilot": "no_go",
+    "production": "no_go",
+    "kingdee": "no_go",
+    "cloud": "no_go",
+    "external_send": "no_go"
+  }
+}

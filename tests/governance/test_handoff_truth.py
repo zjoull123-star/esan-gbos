@@ -24,8 +24,15 @@ TASK13_CLOSURE_DIR = ROOT / "docs" / "evidence" / "task13-credential-free-closur
 TASK13_CLOSURE_EVIDENCE = TASK13_CLOSURE_DIR / "task13-evidence.json"
 TASK13_CLOSURE_SUMMARY = TASK13_CLOSURE_DIR / "task13-summary.md"
 TASK13_CLOSURE_SUMS = TASK13_CLOSURE_DIR / "SHA256SUMS"
+IDENTITY_CLOSURE_DIR = ROOT / "docs" / "evidence" / "user-identity-governance-closure"
+IDENTITY_CLOSURE_EVIDENCE = IDENTITY_CLOSURE_DIR / "identity-governance-evidence.json"
+IDENTITY_CLOSURE_SUMMARY = IDENTITY_CLOSURE_DIR / "identity-governance-summary.md"
+IDENTITY_CLOSURE_SUMS = IDENTITY_CLOSURE_DIR / "SHA256SUMS"
 
-CURRENT_SOURCE_COMMIT = "ad58ab3ea8c0d521cebd90c2642709d135f98fac"
+HISTORICAL_TASK13_SOURCE_COMMIT = "ad58ab3ea8c0d521cebd90c2642709d135f98fac"
+CURRENT_FRAPPE_SOURCE_COMMIT = "28444b8da334c0e3eae2635352e43da4f7d2477b"
+CURRENT_RUNTIME_SOURCE_COMMIT = "094e794971e96be4f3f1078e7c70936130f65387"
+CURRENT_IMAGE_LOCK_COMMIT = "eb8bb1ebb2c183430ac36ef74cafac09052cf96d"
 
 CEO_ROLES = (
     "CEO",
@@ -162,7 +169,9 @@ def test_current_local_pilot_docs_follow_the_locked_runtime_images() -> None:
         _read(path) for path in (EXTERNAL_DEPS, LOCAL_PLAN, LOCAL_INFRA_README)
     )
 
-    assert CURRENT_SOURCE_COMMIT in current_docs
+    assert CURRENT_FRAPPE_SOURCE_COMMIT in current_docs
+    assert CURRENT_RUNTIME_SOURCE_COMMIT in current_docs
+    assert CURRENT_IMAGE_LOCK_COMMIT in current_docs
     for service, digest in locked_digests.items():
         assert digest in current_docs, service
     for stale in (
@@ -203,9 +212,9 @@ def test_current_task13_closure_snapshot_is_bound_to_code_and_not_a_canary_claim
     summary = _read(TASK13_CLOSURE_SUMMARY)
 
     assert evidence["schema_version"] == "1.0"
-    assert evidence["validation_reference_commit"] == CURRENT_SOURCE_COMMIT
+    assert evidence["validation_reference_commit"] == HISTORICAL_TASK13_SOURCE_COMMIT
     source_scope = evidence["source_scope"]
-    assert source_scope["runtime_code_validation_reference"] == CURRENT_SOURCE_COMMIT
+    assert source_scope["runtime_code_validation_reference"] == HISTORICAL_TASK13_SOURCE_COMMIT
     assert source_scope["branch_head_scope"] == (
         "final branch includes only image-lock/test/docs successors after the "
         "runtime validation reference"
@@ -308,12 +317,106 @@ def test_current_task13_closure_snapshot_checksums_cover_only_current_files() ->
 def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
     handoff = _read(HANDOFF)
 
-    assert CURRENT_SOURCE_COMMIT in handoff
-    assert "runtime code validation reference" in handoff.lower()
-    assert "final branch includes only image-lock/test/docs successors after it" in handoff.lower()
+    assert CURRENT_FRAPPE_SOURCE_COMMIT in handoff
+    assert CURRENT_RUNTIME_SOURCE_COMMIT in handoff
+    assert CURRENT_IMAGE_LOCK_COMMIT in handoff
+    assert "frappe source reference" in handoff.lower()
+    assert "runtime source reference" in handoff.lower()
     assert "current code HEAD 是" not in handoff
-    assert "older-source image" in handoff.lower()
     assert "governed rebuild/record" in handoff.lower()
     assert "response_reported_observed_model=unknown" in handoff
     assert "real_email_deepseek_canary=no_go" in handoff
     assert "72 小时连续运行不再作为本阶段退出条件" in handoff
+
+
+def test_current_identity_governance_closure_is_source_bound_and_honest() -> None:
+    evidence = json.loads(_read(IDENTITY_CLOSURE_EVIDENCE))
+    summary = _read(IDENTITY_CLOSURE_SUMMARY)
+    image_lock = json.loads(_read(IMAGE_LOCK))
+    locked_digests = {
+        image["service"]: image["local_inspect_digest"]
+        for image in image_lock["images"]
+        if image["service"] in {"frappe-pwa", "local-runtime"}
+    }
+
+    assert evidence["schema_version"] == "1.0"
+    assert evidence["status"] == "credential_free_design_closure_real_canary_deferred"
+    assert evidence["source_scope"] == {
+        "branch": "feat/user-identity-resolution-20260810",
+        "frappe_source_reference": CURRENT_FRAPPE_SOURCE_COMMIT,
+        "runtime_source_reference": CURRENT_RUNTIME_SOURCE_COMMIT,
+        "image_lock_commit": CURRENT_IMAGE_LOCK_COMMIT,
+        "historical_evidence_modified": False,
+    }
+    assert (
+        evidence["runtime_images"]["frappe_pwa"]["inspect_digest"] == locked_digests["frappe-pwa"]
+    )
+    assert (
+        evidence["runtime_images"]["local_runtime"]["inspect_digest"]
+        == locked_digests["local-runtime"]
+    )
+    assert evidence["verification"]["pytest"] == {
+        "passed": 2798,
+        "skipped": 43,
+        "failed": 0,
+        "warnings": 1,
+    }
+    assert evidence["verification"]["domain_contracts_passed"] == 786
+    assert evidence["verification"]["postgresql_integration"] == {
+        "passed": 43,
+        "warnings": 1,
+        "disposable_environment_removed": True,
+    }
+    assert evidence["verification"]["native_frappe"] == {
+        "identity_tests_passed": 13,
+        "whole_app_tests_passed": 59,
+        "migrations_completed_twice": True,
+        "disposable_environment_removed": True,
+    }
+    assert evidence["verification"]["frontend"] == {
+        "unit_passed": 196,
+        "harness_playwright_passed": 25,
+        "lint": "pass",
+        "typecheck": "pass",
+        "build": "pass",
+    }
+    assert evidence["verification"]["infra_passed"] == 173
+    assert evidence["formal_state"]["local_pilot_go"] is False
+    assert evidence["formal_state"]["production_go"] is False
+    assert evidence["external_activity"] == {
+        "real_imap_connections": 0,
+        "real_model_api_calls": 0,
+        "provider_channel_network": False,
+        "pilot_application_stack_started": False,
+        "observed_model_identity": "unknown",
+        "response_reported_observed_model": "unknown",
+    }
+    assert evidence["stability"] == {
+        "seventy_two_hour_run": "deferred_by_user",
+        "required_for_this_stage": False,
+    }
+    assert evidence["go_no_go"]["credential_free_design_closure"] == "go"
+    assert evidence["go_no_go"]["real_email_deepseek_canary"] == "no_go"
+    assert evidence["go_no_go"]["formal_local_pilot"] == "no_go"
+    assert evidence["missing_external_inputs"]
+    assert "真实 Email/DeepSeek canary 未执行" in summary
+    assert "72 小时" in summary
+    assert "2798 passed, 43 skipped, 1 warning" in summary
+
+    evidence_text = IDENTITY_CLOSURE_EVIDENCE.read_text(encoding="utf-8")
+    for forbidden in ("sk-", "-----BEGIN", "Cookie:", "Authorization:"):
+        assert forbidden not in evidence_text
+
+
+def test_current_identity_governance_closure_checksums_cover_only_current_files() -> None:
+    entries = {}
+    for line in _read(IDENTITY_CLOSURE_SUMS).splitlines():
+        digest, name = line.split("  ", maxsplit=1)
+        entries[name] = digest
+
+    assert set(entries) == {
+        IDENTITY_CLOSURE_EVIDENCE.name,
+        IDENTITY_CLOSURE_SUMMARY.name,
+    }
+    for name, expected in entries.items():
+        assert hashlib.sha256((IDENTITY_CLOSURE_DIR / name).read_bytes()).hexdigest() == expected

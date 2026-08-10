@@ -31,13 +31,14 @@ rechecked on another container runtime.
 The Frappe, MariaDB, Redis, backend, worker, scheduler, websocket, and PWA
 services use local-pilot-specific volume names. The Frappe services use the
 recorded local image `esan-gbos-local-pilot-frappe:2026-08-08` with inspect digest
-`sha256:22c3a2c129442588d0353c6a8f564aec593afc63b7354b4294d37aa9d40f7625`;
+`sha256:71d7e7fd074d519b246cc1da7bb72deb97c07bf58ffc2a1946c2abc26576fb34`;
 the local runtime digest is
-`sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee`.
-Both images bind runtime-code revision
-`ad58ab3ea8c0d521cebd90c2642709d135f98fac`; later branch commits contain only
-image-lock, test and documentation successors and are not runtime-code deltas inside
-the images.
+`sha256:d79fa3982f727b5a47b1783b3731ed153dc07f6a7f1c4a1c81c9b1a5ef407824`.
+The Frappe source reference is
+`28444b8da334c0e3eae2635352e43da4f7d2477b`; the runtime source reference is
+`094e794971e96be4f3f1078e7c70936130f65387`; the image-lock recording commit is
+`eb8bb1ebb2c183430ac36ef74cafac09052cf96d`. Each image label and source hash was
+inspected independently.
 the upstream ERPNext image is not treated as a GBOS PWA. The previous synthetic
 snapshot, rather than this rebuild alone, reported
 `setup_complete=1`, Frappe/ERPNext/CRM/esan_gbos versions
@@ -75,7 +76,7 @@ temporary core-only manifest and starts the three runtime APIs plus Frappe/PWA.
 It never enables connector, model, media, or tunnel profiles and does not alter
 the checked-in manifest, composition state, or formal `start --require-go` gate.
 The earlier synthetic snapshot completed this path with its then-source-bound images;
-the newly recorded `ad58ab3` images have not been promoted to real-channel evidence.
+the newly recorded source-bound images have not been promoted to real-channel evidence.
 The pinned Prometheus profile also observed the authenticated
 `identity-resolution` target as `up=1` with five healthy rules. Resolver
 readiness remained `0` because the real identity worker and channels were

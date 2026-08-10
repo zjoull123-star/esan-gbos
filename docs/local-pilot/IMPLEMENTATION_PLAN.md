@@ -4,14 +4,14 @@
 channel ingestion, identity resolution and model proposals without enabling outbound
 actions, Kingdee, cloud deployment or production state changes.
 
-**Current validation reference:**
-`ad58ab3ea8c0d521cebd90c2642709d135f98fac`. The locked Frappe/PWA image is
-`sha256:22c3a2c129442588d0353c6a8f564aec593afc63b7354b4294d37aa9d40f7625`
-and the local runtime image is
-`sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee`.
-Both images carry that exact runtime-code revision label. Later branch commits are
-limited to image-lock, test and documentation successors and are not represented as
-additional runtime code inside the images.
+**Current validation references:** Frappe source reference
+`28444b8da334c0e3eae2635352e43da4f7d2477b`, runtime source reference
+`094e794971e96be4f3f1078e7c70936130f65387`, and image-lock recording commit
+`eb8bb1ebb2c183430ac36ef74cafac09052cf96d`. The locked Frappe/PWA image is
+`sha256:71d7e7fd074d519b246cc1da7bb72deb97c07bf58ffc2a1946c2abc26576fb34`;
+the local runtime image is
+`sha256:d79fa3982f727b5a47b1783b3731ed153dc07f6a7f1c4a1c81c9b1a5ef407824`.
+Each image carries its own exact source revision and source-hash label.
 
 ## Current architecture
 
@@ -41,6 +41,10 @@ additional runtime code inside the images.
   exercised and the disabled synthetic core was explicitly restored.
 - [x] Credential-free fault drills covered duplicate UID, UIDVALIDITY change,
   attachment quarantine, model retry/protocol failure, identity restart and revocation.
+- [x] Immediate identity authority denial, dynamic target eligibility, rejected mapping
+  resubmission, governed revoke/review PWA and automatic retention scheduling verified.
+- [x] Disposable PostgreSQL matrix passed 43 tests; fresh Frappe v16 identity/app native
+  suites passed 13/59 tests after two migrations; all disposable state removed.
 - [x] Current pre-canary evidence package records source/image bindings and zero
   external activity without modifying historical Gate evidence.
 

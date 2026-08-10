@@ -14,13 +14,12 @@
 
 ## Implementation status snapshot — 2026-08-11
 
-The original offline implementation baseline is `c98f6a5`. The runtime code validation
-reference is `ad58ab3ea8c0d521cebd90c2642709d135f98fac`; the final branch includes only
-image-lock/test/docs successors after it, so later documentation commits are not inside
-the runtime images. The previously older-source image lock was rebuilt and recorded at
-that runtime validation reference (image-lock recording commit `e10a780`). This status
-section records what was actually implemented and verified; it does not authorize the
-real canary. If final code changes again, rebuild and record images before running it.
+The original offline implementation baseline is `c98f6a5`. The current Frappe source
+reference is `28444b8da334c0e3eae2635352e43da4f7d2477b`; the runtime source reference is
+`094e794971e96be4f3f1078e7c70936130f65387`; image-lock recording commit is
+`eb8bb1ebb2c183430ac36ef74cafac09052cf96d`. This status section records what was
+actually implemented and verified; it does not authorize the real canary. If runtime or
+Frappe source changes again, rebuild and record the affected image before running it.
 
 The four user relationships remain separate and **禁止相互推导**:
 
@@ -36,7 +35,7 @@ The four user relationships remain separate and **禁止相互推导**:
 | Task 6–8 | Implemented and verified | PostgreSQL migration/checksum chain ran twice; forced-RLS coverage retained |
 | Task 9–11 | Implemented and verified | Live Frappe subset plus responsive frontend harness passed |
 | Task 12 | Implemented and verified | Local composition, current-source image inspect/record, Prometheus/runtime boundaries, model fatal latch and offline drills verified |
-| Task 13 | **部分完成** | Credential-free closure passed (`2692 passed/42 skipped/1 warning`, frontend unit `188`, Playwright harness `22`); real Email/DeepSeek credentials and observed model identity remain absent |
+| Task 13 | **Credential-free implementation complete; external canary deferred** | Full suite `2798 passed/43 skipped/1 warning`, frontend unit `196`, Playwright harness `25`, PostgreSQL `43`, native Frappe identity/app `13/59`; real Email/DeepSeek credentials and observed model identity remain absent |
 
 The current verdict is `credential_free_closure=go` and
 `real_email_deepseek_canary=no_go`. The checked-in formal state remains
@@ -47,11 +46,11 @@ fail-closed. Email is source-bound to STATUS-only checkpoint/receipt/preflight, 
 machine DB-attested narrow-window verifier reports only `response_reported_observed_model`
 without free-form observed-model input. 72 小时连续运行不再作为本阶段退出条件；it is
 deferred/not required for this stage and does not relax any live channel, model, outbound
-or production gate. Root's isolated PostgreSQL matrix is `42 passed, 10 deselected,
-1 warning` across Gate3/4/5, Context and Media; its validation DB/network/volume was
-removed. This snapshot used governed dependency/image/scanner network and isolated
-PostgreSQL validation/build/scanner containers only; provider/channel network and pilot
-application services were not used or started. 真实 Email + DeepSeek canary 未执行。
+or production gate. Root's isolated PostgreSQL matrix is `43 passed, 1 warning`; fresh
+Frappe v16 native identity/app suites are `13/59 passed` after two migrations. All
+disposable DB/site containers, networks and volumes were removed. Provider/channel
+network and pilot application services were not used or started. 真实 Email + DeepSeek
+canary 未执行。
 
 ---
 
@@ -297,9 +296,11 @@ Email fixture
 **Primary-agent-only external inputs:** IMAP host/port/mailbox/app password/folder, activation time, target team, account user, DeepSeek API key/balance, HMAC key, current trusted phrase lexicon.
 
 **Current boundary:** `credential_free_closure=go` and
-`real_email_deepseek_canary=no_go`. Full pytest is `2692 passed/42 skipped/1 warning`;
+`real_email_deepseek_canary=no_go`. Full pytest is `2798 passed/43 skipped/1 warning`;
 Ruff check/format, mypy, compileall, secret scan, frontend lint/typecheck/build, unit
-`188` and Playwright harness `22` are green. Model fatal latch behavior is fail-closed;
+`196` and Playwright harness `25` are green. PostgreSQL integration is `43 passed,
+1 warning`; fresh Frappe v16 native identity/app suites are `13/59 passed` after two
+migrations. Model fatal latch behavior is fail-closed;
 Email uses source-bound STATUS-only checkpoint/receipt/preflight; the machine
 DB-attested narrow-window verifier reports only `response_reported_observed_model`.
 No real IMAP connection or DeepSeek call has occurred, and
@@ -312,10 +313,10 @@ Missing Email credential, DeepSeek API key, identity HMAC, trusted phrase lexico
 Frappe identity-resolver credentials remain outside the repository and block the real run.
 
 - [x] Keep committed formal manifest disabled and `external_send=false`.
-- [x] Rebuild and record Frappe/runtime images from `ad58ab3`; re-run this gate if final code changes.
+- [x] Rebuild and record Frappe from `28444b8` and runtime from `094e794`; re-run the affected gate if its source changes.
 - [x] Verify credential-free model fatal latch, Email STATUS-only checkpoint/receipt/preflight, and chain-verifier boundaries.
 - [x] Verify 30-day retention dry-run, emergency stop and credential-free restart/failure drills.
-- [x] Produce a current credential-free closure package bound to `ad58ab3` without rewriting historical Gate evidence.
+- [x] Produce a current credential-free identity-governance closure package without rewriting historical Gate evidence.
 - [ ] Obtain the missing external inputs and generate a repository-external real canary manifest.
 
 - [ ] Generate a repository-external canary manifest enabling only Email and model projection.

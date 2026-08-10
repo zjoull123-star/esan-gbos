@@ -6,20 +6,20 @@
 ## 来源与证据边界
 
 - 规划来源基线是 `8c40731`（观察身份解析 roadmap）；当前分支为
-  `feat/user-identity-resolution-20260810`，runtime code validation reference 是
-  `ad58ab3ea8c0d521cebd90c2642709d135f98fac`（`ad58ab3`）。final branch includes only
-  image-lock/test/docs successors after it；因此后续 handoff/evidence 提交不表示已被
-  写入镜像。历史 host 验证基线是 `66a17db87528d67f08bf6692a1f67eb85e03f4e3`
-  （`66a17db`）；此前 older-source image lock 已按该 runtime validation reference
-  完成 governed rebuild/record（image-lock recording commit `e10a780`），当前镜像
-  revision label 与 `ad58ab3` 一致。真实 canary 仍受外部凭据与正式 go 门阻断。
+  `feat/user-identity-resolution-20260810`。当前 Frappe source reference 是
+  `28444b8da334c0e3eae2635352e43da4f7d2477b`，runtime source reference 是
+  `094e794971e96be4f3f1078e7c70936130f65387`，image-lock recording commit 是
+  `eb8bb1ebb2c183430ac36ef74cafac09052cf96d`。镜像 labels、源码哈希和 inspect
+  digest 已逐项复核；后续 handoff/evidence 文档不在镜像内。真实 canary 仍受外部
+  凭据与正式 go 门阻断。
 - 身份解析离线实现基线 `c98f6a5` 保留为历史里程碑；本轮在其上补齐了真实
   Frappe v16 站点、最终镜像、Prometheus live scrape 与安全扫描证据；这些历史
   真实 Frappe 观察不自动代表当前 HEAD live runtime。
 - `docs/evidence/` 中既有 Gate、local-pilot、identity-resolution 和
   `task13-readiness` 文件均是 historical snapshots。**do not modify** historical
   evidence；本次 credential-free closure 写入独立的
-  `task13-credential-free-closure` 证据包。
+  `task13-credential-free-closure` 证据包。本轮不改这些历史文件，另建
+  `user-identity-governance-closure` 当前证据包。
 
 ## 已实现的业务与治理边界
 
@@ -53,17 +53,20 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 
 ## 当前验证快照
 
-当前 image lock 中的本地镜像已按 runtime code validation reference `ad58ab3` 重建并记录：
+当前 image lock 中的两套本地镜像已分别绑定到其实际源码：
 
 | Service | Local image digest | Revision label |
 | --- | --- | --- |
-| `frappe-pwa` | `sha256:22c3a2c129442588d0353c6a8f564aec593afc63b7354b4294d37aa9d40f7625` | `ad58ab3ea8c0d521cebd90c2642709d135f98fac` |
-| `local-runtime` | `sha256:6cc85a0e0f39e683af2f4fde15e93b706a76489831d18acd30f78867ec45cdee` | `ad58ab3ea8c0d521cebd90c2642709d135f98fac` |
+| `frappe-pwa` | `sha256:71d7e7fd074d519b246cc1da7bb72deb97c07bf58ffc2a1946c2abc26576fb34` | `28444b8da334c0e3eae2635352e43da4f7d2477b` |
+| `local-runtime` | `sha256:d79fa3982f727b5a47b1783b3731ed153dc07f6a7f1c4a1c81c9b1a5ef407824` | `094e794971e96be4f3f1078e7c70936130f65387` |
 
-当前 credential-free closure 的 source-bound 验证快照为：full pytest
-`2692 passed, 42 skipped, 1 warning`；Ruff check/format、mypy、compileall 与
-secret scan 全部 green；frontend unit `188 passed`、Playwright harness `22 passed`、
-lint/typecheck/build 全部 green。模型 fatal latch 的 fail-closed 行为已验证；Email
+当前 credential-free 设计闭环的 source-bound 验证快照为：full pytest
+`2798 passed, 43 skipped, 1 warning`；domain/contracts `786 passed`；Ruff
+check/format、mypy、compileall 与 secret scan 全部 green；frontend unit
+`196 passed`、Playwright harness `25 passed`、lint/typecheck/build 全部 green。
+隔离 PostgreSQL integration 为 `43 passed, 1 warning`；全新隔离 Frappe v16 site
+连续 migrate 两次后，身份原生测试 `13 passed`、全 app 原生测试 `59 passed`，所有
+临时容器、网络和卷均已移除。模型 fatal latch 的 fail-closed 行为已验证；Email
 只允许 source-bound `STATUS_UIDVALIDITY_UIDNEXT` checkpoint/receipt，preflight
 要求 receipt，未建立真实 IMAP 连接。machine DB-attested narrow-window canary-chain
 verifier 只报告 `response_reported_observed_model`，不接受 free-form observed model。
@@ -79,7 +82,7 @@ network，并启动 isolated PostgreSQL validation/build/scanner containers；�
 provider/channel network，也没有 pilot application services。真实 IMAP/model/external
 calls 仍为零。
 
-详见 [当前 credential-free closure 证据](evidence/task13-credential-free-closure/task13-evidence.json)
+详见 [当前身份治理闭环证据](evidence/user-identity-governance-closure/identity-governance-evidence.json)
 及 [Task 13 历史真实渠道前就绪证据](evidence/task13-readiness/task13-readiness-summary.md)。
 
 ## 正式状态与剩余门
@@ -99,10 +102,10 @@ checked_in_email_enabled=false
 checked_in_deepseek_enabled=false
 ```
 
-- Task 1–12 的离线实现和 credential-free checks 已完成；full pytest、静态检查与
-  frontend 计数见当前 closure evidence。当前 image lock 已按 runtime code validation
-  reference `ad58ab3` 重建并记录；final branch includes only image-lock/test/docs
-  successors after it，但这仍不等于真实 Email/DeepSeek canary 或正式 Go。
+- Task 1–12 以及本轮身份权限即时撤销、目标动态资格、Rejected 重提、审核/撤回 PWA、
+  自动 retention scheduler 和 canary 启动防护均已完成 credential-free 验证；计数见
+  当前 closure evidence。Frappe 与 runtime 镜像分别绑定上述实际源码版本，但这仍不
+  等于真实 Email/DeepSeek canary 或正式 Go。
 - Task 13 的 credential-free closure 已完成；真实 Email + DeepSeek canary **未执行**。
   当前缺少 Email credential、DeepSeek API Key、identity HMAC、人工批准的 trusted
   phrase lexicon，以及 Frappe identity resolver API key/secret。real Email/DeepSeek
@@ -114,9 +117,9 @@ checked_in_deepseek_enabled=false
 
 ## 后续实施顺序
 
-1. Runtime code validation reference `ad58ab3` 与 current image lock 已完成 governed
-   rebuild/record；final branch includes only image-lock/test/docs successors after it，
-   后续 canary 仍必须复核 revision label 与 manifest binding。
+1. Frappe source reference `28444b8`、runtime source reference `094e794` 与 current
+   image lock `eb8bb1e` 已完成 governed rebuild/record；后续 canary 仍必须复核
+   revision label、source hash 与 manifest binding。
 2. 用户以安全方式提供 Task 13 外部输入；凭据只进入 macOS Keychain，不写仓库。
 3. 按 [运行手册](local-pilot/RUNBOOK.md) 创建 repo-external canary dir/control，
    用 activation-time 做 Email STATUS-only checkpoint probe，复制 exact checkpoint

@@ -94,7 +94,9 @@ def test_task13_readiness_documents_remove_72_hour_gate_and_stale_runtime_claims
     for text in (roadmap, local_plan, handoff, summary):
         assert "72 小时连续运行不再作为本阶段退出条件" in text
         assert "real_email_deepseek_canary=no_go" in text
-    assert "Task 13 | **部分完成**" in roadmap
+    assert "Task 13 | **Credential-free implementation complete; external canary deferred**" in (
+        roadmap
+    )
     assert "The actual UI is a Frappe PWA and its local composition is not present" not in (
         local_plan
     )

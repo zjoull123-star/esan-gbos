@@ -8,7 +8,9 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 DOCS = ROOT / "docs" / "local-pilot"
 INFRA = ROOT / "infra" / "local"
-CURRENT_SOURCE_COMMIT = "ad58ab3ea8c0d521cebd90c2642709d135f98fac"
+CURRENT_FRAPPE_SOURCE_COMMIT = "28444b8da334c0e3eae2635352e43da4f7d2477b"
+CURRENT_RUNTIME_SOURCE_COMMIT = "094e794971e96be4f3f1078e7c70936130f65387"
+CURRENT_IMAGE_LOCK_COMMIT = "eb8bb1ebb2c183430ac36ef74cafac09052cf96d"
 
 
 def _read(path: Path) -> str:
@@ -225,9 +227,11 @@ def test_runbook_documents_current_truth_boundaries_without_unlocking_formal_sta
     runbook = _read(DOCS / "RUNBOOK.md")
 
     for statement in (
-        CURRENT_SOURCE_COMMIT,
-        "runtime code validation reference",
-        "final branch includes only image-lock/test/docs successors after it",
+        CURRENT_FRAPPE_SOURCE_COMMIT,
+        CURRENT_RUNTIME_SOURCE_COMMIT,
+        CURRENT_IMAGE_LOCK_COMMIT,
+        "Frappe source reference",
+        "runtime source reference",
         "response_reported_observed_model=unknown",
         "local_pilot_go=false",
         "production_go=false",
@@ -242,7 +246,10 @@ def test_runbook_documents_current_truth_boundaries_without_unlocking_formal_sta
         "72 小时连续运行不再作为本阶段退出条件",
         "Model fatal latch",
         "STATUS_UIDVALIDITY_UIDNEXT",
-        "42 passed, 10 deselected",
+        "43 passed, 1 warning",
+        "59 passed",
+        "13 passed",
+        "2798 passed, 43 skipped, 1 warning",
         "governed dependency/image/scanner network",
         "isolated PostgreSQL validation/build/scanner containers",
     ):
