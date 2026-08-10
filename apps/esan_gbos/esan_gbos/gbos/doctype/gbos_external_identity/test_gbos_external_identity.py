@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import frappe
 from frappe.auth import validate_auth
@@ -193,11 +194,42 @@ class TestGBOSExternalIdentityAuthority(IntegrationTestCase):
         case.business_status = "Superseded"
         case.review_status = "Superseded"
 
-        case.save(ignore_permissions=True)
+        def accepted_denial(_service: str, **request: Any) -> dict[str, Any]:
+            payload = request["payload"]
+            return {
+                "denial": {
+                    "mapping_ref": payload["mapping_ref"],
+                    "deny_through_revision": payload["deny_through_revision"],
+                    "status": "denied",
+                }
+            }
+
+        with patch(
+            "esan_gbos.api.v4.gateway.call_local",
+            side_effect=accepted_denial,
+        ) as observer_call:
+            case.save(ignore_permissions=True)
 
         identity = frappe.get_doc(identity.doctype, identity.name)
         self.assertEqual(identity.review_status, "Superseded")
         self.assertEqual(identity.business_status, "Archived")
+        observer_call.assert_called_once()
+
+    def test_supersession_rolls_back_when_observer_denial_is_unavailable(self) -> None:
+        identity = self._identity()
+        case = self._case(identity)
+        case.flags.gbos_review_command = True
+        case.business_status = "Superseded"
+        case.review_status = "Superseded"
+
+        with self.assertRaisesRegex(Exception, "Local Observer service is not configured"):
+            case.save(ignore_permissions=True)
+        frappe.db.rollback()
+
+        identity.reload()
+        case.reload()
+        self.assertEqual((identity.review_status, identity.business_status), ("Pending", "Active"))
+        self.assertEqual((case.review_status, case.business_status), ("Pending", "Pending"))
 
     def test_physical_delete_is_denied_for_every_mapping_lifecycle(self) -> None:
         identity = self._identity()

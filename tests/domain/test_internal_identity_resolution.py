@@ -327,6 +327,24 @@ def test_non_authoritative_rows_never_resolve(
     assert response == {"error": {"code": "mapping_not_resolved"}}
 
 
+def test_persisted_mapping_revision_conflict_precedes_authoritative_state_filter(
+    resolution_api: tuple[Any, _Frappe],
+) -> None:
+    api, fake = resolution_api
+    fake.db.rows[("email", SUBJECT)] = [
+        _approved_row(
+            mapping_revision=5,
+            review_status="Rejected",
+            business_status="Active",
+        )
+    ]
+
+    response = api.resolve(_payload())
+
+    assert fake.local.response["http_status_code"] == 409
+    assert response == {"error": {"code": "mapping_revision_conflict"}}
+
+
 @pytest.mark.parametrize(
     ("mutation", "status", "code"),
     (

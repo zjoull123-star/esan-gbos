@@ -184,24 +184,23 @@ def _resolve_lookup(site_id: str, lookup: dict[str, Any]) -> dict[str, Any]:
         provider=str(lookup["identity_provider"]),
         external_subject=str(lookup["external_subject_ref"]),
     )
-    authoritative = [
-        row
-        for row in rows
-        if row.get("review_status") == "Approved"
-        and row.get("business_status") in {"Active", "Revoked"}
-    ]
-    if not authoritative:
+    if not rows:
         raise _APIError("mapping_not_resolved", 404)
-    if len(authoritative) != 1:
+    if len(rows) != 1:
         raise _APIError("mapping_conflict", 409)
-    row = authoritative[0]
-    team_ref = _bounded_row_text(row.get("team_ref"), maximum=256)
-    if team_ref != lookup["expected_team_ref"]:
-        raise _APIError("team_scope_mismatch", 403)
+    row = rows[0]
     revision = _positive_integer(row.get("mapping_revision"))
     expected_revision = lookup.get("expected_mapping_revision")
     if expected_revision is not None and revision != expected_revision:
         raise _APIError("mapping_revision_conflict", 409)
+    if row.get("review_status") != "Approved" or row.get("business_status") not in {
+        "Active",
+        "Revoked",
+    }:
+        raise _APIError("mapping_not_resolved", 404)
+    team_ref = _bounded_row_text(row.get("team_ref"), maximum=256)
+    if team_ref != lookup["expected_team_ref"]:
+        raise _APIError("team_scope_mismatch", 403)
     if row.get("business_status") == "Active" and row.get("target_eligible") != 1:
         raise _APIError("mapping_not_resolved", 404)
 
