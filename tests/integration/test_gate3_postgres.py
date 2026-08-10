@@ -7,6 +7,7 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 from fastapi.testclient import TestClient
@@ -42,6 +43,10 @@ from services.observer.observer.local_pilot_storage import (
     NormalizedBatchConflict,
     PostgresLocalPilotStorage,
     ProcessingJobMetadata,
+)
+from services.observer.observer.model_fatal_latch import (
+    ModelFatalLatchError,
+    PostgresModelFatalLatchRepository,
 )
 from services.observer.observer.models import (
     ByteLocator,
@@ -96,6 +101,9 @@ ROOT = Path(__file__).parents[2]
 IDENTITY_WORK_MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "010_local_pilot_identity_resolution_worker.sql"
 )
+MODEL_FATAL_LATCH_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "012_local_pilot_model_fatal_latch.sql"
+)
 
 pytestmark = [pytest.mark.postgres_integration]
 if not RUN_INTEGRATION:
@@ -139,7 +147,7 @@ def _container_sql(
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 12
+    assert _migration_ledger_count() == 13
     result = _container_sql(
         """
         SELECT count(*)
@@ -162,13 +170,14 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
               'context_publication_outbox', 'local_pilot_quarantine',
               'local_pilot_dead_letter', 'participant_identity_resolutions',
               'identity_resolution_work', 'identity_resolution_worker_metrics',
-              'retention_runs', 'retention_cas_tombstones'
+              'retention_runs', 'retention_cas_tombstones',
+              'model_fatal_latches'
           )
           AND c.relrowsecurity
           AND c.relforcerowsecurity
         """
     )
-    assert int(result.stdout.strip()) == 35
+    assert int(result.stdout.strip()) == 36
 
 
 def _migration_ledger_count() -> int:
@@ -188,11 +197,120 @@ def _migration_ledger_count() -> int:
               'observer/009_local_pilot_identity_resolution.sql',
               'observer/010_local_pilot_identity_resolution_worker.sql',
               'observer/011_local_pilot_retention.sql',
+              'observer/012_local_pilot_model_fatal_latch.sql',
               'context/001_gate3_context.sql'
         )
         """
     )
     return int(result.stdout.strip())
+
+
+def test_model_fatal_latch_is_restart_safe_scope_isolated_and_immutable() -> None:
+    if not all((CONTEXT_HOST, CONTEXT_PORT, CONTEXT_DATABASE, CONTEXT_PASSWORD)):
+        pytest.fail("Gate 3 Observer app-role connection components are required")
+
+    migration_sql = MODEL_FATAL_LATCH_MIGRATION.read_text(encoding="utf-8")
+    _container_sql(migration_sql)
+    _container_sql(migration_sql)
+    security = _container_sql(
+        """
+        SELECT c.relrowsecurity, c.relforcerowsecurity,
+               has_table_privilege(
+                   'gbos_observer_app', 'observer.model_fatal_latches', 'SELECT'
+               ),
+               has_table_privilege(
+                   'gbos_observer_app', 'observer.model_fatal_latches', 'INSERT'
+               ),
+               has_table_privilege(
+                   'gbos_observer_app', 'observer.model_fatal_latches', 'UPDATE'
+               ),
+               has_table_privilege(
+                   'gbos_observer_app', 'observer.model_fatal_latches', 'DELETE'
+               )
+        FROM pg_class AS c
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'observer' AND c.relname = 'model_fatal_latches'
+        """
+    )
+    assert security.stdout.strip() == "t|t|t|t|f|f"
+
+    def connect():
+        return connect_postgres_components(
+            host=str(CONTEXT_HOST),
+            port=int(str(CONTEXT_PORT)),
+            database=str(CONTEXT_DATABASE),
+            user="gbos_observer_app",
+            password=str(CONTEXT_PASSWORD),
+        )
+
+    suffix = uuid.uuid4().hex[:12]
+    now = datetime.now(UTC).replace(microsecond=0)
+    scope = ObserverTenantScope(f"model-latch-{suffix}", "observation_processing")
+    other_site = ObserverTenantScope(
+        f"model-latch-other-{suffix}",
+        "observation_processing",
+    )
+    other_purpose = ObserverTenantScope(scope.site_id, "audit_compliance")
+    connection = connect()
+    restart = None
+    try:
+        repository = PostgresModelFatalLatchRepository(connection)
+        assert repository.status(scope).tripped is False
+        restart = connect()
+        restarted = PostgresModelFatalLatchRepository(restart)
+        trip_finished = Event()
+        trip_errors: list[BaseException] = []
+
+        def trip_after_guard() -> None:
+            try:
+                restarted.trip(scope, error_code="model_mismatch", now=now)
+            except BaseException as error:
+                trip_errors.append(error)
+            finally:
+                trip_finished.set()
+
+        with repository.egress_guard(scope):
+            trip_thread = Thread(target=trip_after_guard)
+            trip_thread.start()
+            assert trip_finished.wait(0.1) is False
+        trip_thread.join(2)
+        assert trip_thread.is_alive() is False
+        assert trip_errors == []
+
+        first = repository.status(scope)
+        replay = repository.trip(
+            scope,
+            error_code="budget_hard_stop",
+            now=now + timedelta(seconds=1),
+        )
+        assert replay == first
+        assert replay.error_code == "model_mismatch"
+        assert repository.status(other_site).tripped is False
+        assert repository.status(other_purpose).tripped is False
+
+        assert restarted.status(scope) == first
+        with pytest.raises(ModelFatalLatchError, match="model_fatal_latched"):
+            restarted.assert_open(scope)
+
+        with (
+            pytest.raises(Exception, match="permission denied|immutable"),
+            restart.transaction(),
+            restart.cursor() as cursor,
+        ):
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (scope.site_id,))
+            cursor.execute(
+                "SELECT set_config('app.processing_purpose', %s, true)",
+                (scope.processing_purpose,),
+            )
+            cursor.execute(
+                "DELETE FROM observer.model_fatal_latches "
+                "WHERE site_id = %s AND processing_purpose = %s",
+                (scope.site_id, scope.processing_purpose),
+            )
+    finally:
+        connection.close()
+        if restart is not None:
+            restart.close()
 
 
 def test_gate3_identity_work_is_rls_fenced_restart_safe_and_aggregated() -> None:

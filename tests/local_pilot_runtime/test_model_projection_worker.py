@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 
 import httpx
 import pytest
@@ -40,7 +40,11 @@ from services.local_pilot_runtime.trusted_phrase_lexicon import (
 from services.model_gateway.deepseek import DEEPSEEK_MODEL
 from services.model_gateway.observation_provider import DeepSeekObservationProvider
 from services.model_gateway.tokenization import InMemoryMappingVault, StableTokenizer
-from services.observer.observer.model_projection import LocalTokenizationResult
+from services.observer.observer.model_fatal_latch import (
+    InMemoryModelFatalLatch,
+    PostgresModelFatalLatchRepository,
+)
+from services.observer.observer.model_projection import LocalTokenizationResult, ProjectionFailure
 from services.observer.observer.models import TenantScope
 from services.observer.observer.projection_outbox import PostgresProjectionOutboxRepository
 
@@ -92,6 +96,7 @@ class _Outbox:
         self.events = [] if events is None else events
         self.published: list[tuple[str, int, str]] = []
         self.failed: list[tuple[str, int, str, str]] = []
+        self.claim_count = 0
 
     def claim(
         self,
@@ -105,6 +110,7 @@ class _Outbox:
         assert worker_id == "model-projection-worker-1"
         assert now == NOW
         assert lease_duration == timedelta(seconds=10)
+        self.claim_count += 1
         return self.claims.pop(0) if self.claims else None
 
     def heartbeat(
@@ -169,6 +175,8 @@ class _Outbox:
 def _worker(
     outbox: _Outbox,
     publisher: Callable[[TenantScope, str, str], object],
+    *,
+    fatal_latch: InMemoryModelFatalLatch | None = None,
 ) -> ModelProjectionWorker:
     return ModelProjectionWorker(
         outbox=outbox,
@@ -178,6 +186,7 @@ def _worker(
         lease_duration=timedelta(seconds=10),
         retry_delay=timedelta(seconds=30),
         heartbeat_runner=_ImmediateHeartbeat(),
+        fatal_latch=fatal_latch or InMemoryModelFatalLatch(),
     )
 
 
@@ -279,6 +288,89 @@ def test_restart_reuses_the_persisted_idempotency_key_exactly() -> None:
     ]
 
 
+def test_fatal_latch_blocks_before_outbox_claim() -> None:
+    latch = InMemoryModelFatalLatch()
+    latch.trip(SCOPE, error_code="model_mismatch", now=NOW)
+    outbox = _Outbox()
+    calls: list[str] = []
+
+    result = _worker(
+        outbox,
+        lambda *_: calls.append("publisher"),
+        fatal_latch=latch,
+    ).run_once(SCOPE)
+
+    assert result.status is ProjectionRunStatus.FATAL_LATCHED
+    assert outbox.claim_count == 0
+    assert calls == []
+    assert outbox.failed == []
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["response_invalid_json", "model_mismatch", "budget_hard_stop"],
+)
+def test_worker_preserves_safe_fatal_provider_code_and_trips_latch(code: str) -> None:
+    latch = InMemoryModelFatalLatch()
+    outbox = _Outbox()
+
+    def fail(*_: object) -> None:
+        raise ProjectionFailure(code)
+
+    result = _worker(outbox, fail, fatal_latch=latch).run_once(SCOPE)
+
+    assert result.status is ProjectionRunStatus.RETRY
+    assert outbox.failed == [("outbox-SYNTH-001", 1, "fence-SYNTH-001", code)]
+    assert latch.status(SCOPE).error_code == code
+
+
+def test_latch_persistence_failure_poison_stops_all_future_claims() -> None:
+    class UnavailableLatch(InMemoryModelFatalLatch):
+        def trip(self, *_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("database detail and secret")
+
+    outbox = _Outbox(claims=[_claim(attempt=1), _claim(attempt=2, fence_token="fence-SYNTH-002")])
+    calls: list[str] = []
+
+    def fail(*_: object) -> None:
+        calls.append("publisher")
+        raise ProjectionFailure(
+            "model_fatal_latch_unavailable",
+            fatal_code="output_schema_invalid",
+        )
+
+    worker = _worker(outbox, fail, fatal_latch=UnavailableLatch())
+    first = worker.run_once(SCOPE)
+    second = worker.run_once(SCOPE)
+
+    assert first.status is ProjectionRunStatus.LATCH_UNAVAILABLE
+    assert second.status is ProjectionRunStatus.LATCH_UNAVAILABLE
+    assert outbox.claim_count == 1
+    assert calls == ["publisher"]
+    assert outbox.failed == []
+
+
+def test_worker_retries_fatal_latch_persistence_before_any_future_claim() -> None:
+    latch = InMemoryModelFatalLatch()
+    outbox = _Outbox()
+
+    def fail(*_: object) -> None:
+        raise ProjectionFailure(
+            "model_fatal_latch_unavailable",
+            fatal_code="response_protocol_error",
+        )
+
+    worker = _worker(outbox, fail, fatal_latch=latch)
+    first = worker.run_once(SCOPE)
+    second = worker.run_once(SCOPE)
+
+    assert first.status is ProjectionRunStatus.RETRY
+    assert second.status is ProjectionRunStatus.FATAL_LATCHED
+    assert outbox.claim_count == 1
+    assert outbox.failed == [("outbox-SYNTH-001", 1, "fence-SYNTH-001", "response_protocol_error")]
+    assert latch.status(SCOPE).error_code == "response_protocol_error"
+
+
 def test_daemon_waits_only_when_idle_and_honors_stop_event() -> None:
     stop = Event()
     waits: list[float] = []
@@ -299,6 +391,38 @@ def test_daemon_waits_only_when_idle_and_honors_stop_event() -> None:
         waiter=_StopOnWait(),
     )
 
+    assert waits == [0.25]
+
+
+def test_daemon_backs_off_while_fatal_latch_remains_persisted() -> None:
+    stop = Event()
+    waits: list[float] = []
+    latch = InMemoryModelFatalLatch()
+    latch.trip(SCOPE, error_code="budget_hard_stop", now=NOW)
+
+    class _StopOnWait:
+        def wait(self, timeout: float | None = None) -> bool:
+            assert timeout is not None
+            waits.append(timeout)
+            stop.set()
+            return True
+
+    runner = Thread(
+        target=lambda: run_worker(
+            _worker(_Outbox(), lambda *_: None, fatal_latch=latch),
+            scope=SCOPE,
+            stop_event=stop,
+            idle_delay=0.25,
+            waiter=_StopOnWait(),
+        )
+    )
+    runner.start()
+    runner.join(0.2)
+    if runner.is_alive():
+        stop.set()
+        runner.join(2)
+
+    assert runner.is_alive() is False
     assert waits == [0.25]
 
 
@@ -361,6 +485,7 @@ class _ContextPublisher:
 
 
 def _components() -> ModelProjectionComponents:
+    fatal_latch = InMemoryModelFatalLatch()
     return ModelProjectionComponents(
         outbox=_Outbox(claims=[None]),
         projection_repository=_ProjectionRepository(),
@@ -371,6 +496,7 @@ def _components() -> ModelProjectionComponents:
             vault=InMemoryMappingVault(),
         ),
         provider=DeepSeekObservationProvider(gateway=_Gateway()),  # type: ignore[arg-type]
+        fatal_latch=fatal_latch,
         close=lambda: None,
     )
 
@@ -601,6 +727,7 @@ def test_production_factory_preflights_all_roles_then_connects_exactly_three_and
         PostgresCommunicationIntelligenceRepository,
     )
     assert isinstance(components.provider, DeepSeekObservationProvider)
+    assert isinstance(components.fatal_latch, PostgresModelFatalLatchRepository)
     assert not hasattr(components.provider, "_tokenizer")
     components.close()
     assert closed == ["gbos_agent_app", "gbos_context_app", "gbos_observer_app"]
@@ -739,6 +866,7 @@ def test_valid_main_builds_only_after_preflight_and_closes_components(
         context_publisher=components.context_publisher,
         tokenizer=components.tokenizer,
         provider=components.provider,
+        fatal_latch=components.fatal_latch,
         close=lambda: events.append("close"),
     )
     stop = Event()

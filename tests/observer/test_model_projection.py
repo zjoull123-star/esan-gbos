@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event, Thread
 from typing import Any
 
 import pytest
@@ -10,6 +11,7 @@ from observer.context_outbox import ContextOutboxPublisherWorker
 from observer.evidence_store import ContentAddressedEvidenceStore
 from observer.local_pilot_api import LocalPilotAPIConfig
 from observer.local_pilot_storage import ContextOutboxMetadata
+from observer.model_fatal_latch import FATAL_MODEL_ERROR_CODES, InMemoryModelFatalLatch
 from observer.model_projection import (
     CommunicationIntelligenceResponse,
     ContentAddressedEvidenceTextLoader,
@@ -32,6 +34,13 @@ from observer.runtime import compose_postgres_local_pilot_runtime
 
 NOW = datetime(2026, 8, 8, 9, tzinfo=UTC)
 SCOPE = TenantScope("alpha.example", "observation_processing")
+FATAL_LATCH_MIGRATION = (
+    Path(__file__).parents[2]
+    / "services"
+    / "observer"
+    / "migrations"
+    / "012_local_pilot_model_fatal_latch.sql"
+)
 SOURCE = ObservationProjectionSource(
     site_id=SCOPE.site_id,
     observation_id="event-001",
@@ -83,6 +92,23 @@ def _output() -> dict[str, Any]:
             }
         ],
     }
+
+
+def test_model_fatal_latch_migration_is_immutable_rls_scoped_and_least_privilege() -> None:
+    sql = FATAL_LATCH_MIGRATION.read_text(encoding="utf-8").lower()
+
+    assert "create table if not exists observer.model_fatal_latches" in sql
+    assert "primary key (site_id, processing_purpose)" in sql
+    assert "alter table observer.model_fatal_latches force row level security" in sql
+    assert "current_setting('app.site_id', true)" in sql
+    assert "current_setting('app.processing_purpose', true)" in sql
+    assert "grant select, insert on observer.model_fatal_latches" in sql
+    assert "grant update" not in sql
+    assert "grant delete" not in sql
+    assert "model fatal latch is immutable" in sql
+    assert all(f"'{code}'" in sql for code in FATAL_MODEL_ERROR_CODES)
+    assert "'retry_exhausted'" not in sql
+    assert "'transport_exhausted'" not in sql
 
 
 class FakeRepository:
@@ -180,6 +206,7 @@ def _publisher(
     provider: FakeProvider | None = None,
     context: FakeContextPublisher | None = None,
     tokenizer: object = _tokenize,
+    fatal_latch: InMemoryModelFatalLatch | None = None,
 ) -> tuple[
     ObservationProjectionPublisher,
     FakeRepository,
@@ -201,6 +228,7 @@ def _publisher(
             context_publisher=active_context,
             clock=lambda: NOW,
             restricted_policy="local_tokenized",
+            fatal_latch=fatal_latch or InMemoryModelFatalLatch(),
         ),
         active_repository,
         active_provider,
@@ -588,6 +616,179 @@ def test_invalid_model_response_fails_closed(
 
     assert repository.stored == []
     assert context.calls == []
+
+
+class _ProviderFailure(RuntimeError):
+    def __init__(self, error_code: str) -> None:
+        self.error_code = error_code
+        super().__init__("provider body and api-secret must stay redacted")
+
+
+@pytest.mark.parametrize(
+    "fatal_code",
+    [
+        "budget_hard_stop",
+        "model_mismatch",
+        "output_invalid_json",
+        "output_schema_invalid",
+        "response_invalid_json",
+        "response_protocol_error",
+    ],
+)
+def test_fatal_provider_code_is_latched_and_blocks_the_next_model_call(
+    fatal_code: str,
+) -> None:
+    repository = FakeRepository()
+    context = FakeContextPublisher(repository)
+    latch = InMemoryModelFatalLatch()
+    calls: list[str] = []
+
+    class Provider:
+        def project(self, _request: ObservationModelRequest) -> CommunicationIntelligenceResponse:
+            calls.append("provider")
+            raise _ProviderFailure(fatal_code)
+
+    publisher = ObservationProjectionPublisher(
+        repository=repository,
+        raw_loader=lambda _scope, evidence: LoadedEvidenceText(
+            evidence_ref=evidence.evidence_ref,
+            text="private body alice@example.com",
+        ),
+        tokenizer=_tokenize,
+        provider=Provider(),
+        context_publisher=context,
+        clock=lambda: NOW,
+        restricted_policy="local_tokenized",
+        fatal_latch=latch,
+    )
+
+    with pytest.raises(ProjectionFailure) as first:
+        publisher(SCOPE, SOURCE.observation_id, "context-normalized:event-001")
+    with pytest.raises(ProjectionFailure, match="model_fatal_latched") as second:
+        publisher(SCOPE, SOURCE.observation_id, "context-normalized:event-001")
+
+    assert first.value.code == fatal_code
+    assert calls == ["provider"]
+    assert latch.status(SCOPE).error_code == fatal_code
+    assert context.calls == []
+    assert repository.stored == []
+    assert "private body" not in repr(first.value)
+    assert "api-secret" not in repr(first.value)
+    assert "private body" not in repr(second.value)
+
+
+@pytest.mark.parametrize("retryable_code", ["retry_exhausted", "transport_exhausted"])
+def test_retryable_provider_code_does_not_trip_fatal_latch(retryable_code: str) -> None:
+    latch = InMemoryModelFatalLatch()
+
+    class Provider:
+        def project(self, _request: ObservationModelRequest) -> CommunicationIntelligenceResponse:
+            raise _ProviderFailure(retryable_code)
+
+    publisher, _, _, context = _publisher(
+        provider=Provider(),  # type: ignore[arg-type]
+        fatal_latch=latch,
+    )
+
+    with pytest.raises(ProjectionFailure) as failure:
+        publisher(SCOPE, SOURCE.observation_id, "context-normalized:event-001")
+
+    assert failure.value.code == retryable_code
+    assert latch.status(SCOPE).tripped is False
+    assert context.calls == []
+
+
+def test_provider_error_code_is_sanitized_without_leaking_exception_text() -> None:
+    latch = InMemoryModelFatalLatch()
+
+    class Provider:
+        def project(self, _request: ObservationModelRequest) -> CommunicationIntelligenceResponse:
+            raise _ProviderFailure("secret\nprovider_body")
+
+    publisher, _, _, _ = _publisher(
+        provider=Provider(),  # type: ignore[arg-type]
+        fatal_latch=latch,
+    )
+
+    with pytest.raises(ProjectionFailure) as failure:
+        publisher(SCOPE, SOURCE.observation_id, "context-normalized:event-001")
+
+    assert failure.value.code == "model_provider_failed"
+    assert latch.status(SCOPE).error_code == "model_provider_failed"
+    assert "secret" not in repr(failure.value)
+    assert "provider_body" not in repr(failure.value)
+
+
+def test_latch_write_failure_preserves_only_safe_fatal_code_for_worker_recovery() -> None:
+    class UnavailableLatch(InMemoryModelFatalLatch):
+        def trip(self, *_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("database identity and secret")
+
+    class Provider:
+        def project(self, _request: ObservationModelRequest) -> CommunicationIntelligenceResponse:
+            raise _ProviderFailure("output_schema_invalid")
+
+    publisher, _, _, context = _publisher(
+        provider=Provider(),  # type: ignore[arg-type]
+        fatal_latch=UnavailableLatch(),
+    )
+
+    with pytest.raises(ProjectionFailure) as failure:
+        publisher(SCOPE, SOURCE.observation_id, "context-normalized:event-001")
+
+    assert failure.value.code == "model_fatal_latch_unavailable"
+    assert failure.value.fatal_code == "output_schema_invalid"
+    assert context.calls == []
+    assert "identity" not in repr(failure.value)
+    assert "secret" not in repr(failure.value)
+
+
+def test_concurrent_http_cannot_cross_a_fatal_latch_transition() -> None:
+    latch = InMemoryModelFatalLatch()
+    provider_entered = Event()
+    release_failure = Event()
+    second_finished = Event()
+    calls: list[str] = []
+    failures: list[str] = []
+
+    class Provider:
+        def project(self, _request: ObservationModelRequest) -> CommunicationIntelligenceResponse:
+            calls.append("provider")
+            if len(calls) > 1:
+                raise AssertionError("second HTTP crossed the fatal latch")
+            provider_entered.set()
+            assert release_failure.wait(2)
+            raise _ProviderFailure("output_schema_invalid")
+
+    publisher, _, _, _ = _publisher(
+        provider=Provider(),  # type: ignore[arg-type]
+        fatal_latch=latch,
+    )
+
+    def invoke(*, finished: Event | None = None) -> None:
+        try:
+            publisher(SCOPE, SOURCE.observation_id, "context-normalized:event-001")
+        except ProjectionFailure as error:
+            failures.append(error.code)
+        finally:
+            if finished is not None:
+                finished.set()
+
+    first = Thread(target=invoke)
+    first.start()
+    assert provider_entered.wait(2)
+    second = Thread(target=lambda: invoke(finished=second_finished))
+    second.start()
+
+    assert second_finished.wait(0.1) is False
+    release_failure.set()
+    first.join(2)
+    second.join(2)
+
+    assert first.is_alive() is False
+    assert second.is_alive() is False
+    assert calls == ["provider"]
+    assert sorted(failures) == ["model_fatal_latched", "output_schema_invalid"]
 
 
 def test_context_failure_prevents_projection_and_preserves_stable_retry_key() -> None:

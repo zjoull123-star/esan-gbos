@@ -17,6 +17,13 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
 from .evidence_store import ContentAddressedEvidenceStore
+from .model_fatal_latch import (
+    InMemoryModelFatalLatch,
+    ModelFatalLatch,
+    ModelFatalLatchError,
+    is_fatal_model_error_code,
+    sanitized_provider_error_code,
+)
 from .models import PROCESSING_PURPOSES, TenantScope, _require_aware
 from .read_service import CommunicationDetail, CommunicationSummary
 from .storage import Connection
@@ -41,16 +48,19 @@ InputMode = Literal["raw", "local_tokenized"]
 class ProjectionFailure(RuntimeError):
     """Safe failure whose code never contains raw or provider-controlled content."""
 
-    __slots__ = ("code",)
+    __slots__ = ("code", "fatal_code")
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, fatal_code: str | None = None) -> None:
         if _SAFE_CODE.fullmatch(code) is None:
             raise ValueError("invalid projection failure code")
+        if fatal_code is not None and not is_fatal_model_error_code(fatal_code):
+            raise ValueError("invalid fatal projection failure code")
         self.code = code
+        self.fatal_code = fatal_code
         super().__init__(code)
 
     def __repr__(self) -> str:
-        return f"ProjectionFailure(code={self.code!r})"
+        return f"ProjectionFailure(code={self.code!r}, fatal_code={self.fatal_code!r})"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -600,6 +610,7 @@ class ObservationProjectionPublisher:
     __slots__ = (
         "_clock",
         "_context_publisher",
+        "_fatal_latch",
         "_provider",
         "_raw_loader",
         "_repository",
@@ -617,6 +628,7 @@ class ObservationProjectionPublisher:
         context_publisher: ContextIntelligencePublisher,
         clock: Clock,
         restricted_policy: RestrictedInputPolicy = "deny",
+        fatal_latch: ModelFatalLatch | None = None,
     ) -> None:
         if raw_loader is not None and not callable(raw_loader):
             raise TypeError("raw_loader must be callable")
@@ -633,6 +645,7 @@ class ObservationProjectionPublisher:
         self._context_publisher = context_publisher
         self._clock = clock
         self._restricted_policy = restricted_policy
+        self._fatal_latch = fatal_latch or InMemoryModelFatalLatch()
 
     def __repr__(self) -> str:
         return (
@@ -649,18 +662,10 @@ class ObservationProjectionPublisher:
     ) -> ProjectionPublicationResult:
         if self._provider is None:
             raise ProjectionFailure("provider_unconfigured")
+        self._assert_model_egress_open(scope)
         source = self._load_source(scope, observation_id)
         request = self._request(scope, source, idempotency_key)
-        try:
-            response = self._provider.project(request)
-        except Exception:
-            raise ProjectionFailure("model_provider_failed") from None
-        if not isinstance(response, CommunicationIntelligenceResponse):
-            raise ProjectionFailure("invalid_model_output")
-        if response.model_name != _APPROVED_MODEL:
-            raise ProjectionFailure("model_mismatch")
-        output = _validated_output(response.output)
-        _validate_binding(source, output, evidence_refs=request.evidence_refs)
+        response, output = self._project_under_fatal_guard(scope, source, request)
         publication = _context_publication(source, output, response)
         try:
             self._context_publisher.publish(
@@ -686,6 +691,71 @@ class ObservationProjectionPublisher:
             status="projected",
             model_version=response.model_version,
         )
+
+    def _project_under_fatal_guard(
+        self,
+        scope: TenantScope,
+        source: ObservationProjectionSource,
+        request: ObservationModelRequest,
+    ) -> tuple[CommunicationIntelligenceResponse, dict[str, Any]]:
+        try:
+            with self._fatal_latch.egress_guard(scope):
+                return self._project_and_validate(scope, source, request)
+        except ProjectionFailure:
+            raise
+        except ModelFatalLatchError:
+            raise ProjectionFailure("model_fatal_latched") from None
+        except Exception:
+            raise ProjectionFailure("model_fatal_latch_unavailable") from None
+
+    def _project_and_validate(
+        self,
+        scope: TenantScope,
+        source: ObservationProjectionSource,
+        request: ObservationModelRequest,
+    ) -> tuple[CommunicationIntelligenceResponse, dict[str, Any]]:
+        assert self._provider is not None
+        try:
+            response = self._provider.project(request)
+        except Exception as error:
+            code = sanitized_provider_error_code(error)
+            if is_fatal_model_error_code(code):
+                self._trip_fatal(scope, code)
+            raise ProjectionFailure(code) from None
+        if not isinstance(response, CommunicationIntelligenceResponse):
+            self._trip_fatal(scope, "invalid_model_output")
+        if response.model_name != _APPROVED_MODEL:
+            self._trip_fatal(scope, "model_mismatch")
+        try:
+            output = _validated_output(response.output)
+            _validate_binding(source, output, evidence_refs=request.evidence_refs)
+        except ProjectionFailure as error:
+            if is_fatal_model_error_code(error.code):
+                self._trip_fatal(scope, error.code)
+            raise
+        return response, output
+
+    def _assert_model_egress_open(self, scope: TenantScope) -> None:
+        try:
+            self._fatal_latch.assert_open(scope)
+        except ModelFatalLatchError:
+            raise ProjectionFailure("model_fatal_latched") from None
+        except Exception:
+            raise ProjectionFailure("model_fatal_latch_unavailable") from None
+
+    def _trip_fatal(self, scope: TenantScope, error_code: str) -> None:
+        try:
+            self._fatal_latch.trip(
+                scope,
+                error_code=error_code,
+                now=self._clock(),
+            )
+        except Exception:
+            raise ProjectionFailure(
+                "model_fatal_latch_unavailable",
+                fatal_code=error_code,
+            ) from None
+        raise ProjectionFailure(error_code)
 
     def _load_source(
         self,

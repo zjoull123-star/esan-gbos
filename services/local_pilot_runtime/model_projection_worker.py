@@ -32,6 +32,13 @@ from services.model_gateway.runtime import (
 )
 from services.model_gateway.tokenization import EncryptedFileMappingVault, StableTokenizer
 from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
+from services.observer.observer.model_fatal_latch import (
+    InMemoryModelFatalLatch,
+    ModelFatalLatch,
+    ModelFatalLatchError,
+    PostgresModelFatalLatchRepository,
+    is_fatal_model_error_code,
+)
 from services.observer.observer.model_projection import (
     ContentAddressedEvidenceTextLoader,
     ContextIntelligencePublisher,
@@ -39,6 +46,7 @@ from services.observer.observer.model_projection import (
     ObservationProjectionPublisher,
     ObservationProjectionRepository,
     PostgresObservationProjectionRepository,
+    ProjectionFailure,
     RawObservationLoader,
 )
 from services.observer.observer.models import TenantScope, _require_aware
@@ -88,6 +96,8 @@ class ProjectionRunStatus(StrEnum):
     RETRY = "retry"
     DEAD_LETTER = "dead_letter"
     LEASE_LOST = "lease_lost"
+    FATAL_LATCHED = "fatal_latched"
+    LATCH_UNAVAILABLE = "latch_unavailable"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -250,7 +260,9 @@ class ModelProjectionWorker:
     __slots__ = (
         "_clock",
         "_heartbeat_runner",
+        "_fatal_latch",
         "_lease_duration",
+        "_locally_stopped",
         "_outbox",
         "_publisher",
         "_retry_delay",
@@ -267,6 +279,7 @@ class ModelProjectionWorker:
         lease_duration: timedelta,
         retry_delay: timedelta = _RETRY_DELAY,
         heartbeat_runner: HeartbeatRunner | None = None,
+        fatal_latch: ModelFatalLatch | None = None,
     ) -> None:
         if (
             not worker_id
@@ -287,6 +300,8 @@ class ModelProjectionWorker:
         self._heartbeat_runner = heartbeat_runner or ThreadedProjectionHeartbeatRunner(
             interval_seconds=max(0.1, lease_duration.total_seconds() / 3)
         )
+        self._fatal_latch = fatal_latch or InMemoryModelFatalLatch()
+        self._locally_stopped = False
 
     def __repr__(self) -> str:
         return (
@@ -294,6 +309,15 @@ class ModelProjectionWorker:
         )
 
     def run_once(self, scope: TenantScope) -> ProjectionRunResult:
+        if self._locally_stopped:
+            return ProjectionRunResult(status=ProjectionRunStatus.LATCH_UNAVAILABLE)
+        try:
+            self._fatal_latch.assert_open(scope)
+        except ModelFatalLatchError:
+            return ProjectionRunResult(status=ProjectionRunStatus.FATAL_LATCHED)
+        except Exception:
+            self._locally_stopped = True
+            return ProjectionRunResult(status=ProjectionRunStatus.LATCH_UNAVAILABLE)
         claim = self._outbox.claim(
             scope,
             worker_id=self._worker_id,
@@ -325,8 +349,8 @@ class ModelProjectionWorker:
                 status=ProjectionRunStatus.LEASE_LOST,
                 attempt=claim.attempt,
             )
-        except Exception:
-            return self._mark_failed(scope, claim)
+        except Exception as error:
+            return self._handle_failure(scope, claim, error)
 
         try:
             self._outbox.mark_published(
@@ -347,10 +371,55 @@ class ModelProjectionWorker:
             attempt=claim.attempt,
         )
 
+    def _handle_failure(
+        self,
+        scope: TenantScope,
+        claim: ProjectionOutboxClaim,
+        error: BaseException,
+    ) -> ProjectionRunResult:
+        error_code = error.code if isinstance(error, ProjectionFailure) else "projection_failed"
+        if error_code == "model_fatal_latch_unavailable":
+            fatal_code = error.fatal_code if isinstance(error, ProjectionFailure) else None
+            if fatal_code is not None:
+                try:
+                    self._fatal_latch.trip(
+                        scope,
+                        error_code=fatal_code,
+                        now=self._now(),
+                    )
+                except Exception:
+                    self._locally_stopped = True
+                    return ProjectionRunResult(
+                        status=ProjectionRunStatus.LATCH_UNAVAILABLE,
+                        attempt=claim.attempt,
+                    )
+                return self._mark_failed(scope, claim, error_code=fatal_code)
+            self._locally_stopped = True
+            return ProjectionRunResult(
+                status=ProjectionRunStatus.LATCH_UNAVAILABLE,
+                attempt=claim.attempt,
+            )
+        if is_fatal_model_error_code(error_code):
+            try:
+                self._fatal_latch.trip(
+                    scope,
+                    error_code=error_code,
+                    now=self._now(),
+                )
+            except Exception:
+                self._locally_stopped = True
+                return ProjectionRunResult(
+                    status=ProjectionRunStatus.LATCH_UNAVAILABLE,
+                    attempt=claim.attempt,
+                )
+        return self._mark_failed(scope, claim, error_code=error_code)
+
     def _mark_failed(
         self,
         scope: TenantScope,
         claim: ProjectionOutboxClaim,
+        *,
+        error_code: str,
     ) -> ProjectionRunResult:
         now = self._now()
         try:
@@ -362,7 +431,7 @@ class ModelProjectionWorker:
                 fence_token=claim.fence_token,
                 now=now,
                 retry_at=now + self._retry_delay,
-                error_code="projection_failed",
+                error_code=error_code,
             )
         except ProjectionLeaseConflict:
             return ProjectionRunResult(
@@ -487,6 +556,7 @@ class ModelProjectionComponents:
     context_publisher: ContextIntelligencePublisher
     tokenizer: StableTokenizer
     provider: DeepSeekObservationProvider
+    fatal_latch: ModelFatalLatch
     close: Callable[[], None]
 
     def __repr__(self) -> str:
@@ -620,6 +690,7 @@ def create_production_components(
             projection_store=projection_store,
             raw_loader=raw_loader,
         )
+        fatal_latch = PostgresModelFatalLatchRepository(observer_connection)
         outbox = PostgresProjectionOutboxRepository(observer_connection)
         context_publisher = PostgresCommunicationIntelligenceRepository(
             context_connection,
@@ -665,6 +736,7 @@ def create_production_components(
         context_publisher=context_publisher,
         tokenizer=tokenizer,
         provider=provider,
+        fatal_latch=fatal_latch,
         close=close,
     )
 
@@ -688,6 +760,10 @@ def build_worker(
     for candidate, message in (
         (components.raw_loader, "raw loader"),
         (components.close, "component closer"),
+        (getattr(components.fatal_latch, "assert_open", None), "model fatal latch reader"),
+        (getattr(components.fatal_latch, "egress_guard", None), "model egress latch guard"),
+        (getattr(components.fatal_latch, "status", None), "model fatal latch status reader"),
+        (getattr(components.fatal_latch, "trip", None), "model fatal latch writer"),
         (getattr(components.context_publisher, "publish", None), "Context publisher"),
         (
             getattr(components.projection_repository, "load_projection_source", None),
@@ -720,6 +796,7 @@ def build_worker(
         context_publisher=components.context_publisher,
         clock=clock,
         restricted_policy="local_tokenized",
+        fatal_latch=components.fatal_latch,
     )
     worker = ModelProjectionWorker(
         outbox=components.outbox,
@@ -728,6 +805,7 @@ def build_worker(
         clock=clock,
         lease_duration=lease_duration,
         heartbeat_runner=ThreadedProjectionHeartbeatRunner(interval_seconds=heartbeat_interval),
+        fatal_latch=components.fatal_latch,
     )
     return worker
 
@@ -749,7 +827,11 @@ def run_worker(
     active_waiter = stop_event if waiter is None else waiter
     while not stop_event.is_set():
         result = worker.run_once(scope)
-        if result.status is ProjectionRunStatus.IDLE:
+        if result.status in {
+            ProjectionRunStatus.IDLE,
+            ProjectionRunStatus.FATAL_LATCHED,
+            ProjectionRunStatus.LATCH_UNAVAILABLE,
+        }:
             active_waiter.wait(idle_delay)
 
 
