@@ -282,6 +282,7 @@ def test_canonical_mounted_secret_file_environment_is_allowed(
         str(ROOT / "secrets" / "postgres_password"),
         "keychain://gbos/postgres_password",
         "/tmp/postgres_password",
+        "/run/secrets/unapproved_secret",
         "/run/secrets/nested/postgres_password",
         "/run/secrets/../postgres_password",
     ],

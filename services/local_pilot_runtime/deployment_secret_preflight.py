@@ -142,7 +142,11 @@ def _is_plaintext_secret_name(name: str) -> bool:
     )
 
 
-def _is_mounted_secret_file_reference(value: str) -> bool:
+def _is_mounted_secret_file_reference(
+    value: str,
+    *,
+    allowed_file_references: frozenset[str],
+) -> bool:
     try:
         path = Path(value)
         if str(path) != value or path.parent != DEFAULT_SECRET_ROOT:
@@ -156,10 +160,14 @@ def _is_mounted_secret_file_reference(value: str) -> bool:
         )
     except SecretProviderError, TypeError, ValueError:
         return False
-    return True
+    return value in allowed_file_references
 
 
-def _reject_local_environment(environ: Mapping[str, str]) -> None:
+def _reject_local_environment(
+    environ: Mapping[str, str],
+    *,
+    allowed_file_references: frozenset[str],
+) -> None:
     for name, value in environ.items():
         if not isinstance(name, str) or not isinstance(value, str):
             _reject(PREFLIGHT_ERROR_LOCAL_INPUT)
@@ -168,7 +176,10 @@ def _reject_local_environment(environ: Mapping[str, str]) -> None:
         if value and "PROVIDER_PAYLOAD" in normalized:
             _reject(PREFLIGHT_ERROR_LOCAL_INPUT)
         if value and normalized.endswith("_FILE") and _is_plaintext_secret_name(normalized[:-5]):
-            if _is_mounted_secret_file_reference(value):
+            if _is_mounted_secret_file_reference(
+                value,
+                allowed_file_references=allowed_file_references,
+            ):
                 continue
             _reject(PREFLIGHT_ERROR_LOCAL_INPUT)
         if value and (
@@ -271,7 +282,6 @@ def run_deployment_secret_preflight(
     """Validate one bound metadata contract and every projected mount."""
 
     active_environment = os.environ if environ is None else environ
-    _reject_local_environment(active_environment)
     contract = _load_object(Path(contract_path))
     if _contains_local_only_input(contract):
         _reject(PREFLIGHT_ERROR_LOCAL_INPUT)
@@ -280,6 +290,12 @@ def run_deployment_secret_preflight(
         _reject(PREFLIGHT_ERROR_BINDING)
     root = _validate_root(Path(secret_root))
     specs = _specs(contract)
+    _reject_local_environment(
+        active_environment,
+        allowed_file_references=frozenset(
+            str(DEFAULT_SECRET_ROOT / spec.filename) for spec in specs
+        ),
+    )
     try:
         provider = provider_factory(root, specs)
         for spec in specs:
