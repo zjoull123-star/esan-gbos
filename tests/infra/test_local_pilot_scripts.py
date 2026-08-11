@@ -24,6 +24,83 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def _run_prepare_secrets_fixture(
+    tmp_path: Path,
+    *,
+    identity_value: str,
+    cursor_value: str = "cursor-text-secret",
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    fixture_root = tmp_path / "prepare-secrets-fixture"
+    scripts = fixture_root / "scripts" / "local-pilot"
+    infra = fixture_root / "infra" / "local"
+    scripts.mkdir(parents=True)
+    infra.mkdir(parents=True)
+    shutil.copy2(SCRIPTS / "lib.sh", scripts / "lib.sh")
+
+    security_log = tmp_path / "security-argv.jsonl"
+    responses = tmp_path / "keychain-responses.json"
+    responses.write_text(
+        json.dumps(
+            {
+                "identity-hmac-key": identity_value,
+                "cursor-hmac-key": cursor_value,
+            }
+        ),
+        encoding="utf-8",
+    )
+    security = tmp_path / "security"
+    _write_executable(
+        security,
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import os\n"
+        "import pathlib\n"
+        "import sys\n\n"
+        "args = sys.argv[1:]\n"
+        "if not args or args[0] != 'find-generic-password':\n"
+        "    raise SystemExit(2)\n"
+        "with pathlib.Path(os.environ['SECURITY_ARG_LOG']).open(\n"
+        "    'a', encoding='utf-8'\n"
+        ") as handle:\n"
+        "    handle.write(json.dumps(args) + '\\n')\n"
+        "account = args[args.index('-a') + 1]\n"
+        "responses = json.loads(\n"
+        "    pathlib.Path(os.environ['KEYCHAIN_RESPONSES']).read_text(encoding='utf-8')\n"
+        ")\n"
+        "print(responses.get(account, f'text-secret::{account}'))\n",
+    )
+
+    prepare = _read(SCRIPTS / "prepare-secrets").replace(
+        "/usr/bin/security",
+        f'"{security}"',
+    )
+    _write_executable(scripts / "prepare-secrets", prepare)
+
+    manifest = json.loads(_read(MANIFEST))
+    for channel in manifest["channels"].values():
+        channel["enabled"] = False
+    manifest["channels"]["email"]["enabled"] = True
+    manifest["channels"]["email"]["credential_ref"] = (
+        "keychain://com.esan.gbos.local-pilot/email-credential"
+    )
+    manifest_path = infra / "local-pilot-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    environment = os.environ.copy()
+    environment["TMPDIR"] = str(tmp_path)
+    environment["SECURITY_ARG_LOG"] = str(security_log)
+    environment["KEYCHAIN_RESPONSES"] = str(responses)
+    result = subprocess.run(
+        [str(scripts / "prepare-secrets"), "--manifest", str(manifest_path)],
+        cwd=fixture_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    return result, security_log
+
+
 def _prepare_runtime_image_repo(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     scripts = repo / "scripts" / "local-pilot"
@@ -752,6 +829,75 @@ def test_keychain_secret_materialization_is_non_logging_and_mode_0600() -> None:
     assert "keychain://" in script
     assert 'secret_tmp_root="${secret_tmp_root%/}"' in script
     assert 'find "${secret_dir}"' not in library
+
+
+def test_identity_hmac_key_materializes_hex_keychain_output_as_exact_raw_bytes(
+    tmp_path: Path,
+) -> None:
+    expected = bytes(range(32))
+    keychain_output = expected.hex()
+
+    result, security_log = _run_prepare_secrets_fixture(
+        tmp_path,
+        identity_value=keychain_output,
+    )
+
+    assert result.returncode == 0, result.stderr
+    secret_dir = Path(result.stdout.strip())
+    identity_key = secret_dir / "identity_hmac_key"
+    assert identity_key.read_bytes() == expected
+    assert stat.S_IMODE(identity_key.stat().st_mode) == 0o600
+    assert keychain_output not in result.stdout
+    assert keychain_output not in result.stderr
+    assert keychain_output not in security_log.read_text(encoding="utf-8")
+
+
+def test_non_identity_secret_preserves_64_hex_characters_as_text(tmp_path: Path) -> None:
+    text_secret = "ab" * 32
+
+    result, _ = _run_prepare_secrets_fixture(
+        tmp_path,
+        identity_value=(bytes(range(32))).hex(),
+        cursor_value=text_secret,
+    )
+
+    assert result.returncode == 0, result.stderr
+    secret_dir = Path(result.stdout.strip())
+    assert (secret_dir / "cursor_hmac_key").read_bytes() == text_secret.encode()
+
+
+def test_identity_hmac_key_rejects_non_hex_keychain_output_without_leaking(
+    tmp_path: Path,
+) -> None:
+    invalid_value = "g1" * 32
+
+    result, security_log = _run_prepare_secrets_fixture(
+        tmp_path,
+        identity_value=invalid_value,
+    )
+
+    assert result.returncode == 78
+    assert "identity_hmac_key must be exactly 64 hexadecimal characters" in result.stderr
+    assert invalid_value not in result.stdout
+    assert invalid_value not in result.stderr
+    assert invalid_value not in security_log.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob("gbos-local-pilot-secrets.*"))
+
+
+def test_identity_hmac_key_rejects_wrong_length_without_leaking(tmp_path: Path) -> None:
+    invalid_value = "a1" * 31
+
+    result, security_log = _run_prepare_secrets_fixture(
+        tmp_path,
+        identity_value=invalid_value,
+    )
+
+    assert result.returncode == 78
+    assert "identity_hmac_key must be exactly 64 hexadecimal characters" in result.stderr
+    assert invalid_value not in result.stdout
+    assert invalid_value not in result.stderr
+    assert invalid_value not in security_log.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob("gbos-local-pilot-secrets.*"))
 
 
 def test_image_inspection_reports_id_and_repo_digests_without_pulling() -> None:
