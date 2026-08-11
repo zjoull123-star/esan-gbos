@@ -11,7 +11,7 @@
     "test": "vitest",
     "test:e2e": "playwright test --project=frontend-harness",
     "test:e2e:site": "playwright test --project=frappe-site",
-    "test:unit": "vitest run",
+    "test:unit": "vitest run --maxWorkers=1",
     "typecheck": "vue-tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tsconfig.e2e.json"
   },
   "dependencies": {

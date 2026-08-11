@@ -26,6 +26,18 @@ const scopedStyle = (path: string) => {
   return source.match(/<style scoped>([\s\S]*?)<\/style>/u)?.[1] ?? "";
 };
 
+describe("unit test runner resource contract", () => {
+  it("caps workers without weakening the default test timeout", () => {
+    const packageJson = JSON.parse(
+      readFileSync(resolve("package.json"), "utf8"),
+    ) as { scripts?: Record<string, string> };
+    const unitCommand = packageJson.scripts?.["test:unit"] ?? "";
+
+    expect(unitCommand).toContain("--maxWorkers=1");
+    expect(unitCommand).not.toContain("--testTimeout");
+  });
+});
+
 const lineage = {
   source_system: "synthetic_kingdee_projection",
   source_record_refs: ["sales-order-projection-SYNTH-001"],
