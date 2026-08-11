@@ -115,11 +115,12 @@ checked_in_deepseek_enabled=false
   当前 closure evidence。Frappe 与 runtime 镜像分别绑定上述实际源码版本，但这仍不
   等于真实 Email/DeepSeek canary 或正式 Go。
 - Task 13 的 credential-free closure 已完成；真实 Email + DeepSeek canary **未执行**。
-  当前缺少 Email credential、DeepSeek API Key、identity HMAC、人工批准的 trusted
-  phrase lexicon，以及 Frappe identity resolver API key/secret。real Email/DeepSeek
+  当前缺少 Email credential、DeepSeek API Key 和人工批准的 trusted phrase lexicon，
+  且人工业务 scope 尚未提供。real Email/DeepSeek
   call、real channels 与 `response_reported_observed_model` 仍为 No-Go/unknown。
-- 2026-08-11 的只读存在性审计没有读取任何 secret value：14 个固定基础 Keychain 项
-  存在；`identity-hmac-key`、Frappe identity-resolver API key/secret 和
+- 2026-08-11 的只读存在性审计没有读取任何 secret value。随后按用户授权创建了
+  `identity-hmac-key` 与两项 Frappe identity-resolver 凭据；三个本地随机凭据分别使用
+  独立 256-bit 值，格式和互异性已验证。目前 17 个固定基础 Keychain 项存在，仅
   `trusted-phrase-lexicon` 不存在。Email/DeepSeek 的动态 Keychain reference、activation
   time、team/account owner、reviewer 与目标 User/Party 尚未提供。使用占位 reference 的
   仓库外 formal manifest source/image preflight 已通过并清理临时声明；这不等于凭据或

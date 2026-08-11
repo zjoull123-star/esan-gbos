@@ -70,9 +70,10 @@ external_send=false
 
 ## Remaining real-canary work
 
-- [ ] Securely provide an Email credential, DeepSeek API key, identity HMAC key,
-  approved trusted-phrase lexicon and Frappe identity-resolver API key/secret through
-  macOS Keychain; none may enter the repository or evidence artifacts.
+- [x] Generate and store the local identity HMAC key and Frappe identity-resolver API
+  key/secret in macOS Keychain without putting values in the repository or evidence.
+- [ ] Securely provide an Email credential, DeepSeek API key and approved
+  trusted-phrase lexicon through macOS Keychain; none may enter the repository or evidence.
 - [ ] Generate a repository-external canary manifest enabling only one Email instance
   and model projection after an approved activation time; do not backfill history.
 - [ ] Prove IMAP TLS, `BODY.PEEK`, UID/UIDVALIDITY checkpoints, attachment isolation and

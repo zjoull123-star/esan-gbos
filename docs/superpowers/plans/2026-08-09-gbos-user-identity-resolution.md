@@ -318,8 +318,9 @@ runtime images have now been rebuilt/recorded from final code; if final code cha
 rebuild/record before the real canary. 72 小时
 连续运行不再作为本阶段退出条件；it is deferred/not required for this stage and a
 shorter evidence-bound health sample is sufficient once the real canary can be run.
-Missing Email credential, DeepSeek API key, identity HMAC, trusted phrase lexicon and
-Frappe identity-resolver credentials remain outside the repository and block the real run.
+The local identity HMAC and Frappe identity-resolver credentials now exist in Keychain.
+Missing Email credential, DeepSeek API key, approved trusted phrase lexicon and operator
+scope remain outside the repository and block the real run.
 
 - [x] Keep committed formal manifest disabled and `external_send=false`.
 - [x] Rebuild and record Frappe from `4b2512b` and runtime from `341b2df`; re-run the affected gate if its source changes.

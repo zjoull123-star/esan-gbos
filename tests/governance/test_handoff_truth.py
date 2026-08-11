@@ -407,10 +407,17 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
         "required_for_this_stage": False,
     }
     assert evidence["external_input_inventory"] == {
-        "checked_at": "2026-08-11T00:08:45Z",
+        "checked_at": "2026-08-11T02:14:28Z",
         "method": "macos_keychain_metadata_existence_only",
         "secret_values_read_or_recorded": False,
         "formal_external_manifest_preflight": "pass_with_placeholder_keychain_refs",
+        "generated_locally_at": "2026-08-11T02:14:28Z",
+        "generated_fixed_items": [
+            "identity-hmac-key",
+            "frappe-identity-resolver-api-key",
+            "frappe-identity-resolver-api-secret",
+        ],
+        "generation_contract": "independent_256_bit_random_lowercase_hex",
         "fixed_required_available": [
             "postgres-password",
             "postgres-observer-password",
@@ -426,11 +433,11 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
             "mapping-vault-aes-256-key",
             "frappe-materializer-api-key",
             "frappe-materializer-api-secret",
-        ],
-        "fixed_required_missing": [
             "identity-hmac-key",
             "frappe-identity-resolver-api-key",
             "frappe-identity-resolver-api-secret",
+        ],
+        "fixed_required_missing": [
             "trusted-phrase-lexicon",
         ],
         "dynamic_references_not_supplied": [
@@ -454,6 +461,7 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
     assert "credential binding" in summary
     assert "Email delivery" in summary
     assert "metadata-only Keychain inventory" in summary
+    assert "三个本地随机凭据" in summary
 
     evidence_text = IDENTITY_CLOSURE_EVIDENCE.read_text(encoding="utf-8")
     for forbidden in ("sk-", "-----BEGIN", "Cookie:", "Authorization:"):

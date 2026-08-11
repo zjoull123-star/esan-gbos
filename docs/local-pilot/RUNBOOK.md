@@ -149,8 +149,9 @@ response_reported_observed_model=unknown
   intelligence/draft 与 Frappe receipt；`canary-evidence record` 必须使用
   `--chain-attestation`，只写入 `response_reported_observed_model`，不接受 free-form
   observed model。真实 canary 未运行，因此该字段当前仍 unknown。
-- Email credential、DeepSeek API key、identity HMAC、trusted phrase lexicon、Frappe
-  identity resolver credentials 仍缺失。此前 older source 的 current locked runtime
+- 本地 identity HMAC 与 Frappe identity resolver API key/secret 已按用户授权生成并存入
+  Keychain，未进入仓库或证据。Email credential、DeepSeek API key、人工批准的 trusted
+  phrase lexicon 与 operator scope 仍缺失。此前 older source 的 current locked runtime
   images blocker 已关闭：当前镜像已按上述实际源码重建并记录；若对应源码再变化，
   **rebuild before the real canary** 仍是硬门。72 小时连续运行不再作为本阶段退出条件，
   按用户决定 deferred/not required for this stage。
