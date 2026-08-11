@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import stat
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
@@ -66,6 +65,12 @@ from .runtime_support import (
     load_secret_file,
     reject_plaintext_secret_environment,
     validate_manifest_binding,
+)
+from .secret_provider import (
+    MountedFileSecretProvider,
+    SecretBytes,
+    SecretProviderError,
+    SecretSpec,
 )
 from .trusted_phrase_lexicon import load_trusted_phrase_resolver
 
@@ -939,28 +944,23 @@ def _run_worker(
 
 
 def _read_exact_private_key_file(path: Path) -> bytes:
-    candidate = Path(path)
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    candidate = Path(path).absolute()
+    logical_name = (
+        candidate.name
+        if candidate.name in {"tokenizer_hmac_key", "mapping_vault_key"}
+        else "projection_private_key"
+    )
     try:
-        descriptor = os.open(candidate, flags)
-    except OSError as exc:
-        raise RuntimeSupportError("required private key file is absent") from exc
-    try:
-        details = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(details.st_mode)
-            or stat.S_IMODE(details.st_mode) != 0o600
-            or details.st_size != 32
-        ):
-            raise RuntimeSupportError(
-                "private key file must be a 32-byte regular non-symlink with mode 0600"
-            )
-        value = os.read(descriptor, 33)
-    finally:
-        os.close(descriptor)
-    if len(value) != 32:
-        raise RuntimeSupportError("private key file length changed while reading")
-    return value
+        provider = MountedFileSecretProvider(
+            candidate.parent,
+            (SecretSpec(logical_name, candidate.name, "bytes", 32, 32, 32),),
+        )
+        secret = provider.read_bytes(logical_name)
+    except SecretProviderError:
+        raise RuntimeSupportError("private key file provider request failed") from None
+    if not isinstance(secret, SecretBytes):
+        raise RuntimeSupportError("private key file provider request failed")
+    return secret.reveal()
 
 
 def _valid_phrase(value: object) -> bool:

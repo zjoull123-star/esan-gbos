@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from services.local_pilot_runtime.secret_provider import (
+    MountedFileSecretProvider,
+    SecretProviderError,
+    SecretSpec,
+    SecretText,
+)
 from services.model_gateway.deepseek import (
     DEEPSEEK_BASE_URL,
     DEEPSEEK_MODEL,
@@ -157,18 +162,26 @@ def _enabled_exact_deepseek_manifest(
 
 
 def _read_secret_file(path: Path) -> str:
-    resolved = Path(path)
-    if not resolved.is_file() or resolved.is_symlink():
+    resolved = Path(path).absolute()
+    try:
+        provider = MountedFileSecretProvider(
+            resolved.parent,
+            (
+                SecretSpec(
+                    "deepseek_api_key",
+                    resolved.name,
+                    "text",
+                    1,
+                    4096,
+                ),
+            ),
+        )
+        secret = provider.read_text("deepseek_api_key")
+    except SecretProviderError:
+        raise LocalRuntimeError("DeepSeek key file is absent or unsafe") from None
+    if not isinstance(secret, SecretText):
         raise LocalRuntimeError("DeepSeek key file is absent or unsafe")
-    mode = os.stat(resolved, follow_symlinks=False).st_mode
-    if mode & 0o077:
-        raise LocalRuntimeError("DeepSeek key file permissions are too broad")
-    if resolved.stat().st_size > 4096:
-        raise LocalRuntimeError("DeepSeek key file is too large")
-    value = resolved.read_text(encoding="utf-8").strip()
-    if not value or "\x00" in value or "\n" in value or "\r" in value:
-        raise LocalRuntimeError("DeepSeek key file is invalid")
-    return value
+    return secret.reveal()
 
 
 __all__ = [

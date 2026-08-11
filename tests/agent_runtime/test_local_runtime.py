@@ -19,6 +19,7 @@ from services.agent_runtime.local_runtime import (
     LocalRuntimeError,
     compose_local_provider,
 )
+from services.local_pilot_runtime.secret_provider import SecretText
 
 
 class _Ledger:
@@ -175,6 +176,46 @@ def test_deepseek_composition_accepts_only_exact_manifest_and_never_calls_networ
             controlled_egress=True,
             deepseek_factory=factory,
         )
+
+
+def test_deepseek_api_key_read_delegates_to_mounted_secret_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.agent_runtime import local_runtime
+
+    key_file = tmp_path / "deepseek_api_key"
+    key_file.write_text("legacy-direct-read-must-not-win\n", encoding="utf-8")
+    key_file.chmod(0o600)
+    events: list[object] = []
+
+    class RecordingProvider:
+        def read_text(self, name: str) -> SecretText:
+            events.append(("read", name))
+            return SecretText("provider-api-key")
+
+    def provider_factory(root: Path, specs: object) -> RecordingProvider:
+        events.append(("provider", root, tuple(specs)))
+        return RecordingProvider()
+
+    monkeypatch.setattr(local_runtime, "MountedFileSecretProvider", provider_factory, raising=False)
+    observed: list[DeepSeekAssembly] = []
+
+    compose_local_provider(
+        _enabled_manifest(),
+        runtime_enabled=True,
+        provider_mode="deepseek",
+        model_kill_switch=False,
+        key_file=key_file,
+        budget_ledger=_Ledger(),
+        tokenizer_vault=_Vault(),
+        controlled_egress=True,
+        deepseek_factory=lambda assembly: observed.append(assembly) or _Provider(),
+    )
+
+    assert [event[0] for event in events] == ["provider", "read"]
+    assert events[1] == ("read", "deepseek_api_key")
+    assert observed[0].api_key == "provider-api-key"
 
 
 @pytest.mark.parametrize(

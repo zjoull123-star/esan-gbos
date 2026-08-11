@@ -34,6 +34,7 @@ from services.local_pilot_runtime.model_projection_worker import (
 )
 from services.local_pilot_runtime.projection_config import ProjectionConfigError
 from services.local_pilot_runtime.runtime_support import load_runtime_config
+from services.local_pilot_runtime.secret_provider import SecretBytes
 from services.local_pilot_runtime.trusted_phrase_lexicon import (
     TrustedPhraseLexiconResolver,
     load_trusted_phrase_resolver,
@@ -51,6 +52,36 @@ from services.observer.observer.projection_outbox import PostgresProjectionOutbo
 
 NOW = datetime(2026, 8, 8, 10, tzinfo=UTC)
 SCOPE = TenantScope("gbos.localhost", "observation_processing")
+
+
+def test_projection_private_key_read_delegates_to_mounted_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key_file = tmp_path / "tokenizer_hmac_key"
+    key_file.write_bytes(b"d" * 32)
+    key_file.chmod(0o600)
+    events: list[object] = []
+
+    class RecordingProvider:
+        def read_bytes(self, name: str) -> SecretBytes:
+            events.append(("read", name))
+            return SecretBytes(b"p" * 32)
+
+    def provider_factory(root: Path, specs: object) -> RecordingProvider:
+        events.append(("provider", root, tuple(specs)))
+        return RecordingProvider()
+
+    monkeypatch.setattr(
+        model_projection_worker,
+        "MountedFileSecretProvider",
+        provider_factory,
+        raising=False,
+    )
+
+    assert model_projection_worker._read_exact_private_key_file(key_file) == b"p" * 32
+    assert [event[0] for event in events] == ["provider", "read"]
+    assert events[1] == ("read", "tokenizer_hmac_key")
 
 
 class _ImmediateHeartbeat:

@@ -15,6 +15,7 @@ from services.agent_runtime.invocations import (
     PostgresModelInvocationRepository,
 )
 from services.agent_runtime.local_runtime import DeepSeekAssembly
+from services.local_pilot_runtime.secret_provider import SecretBytes
 from services.model_gateway.deepseek import BudgetHardStop, InMemoryUsageLedger
 from services.model_gateway.observation_provider import DeepSeekObservationProvider
 from services.model_gateway.provider import DeepSeekAgentProvider
@@ -415,3 +416,34 @@ def test_factory_rejects_wrong_endpoint_model_or_unsafe_hmac_key(tmp_path: Path)
             audit_repository=InMemoryModelInvocationRepository(),
             transport_factory=_NoNetworkTransport,
         )
+
+
+def test_agent_provider_factory_delegates_hmac_key_to_mounted_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.model_gateway import runtime
+
+    key_file = _secret_file(tmp_path / "tokenizer_hmac_key", b"d" * 32)
+    events: list[object] = []
+
+    class RecordingProvider:
+        def read_bytes(self, name: str) -> SecretBytes:
+            events.append(("read", name))
+            return SecretBytes(b"p" * 32)
+
+    def provider_factory(root: Path, specs: object) -> RecordingProvider:
+        events.append(("provider", root, tuple(specs)))
+        return RecordingProvider()
+
+    monkeypatch.setattr(runtime, "MountedFileSecretProvider", provider_factory, raising=False)
+
+    create_deepseek_agent_provider_factory(
+        tokenizer_hmac_key_file=key_file,
+        phrase_resolver=lambda _: (),
+        audit_repository=PostgresModelInvocationRepository(_Connection([])),
+        transport_factory=_NoNetworkTransport,
+    )
+
+    assert [event[0] for event in events] == ["provider", "read"]
+    assert events[1] == ("read", "tokenizer_hmac_key")

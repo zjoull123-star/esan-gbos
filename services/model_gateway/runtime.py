@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import re
-import stat
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -20,6 +18,12 @@ from services.agent_runtime.invocations import (
 )
 from services.agent_runtime.local_runtime import DeepSeekAssembly
 from services.agent_runtime.postgres import Connection, Cursor
+from services.local_pilot_runtime.secret_provider import (
+    MountedFileSecretProvider,
+    SecretBytes,
+    SecretProviderError,
+    SecretSpec,
+)
 
 from .deepseek import (
     DEEPSEEK_BASE_URL,
@@ -570,26 +574,18 @@ def _validate_reservation_values(
 
 
 def _read_exact_private_key_file(path: Path) -> bytes:
-    candidate = Path(path)
-    if candidate.is_symlink():
-        raise ValueError("secret key file must be a regular non-symlink file")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    candidate = Path(path).absolute()
     try:
-        descriptor = os.open(candidate, flags)
-    except OSError as exc:
-        raise ValueError("secret key file must be a regular non-symlink file") from exc
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("secret key file must be a regular non-symlink file")
-        if stat.S_IMODE(metadata.st_mode) != 0o600:
-            raise ValueError("secret key file permissions must be exactly 0600")
-        value = os.read(descriptor, 33)
-    finally:
-        os.close(descriptor)
-    if len(value) != 32:
-        raise ValueError("secret key file must contain exactly 32 bytes")
-    return value
+        provider = MountedFileSecretProvider(
+            candidate.parent,
+            (SecretSpec("tokenizer_hmac_key", candidate.name, "bytes", 32, 32, 32),),
+        )
+        secret = provider.read_bytes("tokenizer_hmac_key")
+    except SecretProviderError:
+        raise ValueError("secret key file permissions, type, or size are invalid") from None
+    if not isinstance(secret, SecretBytes):
+        raise ValueError("secret key file permissions, type, or size are invalid")
+    return secret.reveal()
 
 
 __all__ = [
