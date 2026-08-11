@@ -10,7 +10,12 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
-from .runtime_support import PostgresSettings
+from .runtime_support import (
+    PostgresSettings,
+    RuntimeSupportError,
+    TextSecretProvider,
+    load_secret_file,
+)
 
 _CONFIG_FIELDS = frozenset(
     {
@@ -39,7 +44,6 @@ _ROLE_USERS = {
     "agent": "gbos_agent_app",
 }
 _MAX_CONFIG_BYTES = 65_536
-_MAX_SECRET_BYTES = 4_096
 
 
 class ProjectionConfigError(RuntimeError):
@@ -78,7 +82,12 @@ class CanaryStartGuardConfig:
         )
 
 
-def load_projection_config(path: Path, *, expected_site_id: str) -> ProjectionConfig:
+def load_projection_config(
+    path: Path,
+    *,
+    expected_site_id: str,
+    secret_provider: TextSecretProvider | None = None,
+) -> ProjectionConfig:
     """Load a mode-0600 closed JSON file with three independent local DB roles."""
 
     value = _read_private_json(Path(path))
@@ -101,7 +110,12 @@ def load_projection_config(path: Path, *, expected_site_id: str) -> ProjectionCo
         raw = raw_connections.get(role)
         if not isinstance(raw, dict) or set(raw) != _CONNECTION_FIELDS:
             raise ProjectionConfigError("projection connection must use the closed schema")
-        connection = _connection(raw, expected_user=_ROLE_USERS[role])
+        connection = _connection(
+            raw,
+            expected_user=_ROLE_USERS[role],
+            logical_name=f"postgres_{role}_password",
+            secret_provider=secret_provider,
+        )
         resolved_password = connection.password_file.resolve(strict=True)
         if resolved_password in password_paths:
             raise ProjectionConfigError("projection roles cannot reuse one credential file")
@@ -116,7 +130,11 @@ def load_projection_config(path: Path, *, expected_site_id: str) -> ProjectionCo
     )
 
 
-def load_canary_start_guard_config(path: Path) -> CanaryStartGuardConfig:
+def load_canary_start_guard_config(
+    path: Path,
+    *,
+    secret_provider: TextSecretProvider | None = None,
+) -> CanaryStartGuardConfig:
     """Load three independent read-only-role canary guard connections."""
 
     value = _read_private_json(Path(path))
@@ -131,7 +149,12 @@ def load_canary_start_guard_config(path: Path) -> CanaryStartGuardConfig:
         raw = raw_connections.get(role)
         if not isinstance(raw, dict) or set(raw) != _CONNECTION_FIELDS:
             raise ProjectionConfigError("canary start guard connection must use the closed schema")
-        connection = _connection(raw, expected_user=_ROLE_USERS[role])
+        connection = _connection(
+            raw,
+            expected_user=_ROLE_USERS[role],
+            logical_name=f"postgres_{role}_password",
+            secret_provider=secret_provider,
+        )
         resolved_password = connection.password_file.resolve(strict=True)
         if resolved_password in password_paths:
             raise ProjectionConfigError("canary start guard roles cannot reuse credentials")
@@ -169,7 +192,13 @@ def _read_private_json(path: Path) -> dict[str, object]:
     return value
 
 
-def _connection(value: dict[str, object], *, expected_user: str) -> PostgresSettings:
+def _connection(
+    value: dict[str, object],
+    *,
+    expected_user: str,
+    logical_name: str,
+    secret_provider: TextSecretProvider | None,
+) -> PostgresSettings:
     host = _text(value.get("host"), "PostgreSQL host", maximum=253)
     port = _integer(value.get("port"), "PostgreSQL port", minimum=1, maximum=65_535)
     if host not in {"127.0.0.1", "::1", "localhost", "postgres"} or (
@@ -180,7 +209,15 @@ def _connection(value: dict[str, object], *, expected_user: str) -> PostgresSett
     user = _text(value.get("user"), "PostgreSQL user", maximum=63)
     if user != expected_user:
         raise ProjectionConfigError("projection PostgreSQL role is not least privilege")
-    password_file = _private_secret_path(value.get("password_file"))
+    password_file = _absolute_path(value.get("password_file"), "password file")
+    try:
+        load_secret_file(
+            password_file,
+            secret_provider=secret_provider,
+            logical_name=logical_name if secret_provider is not None else None,
+        )
+    except RuntimeSupportError as exc:
+        raise ProjectionConfigError("projection password file was rejected") from exc
     timeout = _integer(
         value.get("connect_timeout_seconds"),
         "PostgreSQL connect timeout",
@@ -195,24 +232,6 @@ def _connection(value: dict[str, object], *, expected_user: str) -> PostgresSett
         password_file=password_file,
         connect_timeout_seconds=timeout,
     )
-
-
-def _private_secret_path(value: object) -> Path:
-    path = _absolute_path(value, "password file")
-    try:
-        details = path.lstat()
-    except FileNotFoundError as exc:
-        raise ProjectionConfigError("projection password file is absent") from exc
-    if (
-        not stat.S_ISREG(details.st_mode)
-        or stat.S_IMODE(details.st_mode) != 0o600
-        or path.is_symlink()
-        or not 0 < details.st_size <= _MAX_SECRET_BYTES
-    ):
-        raise ProjectionConfigError(
-            "projection password file must be a bounded mode-0600 regular file"
-        )
-    return path
 
 
 def _safe_root(value: object, name: str) -> Path:

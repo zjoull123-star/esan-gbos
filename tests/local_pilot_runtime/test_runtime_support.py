@@ -8,12 +8,30 @@ from typing import Any
 import pytest
 
 from services.local_pilot_runtime.runtime_support import (
+    PostgresSettings,
     RuntimeSupportError,
     connect_postgres,
     load_runtime_config,
     load_secret_file,
     reject_plaintext_secret_environment,
 )
+from services.local_pilot_runtime.secret_provider import SecretProviderError, SecretText
+
+
+class RecordingTextProvider:
+    def __init__(self, value: str = "provider-secret") -> None:
+        self.value = value
+        self.requests: list[str] = []
+
+    def read_text(self, name: str) -> SecretText:
+        self.requests.append(name)
+        return SecretText(self.value)
+
+
+class RejectingTextProvider(RecordingTextProvider):
+    def read_text(self, name: str) -> SecretText:
+        self.requests.append(name)
+        raise SecretProviderError("secret provider request rejected")
 
 
 def _secret(path: Path, value: str) -> Path:
@@ -123,14 +141,103 @@ def test_runtime_config_and_postgres_connection_use_only_0600_secret_files(
     assert "db-secret" not in repr(config)
 
 
-@pytest.mark.parametrize("mode", [0o644, 0o640, 0o400, 0o666])
-def test_secret_file_requires_exact_mode_0600(tmp_path: Path, mode: int) -> None:
+@pytest.mark.parametrize("mode", [0o400, 0o600])
+def test_secret_file_accepts_private_provider_modes(tmp_path: Path, mode: int) -> None:
     path = tmp_path / "secret"
     path.write_text("secret", encoding="utf-8")
     os.chmod(path, mode)
 
-    with pytest.raises(RuntimeSupportError, match="0600"):
+    assert load_secret_file(path).reveal() == "secret"
+
+
+@pytest.mark.parametrize("mode", [0o644, 0o640, 0o666])
+def test_secret_file_rejects_nonprivate_modes(tmp_path: Path, mode: int) -> None:
+    path = tmp_path / "secret"
+    path.write_text("secret", encoding="utf-8")
+    os.chmod(path, mode)
+
+    with pytest.raises(RuntimeSupportError, match="secret file"):
         load_secret_file(path)
+
+
+@pytest.mark.parametrize(
+    "logical_name",
+    ["agent_api_bearer", "context_api_bearer", "context_client_bearer"],
+)
+def test_bearer_reads_delegate_only_the_explicit_logical_name(logical_name: str) -> None:
+    provider = RecordingTextProvider("bearer-value")
+
+    secret = load_secret_file(
+        Path(f"/attacker-controlled/{logical_name}"),
+        secret_provider=provider,
+        logical_name=logical_name,
+    )
+
+    assert secret.reveal() == "bearer-value"
+    assert provider.requests == [logical_name]
+    assert "bearer-value" not in repr(secret)
+    assert "bearer-value" not in str(secret)
+
+
+def test_injected_secret_read_rejects_unknown_logical_name_before_provider_access() -> None:
+    provider = RecordingTextProvider()
+
+    with pytest.raises(RuntimeSupportError, match="secret file"):
+        load_secret_file(
+            Path("/run/secrets/ignored"),
+            secret_provider=provider,
+            logical_name="../../attacker-selected",
+        )
+
+    assert provider.requests == []
+
+
+@pytest.mark.parametrize(
+    ("user", "logical_name"),
+    [
+        ("gbos_observer_app", "postgres_observer_password"),
+        ("gbos_context_app", "postgres_context_password"),
+        ("gbos_agent_app", "postgres_agent_password"),
+        ("gbos_media_app", "postgres_media_password"),
+    ],
+)
+def test_postgres_password_reads_delegate_to_role_logical_name(
+    user: str,
+    logical_name: str,
+) -> None:
+    provider = RecordingTextProvider("db-secret")
+    captured: list[dict[str, Any]] = []
+    settings = PostgresSettings(
+        host="postgres",
+        port=5432,
+        database="gbos",
+        user=user,
+        password_file=Path(f"/attacker-controlled/{logical_name}"),
+        connect_timeout_seconds=3,
+    )
+
+    connect_postgres(
+        settings,
+        connector=lambda **kwargs: captured.append(kwargs),
+        secret_provider=provider,
+    )
+
+    assert provider.requests == [logical_name]
+    assert captured[0]["password"] == "db-secret"
+
+
+def test_provider_errors_are_translated_without_secret_wrapper_leakage() -> None:
+    provider = RejectingTextProvider("must-not-render")
+
+    with pytest.raises(RuntimeSupportError, match="secret file") as captured:
+        load_secret_file(
+            Path("/run/secrets/agent_api_bearer"),
+            secret_provider=provider,
+            logical_name="agent_api_bearer",
+        )
+
+    assert "must-not-render" not in str(captured.value)
+    assert "must-not-render" not in repr(captured.value)
 
 
 @pytest.mark.parametrize(
@@ -147,6 +254,39 @@ def test_plaintext_secret_environment_is_forbidden(
 ) -> None:
     with pytest.raises(RuntimeSupportError, match="plaintext secret"):
         reject_plaintext_secret_environment(environment)
+
+
+@pytest.mark.parametrize(
+    "environment",
+    [
+        {"DEPLOYMENT_API_KEY": "plaintext"},
+        {"DEPLOYMENT_PASSWORD": "plaintext"},
+        {"DEPLOYMENT_TOKEN": "plaintext"},
+        {"DEPLOYMENT_BEARER": "plaintext"},
+    ],
+)
+def test_deployment_plaintext_secrets_are_rejected_before_provider_access(
+    environment: dict[str, str],
+) -> None:
+    provider = RecordingTextProvider()
+    settings = PostgresSettings(
+        host="postgres",
+        port=5432,
+        database="gbos",
+        user="gbos_agent_app",
+        password_file=Path("/run/secrets/postgres_agent_password"),
+        connect_timeout_seconds=3,
+    )
+
+    with pytest.raises(RuntimeSupportError, match="plaintext secret"):
+        connect_postgres(
+            settings,
+            connector=lambda **_: object(),
+            secret_provider=provider,
+            environ=environment,
+        )
+
+    assert provider.requests == []
 
 
 def test_runtime_config_is_closed_and_local_only(tmp_path: Path) -> None:

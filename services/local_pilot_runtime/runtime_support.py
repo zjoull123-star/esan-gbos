@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import ipaddress
 import json
-import stat
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
+
+from .secret_provider import (
+    MountedFileSecretProvider,
+    SecretProviderError,
+    SecretSpec,
+    SecretText,
+)
 
 _CONFIG_FIELDS = frozenset(
     {
@@ -52,8 +58,38 @@ _COMPONENT_NAMES = (
 )
 _MAX_CONFIG_BYTES = 65_536
 _MAX_SECRET_BYTES = 4096
+_DEPLOYMENT_TEXT_SECRET_FILENAMES = {
+    "postgres_password": "postgres_password",
+    "postgres_observer_password": "postgres_observer_password",
+    "postgres_context_password": "postgres_context_password",
+    "postgres_agent_password": "postgres_agent_password",
+    "postgres_media_password": "postgres_media_password",
+    "mariadb_root_password": "mariadb_root_password",
+    "frappe_admin_password": "frappe_admin_password",
+    "frappe_demo_password": "frappe_demo_password",
+    "agent_api_bearer": "agent_api_bearer",
+    "context_api_bearer": "context_api_bearer",
+    "context_client_bearer": "context_client_bearer",
+    "cursor_hmac_key": "cursor_hmac_key",
+    "media_runtime_key": "media_runtime_key",
+    "deepseek_api_key": "deepseek_api_key",
+    "frappe_materializer_api_key": "frappe_materializer_api_key",
+    "frappe_materializer_api_secret": "frappe_materializer_api_secret",
+    "frappe_identity_resolver_api_key": "frappe_identity_resolver_api_key",
+    "frappe_identity_resolver_api_secret": "frappe_identity_resolver_api_secret",
+}
+_POSTGRES_SECRET_NAMES = {
+    "gbos_observer_app": "postgres_observer_password",
+    "gbos_context_app": "postgres_context_password",
+    "gbos_agent_app": "postgres_agent_password",
+    "gbos_media_app": "postgres_media_password",
+}
 
 ProviderMode = Literal["disabled", "deterministic", "deepseek"]
+
+
+class TextSecretProvider(Protocol):
+    def read_text(self, name: str) -> SecretText | None: ...
 
 
 class RuntimeSupportError(RuntimeError):
@@ -168,29 +204,44 @@ def load_runtime_config(path: Path) -> RuntimeConfig:
     )
 
 
-def load_secret_file(path: Path) -> SecretValue:
-    secret_path = Path(path)
+def load_secret_file(
+    path: Path,
+    *,
+    secret_provider: TextSecretProvider | None = None,
+    logical_name: str | None = None,
+) -> SecretValue:
+    """Read one text secret, preserving the legacy value wrapper boundary."""
+
+    secret_path = Path(path).absolute()
     try:
-        details = secret_path.lstat()
-    except FileNotFoundError as exc:
-        raise RuntimeSupportError("required secret file is absent") from exc
-    if (
-        not stat.S_ISREG(details.st_mode)
-        or stat.S_IMODE(details.st_mode) != 0o600
-        or secret_path.is_symlink()
-    ):
-        raise RuntimeSupportError("secret file must be a regular non-symlink with mode 0600")
-    if not 0 < details.st_size <= _MAX_SECRET_BYTES:
-        raise RuntimeSupportError("secret file is empty or unbounded")
-    try:
-        value = secret_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        raise RuntimeSupportError("secret file is not valid UTF-8") from exc
-    if value.endswith("\n"):
-        value = value[:-1]
-    if not value or "\x00" in value or "\r" in value or "\n" in value:
-        raise RuntimeSupportError("secret file contains invalid characters")
-    return SecretValue(value)
+        if secret_provider is None:
+            provider: TextSecretProvider = MountedFileSecretProvider(
+                secret_path.parent,
+                (
+                    SecretSpec(
+                        name="compatibility_secret",
+                        filename=secret_path.name,
+                        kind="text",
+                        minimum_bytes=1,
+                        maximum_bytes=_MAX_SECRET_BYTES,
+                    ),
+                ),
+            )
+            requested_name = "compatibility_secret"
+        else:
+            requested_name = logical_name or ""
+            expected_filename = _DEPLOYMENT_TEXT_SECRET_FILENAMES.get(requested_name)
+            if expected_filename is None or secret_path.name != expected_filename:
+                raise RuntimeSupportError("secret file request rejected")
+            provider = secret_provider
+        secret = provider.read_text(requested_name)
+        if not isinstance(secret, SecretText):
+            raise RuntimeSupportError("secret file request rejected")
+        return SecretValue(secret.reveal())
+    except RuntimeSupportError:
+        raise
+    except SecretProviderError as exc:
+        raise RuntimeSupportError("secret file request rejected") from exc
 
 
 def reject_plaintext_secret_environment(environ: Mapping[str, str]) -> None:
@@ -212,8 +263,21 @@ def connect_postgres(
     settings: PostgresSettings,
     *,
     connector: Callable[..., object] | None = None,
+    secret_provider: TextSecretProvider | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> object:
-    password = load_secret_file(settings.password_file)
+    if environ is not None:
+        reject_plaintext_secret_environment(environ)
+    logical_name: str | None = None
+    if secret_provider is not None:
+        logical_name = _POSTGRES_SECRET_NAMES.get(settings.user)
+        if logical_name is None:
+            raise RuntimeSupportError("secret file request rejected")
+    password = load_secret_file(
+        settings.password_file,
+        secret_provider=secret_provider,
+        logical_name=logical_name,
+    )
     if connector is None:
         try:
             import psycopg
@@ -439,6 +503,7 @@ __all__ = [
     "RuntimeConfig",
     "RuntimeSupportError",
     "SecretValue",
+    "TextSecretProvider",
     "WorkerSettings",
     "close_connection",
     "component_settings",

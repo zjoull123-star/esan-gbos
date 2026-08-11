@@ -10,6 +10,22 @@ from services.local_pilot_runtime.projection_config import (
     ProjectionConfigError,
     load_projection_config,
 )
+from services.local_pilot_runtime.secret_provider import SecretProviderError, SecretText
+
+
+class RecordingTextProvider:
+    def __init__(self) -> None:
+        self.requests: list[str] = []
+
+    def read_text(self, name: str) -> SecretText:
+        self.requests.append(name)
+        return SecretText(f"{name}-value")
+
+
+class RejectingTextProvider(RecordingTextProvider):
+    def read_text(self, name: str) -> SecretText:
+        self.requests.append(name)
+        raise SecretProviderError("secret provider request rejected")
 
 
 def _private(path: Path, value: str) -> Path:
@@ -37,7 +53,7 @@ def _config(tmp_path: Path) -> tuple[Path, dict[str, object]]:
             "port": 55432,
             "database": "gbos_local_pilot",
             "user": user,
-            "password_file": str(_private(secrets / role, f"{role}-secret")),
+            "password_file": str(_private(secrets / f"postgres_{role}_password", f"{role}-secret")),
             "connect_timeout_seconds": 3,
         }
     value: dict[str, object] = {
@@ -91,6 +107,44 @@ def test_projection_config_accepts_exact_docker_internal_postgres_endpoint(
         "gbos_agent_app",
     }
     assert len({connection.password_file for connection in config.connections.values()}) == 3
+
+
+def test_projection_password_reads_delegate_to_exact_role_logical_names(
+    tmp_path: Path,
+) -> None:
+    path, _ = _config(tmp_path)
+    provider = RecordingTextProvider()
+
+    config = load_projection_config(
+        path,
+        expected_site_id="gbos.localhost",
+        secret_provider=provider,
+    )
+
+    assert tuple(config.connections) == ("observer", "context", "agent")
+    assert provider.requests == [
+        "postgres_observer_password",
+        "postgres_context_password",
+        "postgres_agent_password",
+    ]
+
+
+def test_projection_provider_errors_are_translated_without_secret_leakage(
+    tmp_path: Path,
+) -> None:
+    path, _ = _config(tmp_path)
+    provider = RejectingTextProvider()
+
+    with pytest.raises(ProjectionConfigError, match="password file") as captured:
+        load_projection_config(
+            path,
+            expected_site_id="gbos.localhost",
+            secret_provider=provider,
+        )
+
+    assert provider.requests == ["postgres_observer_password"]
+    assert "postgres_observer_password-value" not in str(captured.value)
+    assert "postgres_observer_password-value" not in repr(captured.value)
 
 
 @pytest.mark.parametrize(
