@@ -31,13 +31,13 @@ rechecked on another container runtime.
 The Frappe, MariaDB, Redis, backend, worker, scheduler, websocket, and PWA
 services use local-pilot-specific volume names. The Frappe services use the
 recorded local image `esan-gbos-local-pilot-frappe:2026-08-08` with inspect digest
-`sha256:71d7e7fd074d519b246cc1da7bb72deb97c07bf58ffc2a1946c2abc26576fb34`;
+`sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c`;
 the local runtime digest is
-`sha256:d79fa3982f727b5a47b1783b3731ed153dc07f6a7f1c4a1c81c9b1a5ef407824`.
+`sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3`.
 The Frappe source reference is
-`28444b8da334c0e3eae2635352e43da4f7d2477b`; the runtime source reference is
-`094e794971e96be4f3f1078e7c70936130f65387`; the image-lock recording commit is
-`eb8bb1ebb2c183430ac36ef74cafac09052cf96d`. Each image label and source hash was
+`4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`; the runtime source reference is
+`341b2df9c45b22c0579f960dcb5ecbe694cdd215`; the image-lock recording commit is
+`d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`. Each image label and source hash was
 inspected independently.
 the upstream ERPNext image is not treated as a GBOS PWA. The previous synthetic
 snapshot, rather than this rebuild alone, reported

@@ -5,12 +5,12 @@ channel ingestion, identity resolution and model proposals without enabling outb
 actions, Kingdee, cloud deployment or production state changes.
 
 **Current validation references:** Frappe source reference
-`28444b8da334c0e3eae2635352e43da4f7d2477b`, runtime source reference
-`094e794971e96be4f3f1078e7c70936130f65387`, and image-lock recording commit
-`eb8bb1ebb2c183430ac36ef74cafac09052cf96d`. The locked Frappe/PWA image is
-`sha256:71d7e7fd074d519b246cc1da7bb72deb97c07bf58ffc2a1946c2abc26576fb34`;
+`4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`, runtime source reference
+`341b2df9c45b22c0579f960dcb5ecbe694cdd215`, and image-lock recording commit
+`d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`. The locked Frappe/PWA image is
+`sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c`;
 the local runtime image is
-`sha256:d79fa3982f727b5a47b1783b3731ed153dc07f6a7f1c4a1c81c9b1a5ef407824`.
+`sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3`.
 Each image carries its own exact source revision and source-hash label.
 
 ## Current architecture
@@ -43,8 +43,10 @@ Each image carries its own exact source revision and source-hash label.
   attachment quarantine, model retry/protocol failure, identity restart and revocation.
 - [x] Immediate identity authority denial, dynamic target eligibility, rejected mapping
   resubmission, governed revoke/review PWA and automatic retention scheduling verified.
-- [x] Disposable PostgreSQL matrix passed 43 tests; fresh Frappe v16 identity/app native
-  suites passed 13/59 tests after two migrations; all disposable state removed.
+- [x] The earlier disposable PostgreSQL matrix passed 43 tests; the current runtime
+  source additionally passed isolated three-role migration/start-guard/chain SQL.
+  Fresh current-image Frappe v16 identity/app native suites passed 13/59 tests after
+  two migrations; all disposable state was removed.
 - [x] Current pre-canary evidence package records source/image bindings and zero
   external activity without modifying historical Gate evidence.
 

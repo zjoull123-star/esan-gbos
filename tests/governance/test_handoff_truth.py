@@ -30,9 +30,9 @@ IDENTITY_CLOSURE_SUMMARY = IDENTITY_CLOSURE_DIR / "identity-governance-summary.m
 IDENTITY_CLOSURE_SUMS = IDENTITY_CLOSURE_DIR / "SHA256SUMS"
 
 HISTORICAL_TASK13_SOURCE_COMMIT = "ad58ab3ea8c0d521cebd90c2642709d135f98fac"
-CURRENT_FRAPPE_SOURCE_COMMIT = "28444b8da334c0e3eae2635352e43da4f7d2477b"
-CURRENT_RUNTIME_SOURCE_COMMIT = "094e794971e96be4f3f1078e7c70936130f65387"
-CURRENT_IMAGE_LOCK_COMMIT = "eb8bb1ebb2c183430ac36ef74cafac09052cf96d"
+CURRENT_FRAPPE_SOURCE_COMMIT = "4b2512ba5bf8bbc3bc12cc6beb62055c735dc629"
+CURRENT_RUNTIME_SOURCE_COMMIT = "341b2df9c45b22c0579f960dcb5ecbe694cdd215"
+CURRENT_IMAGE_LOCK_COMMIT = "d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2"
 
 CEO_ROLES = (
     "CEO",
@@ -356,15 +356,26 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
         == locked_digests["local-runtime"]
     )
     assert evidence["verification"]["pytest"] == {
-        "passed": 2798,
-        "skipped": 43,
+        "passed": 2850,
+        "skipped": 44,
         "failed": 0,
         "warnings": 1,
     }
-    assert evidence["verification"]["domain_contracts_passed"] == 786
+    assert evidence["verification"]["domain_contracts_passed"] == 799
     assert evidence["verification"]["postgresql_integration"] == {
         "passed": 43,
         "warnings": 1,
+        "source_scope": "earlier_same_feature_lineage",
+        "disposable_environment_removed": True,
+    }
+    assert evidence["verification"]["postgresql_current_source_canary_closure"] == {
+        "runtime_source_reference": CURRENT_RUNTIME_SOURCE_COMMIT,
+        "observer_migrations": "001-013_applied_twice",
+        "context_migrations": "001-005_applied_twice",
+        "agent_migrations": "001-006_applied_twice",
+        "app_roles": ["gbos_observer_app", "gbos_context_app", "gbos_agent_app"],
+        "roles_have_bypassrls": False,
+        "read_only_start_guard_and_chain_queries": "pass",
         "disposable_environment_removed": True,
     }
     assert evidence["verification"]["native_frappe"] == {
@@ -380,7 +391,7 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
         "typecheck": "pass",
         "build": "pass",
     }
-    assert evidence["verification"]["infra_passed"] == 173
+    assert evidence["verification"]["infra_passed"] == 179
     assert evidence["formal_state"]["local_pilot_go"] is False
     assert evidence["formal_state"]["production_go"] is False
     assert evidence["external_activity"] == {
@@ -401,7 +412,9 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
     assert evidence["missing_external_inputs"]
     assert "真实 Email/DeepSeek canary 未执行" in summary
     assert "72 小时" in summary
-    assert "2798 passed, 43 skipped, 1 warning" in summary
+    assert "2850 passed, 44 skipped, 1 warning" in summary
+    assert "credential binding" in summary
+    assert "Email delivery" in summary
 
     evidence_text = IDENTITY_CLOSURE_EVIDENCE.read_text(encoding="utf-8")
     for forbidden in ("sk-", "-----BEGIN", "Cookie:", "Authorization:"):

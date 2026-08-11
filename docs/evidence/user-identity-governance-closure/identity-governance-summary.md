@@ -1,10 +1,10 @@
 # User identity governance credential-free closure
 
-捕获时间：`2026-08-10T22:27:09Z`。本快照不修改任何历史 evidence，分别绑定：
+捕获时间：`2026-08-10T23:58:57Z`。本快照不修改任何历史 evidence，分别绑定：
 
-- Frappe source reference：`28444b8da334c0e3eae2635352e43da4f7d2477b`
-- runtime source reference：`094e794971e96be4f3f1078e7c70936130f65387`
-- image-lock recording commit：`eb8bb1ebb2c183430ac36ef74cafac09052cf96d`
+- Frappe source reference：`4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`
+- runtime source reference：`341b2df9c45b22c0579f960dcb5ecbe694cdd215`
+- image-lock recording commit：`d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`
 
 ## 结论
 
@@ -30,22 +30,33 @@ No-Go，不得把源码完成、镜像构建或 synthetic/in-process 验证解�
 
 ## 验证结果
 
-- Full pytest：`2798 passed, 43 skipped, 1 warning`，failed `0`。
-- Domain + contracts：`786 passed`；infra：`173 passed`。
+- Full pytest：`2850 passed, 44 skipped, 1 warning`，failed `0`。
+- Domain + contracts：`799 passed`；infra：`179 passed`。
 - Frontend unit：`196 passed`；Playwright harness：`25 passed`；lint、typecheck、
   production build 全部通过。
-- 隔离 PostgreSQL integration：`43 passed, 1 warning`；临时环境已移除。
-- 全新隔离 Frappe v16 site 连续 migrate 两次；身份原生测试 `13 passed`，全 app
-  原生测试 `59 passed`；临时容器、网络和卷已移除。
+- 较早同一 feature lineage 的完整隔离 PostgreSQL integration：`43 passed, 1 warning`；
+  临时环境已移除。当前 runtime source 另在全新一次性 PostgreSQL 中将 Observer
+  001–013、Context 001–005、Agent 001–006 连续应用两次，并以三个
+  `NOBYPASSRLS` app role 验证 read-only start guard 与 chain 查询；临时环境已移除。
+- 全新隔离 Frappe v16 site 使用当前 Frappe 镜像连续 migrate 两次；身份原生测试
+  `13 passed`，全 app 原生测试 `59 passed`；临时容器、网络和卷已移除。
 - Ruff check/format、mypy services、compileall、secret scan 全部通过。
+- Email checkpoint receipt 的 credential binding 通过 HMAC-SHA256 绑定 connector
+  account、team、task、host、port、mailbox、folder 与 username，并明确排除 password。
+- Machine chain verifier 已闭合校验 Email delivery、Observer observation/participant、
+  confirmed identity/active authority、Agent invocation、Context intelligence/draft 和
+  Frappe receipt；不接受 free-form observed model。
+- 两个当前镜像经 Trivy 0.73.0 扫描均为 `0` 个未豁免 High/Critical，image secrets 与
+  misconfigurations 均为 `0`；57 条历史 waiver / 103 个 exact PURL 单独显示，不冒充
+  “总发现为零”。
 - Frappe 镜像 inspect digest：
-  `sha256:71d7e7fd074d519b246cc1da7bb72deb97c07bf58ffc2a1946c2abc26576fb34`。
+  `sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c`。
 - Local runtime 镜像 inspect digest：
-  `sha256:d79fa3982f727b5a47b1783b3731ed153dc07f6a7f1c4a1c81c9b1a5ef407824`。
+  `sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3`。
 
-验证过程中仅为受控镜像构建使用网络，并启动了隔离 PostgreSQL/Frappe 测试容器；
-没有 provider/channel network，没有启动正式 local-pilot application stack。所有隔离
-测试状态均已移除。
+验证过程中仅为受控依赖、镜像构建和安全扫描使用网络，并启动了隔离
+PostgreSQL/Frappe 测试容器；没有 provider/channel network，没有启动正式
+local-pilot application stack。所有隔离测试状态均已移除。
 
 ## 延期与剩余外部门
 

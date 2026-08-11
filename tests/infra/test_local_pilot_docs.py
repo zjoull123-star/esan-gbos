@@ -8,9 +8,9 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 DOCS = ROOT / "docs" / "local-pilot"
 INFRA = ROOT / "infra" / "local"
-CURRENT_FRAPPE_SOURCE_COMMIT = "28444b8da334c0e3eae2635352e43da4f7d2477b"
-CURRENT_RUNTIME_SOURCE_COMMIT = "094e794971e96be4f3f1078e7c70936130f65387"
-CURRENT_IMAGE_LOCK_COMMIT = "eb8bb1ebb2c183430ac36ef74cafac09052cf96d"
+CURRENT_FRAPPE_SOURCE_COMMIT = "4b2512ba5bf8bbc3bc12cc6beb62055c735dc629"
+CURRENT_RUNTIME_SOURCE_COMMIT = "341b2df9c45b22c0579f960dcb5ecbe694cdd215"
+CURRENT_IMAGE_LOCK_COMMIT = "d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2"
 
 
 def _read(path: Path) -> str:
@@ -249,7 +249,7 @@ def test_runbook_documents_current_truth_boundaries_without_unlocking_formal_sta
         "43 passed, 1 warning",
         "59 passed",
         "13 passed",
-        "2798 passed, 43 skipped, 1 warning",
+        "2850 passed, 44 skipped, 1 warning",
         "governed dependency/image/scanner network",
         "isolated PostgreSQL validation/build/scanner containers",
     ):

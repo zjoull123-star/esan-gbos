@@ -7,9 +7,9 @@
 
 - 规划来源基线是 `8c40731`（观察身份解析 roadmap）；当前分支为
   `feat/user-identity-resolution-20260810`。当前 Frappe source reference 是
-  `28444b8da334c0e3eae2635352e43da4f7d2477b`，runtime source reference 是
-  `094e794971e96be4f3f1078e7c70936130f65387`，image-lock recording commit 是
-  `eb8bb1ebb2c183430ac36ef74cafac09052cf96d`。镜像 labels、源码哈希和 inspect
+  `4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`，runtime source reference 是
+  `341b2df9c45b22c0579f960dcb5ecbe694cdd215`，image-lock recording commit 是
+  `d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`。镜像 labels、源码哈希和 inspect
   digest 已逐项复核；后续 handoff/evidence 文档不在镜像内。真实 canary 仍受外部
   凭据与正式 go 门阻断。
 - 身份解析离线实现基线 `c98f6a5` 保留为历史里程碑；本轮在其上补齐了真实
@@ -57,19 +57,27 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 
 | Service | Local image digest | Revision label |
 | --- | --- | --- |
-| `frappe-pwa` | `sha256:71d7e7fd074d519b246cc1da7bb72deb97c07bf58ffc2a1946c2abc26576fb34` | `28444b8da334c0e3eae2635352e43da4f7d2477b` |
-| `local-runtime` | `sha256:d79fa3982f727b5a47b1783b3731ed153dc07f6a7f1c4a1c81c9b1a5ef407824` | `094e794971e96be4f3f1078e7c70936130f65387` |
+| `frappe-pwa` | `sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c` | `4b2512ba5bf8bbc3bc12cc6beb62055c735dc629` |
+| `local-runtime` | `sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3` | `341b2df9c45b22c0579f960dcb5ecbe694cdd215` |
 
 当前 credential-free 设计闭环的 source-bound 验证快照为：full pytest
-`2798 passed, 43 skipped, 1 warning`；domain/contracts `786 passed`；Ruff
+`2850 passed, 44 skipped, 1 warning`；domain/contracts `799 passed`、infra
+`179 passed`；Ruff
 check/format、mypy、compileall 与 secret scan 全部 green；frontend unit
 `196 passed`、Playwright harness `25 passed`、lint/typecheck/build 全部 green。
-隔离 PostgreSQL integration 为 `43 passed, 1 warning`；全新隔离 Frappe v16 site
-连续 migrate 两次后，身份原生测试 `13 passed`、全 app 原生测试 `59 passed`，所有
+较早同一 feature lineage 的完整隔离 PostgreSQL integration 为
+`43 passed, 1 warning`；当前 runtime source 另在全新一次性 PostgreSQL 中将
+Observer 001–013、Context 001–005、Agent 001–006 连续应用两次，并以三个
+`NOBYPASSRLS` app role 验证只读 canary start-guard/chain 查询。全新隔离 Frappe v16 site
+以当前 Frappe 镜像连续 migrate 两次后，身份原生测试 `13 passed`、全 app 原生测试
+`59 passed`，所有
 临时容器、网络和卷均已移除。模型 fatal latch 的 fail-closed 行为已验证；Email
-只允许 source-bound `STATUS_UIDVALIDITY_UIDNEXT` checkpoint/receipt，preflight
+只允许 source-bound `STATUS_UIDVALIDITY_UIDNEXT` checkpoint/receipt，receipt 通过
+私有 HMAC 绑定同一账号、团队、任务、服务器、邮箱、folder 与 username；preflight
 要求 receipt，未建立真实 IMAP 连接。machine DB-attested narrow-window canary-chain
-verifier 只报告 `response_reported_observed_model`，不接受 free-form observed model。
+verifier 交叉验证 Email delivery、observation、participant、confirmed identity、active
+authority、Agent invocation、Context intelligence/draft 与 Frappe receipt，只报告
+`response_reported_observed_model`，不接受 free-form observed model。
 Governed Trivy 0.73.0 scans of both rebuilt images reported `0` unwaived High/Critical,
 `0` image secrets and `0` misconfigurations; historical 57 waiver entries/103 exact PURLs
 were displayed separately and are not zero-total-findings claims. Scan services were not
@@ -117,8 +125,8 @@ checked_in_deepseek_enabled=false
 
 ## 后续实施顺序
 
-1. Frappe source reference `28444b8`、runtime source reference `094e794` 与 current
-   image lock `eb8bb1e` 已完成 governed rebuild/record；后续 canary 仍必须复核
+1. Frappe source reference `4b2512b`、runtime source reference `341b2df` 与 current
+   image lock `d8bdc18` 已完成 governed rebuild/record；后续 canary 仍必须复核
    revision label、source hash 与 manifest binding。
 2. 用户以安全方式提供 Task 13 外部输入；凭据只进入 macOS Keychain，不写仓库。
 3. 按 [运行手册](local-pilot/RUNBOOK.md) 创建 repo-external canary dir/control，

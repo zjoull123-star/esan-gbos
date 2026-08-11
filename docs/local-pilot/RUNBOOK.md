@@ -21,12 +21,12 @@ pilot UI。
 这只证明本地 synthetic core 的隔离边界，不改变正式 No-Go。
 
 当前 Frappe source reference 是
-`28444b8da334c0e3eae2635352e43da4f7d2477b`，image lock 为
-`sha256:71d7e7fd074d519b246cc1da7bb72deb97c07bf58ffc2a1946c2abc26576fb34`；
-runtime source reference 是 `094e794971e96be4f3f1078e7c70936130f65387`，local
+`4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`，image lock 为
+`sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c`；
+runtime source reference 是 `341b2df9c45b22c0579f960dcb5ecbe694cdd215`，local
 runtime image lock 为
-`sha256:d79fa3982f727b5a47b1783b3731ed153dc07f6a7f1c4a1c81c9b1a5ef407824`；
-image-lock recording commit 为 `eb8bb1ebb2c183430ac36ef74cafac09052cf96d`。
+`sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3`；
+image-lock recording commit 为 `d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`。
 两套镜像各自完成 governed rebuild/record，revision label 与 source hash 已复核；
 final docs/evidence successors 不在镜像内，也尚未用真实渠道/模型凭据运行。
 若 final code 再变化，真实 canary 前仍必须
@@ -43,12 +43,14 @@ Playwright 使用 `synthetic.ceo@example.invalid` 登录后访问 `/gbos/ceo` �
 显示“经营总览”和“演示 / 合成数据”；375/768/1440 宽度均无横向溢出，console
 errors/warnings 均为 0，cache 只有 21 个静态预缓存条目且 API `cached=false`。
 上述是历史 snapshot，不是当前 HEAD 的 live runtime 证明。当前 credential-free
-closure 的 source-bound 计数为 full pytest `2798 passed, 43 skipped, 1 warning`，
-domain/contracts `786 passed`，frontend unit `196 passed`、frontend-harness
+closure 的 source-bound 计数为 full pytest `2850 passed, 44 skipped, 1 warning`，
+domain/contracts `799 passed`、infra `179 passed`，frontend unit `196 passed`、frontend-harness
 Playwright `25 passed`，lint/typecheck/build、Ruff check/format、mypy、compileall、
-secret scan 均 green。隔离 PostgreSQL 为 `43 passed, 1 warning`；全新 Frappe v16
-site 连续 migrate 两次后，身份原生测试 `13 passed`、全 app 原生测试 `59 passed`，
-所有临时容器、网络和卷均已删除。首次部分 site 的
+secret scan 均 green。较早同一 feature lineage 的完整隔离 PostgreSQL matrix 为
+`43 passed, 1 warning`；当前 runtime source 另在一次性 PostgreSQL 中完成三套迁移
+双跑与 Observer/Context/Agent 三角色 canary 查询。全新 Frappe v16 site 使用当前
+Frappe 镜像连续 migrate 两次后，身份原生测试 `13 passed`、全 app 原生测试
+`59 passed`，所有临时容器、网络和卷均已删除。首次部分 site 的
 失败目录已可恢复地移动到数据卷内 `.failed-gbos.localhost-20260808T033521`，未删除。
 
 `infra/local/runtime-entrypoints.json` 如实区分可执行入口和仍受阻入口：
@@ -100,10 +102,10 @@ digest。`scripts/local-pilot/build-runtime-image --confirm-network-build`
 Python base、uv builder 与 local runtime 的本机 image ID、RepoDigest 和平台。
 
 Frappe 使用独立的本地 image ref。当前 lock 已记录
-`sha256:71d7e7fd074d519b246cc1da7bb72deb97c07bf58ffc2a1946c2abc26576fb34`，
+`sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c`，
 local runtime 已记录
-`sha256:d79fa3982f727b5a47b1783b3731ed153dc07f6a7f1c4a1c81c9b1a5ef407824`。
-Frappe 与 runtime 分别标记 source reference `28444b8` 和 `094e794`，完成 inspect
+`sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3`。
+Frappe 与 runtime 分别标记 source reference `4b2512b` 和 `341b2df`，完成 inspect
 与安全扫描。synthetic site setup 与 `/gbos/ceo`
 浏览器验证来自较早的 `098d728` 快照，不自动证明新镜像 live runtime；这也不等于
 正式 composition 已 go。若 final code 变化，后续重建仍必须显式运行
@@ -117,9 +119,9 @@ isolated PostgreSQL validation/build/scanner containers；没有 provider/channe
 ## Task 13 credential-free closure 与 real-canary operator sequence
 
 当前 source-bound closure 分别绑定 Frappe source reference
-`28444b8da334c0e3eae2635352e43da4f7d2477b`、runtime source reference
-`094e794971e96be4f3f1078e7c70936130f65387` 与 image-lock recording commit
-`eb8bb1ebb2c183430ac36ef74cafac09052cf96d`：
+`4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`、runtime source reference
+`341b2df9c45b22c0579f960dcb5ecbe694cdd215` 与 image-lock recording commit
+`d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`：
 
 ```text
 production_go=false
@@ -129,17 +131,22 @@ real Email + DeepSeek canary 未执行
 response_reported_observed_model=unknown
 ```
 
-- Full pytest 为 `2798 passed, 43 skipped, 1 warning`；Ruff check/format、mypy、
+- Full pytest 为 `2850 passed, 44 skipped, 1 warning`；domain/contracts `799 passed`、
+  infra `179 passed`；Ruff check/format、mypy、
   compileall、secret scan、frontend lint/typecheck/build 均 green；frontend unit
   为 `196 passed`，Playwright harness 为 `25 passed`。
 - Model fatal latch 的 fail-closed 行为已验证：fatal/mismatch 会锁住模型外发并在
   后续 egress 前拒绝；当前没有真实模型调用。machine verifier 只读取低基数 latch
   状态，不替代真实 provider 证据。
 - Email 只允许 source-bound `STATUS_UIDVALIDITY_UIDNEXT` 只读 checkpoint；probe
-  会写 checkpoint + receipt，且 `canary-preflight` 必须看到绑定 activation-time、
-  source commit、digest 和 receipt 才可继续。当前 real IMAP connections 为 0。
+  会写 checkpoint + receipt；receipt 以私有 HMAC 绑定同一账号、team、task、host、
+  port、mailbox、folder 与 username（不绑定 password），且 `canary-preflight` 必须
+  复核 activation-time、source commit、digest 和 credential binding 才可继续。
+  当前 real IMAP connections 为 0。
 - `verify-canary-chain` 使用 machine DB-attested narrow observation window、独立
-  projection config 和显式 window/output；`canary-evidence record` 必须使用
+  projection config 和显式 window/output，交叉验证 Email delivery、observation、
+  participant、confirmed identity、active authority、Agent invocation、Context
+  intelligence/draft 与 Frappe receipt；`canary-evidence record` 必须使用
   `--chain-attestation`，只写入 `response_reported_observed_model`，不接受 free-form
   observed model。真实 canary 未运行，因此该字段当前仍 unknown。
 - Email credential、DeepSeek API key、identity HMAC、trusted phrase lexicon、Frappe
@@ -147,8 +154,9 @@ response_reported_observed_model=unknown
   images blocker 已关闭：当前镜像已按上述实际源码重建并记录；若对应源码再变化，
   **rebuild before the real canary** 仍是硬门。72 小时连续运行不再作为本阶段退出条件，
   按用户决定 deferred/not required for this stage。
-- Root 已完成 isolated PostgreSQL integration matrix：`43 passed, 1 warning`；全新
-  Frappe v16 site 完成两次 migration，identity `13 passed`、whole app `59 passed`。
+- 较早完整 isolated PostgreSQL integration matrix 为 `43 passed, 1 warning`；当前
+  runtime source 另完成一次性三角色迁移/只读 canary SQL。全新 Frappe v16 site
+  以当前镜像完成两次 migration，identity `13 passed`、whole app `59 passed`。
   所有 validation DB/site/network/volume 已移除。该结果仍不等于真实 provider
   canary 或正式 Go。
 

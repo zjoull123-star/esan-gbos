@@ -4,9 +4,9 @@
 接通。`blocking gate` 是放行前必须满足的条件；`evidence` 链接工程
 记录或明确标注待补证据。`production disabled` by default；生产采集、真实模型和
 真实金蝶访问默认关闭。当前身份解析 roadmap 的来源基线是 `8c40731`；Frappe source
-reference 为 `28444b8da334c0e3eae2635352e43da4f7d2477b`，runtime source reference
-为 `094e794971e96be4f3f1078e7c70936130f65387`，image-lock recording commit 为
-`eb8bb1ebb2c183430ac36ef74cafac09052cf96d`。当前证据与历史快照的边界见
+reference 为 `4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`，runtime source reference
+为 `341b2df9c45b22c0579f960dcb5ecbe694cdd215`，image-lock recording commit 为
+`d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`。当前证据与历史快照的边界见
 [HANDOFF](HANDOFF.md)。
 
 | 依赖/能力 | Owner | Status | Blocking gate | Evidence |
@@ -32,7 +32,7 @@ reference 为 `28444b8da334c0e3eae2635352e43da4f7d2477b`，runtime source refere
 | Gate 6 privacy operations | Privacy/Legal | Seven schemas and six synthetic examples verify fail-closed workflow mechanics | Applicable legal basis, notices, recipient assessment, real data inventory and formal privacy/cross-border approvals remain `blocked_external_input` | [privacy operations](governance/gate6/privacy-operations.md), [Gate 6 decision](evidence/gate6/release-decision.json) |
 | Secrets and key management | Security/Platform | 本地 runtime 已实现 macOS Keychain reference → 私有临时目录 mode `0600` 文件；仓库、site config 和日志不保存明文 secret | 当前仍缺真实 Email/DeepSeek/lexicon 值；production rotation、访问审计、恢复与 Kingdee/preproduction keys 保持外部门禁 | [local runbook](local-pilot/RUNBOOK.md), [threat model](governance/threat-model.md) |
 | Formal local pilot composition | Platform/AI/Observer | Service topology and current-source images are recorded as `composition.status=composed`; formal manifest remains `production_go=false`, `local_pilot_go=false` and channels/models/media/tunnel remain default-off | Real channels、provider API call/identity、fault drills、Kingdee、cloud 和 production remain unverified and No-Go；72-hour continuity is explicitly deferred and not an exit gate | [local-pilot manifest](../infra/local/local-pilot-manifest.json), [runtime entrypoints](../infra/local/runtime-entrypoints.json), [current runtime evidence](evidence/identity-resolution-runtime/identity-resolution-runtime-summary.md) |
-| Local-pilot image lock | Platform | `infra/local/images.lock.json` records Frappe/PWA inspect digest `sha256:71d7e7fd074d519b246cc1da7bb72deb97c07bf58ffc2a1946c2abc26576fb34` at Frappe source `28444b8` and local-runtime inspect digest `sha256:d79fa3982f727b5a47b1783b3731ed153dc07f6a7f1c4a1c81c9b1a5ef407824` at runtime source `094e794` | Recorded local digests prove source-bound builds, not a formal Go, real-channel/model proof, or production readiness; runtime evidence must be captured separately | [image lock](../infra/local/images.lock.json), [current credential-free closure](evidence/user-identity-governance-closure/identity-governance-summary.md) |
+| Local-pilot image lock | Platform | `infra/local/images.lock.json` records Frappe/PWA inspect digest `sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c` at Frappe source `4b2512b` and local-runtime inspect digest `sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3` at runtime source `341b2df` | Recorded local digests prove source-bound builds, not a formal Go, real-channel/model proof, or production readiness; runtime evidence must be captured separately | [image lock](../infra/local/images.lock.json), [current credential-free closure](evidence/user-identity-governance-closure/identity-governance-summary.md) |
 
 No row authorizes production. Changing an owner, status, gate, or evidence link
 requires a reviewed change and must not introduce credentials or raw business
