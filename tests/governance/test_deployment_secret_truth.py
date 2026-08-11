@@ -15,6 +15,13 @@ CONTRACT_SCHEMA = ROOT / "contracts" / "gate6" / "deployment-secret-projection-v
 DEPLOYMENT_GUIDE = ROOT / "docs" / "deployment-secrets.md"
 EXTERNAL_DEPS = ROOT / "docs" / "external-deps.md"
 THREAT_MODEL = ROOT / "docs" / "governance" / "threat-model.md"
+TENCENT_TKE_DESIGN = (
+    ROOT
+    / "docs"
+    / "superpowers"
+    / "specs"
+    / "2026-08-11-gbos-tencent-tke-secret-projection-design.md"
+)
 
 PROJECTION_FIELDS = {
     "logical_name",
@@ -125,16 +132,33 @@ def test_deployment_guide_forbids_plaintext_secret_channels_and_unsafe_audit_dat
     assert "Audit metadata contains no secret values or secret hashes" in guide
 
 
-def test_adapter_selection_is_blocked_and_all_supported_patterns_are_described() -> None:
+def test_tencent_tke_adapter_is_selected_as_design_only_and_production_stays_blocked() -> None:
     guide = _read(DEPLOYMENT_GUIDE)
     dependencies = _read(EXTERNAL_DEPS)
+    design = _read(TENCENT_TKE_DESIGN)
+    normalized_design = " ".join(design.split())
 
-    assert "adapter_selection: blocked_platform_selection" in guide
-    assert "managed container secrets" in guide
-    assert "Kubernetes CSI or External Secrets" in guide
-    assert "copy into private regular files" in guide
-    assert "Vault Agent" in guide
-    assert "blocked_platform_selection" in dependencies
+    assert "adapter_selection: planned_tencent_tke_oidc_ssm_external_secrets" in guide
+    assert "adapter_implementation: not_started" in guide
+    assert "current_pilot: macos_local_keychain" in guide
+    assert "future_runtime: tencent_tke_managed_cluster" in guide
+    assert "region_selection: deferred" in guide
+    for required_text in (
+        "Tencent Cloud SSM",
+        "TKE ServiceAccount OIDC",
+        "External Secrets",
+        "KMS-encrypted Kubernetes Secret",
+        "memory-backed emptyDir",
+        "0400 regular files",
+        "read-only at `/run/secrets`",
+        "no long-lived SecretId or SecretKey",
+        "Mac local pilot",
+        "version-bound projection cache",
+        "The application ServiceAccount may not",
+    ):
+        assert required_text in normalized_design
+    assert "planned_tencent_tke_oidc_ssm_external_secrets" in dependencies
+    assert "no Tencent Cloud resource has been created" in dependencies
     assert "Production Go: false" in guide
     assert "separate Security, Platform, and Release Owner approvals" in guide
 

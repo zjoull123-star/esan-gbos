@@ -4,15 +4,20 @@ This document is a deployment contract, not a selected platform configuration
 or a production authorization.
 
 ```text
-adapter_selection: blocked_platform_selection
+adapter_selection: planned_tencent_tke_oidc_ssm_external_secrets
+adapter_implementation: not_started
+current_pilot: macos_local_keychain
+future_runtime: tencent_tke_managed_cluster
+region_selection: deferred
 rotation_mode: restart-bound-v1
 rollback_window_minutes: 60
 Production Go: false
 ```
 
-Production Go stays false until the deployment platform is selected and the
-rendered adapter, identities, projections, preflight evidence, recovery drill,
-and production release receive separate Security, Platform, and Release Owner approvals.
+The future platform pattern is selected for design purposes only. Production Go
+stays false until a Tencent Cloud region and account are approved and the TKE
+adapter, identities, projections, preflight evidence, recovery drill, and
+production release receive separate Security, Platform, and Release Owner approvals.
 
 ## Closed delivery path
 
@@ -49,30 +54,32 @@ site/environment, outcome status, actor, and timestamp. It must not record a
 provider payload, resource URI, vendor resource ID, file contents, command line,
 or environment snapshot.
 
-## Eligible adapter patterns
+## Selected future adapter
 
-No adapter is selected while `adapter_selection: blocked_platform_selection`.
-Selection requires the operator to choose the deployment platform, demonstrate
-workload-identity authentication and least privilege, and preserve the closed
-delivery path above. Eligible patterns are:
+The approved design-only target is Tencent Cloud TKE:
 
-- The **managed container secrets** pattern uses the container platform's managed secret
-  service and workload identity, and configures the final application-visible
-  target as private regular files. Environment-variable injection is invalid.
-- **Kubernetes CSI or External Secrets:** retrieve by workload identity into a
-  controller-only private volume, then copy into private regular files in a
-  per-pod tmpfs/secret volume before application start. Native rotating or
-  symlink-based projections must never be mounted directly into the application;
-  copy into private regular files, apply mode 0400/0600, and mount read-only.
-- **Vault Agent:** authenticate with workload identity, render to a private
-  tmpfs volume as regular files with mode 0400/0600, finish before preflight,
-  and give the application only the read-only mount. Dynamic in-place updates
-  are not consumed in v1.
+1. A namespace-scoped External Secrets `SecretStore` uses TKE ServiceAccount
+   OIDC and a least-privilege CAM temporary role. No long-lived SecretId or
+   SecretKey is stored in the workload path.
+2. External Secrets reads only explicit Tencent Cloud SSM versions and writes a
+   version-bound Kubernetes Secret.
+3. TKE KMS envelope encryption protects Kubernetes Secret data in etcd, with
+   minimal RBAC.
+4. A non-networked startup projector reads the source volume, copies the closed
+   catalog into a memory-backed `emptyDir`, and creates private regular files
+   with mode 0400.
+5. The application sees only that destination, mounted read-only at
+   `/run/secrets`, and runs the stable preflight before any DB or network access.
 
-Provider-specific resource IDs, URIs, roles, policies, identities and adapter
-manifests remain outside this repository template until selection and review.
-The selected adapter must not widen the logical-name catalog or expose provider
-payloads to the application.
+Direct Kubernetes symlink projection, plaintext environment variables, static
+AK/SK, broad cluster-scoped stores, and application-side Tencent SDK calls are
+invalid. The detailed design is
+[GBOS Tencent TKE Secret Projection Design](superpowers/specs/2026-08-11-gbos-tencent-tke-secret-projection-design.md).
+
+This selection does not implement an adapter. Provider resource IDs, URIs,
+roles, policies, manifests, regions, accounts and secret versions remain
+external and unselected. The adapter must not widen the logical-name catalog or
+expose provider payloads to the application.
 
 ## Rotation and rollback procedure
 

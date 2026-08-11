@@ -1,6 +1,6 @@
 # GBOS Deployment Secret Provider Design
 
-**Status:** Approved direction
+**Status:** Approved base contract; Tencent TKE design-only addendum selected
 
 **Date:** 2026-08-11
 
@@ -21,9 +21,13 @@ deployment dependency.
   database, provider or connector access.
 - Support audited version rotation through a bounded deployment restart.
 
+The future provider choice is recorded in
+[GBOS Tencent TKE Secret Projection Design](2026-08-11-gbos-tencent-tke-secret-projection-design.md).
+No adapter or cloud resource is implemented by that selection.
+
 ## 2. Non-goals
 
-- Selecting the final production platform or vendor in this change.
+- Provisioning or implementing the selected future Tencent TKE adapter in this change.
 - Allowing applications to fetch secrets over the network.
 - Hot-reloading secrets inside long-running workers in v1.
 - Storing secret hashes in logs or evidence. Low-entropy secrets must not become
@@ -138,15 +142,16 @@ overlap keep old and new versions valid only for the approved rollback window.
 - The deployment audit records platform version identifiers, actor or workload,
   approval, rollout time and rollback result. It does not record values.
 
-## 8. Platform selection gate
+## 8. Platform implementation gate
 
-The application contract can be implemented before choosing a platform. A
-platform adapter is not production-ready until the operator chooses one of:
+The application contract is implemented independently of a platform. The
+future design-only selection is Tencent Cloud TKE ServiceAccount OIDC + SSM +
+External Secrets + KMS-encrypted Kubernetes Secret + private regular-file
+projection into a memory-backed `emptyDir`. The application mounts only the
+destination read-only.
 
-- managed container platform secret-file mounts;
-- Kubernetes Secret Store CSI or External Secrets plus private regular-file
-  projection;
-- Vault Agent plus private regular-file projection.
+The platform adapter remains unimplemented and is not production-ready until
+the separately approved Tencent TKE design acceptance gates pass.
 
 Plain Docker Compose env_file, plaintext bind-mounted host files, SOPS plaintext
 at runtime and secrets baked into images are not approved deployment sources.

@@ -34,7 +34,7 @@
 | TM-10 | 未审核 Fact/AI Draft 被 Metrics 使用，或指标定义/数据过期 | CEO 看到错误“官方数字” | Metrics Registry、定义版本、只消费已批准 workflow 与 Gate 5 受治理投影、freshness/coverage/reconciliation 失败关闭；证据：Gate 5 指标测试 |
 | TM-11 | Agent 重复领取、lease 丢失、无限重试或预算失控 | 重复动作、成本失控、队列阻塞 | PostgreSQL lease + `FOR UPDATE SKIP LOCKED`、幂等键、重试上限、dead-letter、预算/速率限制、人工停止；证据：Gate 4 并发与恢复测试 |
 | TM-12 | 外部动作超时后结果未知却被盲目重试 | 重复外发或重复业务副作用 | correlation/idempotency key、`verification_required` 状态、先查询后重试、人工介入；Kingdee V1 无写动作；证据：Gate 4/5 故障注入 |
-| TM-13 | 部署 secret 经环境变量/argv/site config/镜像/仓库/日志泄露，workload identity 越权，或轮换中的 symlink/in-place 投影造成竞态与旧值混用 | 凭据外泄、跨组件权限扩大、启动失败或不可审计的回滚 | macOS Keychain 仅 local-only；platform-managed version ID 由最小权限 workload identity 鉴权取得，复制为 private tmpfs/secret volume 中 mode 0400/0600 regular file，再只读挂载并仅由 `MountedFileSecretProvider` 读取；禁止 symlink 与明文旁路；stable preflight 必须先于 rollout；V1 restart-bound 轮换及 60 分钟 rollback window；审计只记逻辑名/版本 ID/主体/状态/时间，不记 values or hashes；适配器保持 `blocked_platform_selection`，Production Go 保持 false，直到独立审批和真实演练完成 |
+| TM-13 | 部署 secret 经环境变量/argv/site config/镜像/仓库/日志泄露，workload identity 越权，或轮换中的 symlink/in-place 投影造成竞态与旧值混用 | 凭据外泄、跨组件权限扩大、启动失败或不可审计的回滚 | macOS Keychain 仅 local-only；未来腾讯云方案使用 SSM pinned version + TKE ServiceAccount OIDC/CAM 临时角色 + External Secrets，Kubernetes Secret 由 KMS 加密且不直接暴露给应用；启动投影容器复制为 memory-backed emptyDir 中 mode 0400 regular file，再只读挂载并仅由 `MountedFileSecretProvider` 读取；禁止 static AK/SK、symlink 与明文旁路；stable preflight 必须先于 rollout；V1 restart-bound 轮换及 60 分钟 rollback window；审计只记逻辑名/版本 ID/主体/状态/时间，不记 values or hashes；适配器保持 `not_started`，Production Go 保持 false，直到独立审批和真实演练完成 |
 
 ## 风险处理规则
 

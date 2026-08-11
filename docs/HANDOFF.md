@@ -110,6 +110,23 @@ checked_in_email_enabled=false
 checked_in_deepseek_enabled=false
 ```
 
+### 本地试点与未来腾讯云密钥边界
+
+- 当前试点环境仍是 Mac 本机。macOS Keychain 只作为 local-only adapter，现有本地
+  密钥不迁入仓库，也不被解释为云端部署凭据。
+- 未来正式部署平台已在设计层选择 Tencent Cloud TKE managed cluster；密钥链为
+  SSM pinned version → TKE ServiceAccount OIDC/CAM 临时角色 → External Secrets →
+  KMS 加密的 Kubernetes Secret → 启动投影容器 → memory-backed `emptyDir` 中 0400
+  普通文件 → 应用只读 `/run/secrets` → `MountedFileSecretProvider`。
+- 当前只记录方案：`adapter_implementation=not_started`。腾讯云区域、账号、集群、
+  CAM 角色、SSM secret/version、数据库、CFS、网络和工作负载均未创建或联系。
+- 该选择不改变 No-Go：`production_go=false`、`local_pilot_go=false`。未来必须另行
+  完成 TKE 全栈架构、最小权限、真实投影、故障、轮换、回滚、备份、监控、隐私与
+  release approvals。
+
+详见 [腾讯云 TKE 密钥投影设计](superpowers/specs/2026-08-11-gbos-tencent-tke-secret-projection-design.md)
+与 [部署密钥生命周期](deployment-secrets.md)。
+
 - Task 1–12 以及本轮身份权限即时撤销、目标动态资格、Rejected 重提、审核/撤回 PWA、
   自动 retention scheduler 和 canary 启动防护均已完成 credential-free 验证；计数见
   当前 closure evidence。Frappe 与 runtime 镜像分别绑定上述实际源码版本，但这仍不

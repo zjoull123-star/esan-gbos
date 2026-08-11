@@ -16,6 +16,11 @@ and restart-bound in v1.
 **Tech Stack:** Python 3.14, JSON Schema 2020-12, Docker or Kubernetes secret
 volumes, pytest, Ruff, mypy.
 
+**Execution status (2026-08-11):** Tasks 1–6 are implemented and verified in
+the current feature lineage. Task 7 has only its design-selection step
+completed. The future Tencent TKE adapter implementation remains unauthorized
+and not started.
+
 ---
 
 ## Chunk 1: Application Secret Provider
@@ -293,10 +298,19 @@ volumes, pytest, Ruff, mypy.
 
 ### Task 7: Select and implement one platform adapter
 
-This task starts only after the deployment platform is named. Choose exactly
-one adapter; do not implement multiple vendor clients speculatively.
+**Design-only decision (2026-08-11):** The user selected Tencent Cloud for a
+future deployment and retained the Mac as the current pilot. The selected
+future pattern is TKE ServiceAccount OIDC + SSM + External Secrets +
+KMS-encrypted Kubernetes Secret + startup projection into a memory-backed
+`emptyDir` containing 0400 regular files. The application will mount only that
+destination read-only at `/run/secrets`.
 
-- [ ] **Step 1: Record the selected platform and workload identity**
+The user explicitly selected **record the design only**. No Tencent Cloud
+resource, vendor manifest, IAM/CAM role, SSM secret, adapter implementation, or
+cloud test is authorized by this plan update. A future implementation starts
+only after a separate approval.
+
+- [x] **Step 1: Record the selected platform and workload identity design**
 - [ ] **Step 2: Add provider-specific projection manifests without values**
 - [ ] **Step 3: Prove private regular-file projection and read-only app mounts**
 - [ ] **Step 4: Run rotation and rollback in an isolated environment**
