@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
+
+from .secret_provider import (
+    MountedFileSecretProvider,
+    SecretBytes,
+    SecretProviderError,
+    SecretSpec,
+)
 
 if TYPE_CHECKING:
     from services.agent_runtime.agents import AgentInput
@@ -41,6 +46,12 @@ _TOKEN_PATTERN = re.compile(r"<(?:EMAIL|PHONE|ENTITY)_[0-9a-f]{24}>")
 
 class TrustedPhraseLexiconError(RuntimeError):
     """The materialized trusted phrase lexicon failed closed."""
+
+
+class TrustedPhraseSecretProvider(Protocol):
+    """Narrow provider surface required by trusted phrase loading."""
+
+    def read_json_bytes(self, name: str) -> SecretBytes | None: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -108,12 +119,49 @@ def load_trusted_phrase_resolver(
     expected_site_id: str,
     clock: Callable[[], datetime],
 ) -> TrustedPhraseLexiconResolver:
-    """Load a closed mode-0600 JSON lexicon and bind it to one local site."""
+    """Load a path-configured lexicon through the strict secret provider."""
+
+    candidate = Path(path).absolute()
+    try:
+        provider = MountedFileSecretProvider(
+            candidate.parent,
+            (
+                SecretSpec(
+                    "trusted_phrase_lexicon",
+                    candidate.name,
+                    "closed_json",
+                    1,
+                    _MAX_FILE_BYTES,
+                ),
+            ),
+        )
+    except SecretProviderError:
+        raise TrustedPhraseLexiconError("trusted phrase lexicon provider request failed") from None
+    return load_trusted_phrase_resolver_from_provider(
+        provider,
+        expected_site_id=expected_site_id,
+        clock=clock,
+    )
+
+
+def load_trusted_phrase_resolver_from_provider(
+    provider: TrustedPhraseSecretProvider,
+    *,
+    expected_site_id: str,
+    clock: Callable[[], datetime],
+) -> TrustedPhraseLexiconResolver:
+    """Load the trusted lexicon from its closed deployment logical name."""
 
     if not callable(clock):
         raise TrustedPhraseLexiconError("trusted phrase lexicon clock is invalid")
     expected = _text(expected_site_id, "site binding", maximum=140)
-    value = _read_private_json(Path(path))
+    try:
+        secret = provider.read_json_bytes("trusted_phrase_lexicon")
+    except SecretProviderError:
+        raise TrustedPhraseLexiconError("trusted phrase lexicon provider request failed") from None
+    if not isinstance(secret, SecretBytes):
+        raise TrustedPhraseLexiconError("trusted phrase lexicon provider request failed")
+    value = _decode_json_object(secret.reveal())
     if set(value) != _LEXICON_FIELDS or value.get("schema_version") != "1.0":
         raise TrustedPhraseLexiconError("trusted phrase lexicon must use the closed v1 schema")
     site_id = _text(value.get("site_id"), "site binding", maximum=140)
@@ -145,43 +193,22 @@ def load_trusted_phrase_resolver(
     return TrustedPhraseLexiconResolver(lexicon=lexicon, clock=clock)
 
 
-def _read_private_json(path: Path) -> dict[str, object]:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+def _decode_json_object(payload: bytes) -> dict[str, object]:
     try:
-        path_details = path.lstat()
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise TrustedPhraseLexiconError("trusted phrase lexicon is absent or unsafe") from exc
-    try:
-        details = os.fstat(descriptor)
-        if (
-            stat.S_ISLNK(path_details.st_mode)
-            or path_details.st_dev != details.st_dev
-            or path_details.st_ino != details.st_ino
-            or not stat.S_ISREG(details.st_mode)
-            or stat.S_IMODE(details.st_mode) != 0o600
-            or not 0 < details.st_size <= _MAX_FILE_BYTES
-        ):
-            raise TrustedPhraseLexiconError(
-                "trusted phrase lexicon must be a bounded mode-0600 regular non-symlink file"
-            )
-        payload = os.read(descriptor, _MAX_FILE_BYTES + 1)
-        after = os.fstat(descriptor)
-    finally:
-        os.close(descriptor)
-    if (
-        len(payload) != details.st_size
-        or len(payload) > _MAX_FILE_BYTES
-        or after.st_size != details.st_size
-        or after.st_mtime_ns != details.st_mtime_ns
-    ):
-        raise TrustedPhraseLexiconError("trusted phrase lexicon changed while being read")
-    try:
-        value = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        value = json.loads(payload, object_pairs_hook=_unique_object)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise TrustedPhraseLexiconError("trusted phrase lexicon is invalid JSON") from exc
     if not isinstance(value, dict):
         raise TrustedPhraseLexiconError("trusted phrase lexicon must be a JSON object")
+    return value
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
     return value
 
 
@@ -257,5 +284,7 @@ def _resolution(lexicon: _TrustedPhraseLexicon) -> TrustedPhraseResolution:
 __all__ = [
     "TrustedPhraseLexiconError",
     "TrustedPhraseLexiconResolver",
+    "TrustedPhraseSecretProvider",
     "load_trusted_phrase_resolver",
+    "load_trusted_phrase_resolver_from_provider",
 ]

@@ -9,9 +9,11 @@ from pathlib import Path
 import pytest
 
 from services.local_pilot_runtime import model_projection_worker
+from services.local_pilot_runtime.secret_provider import SecretBytes, SecretProviderError
 from services.local_pilot_runtime.trusted_phrase_lexicon import (
     TrustedPhraseLexiconError,
     load_trusted_phrase_resolver,
+    load_trusted_phrase_resolver_from_provider,
 )
 from services.observer.observer.models import TenantScope
 
@@ -229,3 +231,74 @@ def test_phrase_arrays_are_bounded_strings(
             expected_site_id=SCOPE.site_id,
             clock=lambda: NOW,
         )
+
+
+def test_lexicon_consumes_secret_bytes_from_exact_logical_name() -> None:
+    requested: list[str] = []
+
+    class Provider:
+        def read_json_bytes(self, logical_name: str) -> SecretBytes:
+            requested.append(logical_name)
+            return SecretBytes(json.dumps(_value()).encode())
+
+    resolver = load_trusted_phrase_resolver_from_provider(
+        Provider(),
+        expected_site_id=SCOPE.site_id,
+        clock=lambda: NOW,
+    )
+
+    assert resolver(SCOPE, "ignored", "ignored").names == ("Alice Zhang",)
+    assert requested == ["trusted_phrase_lexicon"]
+    assert "Alice Zhang" not in repr(resolver)
+
+
+def test_path_compatibility_wrapper_accepts_relative_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _private_json(Path("trusted-phrases.json"), _value())
+
+    resolver = load_trusted_phrase_resolver(
+        Path("trusted-phrases.json"),
+        expected_site_id=SCOPE.site_id,
+        clock=lambda: NOW,
+    )
+
+    assert resolver(SCOPE, "ignored", "ignored").organizations == ("Example Trading LLC",)
+
+
+def test_lexicon_provider_rejects_duplicate_keys_and_hides_provider_errors() -> None:
+    duplicate_payload = json.dumps(_value()).replace(
+        '"schema_version": "1.0",',
+        '"schema_version": "1.0", "schema_version": "SECRET-DUPLICATE",',
+    )
+
+    class DuplicateProvider:
+        def read_json_bytes(self, logical_name: str) -> SecretBytes:
+            assert logical_name == "trusted_phrase_lexicon"
+            return SecretBytes(duplicate_payload.encode())
+
+    with pytest.raises(TrustedPhraseLexiconError) as duplicate:
+        load_trusted_phrase_resolver_from_provider(
+            DuplicateProvider(),
+            expected_site_id=SCOPE.site_id,
+            clock=lambda: NOW,
+        )
+    assert "SECRET-DUPLICATE" not in repr(duplicate.value)
+
+    class FailingProvider:
+        def read_json_bytes(self, logical_name: str) -> SecretBytes:
+            assert logical_name == "trusted_phrase_lexicon"
+            raise SecretProviderError("SECRET-PROVIDER-DETAIL")
+
+    with pytest.raises(
+        TrustedPhraseLexiconError,
+        match="trusted phrase lexicon provider request failed",
+    ) as failed:
+        load_trusted_phrase_resolver_from_provider(
+            FailingProvider(),
+            expected_site_id=SCOPE.site_id,
+            clock=lambda: NOW,
+        )
+    assert "SECRET-PROVIDER-DETAIL" not in repr(failed.value)

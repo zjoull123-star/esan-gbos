@@ -16,6 +16,13 @@ from typing import Protocol
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from services.local_pilot_runtime.secret_provider import (
+    MountedFileSecretProvider,
+    SecretBytes,
+    SecretProviderError,
+    SecretSpec,
+)
+
 TOKENIZER_VERSION = "stable-hmac-tokenizer-v1"
 _EMAIL_PATTERN = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?![\w-]|\.[\w-])")
 _PHONE_PATTERN = re.compile(
@@ -58,6 +65,12 @@ class AuthenticatedCipher(Protocol):
     def seal(self, plaintext: bytes, *, associated_data: bytes) -> bytes: ...
 
     def open(self, ciphertext: bytes, *, associated_data: bytes) -> bytes: ...
+
+
+class KeySecretProvider(Protocol):
+    """Narrow provider surface required by model cryptographic keys."""
+
+    def read_bytes(self, name: str) -> SecretBytes | None: ...
 
 
 class _AES256GCMCipher:
@@ -191,11 +204,38 @@ class EncryptedFileMappingVault:
         key_file: Path,
         clock: Callable[[], datetime] | None = None,
     ) -> EncryptedFileMappingVault:
-        return cls(
+        return cls.from_key_bytes(
             root=root,
-            cipher=_AES256GCMCipher(_read_exact_private_key_file(key_file)),
+            key=_read_exact_private_key_file(key_file),
             clock=clock,
         )
+
+    @classmethod
+    def from_key_bytes(
+        cls,
+        *,
+        root: Path,
+        key: bytes,
+        clock: Callable[[], datetime] | None = None,
+    ) -> EncryptedFileMappingVault:
+        """Build an AES-256 mapping vault from an in-memory domain key."""
+
+        if type(key) is not bytes or len(key) != 32:
+            raise ValueError("vault master key must contain exactly 32 bytes")
+        return cls(root=root, cipher=_AES256GCMCipher(bytes(key)), clock=clock)
+
+    @classmethod
+    def from_secret_provider(
+        cls,
+        *,
+        root: Path,
+        provider: KeySecretProvider,
+        clock: Callable[[], datetime] | None = None,
+    ) -> EncryptedFileMappingVault:
+        """Load the AES-256 mapping key from its deployment logical name."""
+
+        key = _provider_key(provider, "mapping_vault_key")
+        return cls.from_key_bytes(root=root, key=key, clock=clock)
 
     def store(
         self,
@@ -310,6 +350,21 @@ class StableTokenizer:
         self._hmac_key = bytes(hmac_key)
         self._vault = vault
         self.tokenizer_version = tokenizer_version
+
+    @classmethod
+    def from_secret_provider(
+        cls,
+        *,
+        provider: KeySecretProvider,
+        vault: MappingVault,
+        tokenizer_version: str = TOKENIZER_VERSION,
+    ) -> StableTokenizer:
+        """Load the tokenizer HMAC key from its deployment logical name."""
+
+        key = _provider_key(provider, "tokenizer_hmac_key")
+        if len(key) != 32:
+            raise ValueError("hmac_key must contain exactly 32 bytes")
+        return cls(hmac_key=key, vault=vault, tokenizer_version=tokenizer_version)
 
     def tokenize(
         self,
@@ -476,25 +531,38 @@ def _parse_timestamp(value: str, name: str) -> datetime:
 
 def _read_exact_private_key_file(path: Path) -> bytes:
     candidate = Path(path)
-    if candidate.is_symlink():
-        raise ValueError("vault master key file must be a regular non-symlink file")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
-        descriptor = os.open(candidate, flags)
+        metadata = candidate.lstat()
     except OSError as exc:
         raise ValueError("vault master key file must be a regular non-symlink file") from exc
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("vault master key file must be a regular non-symlink file")
-        if stat.S_IMODE(metadata.st_mode) != 0o600:
-            raise ValueError("vault master key file permissions must be exactly 0600")
-        key = os.read(descriptor, 33)
-    finally:
-        os.close(descriptor)
-    if len(key) != 32:
+    if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise ValueError("vault master key file must be a regular non-symlink file")
+    if stat.S_IMODE(metadata.st_mode) != 0o600:
+        raise ValueError("vault master key file permissions must be exactly 0600")
+    if metadata.st_size != 32:
         raise ValueError("vault master key file must contain exactly 32 bytes")
-    return key
+    absolute = candidate.absolute()
+    try:
+        provider = MountedFileSecretProvider(
+            absolute.parent,
+            (SecretSpec("mapping_vault_key", absolute.name, "bytes", 32, 32, 32),),
+        )
+        secret = provider.read_bytes("mapping_vault_key")
+    except SecretProviderError:
+        raise ValueError("vault master key file must be a regular non-symlink file") from None
+    if not isinstance(secret, SecretBytes):
+        raise ValueError("vault master key file must contain exactly 32 bytes")
+    return secret.reveal()
+
+
+def _provider_key(provider: KeySecretProvider, logical_name: str) -> bytes:
+    try:
+        secret = provider.read_bytes(logical_name)
+    except SecretProviderError:
+        raise ValueError("secret provider request failed") from None
+    if not isinstance(secret, SecretBytes):
+        raise ValueError("secret provider request failed")
+    return secret.reveal()
 
 
 def _atomic_private_write(path: Path, value: bytes) -> None:

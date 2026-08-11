@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from services.local_pilot_runtime.secret_provider import SecretBytes, SecretProviderError
+
 
 def test_hmac_identity_refs_are_stable_scoped_and_provider_prefixed() -> None:
     from observer.identity_tokens import HmacSha256IdentityTokenResolver
@@ -175,6 +177,31 @@ def test_non_regular_secret_path_is_rejected_before_open(
     assert open_calls == []
 
 
+def test_path_compatibility_wrapper_keeps_file_error_code_on_provider_race(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from observer.identity_tokens import HmacSha256IdentityTokenResolver, IdentityTokenError
+
+    from services.local_pilot_runtime import secret_provider
+
+    secret = tmp_path / "identity-token.key"
+    secret.write_bytes(b"s" * 32)
+    secret.chmod(0o600)
+
+    def disappearing_open(*args: object, **kwargs: object) -> int:
+        del args, kwargs
+        raise FileNotFoundError
+
+    monkeypatch.setattr(secret_provider.os, "open", disappearing_open)
+
+    with pytest.raises(
+        IdentityTokenError,
+        match="identity_token.invalid_secret_file",
+    ):
+        HmacSha256IdentityTokenResolver.from_secret_file(secret)
+
+
 def test_identity_resolver_rejects_unsafe_inputs_without_rendering_them() -> None:
     from observer.identity_tokens import HmacSha256IdentityTokenResolver, IdentityTokenError
 
@@ -193,3 +220,58 @@ def test_identity_resolver_rejects_unsafe_inputs_without_rendering_them() -> Non
     rendered = repr((resolver, captured.value))
     assert subject not in rendered
     assert secret.decode() not in rendered
+
+
+def test_identity_hmac_consumes_exact_32_secret_bytes_from_logical_name() -> None:
+    from observer.identity_tokens import HmacSha256IdentityTokenResolver
+
+    requested: list[str] = []
+
+    class Provider:
+        def read_bytes(self, logical_name: str) -> SecretBytes:
+            requested.append(logical_name)
+            return SecretBytes(b"P" * 32)
+
+    resolver = HmacSha256IdentityTokenResolver.from_secret_provider(Provider())
+
+    assert requested == ["identity_hmac_key"]
+    assert "PPPP" not in repr(resolver)
+    assert resolver.resolve(
+        "gbos.localhost",
+        "observation_processing",
+        "email",
+        "alice@example.invalid",
+    ).startswith("extid:v1:email:")
+
+
+@pytest.mark.parametrize("key", [b"x" * 31, b"x" * 33])
+def test_identity_provider_rejects_non_exact_key_without_rendering_it(key: bytes) -> None:
+    from observer.identity_tokens import HmacSha256IdentityTokenResolver, IdentityTokenError
+
+    class Provider:
+        def read_bytes(self, logical_name: str) -> SecretBytes:
+            assert logical_name == "identity_hmac_key"
+            return SecretBytes(key)
+
+    with pytest.raises(
+        IdentityTokenError,
+        match="identity_token.invalid_secret_size",
+    ) as captured:
+        HmacSha256IdentityTokenResolver.from_secret_provider(Provider())
+    assert key.decode() not in repr(captured.value)
+
+
+def test_identity_provider_error_is_translated_without_detail() -> None:
+    from observer.identity_tokens import HmacSha256IdentityTokenResolver, IdentityTokenError
+
+    class Provider:
+        def read_bytes(self, logical_name: str) -> SecretBytes:
+            assert logical_name == "identity_hmac_key"
+            raise SecretProviderError("SECRET-PROVIDER-DETAIL")
+
+    with pytest.raises(
+        IdentityTokenError,
+        match="identity_token.secret_provider_failure",
+    ) as captured:
+        HmacSha256IdentityTokenResolver.from_secret_provider(Provider())
+    assert "SECRET-PROVIDER-DETAIL" not in repr(captured.value)

@@ -10,7 +10,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
+
+from .secret_provider import (
+    MountedFileSecretProvider,
+    SecretBytes,
+    SecretProviderError,
+    SecretSpec,
+)
 
 _CONFIG_FIELDS = frozenset(
     {"schema_version", "site_id", "external_send", "evidence_cas_root", "channels"}
@@ -191,6 +198,12 @@ class WeComCredentialConfig:
 ChannelCredential = EmailCredentialConfig | WhatsAppCredentialConfig | WeComCredentialConfig
 
 
+class ChannelCredentialSecretProvider(Protocol):
+    """Narrow provider surface required by channel credential loading."""
+
+    def read_json_bytes(self, name: str) -> SecretBytes | None: ...
+
+
 def load_channel_config(
     path: Path,
     *,
@@ -273,13 +286,51 @@ def require_active_channel(
 
 
 def load_channel_credential(config: ChannelConfig, name: str) -> ChannelCredential:
-    """Load one mode-0600 credential JSON with a channel-specific closed schema."""
+    """Load a path-configured credential through the strict secret provider."""
 
     try:
         path = config.channels[name].credential_file
     except KeyError as exc:
         raise ChannelConfigError("channel is not configured") from exc
-    value = _read_json_object(path, maximum=_MAX_CREDENTIAL_BYTES, private=True)
+    if name not in {"email", "wecom", "whatsapp"}:
+        raise ChannelConfigError("channel does not accept provider credentials")
+    logical_name = f"{name}_credential"
+    try:
+        provider = MountedFileSecretProvider(
+            path.parent,
+            (
+                SecretSpec(
+                    logical_name,
+                    path.name,
+                    "closed_json",
+                    1,
+                    _MAX_CREDENTIAL_BYTES,
+                ),
+            ),
+        )
+    except SecretProviderError:
+        raise ChannelConfigError("channel credential provider request failed") from None
+    return load_channel_credential_from_provider(config, name, provider)
+
+
+def load_channel_credential_from_provider(
+    config: ChannelConfig,
+    name: str,
+    provider: ChannelCredentialSecretProvider,
+) -> ChannelCredential:
+    """Load one channel credential from its closed deployment logical name."""
+
+    if name not in config.channels:
+        raise ChannelConfigError("channel is not configured")
+    if name not in {"email", "wecom", "whatsapp"}:
+        raise ChannelConfigError("channel does not accept provider credentials")
+    try:
+        secret = provider.read_json_bytes(f"{name}_credential")
+    except SecretProviderError:
+        raise ChannelConfigError("channel credential provider request failed") from None
+    if not isinstance(secret, SecretBytes):
+        raise ChannelConfigError("channel credential provider request failed")
+    value = _decode_json_object(secret.reveal())
     if name == "email":
         return _email(value)
     if name == "whatsapp":
@@ -416,8 +467,12 @@ def _read_json_object(path: Path, *, maximum: int, private: bool) -> dict[str, A
         or (private and stat.S_IMODE(details.st_mode) != 0o600)
     ):
         raise ChannelConfigError("configuration file is unsafe or unbounded")
+    return _decode_json_object(path.read_bytes())
+
+
+def _decode_json_object(payload: bytes) -> dict[str, Any]:
     try:
-        decoded = json.loads(path.read_bytes(), object_pairs_hook=_unique_object)
+        decoded = json.loads(payload, object_pairs_hook=_unique_object)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise ChannelConfigError("configuration file is invalid JSON") from exc
     if not isinstance(decoded, dict):
@@ -492,11 +547,13 @@ __all__ = [
     "ChannelConfig",
     "ChannelConfigError",
     "ChannelCredential",
+    "ChannelCredentialSecretProvider",
     "ChannelSettings",
     "EmailCredentialConfig",
     "WeComCredentialConfig",
     "WhatsAppCredentialConfig",
     "load_channel_config",
     "load_channel_credential",
+    "load_channel_credential_from_provider",
     "require_active_channel",
 ]

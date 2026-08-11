@@ -13,8 +13,10 @@ from services.local_pilot_runtime.channel_config import (
     WhatsAppCredentialConfig,
     load_channel_config,
     load_channel_credential,
+    load_channel_credential_from_provider,
     require_active_channel,
 )
+from services.local_pilot_runtime.secret_provider import SecretBytes, SecretProviderError
 
 NOW = datetime(2026, 8, 8, 9, tzinfo=UTC)
 
@@ -272,3 +274,120 @@ def test_account_user_ref_rejects_empty_whitespace_controls_and_oversize(
 
     with pytest.raises(ChannelConfigError):
         load_channel_credential(config, "whatsapp")
+
+
+@pytest.mark.parametrize(
+    ("name", "payload", "expected_type"),
+    [
+        (
+            "email",
+            {
+                "instance_id": "email-primary",
+                "team_ref": "team:sales",
+                "agent_task_type": "sales",
+                "account_user_ref": "owner@example.invalid",
+                "host": "imap.example.invalid",
+                "port": 993,
+                "mailbox": "pilot-primary",
+                "folder": "INBOX",
+                "username": "provider-user@example.invalid",
+                "password": "PROVIDER-EMAIL-SECRET",
+                "poll_limit": 25,
+                "max_message_bytes": 1_000_000,
+                "max_attachment_bytes": 100_000,
+                "max_attachments": 5,
+                "rescan_max_window_seconds": 86_400,
+                "rescan_max_uids": 100,
+                "initial_checkpoint": None,
+            },
+            EmailCredentialConfig,
+        ),
+        (
+            "wecom",
+            {
+                "instance_id": "wecom-primary",
+                "team_ref": "team:sales",
+                "agent_task_type": "sales",
+                "account_user_ref": None,
+                "corp_id": "provider-corp",
+                "secret": "PROVIDER-WECOM-SECRET",
+                "private_key": "PROVIDER-WECOM-PRIVATE-KEY",
+                "initial_checkpoint": "100",
+            },
+            WeComCredentialConfig,
+        ),
+        (
+            "whatsapp",
+            {
+                "instance_id": "wa-primary",
+                "team_ref": None,
+                "agent_task_type": None,
+                "account_user_ref": "USER-WHATSAPP-OWNER",
+                "app_secret": "PROVIDER-WHATSAPP-SECRET",
+                "verify_token": "PROVIDER-WHATSAPP-TOKEN",
+                "path": "/webhooks/whatsapp",
+                "max_body_bytes": 1_048_576,
+            },
+            WhatsAppCredentialConfig,
+        ),
+    ],
+)
+def test_channel_credentials_consume_secret_bytes_from_exact_logical_names(
+    tmp_path: Path,
+    name: str,
+    payload: dict[str, object],
+    expected_type: type[object],
+) -> None:
+    config = load_channel_config(
+        _connectors(tmp_path),
+        expected_site_id="alpha.example",
+        manifest=_manifest(),
+    )
+    requested: list[str] = []
+
+    class Provider:
+        def read_json_bytes(self, logical_name: str) -> SecretBytes:
+            requested.append(logical_name)
+            return SecretBytes(json.dumps(payload).encode())
+
+    credential = load_channel_credential_from_provider(config, name, Provider())
+
+    assert isinstance(credential, expected_type)
+    assert requested == [f"{name}_credential"]
+    rendered = repr(credential)
+    assert not any(
+        value in rendered
+        for value in payload.values()
+        if isinstance(value, str) and value.startswith("PROVIDER-")
+    )
+
+
+def test_channel_provider_json_keeps_duplicate_rejection_and_hides_provider_errors(
+    tmp_path: Path,
+) -> None:
+    config = load_channel_config(
+        _connectors(tmp_path),
+        expected_site_id="alpha.example",
+        manifest=_manifest(),
+    )
+
+    class DuplicateProvider:
+        def read_json_bytes(self, logical_name: str) -> SecretBytes:
+            assert logical_name == "email_credential"
+            return SecretBytes(b'{"instance_id":"first","instance_id":"SECRET-DUPLICATE"}')
+
+    with pytest.raises(ChannelConfigError) as duplicate:
+        load_channel_credential_from_provider(config, "email", DuplicateProvider())
+    assert "SECRET-DUPLICATE" not in repr(duplicate.value)
+
+    class FailingProvider:
+        def read_json_bytes(self, logical_name: str) -> SecretBytes:
+            assert logical_name == "email_credential"
+            raise SecretProviderError("SECRET-PROVIDER-DETAIL")
+
+    with pytest.raises(
+        ChannelConfigError,
+        match="channel credential provider request failed",
+    ) as failed:
+        load_channel_credential_from_provider(config, "email", FailingProvider())
+    assert "SECRET-PROVIDER-DETAIL" not in repr(failed.value)

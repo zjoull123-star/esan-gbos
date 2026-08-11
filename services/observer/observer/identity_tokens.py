@@ -13,6 +13,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from services.local_pilot_runtime.secret_provider import (
+    MountedFileSecretProvider,
+    SecretBytes,
+    SecretProviderError,
+    SecretSpec,
+)
+
 IDENTITY_PROVIDERS = frozenset({"email", "wecom", "whatsapp", "phone", "manual_import"})
 
 _SAFE_CODE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,79}$")
@@ -53,6 +60,12 @@ class IdentityTokenResolver(Protocol):
         provider: str,
         subject: str,
     ) -> str: ...
+
+
+class IdentitySecretProvider(Protocol):
+    """Narrow provider surface required by identity HMAC loading."""
+
+    def read_bytes(self, name: str) -> SecretBytes | None: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -128,43 +141,55 @@ class HmacSha256IdentityTokenResolver:
         cls,
         path: str | os.PathLike[str],
     ) -> HmacSha256IdentityTokenResolver:
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         try:
             path_value = Path(path)
             path_metadata = os.lstat(path_value)
             if stat.S_ISLNK(path_metadata.st_mode) or not stat.S_ISREG(path_metadata.st_mode):
                 raise IdentityTokenError("identity_token.invalid_secret_file")
-            descriptor = os.open(path_value, flags)
         except IdentityTokenError:
             raise
         except OSError, TypeError, ValueError:
             raise IdentityTokenError("identity_token.invalid_secret_file") from None
 
+        if stat.S_IMODE(path_metadata.st_mode) not in {0o400, 0o600}:
+            raise IdentityTokenError("identity_token.invalid_secret_mode")
+        if path_metadata.st_size != 32:
+            raise IdentityTokenError("identity_token.invalid_secret_size")
+        absolute = path_value.absolute()
         try:
-            metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode):
-                raise IdentityTokenError("identity_token.invalid_secret_file")
-            if stat.S_IMODE(metadata.st_mode) not in {0o400, 0o600}:
-                raise IdentityTokenError("identity_token.invalid_secret_mode")
-            if not _MINIMUM_KEY_BYTES <= metadata.st_size <= _MAXIMUM_KEY_BYTES:
-                raise IdentityTokenError("identity_token.invalid_secret_size")
-            chunks: list[bytes] = []
-            remaining = metadata.st_size
-            while remaining:
-                chunk = os.read(descriptor, remaining)
-                if not chunk:
-                    raise IdentityTokenError("identity_token.invalid_secret_size")
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            if os.read(descriptor, 1):
-                raise IdentityTokenError("identity_token.invalid_secret_size")
-            key = b"".join(chunks)
-        except IdentityTokenError:
-            raise
-        except OSError:
+            provider = MountedFileSecretProvider(
+                absolute.parent,
+                (SecretSpec("identity_hmac_key", absolute.name, "bytes", 32, 32, 32),),
+            )
+        except SecretProviderError:
             raise IdentityTokenError("identity_token.invalid_secret_file") from None
-        finally:
-            os.close(descriptor)
+        try:
+            secret = provider.read_bytes("identity_hmac_key")
+        except SecretProviderError:
+            raise IdentityTokenError("identity_token.invalid_secret_file") from None
+        if not isinstance(secret, SecretBytes):
+            raise IdentityTokenError("identity_token.invalid_secret_file")
+        key = secret.reveal()
+        if len(key) != 32:
+            raise IdentityTokenError("identity_token.invalid_secret_size")
+        return cls(key)
+
+    @classmethod
+    def from_secret_provider(
+        cls,
+        provider: IdentitySecretProvider,
+    ) -> HmacSha256IdentityTokenResolver:
+        """Load the identity key from its closed deployment logical name."""
+
+        try:
+            secret = provider.read_bytes("identity_hmac_key")
+        except SecretProviderError:
+            raise IdentityTokenError("identity_token.secret_provider_failure") from None
+        if not isinstance(secret, SecretBytes):
+            raise IdentityTokenError("identity_token.secret_provider_failure")
+        key = secret.reveal()
+        if len(key) != 32:
+            raise IdentityTokenError("identity_token.invalid_secret_size")
         return cls(key)
 
     def resolve(
@@ -205,6 +230,7 @@ __all__ = [
     "IDENTITY_PROVIDERS",
     "IdentityTokenError",
     "IdentityTokenResolver",
+    "IdentitySecretProvider",
     "TransientIdentitySubject",
     "normalize_identity_subject",
 ]

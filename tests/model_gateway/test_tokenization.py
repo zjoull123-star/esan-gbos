@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from services.local_pilot_runtime.secret_provider import SecretBytes, SecretProviderError
 from services.model_gateway.tokenization import (
     EncryptedFileMappingVault,
     InMemoryMappingVault,
@@ -195,3 +196,85 @@ def test_encrypted_vault_persists_only_ciphertext_and_is_scope_bound(tmp_path: P
             site_id="other.localhost",
             purpose="sales_follow_up",
         )
+
+
+def test_tokenizer_and_vault_consume_exact_provider_keys(tmp_path: Path) -> None:
+    requested: list[str] = []
+    secrets = {
+        "tokenizer_hmac_key": b"T" * 32,
+        "mapping_vault_key": b"V" * 32,
+    }
+
+    class Provider:
+        def read_bytes(self, logical_name: str) -> SecretBytes:
+            requested.append(logical_name)
+            return SecretBytes(secrets[logical_name])
+
+    provider = Provider()
+    vault = EncryptedFileMappingVault.from_secret_provider(root=tmp_path, provider=provider)
+    active = StableTokenizer.from_secret_provider(provider=provider, vault=vault)
+    result = active.tokenize(
+        "alice@example.com",
+        site_id="gbos.localhost",
+        purpose="sales_follow_up",
+        now=NOW,
+    )
+
+    assert requested == ["mapping_vault_key", "tokenizer_hmac_key"]
+    assert "alice@example.com" not in result.text
+    assert "TTTT" not in repr(active)
+    assert "VVVV" not in repr(vault)
+
+
+@pytest.mark.parametrize(
+    ("factory", "logical_name"),
+    [
+        ("tokenizer", "tokenizer_hmac_key"),
+        ("vault", "mapping_vault_key"),
+    ],
+)
+@pytest.mark.parametrize("key", [b"x" * 31, b"x" * 33])
+def test_model_provider_keys_must_be_exact_and_never_rendered(
+    tmp_path: Path,
+    factory: str,
+    logical_name: str,
+    key: bytes,
+) -> None:
+    class Provider:
+        def read_bytes(self, requested_name: str) -> SecretBytes:
+            assert requested_name == logical_name
+            return SecretBytes(key)
+
+    with pytest.raises(ValueError) as captured:
+        if factory == "tokenizer":
+            StableTokenizer.from_secret_provider(
+                provider=Provider(),
+                vault=InMemoryMappingVault(),
+            )
+        else:
+            EncryptedFileMappingVault.from_secret_provider(
+                root=tmp_path,
+                provider=Provider(),
+            )
+    assert key.decode() not in repr(captured.value)
+
+
+def test_model_provider_errors_are_translated_without_detail(tmp_path: Path) -> None:
+    class Provider:
+        def read_bytes(self, logical_name: str) -> SecretBytes:
+            assert logical_name in {"tokenizer_hmac_key", "mapping_vault_key"}
+            raise SecretProviderError("SECRET-PROVIDER-DETAIL")
+
+    for factory in (
+        lambda: StableTokenizer.from_secret_provider(
+            provider=Provider(),
+            vault=InMemoryMappingVault(),
+        ),
+        lambda: EncryptedFileMappingVault.from_secret_provider(
+            root=tmp_path,
+            provider=Provider(),
+        ),
+    ):
+        with pytest.raises(ValueError, match="secret provider request failed") as captured:
+            factory()
+        assert "SECRET-PROVIDER-DETAIL" not in repr(captured.value)
