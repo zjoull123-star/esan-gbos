@@ -235,7 +235,18 @@ class TestGBOSExternalIdentityAuthority(IntegrationTestCase):
         savepoint = "before_unavailable_observer_denial"
         frappe.db.savepoint(savepoint)
 
-        with self.assertRaisesRegex(BFFError, "Local Observer service is not configured"):
+        observer_unavailable = BFFError(
+            "internal_error",
+            "Local Observer service is not configured",
+            status=503,
+        )
+        with (
+            patch(
+                "esan_gbos.api.v4.gateway.call_local",
+                side_effect=observer_unavailable,
+            ),
+            self.assertRaisesRegex(BFFError, "Local Observer service is not configured"),
+        ):
             case.save(ignore_permissions=True)
         frappe.db.rollback(save_point=savepoint)
 
