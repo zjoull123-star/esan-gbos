@@ -142,13 +142,37 @@ def _is_plaintext_secret_name(name: str) -> bool:
     )
 
 
+def _is_mounted_secret_file_reference(value: str) -> bool:
+    try:
+        path = Path(value)
+        if str(path) != value or path.parent != DEFAULT_SECRET_ROOT:
+            return False
+        SecretSpec(
+            name="environment-file-reference",
+            filename=path.name,
+            kind="bytes",
+            minimum_bytes=1,
+            maximum_bytes=1,
+        )
+    except SecretProviderError, TypeError, ValueError:
+        return False
+    return True
+
+
 def _reject_local_environment(environ: Mapping[str, str]) -> None:
     for name, value in environ.items():
         if not isinstance(name, str) or not isinstance(value, str):
             _reject(PREFLIGHT_ERROR_LOCAL_INPUT)
+        normalized = name.upper()
         lowered = value.lower()
+        if value and "PROVIDER_PAYLOAD" in normalized:
+            _reject(PREFLIGHT_ERROR_LOCAL_INPUT)
+        if value and normalized.endswith("_FILE") and _is_plaintext_secret_name(normalized[:-5]):
+            if _is_mounted_secret_file_reference(value):
+                continue
+            _reject(PREFLIGHT_ERROR_LOCAL_INPUT)
         if value and (
-            _is_plaintext_secret_name(name)
+            _is_plaintext_secret_name(normalized)
             or any(marker in lowered for marker in _LOCAL_ONLY_MARKERS)
         ):
             _reject(PREFLIGHT_ERROR_LOCAL_INPUT)

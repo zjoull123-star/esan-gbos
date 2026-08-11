@@ -240,6 +240,74 @@ def test_local_only_environment_fails_before_provider_without_disclosure(
     assert events == []
 
 
+@pytest.mark.parametrize(
+    "environment",
+    [
+        {"POSTGRES_PASSWORD_FILE": "/run/secrets/postgres_password"},
+        {"DEEPSEEK_API_KEY_FILE": "/run/secrets/deepseek_api_key"},
+        {"GBOS_AGENT_API_TOKEN_FILE": "/run/secrets/agent_api_bearer"},
+    ],
+)
+def test_canonical_mounted_secret_file_environment_is_allowed(
+    tmp_path: Path,
+    environment: dict[str, str],
+) -> None:
+    events: list[str] = []
+
+    result = run_deployment_secret_preflight(
+        _contract(tmp_path),
+        site_id="gbos-site-001",
+        environment="preproduction",
+        secret_root=tmp_path / "mounted-secrets",
+        environ=environment,
+        provider_factory=_recording_factory(events, {}),
+    )
+
+    assert result == PREFLIGHT_OK
+    assert events[0] == "provider"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "POSTGRES_PASSWORD_FILE",
+        "DEEPSEEK_API_KEY_FILE",
+        "GBOS_AGENT_API_TOKEN_FILE",
+    ],
+)
+@pytest.mark.parametrize(
+    "file_reference",
+    [
+        "postgres_password",
+        str(ROOT / "secrets" / "postgres_password"),
+        "keychain://gbos/postgres_password",
+        "/tmp/postgres_password",
+        "/run/secrets/nested/postgres_password",
+        "/run/secrets/../postgres_password",
+    ],
+)
+def test_unbounded_secret_file_environment_fails_before_provider_without_disclosure(
+    tmp_path: Path,
+    name: str,
+    file_reference: str,
+) -> None:
+    events: list[str] = []
+
+    with pytest.raises(DeploymentSecretPreflightError) as caught:
+        run_deployment_secret_preflight(
+            _contract(tmp_path),
+            site_id="gbos-site-001",
+            environment="preproduction",
+            secret_root=tmp_path / "mounted-secrets",
+            environ={name: file_reference},
+            provider_factory=_recording_factory(events, {}),
+        )
+
+    assert caught.value.code == PREFLIGHT_ERROR_LOCAL_INPUT
+    assert file_reference not in f"{caught.value!s} {caught.value!r}"
+    assert events == []
+
+
 def test_contract_schema_violation_fails_before_provider(tmp_path: Path) -> None:
     contract = copy.deepcopy(_example())
     contract["projections"].pop()
