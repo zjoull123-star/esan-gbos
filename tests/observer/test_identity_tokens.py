@@ -114,6 +114,23 @@ def test_secret_file_loading_handles_bounded_short_reads(
     ).startswith("extid:v1:email:")
 
 
+@pytest.mark.parametrize("key_size", [33, 64])
+def test_legacy_secret_file_accepts_bounded_key_larger_than_32_bytes(
+    tmp_path: Path,
+    key_size: int,
+) -> None:
+    from observer.identity_tokens import HmacSha256IdentityTokenResolver
+
+    secret = tmp_path / "legacy-identity-token.key"
+    secret.write_bytes(b"L" * key_size)
+    secret.chmod(0o600)
+
+    resolver = HmacSha256IdentityTokenResolver.from_secret_file(secret)
+
+    assert f"bytes={key_size}" in repr(resolver)
+    assert "LLLL" not in repr(resolver)
+
+
 def test_secret_file_loading_requires_regular_non_symlink_safe_bounded_key(
     tmp_path: Path,
 ) -> None:

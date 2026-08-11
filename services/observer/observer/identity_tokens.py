@@ -153,13 +153,21 @@ class HmacSha256IdentityTokenResolver:
 
         if stat.S_IMODE(path_metadata.st_mode) not in {0o400, 0o600}:
             raise IdentityTokenError("identity_token.invalid_secret_mode")
-        if path_metadata.st_size != 32:
+        if not _MINIMUM_KEY_BYTES <= path_metadata.st_size <= _MAXIMUM_KEY_BYTES:
             raise IdentityTokenError("identity_token.invalid_secret_size")
         absolute = path_value.absolute()
         try:
             provider = MountedFileSecretProvider(
                 absolute.parent,
-                (SecretSpec("identity_hmac_key", absolute.name, "bytes", 32, 32, 32),),
+                (
+                    SecretSpec(
+                        "identity_hmac_key",
+                        absolute.name,
+                        "bytes",
+                        _MINIMUM_KEY_BYTES,
+                        _MAXIMUM_KEY_BYTES,
+                    ),
+                ),
             )
         except SecretProviderError:
             raise IdentityTokenError("identity_token.invalid_secret_file") from None
@@ -170,7 +178,7 @@ class HmacSha256IdentityTokenResolver:
         if not isinstance(secret, SecretBytes):
             raise IdentityTokenError("identity_token.invalid_secret_file")
         key = secret.reveal()
-        if len(key) != 32:
+        if not _MINIMUM_KEY_BYTES <= len(key) <= _MAXIMUM_KEY_BYTES:
             raise IdentityTokenError("identity_token.invalid_secret_size")
         return cls(key)
 
