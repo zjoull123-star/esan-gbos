@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "evidence_id": "user-identity-governance-closure-20260811",
-  "captured_at": "2026-08-10T23:58:57Z",
+  "captured_at": "2026-08-11T00:08:45Z",
   "status": "credential_free_design_closure_real_canary_deferred",
   "source_scope": {
     "branch": "feat/user-identity-resolution-20260810",
@@ -116,6 +116,44 @@
     "observed_model_identity": "unknown",
     "response_reported_observed_model": "unknown"
   },
+  "external_input_inventory": {
+    "checked_at": "2026-08-11T00:08:45Z",
+    "method": "macos_keychain_metadata_existence_only",
+    "secret_values_read_or_recorded": false,
+    "formal_external_manifest_preflight": "pass_with_placeholder_keychain_refs",
+    "fixed_required_available": [
+      "postgres-password",
+      "postgres-observer-password",
+      "postgres-context-password",
+      "postgres-agent-password",
+      "postgres-media-password",
+      "mariadb-root-password",
+      "frappe-admin-password",
+      "agent-api-bearer",
+      "context-api-bearer",
+      "cursor-hmac-key",
+      "tokenizer-hmac-key",
+      "mapping-vault-aes-256-key",
+      "frappe-materializer-api-key",
+      "frappe-materializer-api-secret"
+    ],
+    "fixed_required_missing": [
+      "identity-hmac-key",
+      "frappe-identity-resolver-api-key",
+      "frappe-identity-resolver-api-secret",
+      "trusted-phrase-lexicon"
+    ],
+    "dynamic_references_not_supplied": [
+      "approved Email credential Keychain reference",
+      "approved DeepSeek API Keychain reference"
+    ],
+    "operator_scope_not_supplied": [
+      "approved activation time",
+      "approved target team and connector account user",
+      "approved reviewer",
+      "approved target User and Party"
+    ]
+  },
   "stability": {
     "seventy_two_hour_run": "deferred_by_user",
     "required_for_this_stage": false
@@ -130,11 +168,12 @@
     "cloud": false
   },
   "missing_external_inputs": [
-    "approved Email credential in macOS Keychain",
-    "DeepSeek API key in macOS Keychain",
-    "identity HMAC key in macOS Keychain",
-    "approved current trusted-phrase lexicon",
-    "Frappe identity-resolver API key and secret in macOS Keychain"
+    "approved Email credential and selected macOS Keychain reference",
+    "approved DeepSeek API key and selected macOS Keychain reference",
+    "identity HMAC key in the fixed macOS Keychain account",
+    "approved current trusted-phrase lexicon in the fixed macOS Keychain account",
+    "Frappe identity-resolver API key and secret in the fixed macOS Keychain accounts",
+    "approved activation time, team, connector account user, reviewer, target User and target Party"
   ],
   "go_no_go": {
     "credential_free_design_closure": "go",

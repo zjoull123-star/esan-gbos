@@ -1,6 +1,6 @@
 # User identity governance credential-free closure
 
-捕获时间：`2026-08-10T23:58:57Z`。本快照不修改任何历史 evidence，分别绑定：
+捕获时间：`2026-08-11T00:08:45Z`。本快照不修改任何历史 evidence，分别绑定：
 
 - Frappe source reference：`4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`
 - runtime source reference：`341b2df9c45b22c0579f960dcb5ecbe694cdd215`
@@ -58,14 +58,21 @@ No-Go，不得把源码完成、镜像构建或 synthetic/in-process 验证解�
 PostgreSQL/Frappe 测试容器；没有 provider/channel network，没有启动正式
 local-pilot application stack。所有隔离测试状态均已移除。
 
+Formal external manifest 的 source/image/manifest preflight 已使用仓库外临时声明和
+占位 Keychain reference 通过，且临时声明已清理。随后执行的 metadata-only Keychain inventory
+没有读取或记录 secret value：14 个固定基础项存在；`identity-hmac-key`、两项
+Frappe identity-resolver credential 和 `trusted-phrase-lexicon` 四个固定项不存在。
+真实 Email 与 DeepSeek 的动态 Keychain reference、activation time、team/account owner、
+reviewer 及目标 User/Party 尚未提供，不能由实现自行猜测。
+
 ## 延期与剩余外部门
 
 72 小时连续运行按用户决定延期，未执行，且不作为本阶段验收门槛。它的延期不放宽
 真实渠道、模型、预算、隐私、外发或生产控制。
 
-后续若要把 `real_email_deepseek_canary` 改为 Go，仍需由操作人员把获批 Email、
-DeepSeek、identity HMAC、trusted-phrase lexicon 和 Frappe resolver 凭据通过 macOS
-Keychain 提供，并执行仓库外、单 Email instance、激活时间之后、无历史回填的真实
+后续若要把 `real_email_deepseek_canary` 改为 Go，仍需由操作人员提供获批 Email、
+DeepSeek、identity HMAC、trusted-phrase lexicon 和 Frappe resolver 凭据及上述人工
+scope，并通过 macOS Keychain 配置；随后执行仓库外、单 Email instance、激活时间之后、无历史回填的真实
 canary。必须记录 IMAP 只读行为、稳定 UID checkpoint、模型响应报告身份、预算、
 fatal latch、人工身份审核、重启/故障/撤回/retention 证据。Kingdee、cloud、production、
 external send 和正式业务命令仍分别保持 No-Go。

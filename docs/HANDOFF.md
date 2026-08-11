@@ -118,6 +118,12 @@ checked_in_deepseek_enabled=false
   当前缺少 Email credential、DeepSeek API Key、identity HMAC、人工批准的 trusted
   phrase lexicon，以及 Frappe identity resolver API key/secret。real Email/DeepSeek
   call、real channels 与 `response_reported_observed_model` 仍为 No-Go/unknown。
+- 2026-08-11 的只读存在性审计没有读取任何 secret value：14 个固定基础 Keychain 项
+  存在；`identity-hmac-key`、Frappe identity-resolver API key/secret 和
+  `trusted-phrase-lexicon` 不存在。Email/DeepSeek 的动态 Keychain reference、activation
+  time、team/account owner、reviewer 与目标 User/Party 尚未提供。使用占位 reference 的
+  仓库外 formal manifest source/image preflight 已通过并清理临时声明；这不等于凭据或
+  真实 provider 已验证。
 - 72 小时连续运行不再作为本阶段退出条件；该稳定性窗口按用户决定 deferred/not
   required for this stage，未执行、未评估，也不再单独阻塞本阶段。真实 UIDVALIDITY、
   429、超时和断网恢复演练仍未执行。

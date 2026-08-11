@@ -406,6 +406,44 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
         "seventy_two_hour_run": "deferred_by_user",
         "required_for_this_stage": False,
     }
+    assert evidence["external_input_inventory"] == {
+        "checked_at": "2026-08-11T00:08:45Z",
+        "method": "macos_keychain_metadata_existence_only",
+        "secret_values_read_or_recorded": False,
+        "formal_external_manifest_preflight": "pass_with_placeholder_keychain_refs",
+        "fixed_required_available": [
+            "postgres-password",
+            "postgres-observer-password",
+            "postgres-context-password",
+            "postgres-agent-password",
+            "postgres-media-password",
+            "mariadb-root-password",
+            "frappe-admin-password",
+            "agent-api-bearer",
+            "context-api-bearer",
+            "cursor-hmac-key",
+            "tokenizer-hmac-key",
+            "mapping-vault-aes-256-key",
+            "frappe-materializer-api-key",
+            "frappe-materializer-api-secret",
+        ],
+        "fixed_required_missing": [
+            "identity-hmac-key",
+            "frappe-identity-resolver-api-key",
+            "frappe-identity-resolver-api-secret",
+            "trusted-phrase-lexicon",
+        ],
+        "dynamic_references_not_supplied": [
+            "approved Email credential Keychain reference",
+            "approved DeepSeek API Keychain reference",
+        ],
+        "operator_scope_not_supplied": [
+            "approved activation time",
+            "approved target team and connector account user",
+            "approved reviewer",
+            "approved target User and Party",
+        ],
+    }
     assert evidence["go_no_go"]["credential_free_design_closure"] == "go"
     assert evidence["go_no_go"]["real_email_deepseek_canary"] == "no_go"
     assert evidence["go_no_go"]["formal_local_pilot"] == "no_go"
@@ -415,6 +453,7 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
     assert "2850 passed, 44 skipped, 1 warning" in summary
     assert "credential binding" in summary
     assert "Email delivery" in summary
+    assert "metadata-only Keychain inventory" in summary
 
     evidence_text = IDENTITY_CLOSURE_EVIDENCE.read_text(encoding="utf-8")
     for forbidden in ("sk-", "-----BEGIN", "Cookie:", "Authorization:"):
