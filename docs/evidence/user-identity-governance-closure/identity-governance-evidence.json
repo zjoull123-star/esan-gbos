@@ -1,28 +1,38 @@
 {
   "schema_version": "1.0",
-  "evidence_id": "user-identity-governance-closure-20260811",
-  "captured_at": "2026-08-11T02:14:28Z",
+  "evidence_id": "user-identity-governance-closure-20260812",
+  "captured_at": "2026-08-12T01:43:10Z",
   "status": "credential_free_design_closure_real_canary_deferred",
   "source_scope": {
     "branch": "feat/user-identity-resolution-20260810",
-    "frappe_source_reference": "4b2512ba5bf8bbc3bc12cc6beb62055c735dc629",
-    "runtime_source_reference": "341b2df9c45b22c0579f960dcb5ecbe694cdd215",
-    "image_lock_commit": "d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2",
+    "frappe_source_reference": "485d3def0ea30ee49a3899d71c10b0787ba0429f",
+    "runtime_source_reference": "bb260632ff44c7065a88327f264612139a9070a2",
+    "image_lock_commit": "a599a5200e2a8e1b5e42301d74fe8d9d914161c4",
     "historical_evidence_modified": false
   },
   "runtime_images": {
     "frappe_pwa": {
       "reference": "esan-gbos-local-pilot-frappe:2026-08-08",
-      "inspect_digest": "sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c",
-      "revision_label": "4b2512ba5bf8bbc3bc12cc6beb62055c735dc629",
-      "source_sha256": "36920eab75b8ae378d965fbf582976f3f59c07688e81da3b8fbb7b90351ecb1a"
+      "inspect_digest": "sha256:2a0440df614314dec036ecc934e37aa0b3713b8cb8610e3ca2bd8ed69f9187c2",
+      "revision_label": "485d3def0ea30ee49a3899d71c10b0787ba0429f",
+      "source_sha256": "441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405"
     },
     "local_runtime": {
       "reference": "esan-gbos-local-pilot-runtime:2026-08-08",
-      "inspect_digest": "sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3",
-      "revision_label": "341b2df9c45b22c0579f960dcb5ecbe694cdd215",
-      "source_sha256": "b0da06da3b7dc1f0dec936a1809f3ac2bd07f9e93dc24a73cadc3f8ce3f2c1c0"
+      "inspect_digest": "sha256:de037ad28a020689fec8b72f743ad0224afdf5c2ca6856a2ea5568fabd45e568",
+      "revision_label": "bb260632ff44c7065a88327f264612139a9070a2",
+      "source_sha256": "c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3"
     }
+  },
+  "current_synthetic_core": {
+    "restarted": true,
+    "scope": "Frappe/PWA plus Observer, Context, and Agent APIs only",
+    "channels_enabled": false,
+    "models_enabled": false,
+    "media_enabled": false,
+    "tunnel_enabled": false,
+    "formal_local_pilot_go": false,
+    "source_bound_images_rebuilt_and_recorded": true
   },
   "verification": {
     "pytest": {
@@ -39,7 +49,7 @@
       "disposable_environment_removed": true
     },
     "postgresql_current_source_canary_closure": {
-      "runtime_source_reference": "341b2df9c45b22c0579f960dcb5ecbe694cdd215",
+      "runtime_source_reference": "bb260632ff44c7065a88327f264612139a9070a2",
       "observer_migrations": "001-013_applied_twice",
       "context_migrations": "001-005_applied_twice",
       "agent_migrations": "001-006_applied_twice",
@@ -66,6 +76,13 @@
       "build": "pass"
     },
     "infra_passed": 179,
+    "backend_latest_pre_doc_fix": {
+      "passed": 3060,
+      "skipped": 44,
+      "failed": 3,
+      "failure_scope": "stale-current-doc mismatch only",
+      "post_fix_full_suite": "not_yet_rerun"
+    },
     "python_static": {
       "ruff_check": "pass",
       "ruff_format": "pass",
@@ -92,6 +109,7 @@
     },
     "image_security_scans": {
       "scanner": "trivy_0.73.0",
+      "scope": "earlier closure image set before current Frappe refresh",
       "frappe_unwaived_high_critical": 0,
       "runtime_unwaived_high_critical": 0,
       "image_secrets": 0,

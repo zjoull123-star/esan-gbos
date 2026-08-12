@@ -1,15 +1,15 @@
 # GBOS 当前交接真相
 
-更新时间：2026-08-11。本文是 current main/feature handoff 的可复核状态面，
+更新时间：2026-08-12。本文是 current main/feature handoff 的可复核状态面，
 不授予外部权限，也不把本地验证解释为生产发布。
 
 ## 来源与证据边界
 
 - 规划来源基线是 `8c40731`（观察身份解析 roadmap）；当前分支为
   `feat/user-identity-resolution-20260810`。当前 Frappe source reference 是
-  `4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`，runtime source reference 是
-  `341b2df9c45b22c0579f960dcb5ecbe694cdd215`，image-lock recording commit 是
-  `d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`。镜像 labels、源码哈希和 inspect
+  `485d3def0ea30ee49a3899d71c10b0787ba0429f`，runtime source reference 是
+  `bb260632ff44c7065a88327f264612139a9070a2`，image-lock recording commit 是
+  `a599a5200e2a8e1b5e42301d74fe8d9d914161c4`。镜像 labels、源码哈希和 inspect
   digest 已逐项复核；后续 handoff/evidence 文档不在镜像内。真实 canary 仍受外部
   凭据与正式 go 门阻断。
 - 身份解析离线实现基线 `c98f6a5` 保留为历史里程碑；本轮在其上补齐了真实
@@ -57,10 +57,19 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 
 | Service | Local image digest | Revision label |
 | --- | --- | --- |
-| `frappe-pwa` | `sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c` | `4b2512ba5bf8bbc3bc12cc6beb62055c735dc629` |
-| `local-runtime` | `sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3` | `341b2df9c45b22c0579f960dcb5ecbe694cdd215` |
+| `frappe-pwa` | `sha256:2a0440df614314dec036ecc934e37aa0b3713b8cb8610e3ca2bd8ed69f9187c2` | `485d3def0ea30ee49a3899d71c10b0787ba0429f` |
+| `local-runtime` | `sha256:de037ad28a020689fec8b72f743ad0224afdf5c2ca6856a2ea5568fabd45e568` | `bb260632ff44c7065a88327f264612139a9070a2` |
 
-当前 credential-free 设计闭环的 source-bound 验证快照为：full pytest
+Frappe/PWA 的 source SHA256 label 是
+`441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405`；local-runtime 的
+source SHA256 label 是
+`c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3`。
+
+当前 source-bound images 已重新构建并记录到上述 image lock；当前 synthetic core 也已
+使用这两套镜像重启。它只表示本地 Frappe/PWA、Observer、Context、Agent 的 synthetic
+core 可重启，不改变正式 `local_pilot_go=false`，也不启动真实渠道或模型。
+
+此前 credential-free 设计闭环的 source-bound 验证快照为：full pytest
 `2850 passed, 44 skipped, 1 warning`；domain/contracts `799 passed`、infra
 `179 passed`；Ruff
 check/format、mypy、compileall 与 secret scan 全部 green；frontend unit
@@ -78,10 +87,11 @@ Observer 001–013、Context 001–005、Agent 001–006 连续应用两次，�
 verifier 交叉验证 Email delivery、observation、participant、confirmed identity、active
 authority、Agent invocation、Context intelligence/draft 与 Frappe receipt，只报告
 `response_reported_observed_model`，不接受 free-form observed model。
-Governed Trivy 0.73.0 scans of both rebuilt images reported `0` unwaived High/Critical,
+Earlier closure Trivy 0.73.0 scans of the then-current rebuilt images reported `0` unwaived High/Critical,
 `0` image secrets and `0` misconfigurations; historical 57 waiver entries/103 exact PURLs
-were displayed separately and are not zero-total-findings claims. Scan services were not
-started.
+were displayed separately and are not zero-total-findings claims. The current Frappe image
+refresh is recorded above; its security scan must be refreshed before any real canary. Scan
+services were not started for this docs-only update.
 
 这些结果不等于真实 Email/DeepSeek canary 或正式 Go。当前镜像已完成
 governed current-image rebuild/record；数据库隔离矩阵结果见 closure evidence，且
@@ -89,6 +99,12 @@ governed current-image rebuild/record；数据库隔离矩阵结果见 closure e
 network，并启动 isolated PostgreSQL validation/build/scanner containers；没有
 provider/channel network，也没有 pilot application services。真实 IMAP/model/external
 calls 仍为零。
+
+本次 current-truth 文档刷新前的 full backend 最新结果是 `3060 passed, 44 skipped,
+3 failed`；3 个失败全部是旧 current-doc/image-lock/closure digest 不一致，属于 stale-doc
+mismatch only，不是应用实现失败。本次变更已更新这些 current refs、digests、source labels
+和 closure checksum；focused governance/docs checks 通过，但 root 仍需重新运行 full backend，
+本文不把它提前宣称为全绿。
 
 详见 [当前身份治理闭环证据](evidence/user-identity-governance-closure/identity-governance-evidence.json)
 及 [Task 13 历史真实渠道前就绪证据](evidence/task13-readiness/task13-readiness-summary.md)。
@@ -149,8 +165,8 @@ checked_in_deepseek_enabled=false
 
 ## 后续实施顺序
 
-1. Frappe source reference `4b2512b`、runtime source reference `341b2df` 与 current
-   image lock `d8bdc18` 已完成 governed rebuild/record；后续 canary 仍必须复核
+1. Frappe source reference `485d3def`、runtime source reference `bb260632` 与 current
+   image lock `a599a520` 已完成 governed rebuild/record；后续 canary 仍必须复核
    revision label、source hash 与 manifest binding。
 2. 用户以安全方式提供 Task 13 外部输入；凭据只进入 macOS Keychain，不写仓库。
 3. 按 [运行手册](local-pilot/RUNBOOK.md) 创建 repo-external canary dir/control，

@@ -5,13 +5,16 @@ channel ingestion, identity resolution and model proposals without enabling outb
 actions, Kingdee, cloud deployment or production state changes.
 
 **Current validation references:** Frappe source reference
-`4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`, runtime source reference
-`341b2df9c45b22c0579f960dcb5ecbe694cdd215`, and image-lock recording commit
-`d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`. The locked Frappe/PWA image is
-`sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c`;
+`485d3def0ea30ee49a3899d71c10b0787ba0429f`, runtime source reference
+`bb260632ff44c7065a88327f264612139a9070a2`, and image-lock recording commit
+`a599a5200e2a8e1b5e42301d74fe8d9d914161c4`. The locked Frappe/PWA image is
+`sha256:2a0440df614314dec036ecc934e37aa0b3713b8cb8610e3ca2bd8ed69f9187c2`;
 the local runtime image is
-`sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3`.
-Each image carries its own exact source revision and source-hash label.
+`sha256:de037ad28a020689fec8b72f743ad0224afdf5c2ca6856a2ea5568fabd45e568`.
+Their source SHA256 labels are respectively
+`441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405` and
+`c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3`; each image carries
+its own exact source revision and source-hash label.
 
 ## Current architecture
 
@@ -30,7 +33,8 @@ Each image carries its own exact source revision and source-hash label.
 
 - [x] Compose isolation, loopback exposure, profiles, secrets, image locks and
   fail-closed preflight.
-- [x] Current Frappe/PWA and runtime images built, inspected and recorded.
+- [x] Current-source Frappe/PWA and runtime images rebuilt, inspected and recorded;
+  the synthetic core was restarted from these recorded images.
 - [x] Fresh Frappe v16 site install for ERPNext, CRM and `esan_gbos`, followed by two
   migrations and native identity permission tests.
 - [x] Observer, Context, Agent and Media PostgreSQL migration chain executed twice with
@@ -49,6 +53,12 @@ Each image carries its own exact source revision and source-hash label.
   two migrations; all disposable state was removed.
 - [x] Current pre-canary evidence package records source/image bindings and zero
   external activity without modifying historical Gate evidence.
+
+Before this current-truth refresh, the latest full backend run was `3060 passed, 44
+skipped, 3 failed`; all three failures were stale-current-doc mismatches against the
+superseded image lock/digests, not application implementation failures. This docs-only
+red is recorded as pre-fix evidence; focused governance/docs checks pass after the
+refresh, while a new full backend run remains required and is not claimed green here.
 
 ## Deferred by explicit scope decision
 

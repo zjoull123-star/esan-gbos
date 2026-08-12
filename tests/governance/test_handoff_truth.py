@@ -30,9 +30,11 @@ IDENTITY_CLOSURE_SUMMARY = IDENTITY_CLOSURE_DIR / "identity-governance-summary.m
 IDENTITY_CLOSURE_SUMS = IDENTITY_CLOSURE_DIR / "SHA256SUMS"
 
 HISTORICAL_TASK13_SOURCE_COMMIT = "ad58ab3ea8c0d521cebd90c2642709d135f98fac"
-CURRENT_FRAPPE_SOURCE_COMMIT = "4b2512ba5bf8bbc3bc12cc6beb62055c735dc629"
-CURRENT_RUNTIME_SOURCE_COMMIT = "341b2df9c45b22c0579f960dcb5ecbe694cdd215"
-CURRENT_IMAGE_LOCK_COMMIT = "d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2"
+CURRENT_FRAPPE_SOURCE_COMMIT = "485d3def0ea30ee49a3899d71c10b0787ba0429f"
+CURRENT_RUNTIME_SOURCE_COMMIT = "bb260632ff44c7065a88327f264612139a9070a2"
+CURRENT_IMAGE_LOCK_COMMIT = "a599a5200e2a8e1b5e42301d74fe8d9d914161c4"
+CURRENT_FRAPPE_SOURCE_SHA256 = "441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405"
+CURRENT_RUNTIME_SOURCE_SHA256 = "c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3"
 
 CEO_ROLES = (
     "CEO",
@@ -320,6 +322,8 @@ def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
     assert CURRENT_FRAPPE_SOURCE_COMMIT in handoff
     assert CURRENT_RUNTIME_SOURCE_COMMIT in handoff
     assert CURRENT_IMAGE_LOCK_COMMIT in handoff
+    assert CURRENT_FRAPPE_SOURCE_SHA256 in handoff
+    assert CURRENT_RUNTIME_SOURCE_SHA256 in handoff
     assert "frappe source reference" in handoff.lower()
     assert "runtime source reference" in handoff.lower()
     assert "current code HEAD 是" not in handoff
@@ -354,6 +358,18 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
     assert (
         evidence["runtime_images"]["local_runtime"]["inspect_digest"]
         == locked_digests["local-runtime"]
+    )
+    assert (
+        evidence["runtime_images"]["frappe_pwa"]["revision_label"] == CURRENT_FRAPPE_SOURCE_COMMIT
+    )
+    assert evidence["runtime_images"]["frappe_pwa"]["source_sha256"] == CURRENT_FRAPPE_SOURCE_SHA256
+    assert (
+        evidence["runtime_images"]["local_runtime"]["revision_label"]
+        == CURRENT_RUNTIME_SOURCE_COMMIT
+    )
+    assert (
+        evidence["runtime_images"]["local_runtime"]["source_sha256"]
+        == CURRENT_RUNTIME_SOURCE_SHA256
     )
     assert evidence["verification"]["pytest"] == {
         "passed": 2850,
@@ -392,6 +408,17 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
         "build": "pass",
     }
     assert evidence["verification"]["infra_passed"] == 179
+    assert evidence["verification"]["backend_latest_pre_doc_fix"] == {
+        "passed": 3060,
+        "skipped": 44,
+        "failed": 3,
+        "failure_scope": "stale-current-doc mismatch only",
+        "post_fix_full_suite": "not_yet_rerun",
+    }
+    assert evidence["current_synthetic_core"]["restarted"] is True
+    assert evidence["current_synthetic_core"]["formal_local_pilot_go"] is False
+    assert evidence["current_synthetic_core"]["channels_enabled"] is False
+    assert evidence["current_synthetic_core"]["models_enabled"] is False
     assert evidence["formal_state"]["local_pilot_go"] is False
     assert evidence["formal_state"]["production_go"] is False
     assert evidence["external_activity"] == {

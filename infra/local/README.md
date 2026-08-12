@@ -31,14 +31,16 @@ rechecked on another container runtime.
 The Frappe, MariaDB, Redis, backend, worker, scheduler, websocket, and PWA
 services use local-pilot-specific volume names. The Frappe services use the
 recorded local image `esan-gbos-local-pilot-frappe:2026-08-08` with inspect digest
-`sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c`;
+`sha256:2a0440df614314dec036ecc934e37aa0b3713b8cb8610e3ca2bd8ed69f9187c2`;
 the local runtime digest is
-`sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3`.
+`sha256:de037ad28a020689fec8b72f743ad0224afdf5c2ca6856a2ea5568fabd45e568`.
 The Frappe source reference is
-`4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`; the runtime source reference is
-`341b2df9c45b22c0579f960dcb5ecbe694cdd215`; the image-lock recording commit is
-`d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`. Each image label and source hash was
-inspected independently.
+`485d3def0ea30ee49a3899d71c10b0787ba0429f`; the runtime source reference is
+`bb260632ff44c7065a88327f264612139a9070a2`; the image-lock recording commit is
+`a599a5200e2a8e1b5e42301d74fe8d9d914161c4`. Their source SHA256 labels are
+`441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405` and
+`c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3`; each image label
+and source hash was inspected independently.
 the upstream ERPNext image is not treated as a GBOS PWA. The previous synthetic
 snapshot, rather than this rebuild alone, reported
 `setup_complete=1`, Frappe/ERPNext/CRM/esan_gbos versions
@@ -82,6 +84,13 @@ The pinned Prometheus profile also observed the authenticated
 readiness remained `0` because the real identity worker and channels were
 disabled. This is local synthetic evidence, not a formal Go. The 72-hour window is
 deferred by user decision, is not assessed, and is no longer an exit requirement.
+
+The current-source synthetic core restart is separate from formal pilot approval:
+`local_pilot_go=false`, with channels, models, media and tunnel still disabled. Before
+this current-truth refresh, the latest full backend run was `3060 passed, 44 skipped,
+3 failed`; all three failures were stale-current-doc mismatches against the superseded
+image lock/digests. Focused governance/docs checks pass after the refresh; a new full
+backend run is still required and is not claimed green here.
 
 Build the runtime image explicitly with
 `scripts/local-pilot/build-runtime-image --confirm-network-build`. Python and

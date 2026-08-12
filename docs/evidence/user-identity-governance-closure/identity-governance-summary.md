@@ -1,10 +1,14 @@
 # User identity governance credential-free closure
 
-捕获时间：`2026-08-11T02:14:28Z`。本快照不修改任何历史 evidence，分别绑定：
+捕获时间：`2026-08-12T01:43:10Z`。本快照不修改任何历史 evidence，分别绑定：
 
-- Frappe source reference：`4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`
-- runtime source reference：`341b2df9c45b22c0579f960dcb5ecbe694cdd215`
-- image-lock recording commit：`d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`
+- Frappe source reference：`485d3def0ea30ee49a3899d71c10b0787ba0429f`
+- runtime source reference：`bb260632ff44c7065a88327f264612139a9070a2`
+- image-lock recording commit：`a599a5200e2a8e1b5e42301d74fe8d9d914161c4`
+- current Frappe/PWA inspect digest：`sha256:2a0440df614314dec036ecc934e37aa0b3713b8cb8610e3ca2bd8ed69f9187c2`
+- current local-runtime inspect digest：`sha256:de037ad28a020689fec8b72f743ad0224afdf5c2ca6856a2ea5568fabd45e568`
+- source SHA256 labels：Frappe/PWA `441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405`；
+  local-runtime `c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3`
 
 ## 结论
 
@@ -28,9 +32,14 @@ observed model identity 与 response-reported observed model 均为 `unknown`。
 No-Go，不得把源码完成、镜像构建或 synthetic/in-process 验证解释为真实 provider
 可用性、生产放行或正式经营指标。
 
+当前 source-bound 镜像已重建并记录，synthetic core 已使用它们重启；这不等于正式
+local pilot 启动，`local_pilot_go=false` 仍保持。当前 core 仅包含 Frappe/PWA、Observer、
+Context、Agent，channels/models/media/tunnel 均为 disabled。
+
 ## 验证结果
 
-- Full pytest：`2850 passed, 44 skipped, 1 warning`，failed `0`。
+- Earlier source-bound closure snapshot (before this image refresh) recorded full pytest：
+  `2850 passed, 44 skipped, 1 warning`，failed `0`。
 - Domain + contracts：`799 passed`；infra：`179 passed`。
 - Frontend unit：`196 passed`；Playwright harness：`25 passed`；lint、typecheck、
   production build 全部通过。
@@ -46,13 +55,15 @@ No-Go，不得把源码完成、镜像构建或 synthetic/in-process 验证解�
 - Machine chain verifier 已闭合校验 Email delivery、Observer observation/participant、
   confirmed identity/active authority、Agent invocation、Context intelligence/draft 和
   Frappe receipt；不接受 free-form observed model。
-- 两个当前镜像经 Trivy 0.73.0 扫描均为 `0` 个未豁免 High/Critical，image secrets 与
-  misconfigurations 均为 `0`；57 条历史 waiver / 103 个 exact PURL 单独显示，不冒充
-  “总发现为零”。
-- Frappe 镜像 inspect digest：
-  `sha256:7b9979267b45c0ad8b635581112f245ef635c956a28d4055cfacb59703020d7c`。
-- Local runtime 镜像 inspect digest：
-  `sha256:8a0ac2014c09765453e611e2bdf20ead82813b80ff9729cb52151382e11d00e3`。
+- Earlier closure scan of the then-current rebuilt images with Trivy 0.73.0 reported `0`
+  unwaived High/Critical, `0` image secrets and `0` misconfigurations；57 条历史 waiver /
+  103 个 exact PURL 单独显示，不冒充“总发现为零”。The refreshed Frappe image requires a
+  new security scan before any real canary.
+- 本次 current-truth 文档刷新前，full backend 最新结果为 `3060 passed, 44 skipped,
+  3 failed`；三个失败全部是 stale-current-doc mismatch（旧 image lock/digest 与当前
+  source-bound 记录不一致），不是应用实现失败。本次更新已修正 current refs、digests、
+  source labels 与 closure checksum；focused governance/docs checks 已通过，但 full
+  backend 仍需由 root 重新运行，不能提前宣称全绿。
 
 验证过程中仅为受控依赖、镜像构建和安全扫描使用网络，并启动了隔离
 PostgreSQL/Frappe 测试容器；没有 provider/channel network，没有启动正式
