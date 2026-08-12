@@ -29,6 +29,8 @@ def _run_prepare_secrets_fixture(
     *,
     identity_value: str,
     cursor_value: str = "cursor-text-secret",
+    email_value: str = '{"username":"email-user","password":"email-password"}',
+    deepseek_value: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     fixture_root = tmp_path / "prepare-secrets-fixture"
     scripts = fixture_root / "scripts" / "local-pilot"
@@ -44,6 +46,9 @@ def _run_prepare_secrets_fixture(
             {
                 "identity-hmac-key": identity_value,
                 "cursor-hmac-key": cursor_value,
+                "email-credential": email_value,
+                "deepseek-api-key": deepseek_value,
+                "trusted-phrase-lexicon": '{"phrases":[]}',
             }
         ),
         encoding="utf-8",
@@ -83,6 +88,11 @@ def _run_prepare_secrets_fixture(
     manifest["channels"]["email"]["credential_ref"] = (
         "keychain://com.esan.gbos.local-pilot/email-credential"
     )
+    if deepseek_value is not None:
+        manifest["deepseek"]["enabled"] = True
+        manifest["deepseek"]["keychain_ref"] = (
+            "keychain://com.esan.gbos.local-pilot/deepseek-api-key"
+        )
     manifest_path = infra / "local-pilot-manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -850,6 +860,94 @@ def test_identity_hmac_key_materializes_hex_keychain_output_as_exact_raw_bytes(
     assert keychain_output not in result.stdout
     assert keychain_output not in result.stderr
     assert keychain_output not in security_log.read_text(encoding="utf-8")
+
+
+def test_multiline_email_json_hex_export_materializes_as_exact_json_bytes(
+    tmp_path: Path,
+) -> None:
+    expected = b'{\n  "username": "email-user",\n  "password": "email-password"\n}'
+    keychain_output = expected.hex().upper()
+
+    result, security_log = _run_prepare_secrets_fixture(
+        tmp_path,
+        identity_value=(bytes(range(32))).hex(),
+        email_value=keychain_output,
+    )
+
+    assert result.returncode == 0, result.stderr
+    secret_dir = Path(result.stdout.strip())
+    assert (secret_dir / "email_credential").read_bytes() == expected
+    assert keychain_output not in result.stdout
+    assert keychain_output not in result.stderr
+    assert keychain_output not in security_log.read_text(encoding="utf-8")
+
+
+def test_raw_email_json_and_deepseek_text_materialize_unchanged(tmp_path: Path) -> None:
+    email_value = '{\n  "username": "raw-email-user"\n}'
+    deepseek_value = "ordinary-deepseek-text"
+
+    result, _ = _run_prepare_secrets_fixture(
+        tmp_path,
+        identity_value=(bytes(range(32))).hex(),
+        email_value=email_value,
+        deepseek_value=deepseek_value,
+    )
+
+    assert result.returncode == 0, result.stderr
+    secret_dir = Path(result.stdout.strip())
+    assert (secret_dir / "email_credential").read_bytes() == email_value.encode()
+    assert (secret_dir / "deepseek_api_key").read_bytes() == deepseek_value.encode()
+
+
+def test_malformed_email_hex_export_fails_closed_without_leaking(tmp_path: Path) -> None:
+    malformed = b'{"username":"email-user"}'.hex()[:-1]
+
+    result, security_log = _run_prepare_secrets_fixture(
+        tmp_path,
+        identity_value=(bytes(range(32))).hex(),
+        email_value=malformed,
+    )
+
+    assert result.returncode == 78
+    assert "email_credential could not be safely materialized" in result.stderr
+    assert malformed not in result.stdout
+    assert malformed not in result.stderr
+    assert malformed not in security_log.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob("gbos-local-pilot-secrets.*"))
+
+
+def test_non_utf8_email_hex_export_fails_closed_without_leaking(tmp_path: Path) -> None:
+    non_utf8 = b"\xff\xfe\xfd".hex()
+
+    result, security_log = _run_prepare_secrets_fixture(
+        tmp_path,
+        identity_value=(bytes(range(32))).hex(),
+        email_value=non_utf8,
+    )
+
+    assert result.returncode == 78
+    assert "email_credential could not be safely materialized" in result.stderr
+    assert non_utf8 not in result.stdout
+    assert non_utf8 not in result.stderr
+    assert non_utf8 not in security_log.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob("gbos-local-pilot-secrets.*"))
+
+
+def test_oversized_email_hex_export_fails_closed_without_leaking(tmp_path: Path) -> None:
+    oversized = (b'{"value":"' + (b"a" * 65_526) + b'"}').hex()
+
+    result, security_log = _run_prepare_secrets_fixture(
+        tmp_path,
+        identity_value=(bytes(range(32))).hex(),
+        email_value=oversized,
+    )
+
+    assert result.returncode == 78
+    assert "email_credential could not be safely materialized" in result.stderr
+    assert oversized not in result.stdout
+    assert oversized not in result.stderr
+    assert oversized not in security_log.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob("gbos-local-pilot-secrets.*"))
 
 
 def test_non_identity_secret_preserves_64_hex_characters_as_text(tmp_path: Path) -> None:
