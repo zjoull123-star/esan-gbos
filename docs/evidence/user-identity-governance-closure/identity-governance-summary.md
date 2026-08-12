@@ -1,6 +1,6 @@
 # User identity governance credential-free closure
 
-捕获时间：`2026-08-12T02:29:35Z`。本快照不修改任何历史 evidence，分别绑定：
+捕获时间：`2026-08-12T02:40:31Z`。本快照不修改任何历史 evidence，分别绑定：
 
 - Frappe source reference：`485d3def0ea30ee49a3899d71c10b0787ba0429f`
 - runtime source reference：`bb260632ff44c7065a88327f264612139a9070a2`
@@ -44,6 +44,13 @@ Context、Agent，channels/models/media/tunnel 均为 disabled。
   `101 sources` green；compileall green；`scripts/dev/secret-scan` green。
 - 本次 frontend：lint/typecheck/build 全部 green；unit `197 passed`；
   frontend-harness Playwright `25 passed`。
+- Current-image live-site Playwright `test:e2e:site` at `http://127.0.0.1:58080` completed
+  in `6.5s`: `4 passed, 21 skipped, 0 failed`。Applicable live scopes were five role workspaces axe,
+  CEO cockpit governance/source values, keyboard skip/nav order, and
+  integrations+communications Restricted/3 viewports. The 21 skipped scenarios were
+  harness-only by design; this is not all 25 live. The repo-external `0600` synthetic CEO
+  storage state was sourced in-process from Keychain, and temporary auth state/test-results
+  were deleted afterward.
 - 当前 source-bound synthetic core 健康，使用锁定镜像重启；formal preflight 返回
   `rc78`，唯一 blocker 是 `local_pilot_go=false`。这不改变 production/local pilot
   No-Go。

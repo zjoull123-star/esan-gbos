@@ -36,6 +36,7 @@ CURRENT_IMAGE_LOCK_COMMIT = "a599a5200e2a8e1b5e42301d74fe8d9d914161c4"
 CURRENT_FRAPPE_SOURCE_SHA256 = "441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405"
 CURRENT_RUNTIME_SOURCE_SHA256 = "c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3"
 CURRENT_GITLEAKS_ALLOWLIST_COMMIT = "c27687ec6b39e669014b9ae8980cf6565556aaba"
+CURRENT_LIVE_SITE_BASE_URL = "http://127.0.0.1:58080"
 
 CEO_ROLES = (
     "CEO",
@@ -336,6 +337,10 @@ def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
     assert "17 passed, 1 warning" in handoff
     assert "rc78" in handoff
     assert "missing working client authorization" in handoff
+    assert "test:e2e:site" in handoff
+    assert "4 passed, 21 skipped, 0 failed" in handoff
+    assert "6.5s" in handoff
+    assert "not all 25 live" in handoff.lower()
     assert "response_reported_observed_model=unknown" in handoff
     assert "real_email_deepseek_canary=no_go" in handoff
     assert "72 小时连续运行不再作为本阶段退出条件" in handoff
@@ -420,6 +425,28 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
         "lint": "pass",
         "typecheck": "pass",
         "build": "pass",
+        "live_site_playwright": {
+            "command": "test:e2e:site",
+            "base_url": CURRENT_LIVE_SITE_BASE_URL,
+            "current_image": True,
+            "passed": 4,
+            "skipped": 21,
+            "failed": 0,
+            "duration_seconds": 6.5,
+            "skip_scope": "21 harness-only scenarios skipped by design",
+            "all_25_live_claim": False,
+            "auth_state_qualifier": (
+                "repo-external 0600 synthetic CEO storage state sourced in-process from Keychain"
+            ),
+            "temporary_auth_state_deleted": True,
+            "test_results_deleted": True,
+            "scenarios": [
+                "five role workspaces axe",
+                "CEO cockpit governance/source values",
+                "keyboard skip/nav order",
+                "integrations+communications Restricted/3 viewports",
+            ],
+        },
     }
     assert evidence["verification"]["infra_passed"] == 179
     assert evidence["verification"]["backend"] == {
@@ -563,6 +590,17 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
     assert "rc78" in summary
     assert "2026-09-30" in summary
     assert "missing working client authorization" in summary
+    assert "test:e2e:site" in summary
+    assert "4 passed, 21 skipped, 0 failed" in summary
+    assert "6.5s" in summary
+    assert "not all 25 live" in summary.lower()
+    for live_scope in (
+        "five role workspaces axe",
+        "CEO cockpit governance/source values",
+        "keyboard skip/nav order",
+        "integrations+communications Restricted/3 viewports",
+    ):
+        assert live_scope in summary
     assert "credential binding" in summary
     assert "Email delivery" in summary
     assert "metadata-only Keychain inventory" in summary
@@ -571,6 +609,23 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
     evidence_text = IDENTITY_CLOSURE_EVIDENCE.read_text(encoding="utf-8")
     for forbidden in ("sk-", "-----BEGIN", "Cookie:", "Authorization:"):
         assert forbidden not in evidence_text
+
+
+def test_current_live_site_playwright_evidence_is_qualified_across_owned_docs() -> None:
+    current_truth_docs = (
+        HANDOFF,
+        EXTERNAL_DEPS,
+        LOCAL_PLAN,
+        LOCAL_INFRA_README,
+        IDENTITY_CLOSURE_SUMMARY,
+    )
+
+    for path in current_truth_docs:
+        document = _read(path)
+        assert "test:e2e:site" in document, path
+        assert "4 passed, 21 skipped, 0 failed" in document, path
+        assert "6.5s" in document, path
+        assert "not all 25 live" in document.lower(), path
 
 
 def test_current_identity_governance_closure_checksums_cover_only_current_files() -> None:

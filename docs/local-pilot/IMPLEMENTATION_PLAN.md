@@ -64,6 +64,14 @@ one existing warning, and removed its container. Full-history Gitleaks scanned `
 with `0 leaks` using the reviewed exact synthetic allowlist committed at
 `c27687ec6b39e669014b9ae8980cf6565556aaba`; this is not an unreviewed zero claim.
 
+Current-image live-site Playwright `test:e2e:site` at `http://127.0.0.1:58080` completed in
+`6.5s`: `4 passed, 21 skipped, 0 failed`. Applicable live scopes were five role workspaces axe,
+CEO cockpit governance/source values, keyboard skip/nav order, and
+integrations+communications Restricted/3 viewports. The 21 skipped scenarios were
+harness-only by design; this is not all 25 live. The repo-external `0600` synthetic CEO
+storage state was sourced in-process from Keychain, and temporary auth state/test-results
+were deleted afterward.
+
 Trivy filesystem and current locked-image scans exited `0`; report only `0` unwaived
 High/Critical, `0` image secrets and `0` misconfigurations. The historical waiver set has
 `57` entries covering `103` exact PURLs, expiring `2026-09-30`, and is not a total-findings

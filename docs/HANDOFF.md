@@ -76,6 +76,14 @@ Ruff format `528 files`、mypy `101 sources`、compileall 和 `scripts/dev/secre
 `25 passed`。一次性无 volume 的 pgvector Gate 3 记录 15 条 migration ledger，迁移应用两次，
 integration `17 passed, 1 warning`，容器已移除。
 
+Current-image live-site Playwright `test:e2e:site` at `http://127.0.0.1:58080` completed in
+`6.5s`: `4 passed, 21 skipped, 0 failed`。Applicable live scopes were five role workspaces axe,
+CEO cockpit governance/source values, keyboard skip/nav order, and
+integrations+communications Restricted/3 viewports. The 21 skipped scenarios were
+harness-only by design; this is not all 25 live. The repo-external `0600` synthetic CEO
+storage state was sourced in-process from Keychain, and temporary auth state/test-results
+were deleted afterward.
+
 Full-history Gitleaks 扫描 `263 commits`、`0 leaks`，使用已审阅且已提交的 exact synthetic
 allowlist（commit `c27687ec6b39e669014b9ae8980cf6565556aaba`）；不把未审阅结果称为 zero。
 Trivy filesystem scan 与两套当前 locked image scan 均 exit `0`，这里只报告 `0` unwaived

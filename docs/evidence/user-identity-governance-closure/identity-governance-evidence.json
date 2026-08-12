@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "evidence_id": "user-identity-governance-closure-20260812",
-  "captured_at": "2026-08-12T02:29:35Z",
+  "captured_at": "2026-08-12T02:40:31Z",
   "status": "credential_free_design_closure_real_canary_deferred",
   "source_scope": {
     "branch": "feat/user-identity-resolution-20260810",
@@ -81,7 +81,27 @@
       "harness_playwright_passed": 25,
       "lint": "pass",
       "typecheck": "pass",
-      "build": "pass"
+      "build": "pass",
+      "live_site_playwright": {
+        "command": "test:e2e:site",
+        "base_url": "http://127.0.0.1:58080",
+        "current_image": true,
+        "passed": 4,
+        "skipped": 21,
+        "failed": 0,
+        "duration_seconds": 6.5,
+        "skip_scope": "21 harness-only scenarios skipped by design",
+        "all_25_live_claim": false,
+        "auth_state_qualifier": "repo-external 0600 synthetic CEO storage state sourced in-process from Keychain",
+        "temporary_auth_state_deleted": true,
+        "test_results_deleted": true,
+        "scenarios": [
+          "five role workspaces axe",
+          "CEO cockpit governance/source values",
+          "keyboard skip/nav order",
+          "integrations+communications Restricted/3 viewports"
+        ]
+      }
     },
     "infra_passed": 179,
     "backend": {
