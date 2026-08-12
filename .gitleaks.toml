@@ -10,3 +10,35 @@ targetRules = ["generic-api-key"]
 regexTarget = "line"
 regexes = ['''^\s+DB_ROOT_PASSWORD: SYNTHETIC-ci-db-root-[a-f0-9]{8}$''']
 paths = ['''^\.github/workflows/frappe-app-smoke\.yml$''']
+
+[[allowlists]]
+description = "Allow the frozen non-secret DeepSeek tokenizer catalog version"
+condition = "AND"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''deepseek-utf8-byte-plus-1024-upper-bound-v1''']
+paths = ['''^services/model_gateway/runtime\.py$''']
+
+[[allowlists]]
+description = "Allow only the explicit synthetic materializer credentials in its unit fixture"
+condition = "AND"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''MaterializerKey_0123456789ABCDEF|MaterializerSecret_0123456789ABCDEF''']
+paths = ['''^tests/domain/test_local_pilot_service_identity\.py$''']
+
+[[allowlists]]
+description = "Allow only frozen synthetic observation identifiers in identity read tests"
+condition = "AND"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''observation_id="(?:OBS-EMAIL-0001|event-001)"''']
+paths = ['''^tests/(?:integration/test_identity_resolution_offline_e2e|observer/test_local_pilot_read)\.py$''']
+
+[[allowlists]]
+description = "Allow only the frozen synthetic projection lease token fixture"
+condition = "AND"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''fence_token="fence-SYNTH-002"''']
+paths = ['''^tests/local_pilot_runtime/test_model_projection_worker\.py$''']

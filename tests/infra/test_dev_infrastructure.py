@@ -493,13 +493,14 @@ def test_ci_has_required_jobs_and_immutable_actions() -> None:
         "@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
     ) in workflow
     assert "fetch-depth: 0" in workflow
-    assert workflow.count("git . --no-banner --redact --exit-code 1") == 1
+    gitleaks_command = "git . --config /repo/.gitleaks.toml --no-banner --redact --exit-code 1"
+    assert workflow.count(gitleaks_command) == 1
     assert "scripts/dev/security-scan" in workflow
     assert "scripts/dev/license-sbom" in workflow
     assert "apps/esan_gbos" in workflow
     assert "pnpm" in workflow
     assert "playwright" in workflow
-    assert "git . --no-banner --redact --exit-code 1" in workflow
+    assert gitleaks_command in workflow
     assert "git --source ." not in workflow
     assert "corepack install --global pnpm@11.9.0" in workflow
     assert 'test "$(pnpm --version)" = "11.9.0"' in workflow
@@ -548,12 +549,30 @@ def test_gitleaks_exception_is_narrow_and_keeps_default_rules() -> None:
     config = read_required(GITLEAKS_CONFIG)
 
     assert "useDefault = true" in config
-    assert 'targetRules = ["generic-api-key"]' in config
-    assert 'condition = "AND"' in config
-    assert 'regexTarget = "line"' in config
+    assert config.count('targetRules = ["generic-api-key"]') == 5
+    assert config.count('condition = "AND"') == 5
+    assert config.count('regexTarget = "line"') == 5
     assert r"^\.github/workflows/frappe-app-smoke\.yml$" in config
     assert r"DB_ROOT_PASSWORD: SYNTHETIC-ci-db-root-[a-f0-9]{8}" in config
+    assert r"^services/model_gateway/runtime\.py$" in config
+    assert r"deepseek-utf8-byte-plus-1024-upper-bound-v1" in config
+    assert r"^tests/domain/test_local_pilot_service_identity\.py$" in config
+    assert r"MaterializerKey_0123456789ABCDEF|MaterializerSecret_0123456789ABCDEF" in config
+    assert (
+        r"^tests/(?:integration/test_identity_resolution_offline_e2e|observer/test_local_pilot_read)\.py$"
+        in config
+    )
+    assert r'observation_id="(?:OBS-EMAIL-0001|event-001)"' in config
+    assert r"^tests/local_pilot_runtime/test_model_projection_worker\.py$" in config
+    assert r'fence_token="fence-SYNTH-002"' in config
     assert "commits =" not in config
+    assert "stopwords =" not in config
+
+
+def test_gitleaks_ci_explicitly_loads_the_reviewed_repository_config() -> None:
+    workflow = read_required(WORKFLOWS_DIR / "ci.yml")
+
+    assert "--config /repo/.gitleaks.toml" in workflow
 
 
 def test_frappe_app_smoke_builds_pr_image_or_accepts_pinned_dispatch_image() -> None:
