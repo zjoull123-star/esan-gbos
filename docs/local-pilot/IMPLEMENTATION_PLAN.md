@@ -54,11 +54,26 @@ its own exact source revision and source-hash label.
 - [x] Current pre-canary evidence package records source/image bindings and zero
   external activity without modifying historical Gate evidence.
 
-Before this current-truth refresh, the latest full backend run was `3060 passed, 44
-skipped, 3 failed`; all three failures were stale-current-doc mismatches against the
-superseded image lock/digests, not application implementation failures. This docs-only
-red is recorded as pre-fix evidence; focused governance/docs checks pass after the
-refresh, while a new full backend run remains required and is not claimed green here.
+The final credential-free P0 run records full backend `3064 passed, 44 skipped, 1 warning`,
+failed `0`; the warning is the existing Starlette TestClient/httpx deprecation. Ruff check,
+Ruff format (`528 files`), mypy (`101 sources`), compileall, and `scripts/dev/secret-scan`
+are green. Frontend lint/typecheck/build are green, with unit `197 passed` and
+frontend-harness Playwright `25 passed`. A disposable no-volume pgvector Gate 3 run recorded
+15 migration-ledger entries, applied migrations twice, passed `17` integration tests with
+one existing warning, and removed its container. Full-history Gitleaks scanned `263 commits`
+with `0 leaks` using the reviewed exact synthetic allowlist committed at
+`c27687ec6b39e669014b9ae8980cf6565556aaba`; this is not an unreviewed zero claim.
+
+Trivy filesystem and current locked-image scans exited `0`; report only `0` unwaived
+High/Critical, `0` image secrets and `0` misconfigurations. The historical waiver set has
+`57` entries covering `103` exact PURLs, expiring `2026-09-30`, and is not a total-findings
+zero claim. The synthetic core is healthy on the current images; formal preflight returns
+`rc78` solely because `local_pilot_go=false`. Email IMAP login/checkpoint/canary remains
+unrun due missing working client authorization, DeepSeek response-reported model remains
+`unknown`, and `production_go=false`/`local_pilot_go=false` remain unchanged.
+
+The earlier `3060 passed, 44 skipped, 3 failed` result is retained in current closure evidence
+as pre-doc-fix stale-current-doc mismatch only; the final run above closed that mismatch.
 
 ## Deferred by explicit scope decision
 

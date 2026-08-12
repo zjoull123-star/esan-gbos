@@ -69,29 +69,30 @@ source SHA256 label 是
 使用这两套镜像重启。它只表示本地 Frappe/PWA、Observer、Context、Agent 的 synthetic
 core 可重启，不改变正式 `local_pilot_go=false`，也不启动真实渠道或模型。
 
-此前 credential-free 设计闭环的 source-bound 验证快照为：full pytest
-`2850 passed, 44 skipped, 1 warning`；domain/contracts `799 passed`、infra
-`179 passed`；Ruff
-check/format、mypy、compileall 与 secret scan 全部 green；frontend unit
-`196 passed`、Playwright harness `25 passed`、lint/typecheck/build 全部 green。
-较早同一 feature lineage 的完整隔离 PostgreSQL integration 为
-`43 passed, 1 warning`；当前 runtime source 另在全新一次性 PostgreSQL 中将
-Observer 001–013、Context 001–005、Agent 001–006 连续应用两次，并以三个
-`NOBYPASSRLS` app role 验证只读 canary start-guard/chain 查询。全新隔离 Frappe v16 site
-以当前 Frappe 镜像连续 migrate 两次后，身份原生测试 `13 passed`、全 app 原生测试
-`59 passed`，所有
-临时容器、网络和卷均已移除。模型 fatal latch 的 fail-closed 行为已验证；Email
-只允许 source-bound `STATUS_UIDVALIDITY_UIDNEXT` checkpoint/receipt，receipt 通过
-私有 HMAC 绑定同一账号、团队、任务、服务器、邮箱、folder 与 username；preflight
-要求 receipt，未建立真实 IMAP 连接。machine DB-attested narrow-window canary-chain
-verifier 交叉验证 Email delivery、observation、participant、confirmed identity、active
-authority、Agent invocation、Context intelligence/draft 与 Frappe receipt，只报告
-`response_reported_observed_model`，不接受 free-form observed model。
-Earlier closure Trivy 0.73.0 scans of the then-current rebuilt images reported `0` unwaived High/Critical,
-`0` image secrets and `0` misconfigurations; historical 57 waiver entries/103 exact PURLs
-were displayed separately and are not zero-total-findings claims. The current Frappe image
-refresh is recorded above; its security scan must be refreshed before any real canary. Scan
-services were not started for this docs-only update.
+当前 credential-free P0 验证快照为：full backend `3064 passed, 44 skipped, 1 warning`、
+failed `0`；唯一 warning 是既有 Starlette TestClient/httpx deprecation。Ruff check、
+Ruff format `528 files`、mypy `101 sources`、compileall 和 `scripts/dev/secret-scan`
+全部 green；frontend lint/typecheck/build green、unit `197 passed`、Playwright harness
+`25 passed`。一次性无 volume 的 pgvector Gate 3 记录 15 条 migration ledger，迁移应用两次，
+integration `17 passed, 1 warning`，容器已移除。
+
+Full-history Gitleaks 扫描 `263 commits`、`0 leaks`，使用已审阅且已提交的 exact synthetic
+allowlist（commit `c27687ec6b39e669014b9ae8980cf6565556aaba`）；不把未审阅结果称为 zero。
+Trivy filesystem scan 与两套当前 locked image scan 均 exit `0`，这里只报告 `0` unwaived
+High/Critical、`0` image secrets、`0` misconfigurations；历史 `57` 条 waiver 覆盖 `103`
+个 exact PURL，均于 `2026-09-30` 到期，不宣称 total findings 为零。
+
+当前 synthetic core 使用锁定镜像重启且健康；formal preflight 返回 `rc78`，唯一 blocker
+是 `local_pilot_go=false`。全新隔离 Frappe v16 site 连续 migrate 两次后，身份原生测试
+`13 passed`、全 app 原生测试 `59 passed`，临时容器、网络和卷均已移除。Email checkpoint
+receipt 仍只允许 source-bound `STATUS_UIDVALIDITY_UIDNEXT`，但真实 Email IMAP login、
+checkpoint 与 canary 未执行，原因是 missing working client authorization；DeepSeek real call
+未执行，`response_reported_observed_model=unknown`。
+
+Earlier source-bound closure snapshot (`2850 passed, 44 skipped, 1 warning`) 与 pre-doc-fix
+red (`3060 passed, 44 skipped, 3 failed`, stale-current-doc mismatch only) 均保留在当前
+closure evidence，最终 fresh run 已关闭该文档 mismatch。formal `production_go=false`、
+`local_pilot_go=false` 与 real Email/DeepSeek No-Go 不变。
 
 这些结果不等于真实 Email/DeepSeek canary 或正式 Go。当前镜像已完成
 governed current-image rebuild/record；数据库隔离矩阵结果见 closure evidence，且
@@ -99,12 +100,6 @@ governed current-image rebuild/record；数据库隔离矩阵结果见 closure e
 network，并启动 isolated PostgreSQL validation/build/scanner containers；没有
 provider/channel network，也没有 pilot application services。真实 IMAP/model/external
 calls 仍为零。
-
-本次 current-truth 文档刷新前的 full backend 最新结果是 `3060 passed, 44 skipped,
-3 failed`；3 个失败全部是旧 current-doc/image-lock/closure digest 不一致，属于 stale-doc
-mismatch only，不是应用实现失败。本次变更已更新这些 current refs、digests、source labels
-和 closure checksum；focused governance/docs checks 通过，但 root 仍需重新运行 full backend，
-本文不把它提前宣称为全绿。
 
 详见 [当前身份治理闭环证据](evidence/user-identity-governance-closure/identity-governance-evidence.json)
 及 [Task 13 历史真实渠道前就绪证据](evidence/task13-readiness/task13-readiness-summary.md)。

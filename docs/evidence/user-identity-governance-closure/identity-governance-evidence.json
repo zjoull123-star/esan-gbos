@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "evidence_id": "user-identity-governance-closure-20260812",
-  "captured_at": "2026-08-12T01:43:10Z",
+  "captured_at": "2026-08-12T02:29:35Z",
   "status": "credential_free_design_closure_real_canary_deferred",
   "source_scope": {
     "branch": "feat/user-identity-resolution-20260810",
@@ -26,6 +26,8 @@
   },
   "current_synthetic_core": {
     "restarted": true,
+    "healthy": true,
+    "images_match_lock": true,
     "scope": "Frappe/PWA plus Observer, Context, and Agent APIs only",
     "channels_enabled": false,
     "models_enabled": false,
@@ -36,6 +38,12 @@
   },
   "verification": {
     "pytest": {
+      "passed": 3064,
+      "skipped": 44,
+      "failed": 0,
+      "warnings": 1
+    },
+    "prior_source_bound_closure": {
       "passed": 2850,
       "skipped": 44,
       "failed": 0,
@@ -69,13 +77,20 @@
       "disposable_environment_removed": true
     },
     "frontend": {
-      "unit_passed": 196,
+      "unit_passed": 197,
       "harness_playwright_passed": 25,
       "lint": "pass",
       "typecheck": "pass",
       "build": "pass"
     },
     "infra_passed": 179,
+    "backend": {
+      "passed": 3064,
+      "skipped": 44,
+      "failed": 0,
+      "warnings": 1,
+      "warning_scope": "existing Starlette TestClient/httpx deprecation"
+    },
     "backend_latest_pre_doc_fix": {
       "passed": 3060,
       "skipped": 44,
@@ -83,12 +98,35 @@
       "failure_scope": "stale-current-doc mismatch only",
       "post_fix_full_suite": "not_yet_rerun"
     },
+    "postgresql_gate3_disposable": {
+      "image": "pgvector/pgvector:0.8.2-pg17-bookworm",
+      "migration_ledger_entries": 15,
+      "migrations_applied_twice": true,
+      "integration_passed": 17,
+      "warnings": 1,
+      "volumes": "none",
+      "disposable_container_removed": true
+    },
     "python_static": {
       "ruff_check": "pass",
       "ruff_format": "pass",
+      "ruff_format_files": 528,
       "mypy_services": "pass",
+      "mypy_sources": 101,
       "compileall": "pass",
       "secret_scan": "pass"
+    },
+    "full_history_gitleaks": {
+      "commits_scanned": 263,
+      "leaks": 0,
+      "allowlist_commit": "c27687ec6b39e669014b9ae8980cf6565556aaba",
+      "allowlist_scope": "reviewed exact synthetic fixture patterns only",
+      "unreviewed_zero_claim": false
+    },
+    "formal_preflight": {
+      "exit_code": 78,
+      "status": "no_go",
+      "reason": "local_pilot_go=false"
     },
     "identity_governance": {
       "immediate_authority_deny": "verified",
@@ -109,13 +147,17 @@
     },
     "image_security_scans": {
       "scanner": "trivy_0.73.0",
-      "scope": "earlier closure image set before current Frappe refresh",
+      "scope": "current locked images and repository filesystem",
+      "filesystem_scan_exit_code": 0,
+      "current_locked_image_scans_exit_code": 0,
       "frappe_unwaived_high_critical": 0,
       "runtime_unwaived_high_critical": 0,
       "image_secrets": 0,
       "misconfigurations": 0,
       "historical_waiver_entries": 57,
-      "historical_exact_purls": 103
+      "historical_exact_purls": 103,
+      "waiver_expiry": "2026-09-30",
+      "total_findings_claim": "not_asserted"
     }
   },
   "validation_activity": {
@@ -127,12 +169,15 @@
     "pilot_application_stack_started": false
   },
   "external_activity": {
+    "real_email_login": 0,
+    "email_checkpoint_probes": 0,
     "real_imap_connections": 0,
     "real_model_api_calls": 0,
     "provider_channel_network": false,
     "pilot_application_stack_started": false,
     "observed_model_identity": "unknown",
-    "response_reported_observed_model": "unknown"
+    "response_reported_observed_model": "unknown",
+    "email_blocked_reason": "missing working client authorization"
   },
   "external_input_inventory": {
     "checked_at": "2026-08-11T02:14:28Z",

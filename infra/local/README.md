@@ -86,11 +86,26 @@ disabled. This is local synthetic evidence, not a formal Go. The 72-hour window 
 deferred by user decision, is not assessed, and is no longer an exit requirement.
 
 The current-source synthetic core restart is separate from formal pilot approval:
-`local_pilot_go=false`, with channels, models, media and tunnel still disabled. Before
-this current-truth refresh, the latest full backend run was `3060 passed, 44 skipped,
-3 failed`; all three failures were stale-current-doc mismatches against the superseded
-image lock/digests. Focused governance/docs checks pass after the refresh; a new full
-backend run is still required and is not claimed green here.
+`local_pilot_go=false`, with channels, models, media and tunnel still disabled; the core is
+healthy on the current locked images. Formal preflight returns `rc78` solely because
+`local_pilot_go=false`. The final credential-free P0 run records full backend
+`3064 passed, 44 skipped, 1 warning`, failed `0`; the warning is the existing Starlette
+TestClient/httpx deprecation. Ruff check/format, mypy, compileall and `scripts/dev/secret-scan`
+are green; format covers `528 files` and mypy `101 sources`. Frontend lint/typecheck/build are
+green, unit `197 passed`, and frontend-harness Playwright `25 passed`. A disposable no-volume
+pgvector Gate 3 run recorded 15 migration-ledger entries, applied migrations twice, passed
+`17` integration tests with one existing warning, and removed its container. Full-history
+Gitleaks scanned `263 commits` with `0 leaks` under the reviewed exact synthetic allowlist
+committed at `c27687ec6b39e669014b9ae8980cf6565556aaba`; this is not an unreviewed zero claim.
+Trivy filesystem and current locked-image scans exited `0`, with only `0` unwaived
+High/Critical, `0` image secrets and `0` misconfigurations reported. The historical waiver
+set has `57` entries covering `103` exact PURLs expiring `2026-09-30`; total findings are not
+claimed zero. Email IMAP login/checkpoint/canary remains unrun because working client
+authorization is missing, DeepSeek response-reported model remains `unknown`, and formal
+`production_go=false`/`local_pilot_go=false` remain unchanged.
+
+The earlier `3060 passed, 44 skipped, 3 failed` result remains recorded in current closure
+evidence as stale-current-doc mismatch only; the final run above closed that mismatch.
 
 Build the runtime image explicitly with
 `scripts/local-pilot/build-runtime-image --confirm-network-build`. Python and

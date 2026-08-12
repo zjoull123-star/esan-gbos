@@ -1,6 +1,6 @@
 # User identity governance credential-free closure
 
-捕获时间：`2026-08-12T01:43:10Z`。本快照不修改任何历史 evidence，分别绑定：
+捕获时间：`2026-08-12T02:29:35Z`。本快照不修改任何历史 evidence，分别绑定：
 
 - Frappe source reference：`485d3def0ea30ee49a3899d71c10b0787ba0429f`
 - runtime source reference：`bb260632ff44c7065a88327f264612139a9070a2`
@@ -38,36 +38,42 @@ Context、Agent，channels/models/media/tunnel 均为 disabled。
 
 ## 验证结果
 
-- Earlier source-bound closure snapshot (before this image refresh) recorded full pytest：
-  `2850 passed, 44 skipped, 1 warning`，failed `0`。
-- Domain + contracts：`799 passed`；infra：`179 passed`。
-- Frontend unit：`196 passed`；Playwright harness：`25 passed`；lint、typecheck、
-  production build 全部通过。
-- 较早同一 feature lineage 的完整隔离 PostgreSQL integration：`43 passed, 1 warning`；
-  临时环境已移除。当前 runtime source 另在全新一次性 PostgreSQL 中将 Observer
-  001–013、Context 001–005、Agent 001–006 连续应用两次，并以三个
-  `NOBYPASSRLS` app role 验证 read-only start guard 与 chain 查询；临时环境已移除。
+- 本次 full backend：`3064 passed, 44 skipped, 1 warning`，failed `0`。唯一 warning
+  是既有 Starlette TestClient/httpx deprecation；不是实现失败。
+- 本次 Python 静态门：Ruff check green；Ruff format 检查 `528 files` green；mypy
+  `101 sources` green；compileall green；`scripts/dev/secret-scan` green。
+- 本次 frontend：lint/typecheck/build 全部 green；unit `197 passed`；
+  frontend-harness Playwright `25 passed`。
+- 当前 source-bound synthetic core 健康，使用锁定镜像重启；formal preflight 返回
+  `rc78`，唯一 blocker 是 `local_pilot_go=false`。这不改变 production/local pilot
+  No-Go。
+- 一次性、无 volume 的 pgvector Gate 3 环境记录 15 条 migration ledger；迁移应用两次，
+  integration `17 passed, 1 warning`，容器已移除。该 warning 同样是既有 warning，
+  不改变验证结论。
+- Full-history Gitleaks 扫描 `263 commits`、`0 leaks`，使用已审阅且已提交的 exact
+  synthetic allowlist（commit `c27687ec6b39e669014b9ae8980cf6565556aaba`）；这不是
+  未审阅的“zero leaks”声明。
+- Trivy filesystem scan 与两套当前 locked image scan 均 exit `0`；结果只表述为
+  `0` unwaived High/Critical、`0` image secrets、`0` misconfigurations。历史 waiver
+  为 `57` 条、覆盖 `103` 个 exact PURL，均在 `2026-09-30` 到期；不宣称 total findings
+  为零。
 - 全新隔离 Frappe v16 site 使用当前 Frappe 镜像连续 migrate 两次；身份原生测试
   `13 passed`，全 app 原生测试 `59 passed`；临时容器、网络和卷已移除。
-- Ruff check/format、mypy services、compileall、secret scan 全部通过。
 - Email checkpoint receipt 的 credential binding 通过 HMAC-SHA256 绑定 connector
   account、team、task、host、port、mailbox、folder 与 username，并明确排除 password。
 - Machine chain verifier 已闭合校验 Email delivery、Observer observation/participant、
   confirmed identity/active authority、Agent invocation、Context intelligence/draft 和
   Frappe receipt；不接受 free-form observed model。
-- Earlier closure scan of the then-current rebuilt images with Trivy 0.73.0 reported `0`
-  unwaived High/Critical, `0` image secrets and `0` misconfigurations；57 条历史 waiver /
-  103 个 exact PURL 单独显示，不冒充“总发现为零”。The refreshed Frappe image requires a
-  new security scan before any real canary.
-- 本次 current-truth 文档刷新前，full backend 最新结果为 `3060 passed, 44 skipped,
-  3 failed`；三个失败全部是 stale-current-doc mismatch（旧 image lock/digest 与当前
-  source-bound 记录不一致），不是应用实现失败。本次更新已修正 current refs、digests、
-  source labels 与 closure checksum；focused governance/docs checks 已通过，但 full
-  backend 仍需由 root 重新运行，不能提前宣称全绿。
+- Earlier source-bound closure snapshot remains recorded separately as `2850 passed, 44
+  skipped, 1 warning`, and the pre-doc-fix red remains recorded as `3060 passed, 44 skipped,
+  3 failed` with stale-current-doc mismatch only. The final current run above closed that
+  docs mismatch; it is now green, with the one existing warning explicitly qualified.
 
 验证过程中仅为受控依赖、镜像构建和安全扫描使用网络，并启动了隔离
 PostgreSQL/Frappe 测试容器；没有 provider/channel network，没有启动正式
-local-pilot application stack。所有隔离测试状态均已移除。
+local-pilot application stack。所有隔离测试状态均已移除。真实 Email IMAP login、
+STATUS/UIDVALIDITY checkpoint 和 Email/DeepSeek canary 仍未执行；原因是
+`missing working client authorization`。response-reported model 仍为 `unknown`。
 
 Formal external manifest 的 source/image/manifest preflight 已使用仓库外临时声明和
 占位 Keychain reference 通过，且临时声明已清理。随后执行的 metadata-only Keychain inventory

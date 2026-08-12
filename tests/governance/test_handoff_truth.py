@@ -35,6 +35,7 @@ CURRENT_RUNTIME_SOURCE_COMMIT = "bb260632ff44c7065a88327f264612139a9070a2"
 CURRENT_IMAGE_LOCK_COMMIT = "a599a5200e2a8e1b5e42301d74fe8d9d914161c4"
 CURRENT_FRAPPE_SOURCE_SHA256 = "441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405"
 CURRENT_RUNTIME_SOURCE_SHA256 = "c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3"
+CURRENT_GITLEAKS_ALLOWLIST_COMMIT = "c27687ec6b39e669014b9ae8980cf6565556aaba"
 
 CEO_ROLES = (
     "CEO",
@@ -328,6 +329,13 @@ def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
     assert "runtime source reference" in handoff.lower()
     assert "current code HEAD 是" not in handoff
     assert "governed rebuild/record" in handoff.lower()
+    assert "3064 passed, 44 skipped, 1 warning" in handoff
+    assert "528 files" in handoff
+    assert "101 sources" in handoff
+    assert "263 commits" in handoff
+    assert "17 passed, 1 warning" in handoff
+    assert "rc78" in handoff
+    assert "missing working client authorization" in handoff
     assert "response_reported_observed_model=unknown" in handoff
     assert "real_email_deepseek_canary=no_go" in handoff
     assert "72 小时连续运行不再作为本阶段退出条件" in handoff
@@ -372,6 +380,12 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
         == CURRENT_RUNTIME_SOURCE_SHA256
     )
     assert evidence["verification"]["pytest"] == {
+        "passed": 3064,
+        "skipped": 44,
+        "failed": 0,
+        "warnings": 1,
+    }
+    assert evidence["verification"]["prior_source_bound_closure"] == {
         "passed": 2850,
         "skipped": 44,
         "failed": 0,
@@ -401,13 +415,20 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
         "disposable_environment_removed": True,
     }
     assert evidence["verification"]["frontend"] == {
-        "unit_passed": 196,
+        "unit_passed": 197,
         "harness_playwright_passed": 25,
         "lint": "pass",
         "typecheck": "pass",
         "build": "pass",
     }
     assert evidence["verification"]["infra_passed"] == 179
+    assert evidence["verification"]["backend"] == {
+        "passed": 3064,
+        "skipped": 44,
+        "failed": 0,
+        "warnings": 1,
+        "warning_scope": "existing Starlette TestClient/httpx deprecation",
+    }
     assert evidence["verification"]["backend_latest_pre_doc_fix"] == {
         "passed": 3060,
         "skipped": 44,
@@ -415,19 +436,68 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
         "failure_scope": "stale-current-doc mismatch only",
         "post_fix_full_suite": "not_yet_rerun",
     }
+    assert evidence["verification"]["postgresql_gate3_disposable"] == {
+        "image": "pgvector/pgvector:0.8.2-pg17-bookworm",
+        "migration_ledger_entries": 15,
+        "migrations_applied_twice": True,
+        "integration_passed": 17,
+        "warnings": 1,
+        "volumes": "none",
+        "disposable_container_removed": True,
+    }
+    assert evidence["verification"]["python_static"] == {
+        "ruff_check": "pass",
+        "ruff_format": "pass",
+        "ruff_format_files": 528,
+        "mypy_services": "pass",
+        "mypy_sources": 101,
+        "compileall": "pass",
+        "secret_scan": "pass",
+    }
+    assert evidence["verification"]["full_history_gitleaks"] == {
+        "commits_scanned": 263,
+        "leaks": 0,
+        "allowlist_commit": CURRENT_GITLEAKS_ALLOWLIST_COMMIT,
+        "allowlist_scope": "reviewed exact synthetic fixture patterns only",
+        "unreviewed_zero_claim": False,
+    }
+    assert evidence["verification"]["image_security_scans"] == {
+        "scanner": "trivy_0.73.0",
+        "scope": "current locked images and repository filesystem",
+        "filesystem_scan_exit_code": 0,
+        "current_locked_image_scans_exit_code": 0,
+        "frappe_unwaived_high_critical": 0,
+        "runtime_unwaived_high_critical": 0,
+        "image_secrets": 0,
+        "misconfigurations": 0,
+        "historical_waiver_entries": 57,
+        "historical_exact_purls": 103,
+        "waiver_expiry": "2026-09-30",
+        "total_findings_claim": "not_asserted",
+    }
+    assert evidence["verification"]["formal_preflight"] == {
+        "exit_code": 78,
+        "status": "no_go",
+        "reason": "local_pilot_go=false",
+    }
     assert evidence["current_synthetic_core"]["restarted"] is True
     assert evidence["current_synthetic_core"]["formal_local_pilot_go"] is False
+    assert evidence["current_synthetic_core"]["healthy"] is True
+    assert evidence["current_synthetic_core"]["images_match_lock"] is True
     assert evidence["current_synthetic_core"]["channels_enabled"] is False
     assert evidence["current_synthetic_core"]["models_enabled"] is False
     assert evidence["formal_state"]["local_pilot_go"] is False
     assert evidence["formal_state"]["production_go"] is False
     assert evidence["external_activity"] == {
+        "real_email_login": 0,
+        "email_checkpoint_probes": 0,
         "real_imap_connections": 0,
         "real_model_api_calls": 0,
         "provider_channel_network": False,
         "pilot_application_stack_started": False,
         "observed_model_identity": "unknown",
         "response_reported_observed_model": "unknown",
+        "email_blocked_reason": "missing working client authorization",
     }
     assert evidence["stability"] == {
         "seventy_two_hour_run": "deferred_by_user",
@@ -484,7 +554,15 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
     assert evidence["missing_external_inputs"]
     assert "真实 Email/DeepSeek canary 未执行" in summary
     assert "72 小时" in summary
-    assert "2850 passed, 44 skipped, 1 warning" in summary
+    assert "3064 passed, 44 skipped, 1 warning" in summary
+    assert "197 passed" in summary
+    assert "528 files" in summary
+    assert "101 sources" in summary
+    assert "263 commits" in summary
+    assert "17 passed, 1 warning" in summary
+    assert "rc78" in summary
+    assert "2026-09-30" in summary
+    assert "missing working client authorization" in summary
     assert "credential binding" in summary
     assert "Email delivery" in summary
     assert "metadata-only Keychain inventory" in summary
