@@ -166,6 +166,22 @@ def _prepare_runtime_image_repo(tmp_path: Path) -> tuple[Path, Path]:
         "state = log.with_suffix('.state.json')\n"
         "args = sys.argv[1:]\n"
         "if args and args[0] == 'build':\n"
+        "    context_log = os.environ.get('DOCKER_BUILD_CONTEXT_LOG')\n"
+        "    if context_log:\n"
+        "        context = pathlib.Path(args[-1])\n"
+        "        build_file = pathlib.Path(args[args.index('--file') + 1])\n"
+        "        pathlib.Path(context_log).write_text(\n"
+        "            json.dumps({\n"
+        "                'context': str(context),\n"
+        "                'file': str(build_file),\n"
+        "                'files': sorted(\n"
+        "                    str(item.relative_to(context))\n"
+        "                    for item in context.rglob('*')\n"
+        "                    if item.is_file()\n"
+        "                ),\n"
+        "            }),\n"
+        "            encoding='utf-8',\n"
+        "        )\n"
         "    values = {}\n"
         "    for index, value in enumerate(args):\n"
         "        if value == '--build-arg':\n"
@@ -201,11 +217,14 @@ def _run_runtime_image_build(
     repo: Path,
     command_log: Path,
     *,
+    build_context_log: Path | None = None,
     label_override: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment["PATH"] = os.pathsep.join((str(command_log.parent), os.defpath))
     environment["DOCKER_COMMAND_LOG"] = str(command_log)
+    if build_context_log is not None:
+        environment["DOCKER_BUILD_CONTEXT_LOG"] = str(build_context_log)
     if label_override is not None:
         environment["RUNTIME_TEST_LABEL_OVERRIDE"] = label_override
     return subprocess.run(
@@ -425,6 +444,33 @@ def test_runtime_image_build_rejects_dirty_runtime_sources_before_docker(
     assert result.returncode == 65
     assert "runtime image inputs must be tracked and clean" in result.stderr
     assert not command_log.exists()
+
+
+def test_runtime_image_build_binds_containerfile_and_context_to_archived_source(
+    tmp_path: Path,
+) -> None:
+    repo, command_log = _prepare_runtime_image_repo(tmp_path)
+    ignored_source = "services/ignored-runtime.py"
+    (repo / ".git" / "info" / "exclude").write_text(
+        f"{ignored_source}\n",
+        encoding="utf-8",
+    )
+    (repo / ignored_source).write_text("IGNORED = True\n", encoding="utf-8")
+    build_context_log = tmp_path / "docker-build-context.json"
+
+    result = _run_runtime_image_build(
+        repo,
+        command_log,
+        build_context_log=build_context_log,
+    )
+
+    assert result.returncode == 0, result.stderr
+    build_context = json.loads(build_context_log.read_text(encoding="utf-8"))
+    context = Path(build_context["context"])
+    assert context != repo
+    assert Path(build_context["file"]) == context / "infra/local/Containerfile.runtime"
+    assert ignored_source not in build_context["files"]
+    assert "services/runtime.py" in build_context["files"]
 
 
 def test_runtime_image_build_labels_exact_clean_source_before_recording(

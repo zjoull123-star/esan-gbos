@@ -97,13 +97,13 @@ docker pull --platform linux/arm64 "${UV_IMAGE}"
 docker build \
   --pull \
   --platform linux/arm64 \
-  --file "${REPO_ROOT}/infra/local/Containerfile.runtime" \
+  --file "${RUNTIME_SOURCE_ROOT}/infra/local/Containerfile.runtime" \
   --build-arg "PYTHON_BASE_IMAGE=${PYTHON_BASE_IMAGE}" \
   --build-arg "UV_IMAGE=${UV_IMAGE}" \
   --build-arg "RUNTIME_SOURCE_COMMIT=${RUNTIME_SOURCE_COMMIT}" \
   --build-arg "RUNTIME_SOURCE_SHA256=${RUNTIME_SOURCE_SHA256}" \
   --tag "${RUNTIME_IMAGE}" \
-  "${REPO_ROOT}"
+  "${RUNTIME_SOURCE_ROOT}"
 
 ACTUAL_SOURCE_COMMIT="$(
   docker image inspect \
