@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/email-gateway/v1.0/frappe-route-authority.schema.json",
+  "title": "FrappeRouteAuthority v1.0",
+  "description": "Closed route-authority result. It returns either a fully revision-pinned Frappe assignment or one fixed safe unassigned reason, never a partial or inferred route.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "route_status",
+        "party_ref",
+        "party_revision",
+        "team_ref",
+        "team_revision",
+        "owner_user_ref",
+        "owner_eligibility_revision",
+        "resolved_at"
+      ],
+      "properties": {
+        "route_status": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 8,
+          "const": "assigned"
+        },
+        "party_ref": {
+          "type": "string",
+          "minLength": 30,
+          "maxLength": 30,
+          "pattern": "^PTY-[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "party_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "team_ref": {
+          "type": "string",
+          "minLength": 30,
+          "maxLength": 30,
+          "pattern": "^TEM-[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "team_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "owner_user_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\u0000\\r\\n]+$"
+        },
+        "owner_eligibility_revision": {
+          "type": "string",
+          "minLength": 71,
+          "maxLength": 71,
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "resolved_at": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 35,
+          "format": "date-time"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "route_status",
+        "safe_reason_code",
+        "resolved_at"
+      ],
+      "properties": {
+        "route_status": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "const": "unassigned"
+        },
+        "safe_reason_code": {
+          "type": "string",
+          "minLength": 13,
+          "maxLength": 21,
+          "enum": [
+            "owner_unavailable",
+            "party_not_active",
+            "party_not_approved",
+            "team_mismatch",
+            "owner_disabled",
+            "owner_not_team_member",
+            "authority_ambiguous",
+            "authority_unavailable",
+            "revision_drift"
+          ]
+        },
+        "resolved_at": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 35,
+          "format": "date-time"
+        }
+      }
+    }
+  ]
+}

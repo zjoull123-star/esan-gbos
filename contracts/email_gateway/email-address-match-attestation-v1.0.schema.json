@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/email-gateway/v1.0/email-address-match-attestation.schema.json",
+  "title": "EmailAddressMatchAttestation v1.0",
+  "description": "Content-free Observer attestation of an exact normalized email-address comparison. It never exposes either compared address.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "opaque_address_ref",
+    "candidate_target_ref",
+    "candidate_target_type",
+    "evidence_ref",
+    "normalization_version",
+    "matched",
+    "observed_at",
+    "expires_at",
+    "digest"
+  ],
+  "properties": {
+    "opaque_address_ref": {
+      "type": "string",
+      "minLength": 58,
+      "maxLength": 58,
+      "pattern": "^extid:v1:email:[A-Za-z0-9_-]{43}$"
+    },
+    "candidate_target_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^(?:USR|PTY)-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "candidate_target_type": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 5,
+      "enum": [
+        "User",
+        "Party"
+      ]
+    },
+    "evidence_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^EVR-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "normalization_version": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 16,
+      "const": "email-address-v1"
+    },
+    "matched": {
+      "type": "boolean"
+    },
+    "observed_at": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 35,
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 35,
+      "format": "date-time"
+    },
+    "digest": {
+      "type": "string",
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "candidate_target_ref": {
+          "pattern": "^USR-"
+        },
+        "candidate_target_type": {
+          "const": "User"
+        }
+      }
+    },
+    {
+      "properties": {
+        "candidate_target_ref": {
+          "pattern": "^PTY-"
+        },
+        "candidate_target_type": {
+          "const": "Party"
+        }
+      }
+    }
+  ]
+}

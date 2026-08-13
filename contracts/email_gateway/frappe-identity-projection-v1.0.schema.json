@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/email-gateway/v1.0/frappe-identity-projection.schema.json",
+  "title": "FrappeIdentityProjection v1.0",
+  "description": "Closed minimum projection of one Frappe-authoritative email identity mapping. It contains no raw address, external subject, target ref, or display content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "site_id",
+    "processing_purpose",
+    "opaque_address_ref",
+    "external_identity_ref",
+    "external_identity_revision",
+    "identity_type",
+    "team_ref",
+    "status",
+    "projection_receipt",
+    "observed_at"
+  ],
+  "properties": {
+    "site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+    },
+    "processing_purpose": {
+      "type": "string",
+      "minLength": 11,
+      "maxLength": 25,
+      "enum": [
+        "business_operations",
+        "observation_processing",
+        "entity_resolution",
+        "customer_service",
+        "sales_follow_up",
+        "procurement_coordination",
+        "product_sample_management",
+        "risk_review",
+        "metric_reporting",
+        "audit_compliance"
+      ]
+    },
+    "opaque_address_ref": {
+      "type": "string",
+      "minLength": 58,
+      "maxLength": 58,
+      "pattern": "^extid:v1:email:[A-Za-z0-9_-]{43}$"
+    },
+    "external_identity_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^EID-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "external_identity_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "identity_type": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 5,
+      "enum": [
+        "User",
+        "Party"
+      ]
+    },
+    "team_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^TEM-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "status": {
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 9,
+      "enum": [
+        "confirmed",
+        "revoked"
+      ]
+    },
+    "projection_receipt": {
+      "type": "string",
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "observed_at": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 35,
+      "format": "date-time"
+    }
+  }
+}

@@ -56,6 +56,41 @@ These documents define provider-neutral pilot boundaries only. They do not
 enable a connector, model provider, network call, external send, or storage
 migration.
 
+### Email Gateway contracts
+
+The additive JSON Schema 2020-12 contracts under
+[`email_gateway/`](./email_gateway/) freeze the provider-neutral boundaries
+between Observer, the independent Email Gateway, and Frappe authority:
+
+- `EmailMessagePublication v1.0` is Observer's content-minimized durable
+  publication. It carries only opaque role-tagged participants, bounded subject
+  projection or digest, header digests, EvidenceRefs, and revision-pinned
+  Observer/mailbox references. It never carries a raw address, provider ID,
+  header value, body, attachment, EML, cursor, or secret.
+- `MailboxConnectorProjection v1.0` is the Gateway-to-Observer connector
+  configuration boundary. Its activation watermark owns the exact mailbox ID
+  and positive mailbox config revision that introduced the lower bound;
+  candidates before that bound are not eligible for delivery or CAS intake.
+- `FrappeIdentityProjection v1.0` is a minimum, versioned projection of the
+  existing Frappe external-identity authority. It reuses the governed GBOS
+  processing-purpose and opaque `extid:v1:email:*` vocabularies, admits only
+  `User` or `Party` mappings, and exposes no raw address, provider subject,
+  target ref, or display content.
+- `FrappeRouteAuthority v1.0` is a closed `oneOf`: either a complete,
+  revision-pinned assigned route or an unassigned result with one fixed safe
+  reason code. Partial and hybrid routes are invalid.
+- `EmailAddressMatchAttestation v1.0` records only an opaque address ref,
+  opaque candidate target, EvidenceRef, frozen normalization version, boolean
+  match, bounded timestamps, and digest. Neither compared address is returned.
+
+Named synthetic valid and intentionally invalid cases for all five schemas are
+in [`email_gateway/examples/provider-neutral-v1.json`](./email_gateway/examples/provider-neutral-v1.json).
+At each internal API boundary, the consumer must additionally bind the schema's
+site, team, and processing-purpose fields to the authenticated request scope;
+wire-shape validation alone is not cross-request authorization.
+These contracts do not enable a provider adapter, connect to Frappe, prove a
+live mailbox, send email, or claim end-to-end integration.
+
 ### Gate 2 aggregate contracts
 
 - `common.schema.json`: shared definitions for identifiers, temporal fields,

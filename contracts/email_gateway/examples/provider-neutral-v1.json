@@ -1,0 +1,310 @@
+{
+  "schema_version": "1.0",
+  "cases": {
+    "email-message-publication-v1.0.schema.json": {
+      "valid": {
+        "subject_projection": {
+          "publication_id": "PUB-01KZA5X900WTDAZG0748EWQ7ZW",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 4,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "DLV-01KZQB094BY8XFHEBB3ENN6TAY",
+          "received_at": "2026-08-13T00:00:00Z",
+          "participants": [
+            {
+              "address_role": "from",
+              "identity_ref": "extid:v1:email:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            },
+            {
+              "address_role": "to",
+              "identity_ref": "extid:v1:email:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+            }
+          ],
+          "subject_projection": "Sample delivery question",
+          "header_digests": {
+            "message_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+          },
+          "evidence_refs": [
+            "EVR-01KZQB094BY8XFHEBB3ENN6TAZ"
+          ],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        "subject_digest": {
+          "publication_id": "PUB-01KZA5X900WTDAZG0748EWQ7ZX",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 4,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "DLV-01KZQB094BY8XFHEBB3ENN6TB0",
+          "received_at": "2026-08-13T00:01:00Z",
+          "participants": [
+            {
+              "address_role": "from",
+              "identity_ref": "extid:v1:email:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+            },
+            {
+              "address_role": "bcc",
+              "identity_ref": "extid:v1:email:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
+            }
+          ],
+          "subject_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+          "header_digests": {
+            "message_id": "sha256:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "in_reply_to": "sha256:2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "references": [
+              "sha256:3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ]
+          },
+          "evidence_refs": [
+            "EVR-01KZQB094BY8XFHEBB3ENN6TB1",
+            "EVR-01KZQB094BY8XFHEBB3ENN6TB2"
+          ],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:2234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        }
+      },
+      "invalid": {
+        "raw_email": {
+          "publication_id": "PUB-01KZA5X900WTDAZG0748EWQ7ZW",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 4,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "DLV-01KZQB094BY8XFHEBB3ENN6TAY",
+          "received_at": "2026-08-13T00:00:00Z",
+          "participants": [
+            {
+              "address_role": "from",
+              "identity_ref": "sales@example.invalid"
+            }
+          ],
+          "subject_projection": "Question",
+          "header_digests": {
+            "message_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+          },
+          "evidence_refs": ["EVR-01KZQB094BY8XFHEBB3ENN6TAZ"],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        "raw_phone": {
+          "publication_id": "PUB-01KZA5X900WTDAZG0748EWQ7ZW",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 4,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "DLV-01KZQB094BY8XFHEBB3ENN6TAY",
+          "received_at": "2026-08-13T00:00:00Z",
+          "participants": [{"address_role": "from", "identity_ref": "+8613800138000"}],
+          "subject_projection": "Question",
+          "header_digests": {"message_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+          "evidence_refs": ["EVR-01KZQB094BY8XFHEBB3ENN6TAZ"],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        "raw_provider_id": {
+          "publication_id": "PUB-01KZA5X900WTDAZG0748EWQ7ZW",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 4,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "provider-message-123",
+          "received_at": "2026-08-13T00:00:00Z",
+          "participants": [{"address_role": "from", "identity_ref": "extid:v1:email:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],
+          "subject_projection": "Question",
+          "header_digests": {"message_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+          "evidence_refs": ["EVR-01KZQB094BY8XFHEBB3ENN6TAZ"],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        "duplicate_address_role": {
+          "publication_id": "PUB-01KZA5X900WTDAZG0748EWQ7ZW",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 4,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "DLV-01KZQB094BY8XFHEBB3ENN6TAY",
+          "received_at": "2026-08-13T00:00:00Z",
+          "participants": [
+            {"address_role": "from", "identity_ref": "extid:v1:email:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+            {"address_role": "from", "identity_ref": "extid:v1:email:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+          ],
+          "subject_projection": "Question",
+          "header_digests": {"message_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+          "evidence_refs": ["EVR-01KZQB094BY8XFHEBB3ENN6TAZ"],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        "unknown_role": {
+          "publication_id": "PUB-01KZA5X900WTDAZG0748EWQ7ZW",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 4,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "DLV-01KZQB094BY8XFHEBB3ENN6TAY",
+          "received_at": "2026-08-13T00:00:00Z",
+          "participants": [{"address_role": "reply_to", "identity_ref": "extid:v1:email:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],
+          "subject_projection": "Question",
+          "header_digests": {"message_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+          "evidence_refs": ["EVR-01KZQB094BY8XFHEBB3ENN6TAZ"],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        "unbounded_subject": {
+          "publication_id": "PUB-01KZA5X900WTDAZG0748EWQ7ZW",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 4,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "DLV-01KZQB094BY8XFHEBB3ENN6TAY",
+          "received_at": "2026-08-13T00:00:00Z",
+          "participants": [{"address_role": "from", "identity_ref": "extid:v1:email:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],
+          "subject_projection": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS",
+          "header_digests": {"message_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+          "evidence_refs": ["EVR-01KZQB094BY8XFHEBB3ENN6TAZ"],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        "bad_publication_ulid": {
+          "publication_id": "PUB-not-a-ulid",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 4,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "DLV-01KZQB094BY8XFHEBB3ENN6TAY",
+          "received_at": "2026-08-13T00:00:00Z",
+          "participants": [{"address_role": "from", "identity_ref": "extid:v1:email:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],
+          "subject_projection": "Question",
+          "header_digests": {"message_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+          "evidence_refs": ["EVR-01KZQB094BY8XFHEBB3ENN6TAZ"],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        "bad_digest": {
+          "publication_id": "PUB-01KZA5X900WTDAZG0748EWQ7ZW",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 4,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "DLV-01KZQB094BY8XFHEBB3ENN6TAY",
+          "received_at": "2026-08-13T00:00:00Z",
+          "participants": [{"address_role": "from", "identity_ref": "extid:v1:email:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],
+          "subject_projection": "Question",
+          "header_digests": {"message_id": "sha256:not-a-digest"},
+          "evidence_refs": ["EVR-01KZQB094BY8XFHEBB3ENN6TAZ"],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        "bad_revision": {
+          "publication_id": "PUB-01KZA5X900WTDAZG0748EWQ7ZW",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 0,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "DLV-01KZQB094BY8XFHEBB3ENN6TAY",
+          "received_at": "2026-08-13T00:00:00Z",
+          "participants": [{"address_role": "from", "identity_ref": "extid:v1:email:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],
+          "subject_projection": "Question",
+          "header_digests": {"message_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+          "evidence_refs": ["EVR-01KZQB094BY8XFHEBB3ENN6TAZ"],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        "additional_property": {
+          "publication_id": "PUB-01KZA5X900WTDAZG0748EWQ7ZW",
+          "site_id": "gbos.localhost",
+          "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+          "mailbox_config_revision": 4,
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "observer_delivery_ref": "DLV-01KZQB094BY8XFHEBB3ENN6TAY",
+          "received_at": "2026-08-13T00:00:00Z",
+          "participants": [{"address_role": "from", "identity_ref": "extid:v1:email:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],
+          "subject_projection": "Question",
+          "header_digests": {"message_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+          "evidence_refs": ["EVR-01KZQB094BY8XFHEBB3ENN6TAZ"],
+          "publication_revision": 1,
+          "idempotency_key": "idem:v1:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+          "raw_eml": "forbidden"
+        }
+      }
+    },
+    "mailbox-connector-projection-v1.0.schema.json": {
+      "valid": {
+        "primary_inbound": {
+          "site_id": "gbos.localhost",
+          "observer_connector_instance_ref": "OCI-01KZQB094BY8XFHEBB3ENN6TAX",
+          "provider_kind": "wecom_app_mail",
+          "entry_role": "primary",
+          "business_purpose": "sales_follow_up",
+          "team_ref": "TEM-01KZQB094BY8XFHEBB3ENN6TAW",
+          "credential_ref": "secretref:v1/email-primary",
+          "inbound_enabled": true,
+          "activation_watermark": {
+            "mailbox_id": "MBX-01KZQB094BY8XFHEBB3ENN6TAW",
+            "mailbox_config_revision": 4,
+            "not_before": "2026-08-13T00:00:00Z"
+          },
+          "projection_revision": 1,
+          "projection_digest": "sha256:4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      },
+      "invalid": {
+        "unknown_provider": {"site_id":"gbos.localhost","observer_connector_instance_ref":"OCI-01KZQB094BY8XFHEBB3ENN6TAX","provider_kind":"provider_account_123","entry_role":"primary","business_purpose":"sales_follow_up","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","credential_ref":"secretref:v1/email-primary","inbound_enabled":true,"activation_watermark":{"mailbox_id":"MBX-01KZQB094BY8XFHEBB3ENN6TAW","mailbox_config_revision":4,"not_before":"2026-08-13T00:00:00Z"},"projection_revision":1,"projection_digest":"sha256:4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "unknown_entry_role": {"site_id":"gbos.localhost","observer_connector_instance_ref":"OCI-01KZQB094BY8XFHEBB3ENN6TAX","provider_kind":"wecom_app_mail","entry_role":"backup","business_purpose":"sales_follow_up","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","credential_ref":"secretref:v1/email-primary","inbound_enabled":true,"activation_watermark":{"mailbox_id":"MBX-01KZQB094BY8XFHEBB3ENN6TAW","mailbox_config_revision":4,"not_before":"2026-08-13T00:00:00Z"},"projection_revision":1,"projection_digest":"sha256:4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "bad_config_revision": {"site_id":"gbos.localhost","observer_connector_instance_ref":"OCI-01KZQB094BY8XFHEBB3ENN6TAX","provider_kind":"wecom_app_mail","entry_role":"primary","business_purpose":"sales_follow_up","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","credential_ref":"secretref:v1/email-primary","inbound_enabled":true,"activation_watermark":{"mailbox_id":"MBX-01KZQB094BY8XFHEBB3ENN6TAW","mailbox_config_revision":0,"not_before":"2026-08-13T00:00:00Z"},"projection_revision":1,"projection_digest":"sha256:4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "bad_mailbox_ulid": {"site_id":"gbos.localhost","observer_connector_instance_ref":"OCI-01KZQB094BY8XFHEBB3ENN6TAX","provider_kind":"wecom_app_mail","entry_role":"primary","business_purpose":"sales_follow_up","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","credential_ref":"secretref:v1/email-primary","inbound_enabled":true,"activation_watermark":{"mailbox_id":"MBX-not-a-ulid","mailbox_config_revision":4,"not_before":"2026-08-13T00:00:00Z"},"projection_revision":1,"projection_digest":"sha256:4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "unbounded_string": {"site_id":"gbos.localhost","observer_connector_instance_ref":"OCI-01KZQB094BY8XFHEBB3ENN6TAX","provider_kind":"wecom_app_mail","entry_role":"primary","business_purpose":"sales_follow_up","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","credential_ref":"secretref:v1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","inbound_enabled":true,"activation_watermark":{"mailbox_id":"MBX-01KZQB094BY8XFHEBB3ENN6TAW","mailbox_config_revision":4,"not_before":"2026-08-13T00:00:00Z"},"projection_revision":1,"projection_digest":"sha256:4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "additional_property": {"site_id":"gbos.localhost","observer_connector_instance_ref":"OCI-01KZQB094BY8XFHEBB3ENN6TAX","provider_kind":"wecom_app_mail","entry_role":"primary","business_purpose":"sales_follow_up","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","credential_ref":"secretref:v1/email-primary","inbound_enabled":true,"activation_watermark":{"mailbox_id":"MBX-01KZQB094BY8XFHEBB3ENN6TAW","mailbox_config_revision":4,"not_before":"2026-08-13T00:00:00Z"},"projection_revision":1,"projection_digest":"sha256:4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","provider_account_id":"forbidden"}
+      }
+    },
+    "frappe-identity-projection-v1.0.schema.json": {
+      "valid": {
+        "employee": {"site_id":"gbos.localhost","processing_purpose":"sales_follow_up","opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","external_identity_ref":"EID-01K2M4N6P8Q0R2S4T6V8W0XYZA","external_identity_revision":2,"identity_type":"User","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","status":"confirmed","projection_receipt":"sha256:5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","observed_at":"2026-08-13T00:00:00Z"},
+        "customer": {"site_id":"gbos.localhost","processing_purpose":"sales_follow_up","opaque_address_ref":"extid:v1:email:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF","external_identity_ref":"EID-01K2M4N6P8Q0R2S4T6V8W0XYZB","external_identity_revision":3,"identity_type":"Party","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","status":"revoked","projection_receipt":"sha256:6123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","observed_at":"2026-08-13T00:01:00Z"}
+      },
+      "invalid": {
+        "raw_address": {"site_id":"gbos.localhost","processing_purpose":"sales_follow_up","opaque_address_ref":"sales@example.invalid","external_identity_ref":"EID-01K2M4N6P8Q0R2S4T6V8W0XYZA","external_identity_revision":2,"identity_type":"User","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","status":"confirmed","projection_receipt":"sha256:5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","observed_at":"2026-08-13T00:00:00Z"},
+        "raw_subject": {"site_id":"gbos.localhost","processing_purpose":"sales_follow_up","opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","external_identity_ref":"EID-01K2M4N6P8Q0R2S4T6V8W0XYZA","external_identity_revision":2,"identity_type":"User","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","status":"confirmed","projection_receipt":"sha256:5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","observed_at":"2026-08-13T00:00:00Z","external_subject":"provider-user-123"},
+        "unknown_identity_type": {"site_id":"gbos.localhost","processing_purpose":"sales_follow_up","opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","external_identity_ref":"EID-01K2M4N6P8Q0R2S4T6V8W0XYZA","external_identity_revision":2,"identity_type":"Contact","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","status":"confirmed","projection_receipt":"sha256:5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","observed_at":"2026-08-13T00:00:00Z"},
+        "bad_external_identity_ulid": {"site_id":"gbos.localhost","processing_purpose":"sales_follow_up","opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","external_identity_ref":"EID-not-a-ulid","external_identity_revision":2,"identity_type":"User","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","status":"confirmed","projection_receipt":"sha256:5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","observed_at":"2026-08-13T00:00:00Z"},
+        "bad_revision": {"site_id":"gbos.localhost","processing_purpose":"sales_follow_up","opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","external_identity_ref":"EID-01K2M4N6P8Q0R2S4T6V8W0XYZA","external_identity_revision":0,"identity_type":"User","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","status":"confirmed","projection_receipt":"sha256:5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","observed_at":"2026-08-13T00:00:00Z"},
+        "unknown_purpose": {"site_id":"gbos.localhost","processing_purpose":"arbitrary_email_use","opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","external_identity_ref":"EID-01K2M4N6P8Q0R2S4T6V8W0XYZA","external_identity_revision":2,"identity_type":"Party","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","status":"confirmed","projection_receipt":"sha256:5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","observed_at":"2026-08-13T00:00:00Z"},
+        "unbounded_team": {"site_id":"gbos.localhost","processing_purpose":"sales_follow_up","opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","external_identity_ref":"EID-01K2M4N6P8Q0R2S4T6V8W0XYZA","external_identity_revision":2,"identity_type":"User","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAWZ","status":"confirmed","projection_receipt":"sha256:5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","observed_at":"2026-08-13T00:00:00Z"},
+        "additional_property": {"site_id":"gbos.localhost","processing_purpose":"sales_follow_up","opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","external_identity_ref":"EID-01K2M4N6P8Q0R2S4T6V8W0XYZA","external_identity_revision":2,"identity_type":"User","team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","status":"confirmed","projection_receipt":"sha256:5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","observed_at":"2026-08-13T00:00:00Z","target_ref":"sales@example.invalid"}
+      }
+    },
+    "frappe-route-authority-v1.0.schema.json": {
+      "valid": {
+        "assigned": {"route_status":"assigned","party_ref":"PTY-01KZA5X900WTDAZG0748EWQ7ZW","party_revision":2,"team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","team_revision":3,"owner_user_ref":"user@example.invalid","owner_eligibility_revision":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","resolved_at":"2026-08-13T00:00:00Z"},
+        "unassigned": {"route_status":"unassigned","safe_reason_code":"owner_unavailable","resolved_at":"2026-08-13T00:00:00Z"}
+      },
+      "invalid": {
+        "hybrid_shape": {"route_status":"assigned","party_ref":"PTY-01KZA5X900WTDAZG0748EWQ7ZW","party_revision":2,"team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","team_revision":3,"owner_user_ref":"user@example.invalid","owner_eligibility_revision":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","safe_reason_code":"owner_unavailable","resolved_at":"2026-08-13T00:00:00Z"},
+        "unknown_status": {"route_status":"pending","safe_reason_code":"owner_unavailable","resolved_at":"2026-08-13T00:00:00Z"},
+        "unknown_reason": {"route_status":"unassigned","safe_reason_code":"provider_said_no","resolved_at":"2026-08-13T00:00:00Z"},
+        "bad_party_ulid": {"route_status":"assigned","party_ref":"PTY-not-a-ulid","party_revision":2,"team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","team_revision":3,"owner_user_ref":"user@example.invalid","owner_eligibility_revision":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","resolved_at":"2026-08-13T00:00:00Z"},
+        "bad_revision": {"route_status":"assigned","party_ref":"PTY-01KZA5X900WTDAZG0748EWQ7ZW","party_revision":0,"team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","team_revision":3,"owner_user_ref":"user@example.invalid","owner_eligibility_revision":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","resolved_at":"2026-08-13T00:00:00Z"},
+        "bad_digest": {"route_status":"assigned","party_ref":"PTY-01KZA5X900WTDAZG0748EWQ7ZW","party_revision":2,"team_ref":"TEM-01KZQB094BY8XFHEBB3ENN6TAW","team_revision":3,"owner_user_ref":"user@example.invalid","owner_eligibility_revision":"sha256:not-a-digest","resolved_at":"2026-08-13T00:00:00Z"},
+        "additional_property": {"route_status":"unassigned","safe_reason_code":"owner_unavailable","resolved_at":"2026-08-13T00:00:00Z","provider_error":"forbidden"}
+      }
+    },
+    "email-address-match-attestation-v1.0.schema.json": {
+      "valid": {
+        "matched": {"opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","candidate_target_ref":"USR-01KZA5X900WTDAZG0748EWQ7ZW","candidate_target_type":"User","evidence_ref":"EVR-01KZQB094BY8XFHEBB3ENN6TAZ","normalization_version":"email-address-v1","matched":true,"observed_at":"2026-08-13T00:00:00Z","expires_at":"2026-08-13T00:05:00Z","digest":"sha256:7123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "not_matched": {"opaque_address_ref":"extid:v1:email:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF","candidate_target_ref":"PTY-01KZA5X900WTDAZG0748EWQ7ZW","candidate_target_type":"Party","evidence_ref":"EVR-01KZQB094BY8XFHEBB3ENN6TAZ","normalization_version":"email-address-v1","matched":false,"observed_at":"2026-08-13T00:00:00Z","expires_at":"2026-08-13T00:05:00Z","digest":"sha256:8123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+      },
+      "invalid": {
+        "raw_email": {"opaque_address_ref":"sales@example.invalid","candidate_target_ref":"USR-01KZA5X900WTDAZG0748EWQ7ZW","candidate_target_type":"User","evidence_ref":"EVR-01KZQB094BY8XFHEBB3ENN6TAZ","normalization_version":"email-address-v1","matched":true,"observed_at":"2026-08-13T00:00:00Z","expires_at":"2026-08-13T00:05:00Z","digest":"sha256:7123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "raw_phone": {"opaque_address_ref":"+8613800138000","candidate_target_ref":"USR-01KZA5X900WTDAZG0748EWQ7ZW","candidate_target_type":"User","evidence_ref":"EVR-01KZQB094BY8XFHEBB3ENN6TAZ","normalization_version":"email-address-v1","matched":true,"observed_at":"2026-08-13T00:00:00Z","expires_at":"2026-08-13T00:05:00Z","digest":"sha256:7123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "raw_provider_id": {"opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","candidate_target_ref":"provider-user-123","candidate_target_type":"User","evidence_ref":"EVR-01KZQB094BY8XFHEBB3ENN6TAZ","normalization_version":"email-address-v1","matched":true,"observed_at":"2026-08-13T00:00:00Z","expires_at":"2026-08-13T00:05:00Z","digest":"sha256:7123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "unknown_target_type": {"opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","candidate_target_ref":"USR-01KZA5X900WTDAZG0748EWQ7ZW","candidate_target_type":"Contact","evidence_ref":"EVR-01KZQB094BY8XFHEBB3ENN6TAZ","normalization_version":"email-address-v1","matched":true,"observed_at":"2026-08-13T00:00:00Z","expires_at":"2026-08-13T00:05:00Z","digest":"sha256:7123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "bad_target_ulid": {"opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","candidate_target_ref":"USR-not-a-ulid","candidate_target_type":"User","evidence_ref":"EVR-01KZQB094BY8XFHEBB3ENN6TAZ","normalization_version":"email-address-v1","matched":true,"observed_at":"2026-08-13T00:00:00Z","expires_at":"2026-08-13T00:05:00Z","digest":"sha256:7123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "bad_digest": {"opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","candidate_target_ref":"USR-01KZA5X900WTDAZG0748EWQ7ZW","candidate_target_type":"User","evidence_ref":"EVR-01KZQB094BY8XFHEBB3ENN6TAZ","normalization_version":"email-address-v1","matched":true,"observed_at":"2026-08-13T00:00:00Z","expires_at":"2026-08-13T00:05:00Z","digest":"sha256:not-a-digest"},
+        "unknown_normalization": {"opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","candidate_target_ref":"USR-01KZA5X900WTDAZG0748EWQ7ZW","candidate_target_type":"User","evidence_ref":"EVR-01KZQB094BY8XFHEBB3ENN6TAZ","normalization_version":"email-address-v2","matched":true,"observed_at":"2026-08-13T00:00:00Z","expires_at":"2026-08-13T00:05:00Z","digest":"sha256:7123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "unbounded_evidence": {"opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","candidate_target_ref":"USR-01KZA5X900WTDAZG0748EWQ7ZW","candidate_target_type":"User","evidence_ref":"EVR-01KZQB094BY8XFHEBB3ENN6TAZZ","normalization_version":"email-address-v1","matched":true,"observed_at":"2026-08-13T00:00:00Z","expires_at":"2026-08-13T00:05:00Z","digest":"sha256:7123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+        "additional_property": {"opaque_address_ref":"extid:v1:email:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","candidate_target_ref":"USR-01KZA5X900WTDAZG0748EWQ7ZW","candidate_target_type":"User","evidence_ref":"EVR-01KZQB094BY8XFHEBB3ENN6TAZ","normalization_version":"email-address-v1","matched":true,"observed_at":"2026-08-13T00:00:00Z","expires_at":"2026-08-13T00:05:00Z","digest":"sha256:7123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","raw_address":"sales@example.invalid"}
+      }
+    }
+  }
+}
