@@ -461,9 +461,49 @@ class EmailMaterialRetentionService:
         )
 
 
+class EmailMaterialRetentionDeletionRunner:
+    """Bound one scheduler tick around an injected retention service."""
+
+    def __init__(
+        self,
+        *,
+        service: EmailMaterialRetentionService,
+        max_batch_size: int = 100,
+    ) -> None:
+        if (
+            isinstance(max_batch_size, bool)
+            or not isinstance(max_batch_size, int)
+            or not 1 <= max_batch_size <= 100
+        ):
+            raise ValueError("invalid email material retention max batch size")
+        self._service = service
+        self._max_batch_size = max_batch_size
+
+    def __repr__(self) -> str:
+        return (
+            "EmailMaterialRetentionDeletionRunner("
+            f"max_batch_size={self._max_batch_size}, service=<redacted>)"
+        )
+
+    def run_once(
+        self,
+        scope: TenantScope,
+        *,
+        batch_size: int,
+    ) -> tuple[EmailMaterialTombstoneReceipt, ...]:
+        if (
+            isinstance(batch_size, bool)
+            or not isinstance(batch_size, int)
+            or not 1 <= batch_size <= self._max_batch_size
+        ):
+            raise ValueError("email material retention batch size is outside bounds")
+        return self._service.run_once(scope, batch_size=batch_size)
+
+
 __all__ = [
     "AuthoritativeTerminalRegistrar",
     "EmailMaterialDeletionLease",
+    "EmailMaterialRetentionDeletionRunner",
     "EmailMaterialRetentionRepository",
     "EmailMaterialRetentionRequest",
     "EmailMaterialRetentionService",
