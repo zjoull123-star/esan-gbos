@@ -146,8 +146,6 @@ export interface RevisionCommand {
 export interface EmailInboxClaimCommand extends RevisionCommand { inbox_item_ref: string }
 export interface EmailInboxReassignCommand extends RevisionCommand {
   inbox_item_ref: string;
-  assignee_team_ref: string;
-  assignee_enabled: boolean;
   assignee_user_ref?: string;
 }
 export interface EmailInboxTransitionCommand extends RevisionCommand {
@@ -169,8 +167,6 @@ export interface EmailInboxSplitCommand extends RevisionCommand {
 export interface EmailBusinessLinkCommand extends RevisionCommand {
   inbox_item_ref: string;
   business_ref: string;
-  authority_valid: true;
-  authority_team_ref: string;
 }
 export interface EmailDraftSaveCommand extends RevisionCommand {
   inbox_item_ref: string;

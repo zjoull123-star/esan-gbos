@@ -3,10 +3,9 @@
     <h2 id="business-link-title">
       业务关联
     </h2>
-    <p>客户 Party / Contact 与商机链接须在当前团队权限内人工确认。</p>
+    <p>输入已有业务对象的受控引用（PTY-、CNT-、CRM-LEAD- 或 CRM-DEAL-）。团队权限由服务端根据当前会话判定。</p>
     <form autocomplete="off" @submit.prevent="submit">
       <label>业务对象引用<input v-model.trim="businessRef" name="business_ref" maxlength="140" required></label>
-      <label>授权团队引用<input v-model.trim="teamRef" name="authority_team_ref" maxlength="140" required></label>
       <GbosButton type="submit" :disabled="pending">
         保存业务关联
       </GbosButton>
@@ -18,12 +17,12 @@
 import { ref } from "vue";
 import GbosButton from "@/components/ui/GbosButton.vue";
 defineProps<{ pending?: boolean }>();
-const emit = defineEmits<{ link: [value: { businessRef: string; teamRef: string }] }>();
+const emit = defineEmits<{ link: [businessRef: string] }>();
 const businessRef = ref("");
-const teamRef = ref("");
 const submit = () => {
-  if (!businessRef.value || !teamRef.value) return;
-  emit("link", { businessRef: businessRef.value, teamRef: teamRef.value });
+  if (!businessRef.value) return;
+  emit("link", businessRef.value);
+  businessRef.value = "";
 };
 </script>
 

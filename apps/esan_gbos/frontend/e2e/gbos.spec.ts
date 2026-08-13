@@ -647,10 +647,31 @@ const harnessFixtures = new Map<string, unknown>([
     v5Envelope({
       inbox_item: {
         ...syntheticEmailInboxItem,
+        state: "assigned",
         assignee_label: "销售负责人",
         identity_state: "unknown",
       },
     }),
+  ],
+  [
+    `POST ${EMAIL_GATEWAY_ENDPOINTS.inboxClaim}`,
+    v5Envelope({ inbox_item: { inbox_item_ref: "INB-E2E-PRIMARY", state: "assigned", revision: 2 } }),
+  ],
+  [
+    `POST ${EMAIL_GATEWAY_ENDPOINTS.inboxReassign}`,
+    v5Envelope({ inbox_item: { inbox_item_ref: "INB-E2E-PRIMARY", state: "assigned", revision: 2 } }),
+  ],
+  [
+    `POST ${EMAIL_GATEWAY_ENDPOINTS.inboxTransition}`,
+    v5Envelope({ inbox_item: { inbox_item_ref: "INB-E2E-PRIMARY", state: "waiting_internal", revision: 2 } }),
+  ],
+  [
+    `POST ${EMAIL_GATEWAY_ENDPOINTS.inboxLinkBusiness}`,
+    v5Envelope({ inbox_item: { inbox_item_ref: "INB-E2E-PRIMARY", state: "identity_pending", revision: 2 } }),
+  ],
+  [
+    `POST ${EMAIL_GATEWAY_ENDPOINTS.inboxSaveDraft}`,
+    v5Envelope({ draft: { draft_ref: "DRF-E2E", revision: 1, state: "editable" } }),
   ],
   [`GET ${BFF_ENDPOINTS.party360}`, syntheticPartyEnvelope],
   [`GET ${BFF_ENDPOINTS.workItemList}`, syntheticWorkEnvelope],
@@ -1110,6 +1131,81 @@ test("邮件收件箱与独立网关遵守隐私、角色、缩放和仅草稿�
   expect(zoomed.body).toBeLessThanOrEqual(zoomed.viewport);
   expect(zoomed.offscreenButtons).toEqual([]);
   await page.evaluate(() => { document.documentElement.style.zoom = ""; });
+});
+
+test("邮件详情只发送服务端授权的人工操作字段", async ({ page }, testInfo) => {
+  test.skip(!isHarness(testInfo), "邮件命令合成验收仅用于前端 harness");
+  const commandBodies = new Map<string, string[]>();
+  for (const endpoint of [
+    EMAIL_GATEWAY_ENDPOINTS.inboxReassign,
+    EMAIL_GATEWAY_ENDPOINTS.inboxTransition,
+    EMAIL_GATEWAY_ENDPOINTS.inboxLinkBusiness,
+    EMAIL_GATEWAY_ENDPOINTS.inboxSaveDraft,
+  ]) {
+    await page.route(`**${endpoint}`, async (route) => {
+      commandBodies.set(endpoint, [
+        ...(commandBodies.get(endpoint) ?? []),
+        route.request().postData() ?? "",
+      ]);
+      await route.fallback();
+    });
+  }
+  await setHarnessSession(page, ["Sales User"]);
+  await page.goto(harnessEntry);
+  await navigateHarnessRoute(page, "/gbos/email/INB-E2E-PRIMARY");
+
+  const assignee = page.locator("[data-assignee-ref]");
+  await assignee.fill("sales.user@example.invalid");
+  await page.locator("[data-reassign-form]").getByRole("button", { name: "重新分配" }).click();
+  await expect(page.getByText("负责人已更新。", { exact: true })).toBeVisible();
+  await expect(assignee).toHaveValue("");
+
+  await page.locator("#email-target-state").selectOption("waiting_internal");
+  await page.locator(".transition-form").getByRole("button", { name: "更新状态" }).click();
+  await expect(page.getByText("处理状态已更新。", { exact: true })).toBeVisible();
+
+  const businessRef = page.locator("[name='business_ref']");
+  await businessRef.fill("CRM-DEAL-E2E");
+  await page.getByRole("button", { name: "保存业务关联" }).click();
+  await expect(page.getByText("业务关联已保存。", { exact: true })).toBeVisible();
+  await expect(businessRef).toHaveValue("");
+
+  await page.locator("#reply-draft-content").fill("仅保存的受控草稿");
+  await page.getByRole("button", { name: "保存草稿", exact: true }).click();
+  await expect(page.getByText("草稿已保存；尚未批准或发送。", { exact: true })).toBeVisible();
+
+  const parsed = (endpoint: string) =>
+    Object.fromEntries(new URLSearchParams(commandBodies.get(endpoint)?.[0] ?? ""));
+  expect(parsed(EMAIL_GATEWAY_ENDPOINTS.inboxReassign)).toMatchObject({
+    inbox_item_ref: "INB-E2E-PRIMARY",
+    assignee_user_ref: "sales.user@example.invalid",
+    expected_revision: "1",
+  });
+  expect(parsed(EMAIL_GATEWAY_ENDPOINTS.inboxReassign)).not.toHaveProperty("assignee_team_ref");
+  expect(parsed(EMAIL_GATEWAY_ENDPOINTS.inboxReassign)).not.toHaveProperty("assignee_enabled");
+  expect(parsed(EMAIL_GATEWAY_ENDPOINTS.inboxTransition)).toMatchObject({
+    inbox_item_ref: "INB-E2E-PRIMARY",
+    target_state: "waiting_internal",
+    expected_revision: "1",
+  });
+  expect(parsed(EMAIL_GATEWAY_ENDPOINTS.inboxLinkBusiness)).toMatchObject({
+    inbox_item_ref: "INB-E2E-PRIMARY",
+    business_ref: "CRM-DEAL-E2E",
+    expected_revision: "1",
+  });
+  expect(parsed(EMAIL_GATEWAY_ENDPOINTS.inboxLinkBusiness)).not.toHaveProperty("authority_valid");
+  expect(parsed(EMAIL_GATEWAY_ENDPOINTS.inboxLinkBusiness)).not.toHaveProperty("authority_team_ref");
+  expect(parsed(EMAIL_GATEWAY_ENDPOINTS.inboxSaveDraft)).toMatchObject({
+    inbox_item_ref: "INB-E2E-PRIMARY",
+    content: "仅保存的受控草稿",
+    expected_revision: "0",
+  });
+  await expect(page.getByRole("button", { name: "批准", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toHaveCount(0);
+  const visibleDom = await page.locator("html").textContent();
+  expect(visibleDom).not.toContain("sales.user@example.invalid");
+  expect(visibleDom).not.toContain("CRM-DEAL-E2E");
+  expect(page.url()).not.toContain("?");
 });
 
 test("真实邮箱地址只进入一次请求并在成功后从页面与浏览器状态清除", async ({ page }, testInfo) => {

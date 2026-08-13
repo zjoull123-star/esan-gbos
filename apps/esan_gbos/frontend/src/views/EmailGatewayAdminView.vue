@@ -185,6 +185,7 @@
           <h2 id="email-health-title">
             连接器实时健康状态
           </h2>
+          <p>当前接口未提供连接器游标；这里只展示真实健康、新鲜度、积压与最近成功时间。</p>
           <ResourceBoundary
             :state="healthResource.state.value"
             :message="healthBoundaryMessage"
@@ -242,7 +243,7 @@
           <h2 id="email-audit-title">
             审计与版本
           </h2>
-          <p>服务端保留权威审计。浏览器只显示本次打开页面后的安全操作结果，不持久化配置、标识或业务数据。</p>
+          <p>当前公开接口未提供服务端审计列表。服务端仍保留权威审计；浏览器只显示本次打开页面后的安全操作结果，不持久化配置、标识或业务数据。</p>
           <ul v-if="auditEvents.length" aria-label="本次页面操作记录">
             <li v-for="event in auditEvents" :key="event.id">
               {{ event.label }}

@@ -36,20 +36,29 @@
           <p>{{ detail.safe_summary }}</p>
           <dl>
             <div><dt>接收邮箱</dt><dd>{{ detail.mailbox_label }}</dd></div>
-            <div><dt>渠道账户负责人</dt><dd>网关配置中定义（业务详情不展开）</dd></div>
+            <div><dt>渠道账户负责人</dt><dd>当前安全详情未提供渠道账户负责人标签</dd></div>
             <div><dt>参与者身份状态</dt><dd>{{ identityLabel(detail.identity_state) }}</dd></div>
-            <div><dt>客户 Party / Contact</dt><dd>{{ detail.identity_state === "confirmed" ? "已确认映射" : "尚未确认" }}</dd></div>
+            <div><dt>客户 Party / Contact</dt><dd>当前安全详情未提供客户 Party / Contact 标签</dd></div>
             <div><dt>当前业务负责人</dt><dd>{{ detail.assignee_label || "未分配" }}</dd></div>
             <div><dt>版本</dt><dd>{{ detail.revision }}</dd></div>
           </dl>
         </section>
 
-        <InboxAssignmentPanel :detail="detail" :pending="commandPending" @claim="claim" />
+        <InboxAssignmentPanel
+          :detail="detail"
+          :pending="commandPending"
+          @claim="claim"
+          @reassign="reassign"
+          @transition="transition"
+        />
         <IdentityProjectionPanel :detail="detail" />
         <ThreadSuggestionPanel :pending="commandPending" />
         <ConversationTimeline :detail="detail" />
         <BusinessLinkPanel :pending="commandPending" @link="linkBusiness" />
-        <ReplyDraftEditor :pending="commandPending" @save="saveDraft" />
+        <ReplyDraftEditor :pending="commandPending || draftBlocked" @save="saveDraft" />
+        <p v-if="draftBlocked" class="command-message" role="alert">
+          草稿版本已冲突，而当前详情接口不能重新读取草稿版本；请离开本页后由管理员核对。
+        </p>
 
         <section class="panel reveal-panel" aria-labelledby="reveal-title">
           <h2 id="reveal-title">
@@ -87,6 +96,8 @@ const commandMessage = ref("");
 const commandMessageElement = ref<HTMLElement>();
 const refreshButton = ref<InstanceType<typeof GbosButton>>();
 const draftRef = ref(`DRF-ui-${Date.now().toString(36)}`);
+const draftRevision = ref(0);
+const draftBlocked = ref(false);
 let commandGeneration = 0;
 
 const resource = useOnlineResource(async () => (await client.getInboxItem(props.inboxItemRef)).data);
@@ -102,29 +113,48 @@ const focusRefresh = async () => {
   if (candidate instanceof HTMLElement) candidate.focus();
   else document.querySelector<HTMLElement>("[data-detail-refresh]")?.focus();
 };
-const refresh = () => {
+const refresh = async () => {
   commandGeneration += 1;
   commandPending.value = false;
   commandMessage.value = "";
-  void resource.load();
+  await resource.load();
+  if (resource.state.value === "permission") {
+    draftRef.value = "";
+    draftRevision.value = 0;
+    draftBlocked.value = true;
+    await focusRefresh();
+  }
 };
-const runCommand = async (operation: () => Promise<unknown>, success: string) => {
+const runCommand = async <T,>(
+  operation: () => Promise<T>,
+  success: string,
+  onSuccess?: (result: T) => void,
+  onConflict?: () => void,
+  reloadAfterSuccess = true,
+) => {
   if (commandPending.value) return;
   const generation = ++commandGeneration;
   commandPending.value = true;
   commandMessage.value = "";
   try {
-    await operation();
+    const result = await operation();
     if (generation !== commandGeneration) return;
+    onSuccess?.(result);
     commandMessage.value = success;
-    await resource.load();
+    if (reloadAfterSuccess) await resource.load();
     await focusMessage();
   } catch (error) {
     if (generation !== commandGeneration) return;
     if (error instanceof BffError) {
       commandMessage.value = error.displayMessage;
-      if (error.status === 403 || error.code === "permission_denied") resource.clear();
+      if (error.status === 403 || error.code === "permission_denied") {
+        draftRef.value = "";
+        draftRevision.value = 0;
+        draftBlocked.value = true;
+        resource.clear();
+      }
       if (error.status === 409 || error.code === "revision_conflict") {
+        onConflict?.();
         await resource.load();
         await focusRefresh();
       } else {
@@ -146,31 +176,56 @@ const claim = () => {
     idempotency_key: idempotencyKey("claim"),
   }), "认领已记录。 ");
 };
-const linkBusiness = (value: { businessRef: string; teamRef: string }) => {
+const reassign = (assigneeUserRef?: string) => {
+  if (!detail.value) return;
+  void runCommand(() => client.reassignInbox({
+    inbox_item_ref: detail.value!.inbox_item_ref,
+    ...(assigneeUserRef ? { assignee_user_ref: assigneeUserRef } : {}),
+    expected_revision: detail.value!.revision,
+    idempotency_key: idempotencyKey("reassign"),
+  }), assigneeUserRef ? "负责人已更新。 " : "分配已取消。 ");
+};
+const transition = (targetState: import("@/api/email-gateway-types").EmailInboxState) => {
+  if (!detail.value) return;
+  void runCommand(() => client.transitionInbox({
+    inbox_item_ref: detail.value!.inbox_item_ref,
+    target_state: targetState,
+    expected_revision: detail.value!.revision,
+    idempotency_key: idempotencyKey("transition"),
+  }), targetState === "assigned" ? "邮件已重新打开。 " : "处理状态已更新。 ");
+};
+const linkBusiness = (businessRef: string) => {
   if (!detail.value) return;
   void runCommand(() => client.linkBusiness({
     inbox_item_ref: detail.value!.inbox_item_ref,
-    business_ref: value.businessRef,
-    authority_valid: true,
-    authority_team_ref: value.teamRef,
+    business_ref: businessRef,
     expected_revision: detail.value!.revision,
     idempotency_key: idempotencyKey("business-link"),
   }), "业务关联已保存。 ");
 };
 const saveDraft = (content: string) => {
-  if (!detail.value) return;
+  if (!detail.value || draftBlocked.value || !draftRef.value) return;
   void runCommand(() => client.saveDraft({
     inbox_item_ref: detail.value!.inbox_item_ref,
     draft_ref: draftRef.value,
     content,
-    expected_revision: detail.value!.revision,
+    expected_revision: draftRevision.value,
     idempotency_key: idempotencyKey("draft"),
-  }), "草稿已保存；尚未批准或发送。 ");
+  }), "草稿已保存；尚未批准或发送。 ", (response) => {
+    draftRef.value = response.data.draft.draft_ref;
+    draftRevision.value = response.data.draft.revision;
+  }, () => {
+    draftRef.value = "";
+    draftRevision.value = 0;
+    draftBlocked.value = true;
+  }, false);
 };
 onBeforeUnmount(() => {
   commandGeneration += 1;
   commandMessage.value = "";
   draftRef.value = "";
+  draftRevision.value = 0;
+  draftBlocked.value = true;
 });
 </script>
 

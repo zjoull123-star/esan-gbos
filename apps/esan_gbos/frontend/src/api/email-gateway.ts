@@ -94,6 +94,8 @@ const optionalSafeText = (value: unknown, maximum = 240) =>
   value === null || safeProjectionText(value, maximum);
 const opaqueRef = (value: unknown, maximum = 140): value is string =>
   boundedText(value, maximum) && !/[?&#@\s]/u.test(value);
+const commandRef = (value: unknown, maximum = 140): value is string =>
+  boundedText(value, maximum) && !/[?&#\s]/u.test(value);
 const unique = (values: readonly string[]) => new Set(values).size === values.length;
 
 const providerKinds = new Set<EmailProviderKind>(["fake", "imap_smtp", "wecom_app_mail"]);
@@ -239,6 +241,7 @@ const supportedErrorCodes = {
   scope_mismatch: "scope_mismatch", identity_mismatch: "identity_mismatch",
   suggestion_mismatch: "suggestion_mismatch", candidate_ineligible: "candidate_ineligible",
   reviewer_ineligible: "reviewer_ineligible", revision_conflict: "revision_conflict",
+  authority_conflict: "revision_conflict",
   invalid_transition: "invalid_transition", idempotency_conflict: "idempotency_conflict",
   request_in_progress: "request_in_progress", validation_error: "validation_error",
   internal_error: "internal_error",
@@ -429,8 +432,8 @@ export const createEmailGatewayClient = (dependencies: EmailGatewayDependencies 
       return result;
     },
     reassignInbox: async (command: EmailInboxReassignCommand) => {
-      validateRevision(command); if (!opaqueRef(command.inbox_item_ref) || !teamRefPattern.test(command.assignee_team_ref) ||
-        typeof command.assignee_enabled !== "boolean" || (command.assignee_user_ref !== undefined && !boundedText(command.assignee_user_ref, 140))) validationError();
+      validateRevision(command); if (!opaqueRef(command.inbox_item_ref) ||
+        (command.assignee_user_ref !== undefined && !commandRef(command.assignee_user_ref))) validationError();
       const response = await post<unknown>(EMAIL_GATEWAY_ENDPOINTS.inboxReassign, command as unknown as Record<string, unknown>);
       const result = parseSingle(response, "inbox_item", parseInboxCommand);
       if (result.data.inbox_item.revision <= command.expected_revision) invalidResponse(response.meta.request_id);
@@ -459,7 +462,7 @@ export const createEmailGatewayClient = (dependencies: EmailGatewayDependencies 
       return result;
     },
     linkBusiness: async (command: EmailBusinessLinkCommand) => {
-      validateRevision(command); if (!opaqueRef(command.inbox_item_ref) || !opaqueRef(command.business_ref) || command.authority_valid !== true || !teamRefPattern.test(command.authority_team_ref)) validationError();
+      validateRevision(command); if (!opaqueRef(command.inbox_item_ref) || !opaqueRef(command.business_ref)) validationError();
       const response = await post<unknown>(EMAIL_GATEWAY_ENDPOINTS.inboxLinkBusiness, command as unknown as Record<string, unknown>);
       const result = parseSingle(response, "inbox_item", parseInboxCommand);
       if (result.data.inbox_item.revision <= command.expected_revision) invalidResponse(response.meta.request_id);

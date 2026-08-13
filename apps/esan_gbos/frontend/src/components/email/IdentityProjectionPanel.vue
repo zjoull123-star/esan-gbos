@@ -5,9 +5,11 @@
     </h2>
     <dl>
       <div><dt>参与者身份状态</dt><dd>{{ identityLabel }}</dd></div>
-      <div><dt>客户 Party / Contact</dt><dd>{{ detail.identity_state === "confirmed" ? "已确认映射（受控详情不展开）" : "尚未确认" }}</dd></div>
+      <div><dt>客户 Party / Contact</dt><dd>当前安全详情未提供客户 Party / Contact 标签</dd></div>
     </dl>
-    <a v-if="detail.identity_state !== 'confirmed'" href="/gbos/review">进入身份治理审核</a>
+    <p v-if="detail.identity_state !== 'confirmed'">
+      当前安全详情未提供身份审核案件链接，无法从此处跳转。
+    </p>
   </section>
 </template>
 

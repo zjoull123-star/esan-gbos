@@ -6,7 +6,7 @@
     <p>仅创建或编辑草稿。本页面不提供批准、发送或外发状态操作。</p>
     <form autocomplete="off" @submit.prevent="save">
       <label for="reply-draft-content">草稿内容</label>
-      <textarea id="reply-draft-content" v-model="content" maxlength="131072" rows="8" required />
+      <textarea id="reply-draft-content" v-model="content" maxlength="131072" rows="8" required :disabled="pending" />
       <GbosButton type="submit" :disabled="pending || !content.trim()">
         保存草稿
       </GbosButton>

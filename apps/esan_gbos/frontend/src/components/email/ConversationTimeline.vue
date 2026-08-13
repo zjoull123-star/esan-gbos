@@ -3,6 +3,7 @@
     <h2 id="timeline-title">
       会话时间线
     </h2>
+    <p>当前安全详情只提供本收件项；完整会话成员与事件暂不可用。</p>
     <ol>
       <li><time :datetime="detail.received_at">{{ detail.received_at }}</time><p>{{ detail.safe_summary }}</p></li>
     </ol>
