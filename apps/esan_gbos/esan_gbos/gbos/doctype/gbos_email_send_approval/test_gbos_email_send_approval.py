@@ -506,6 +506,65 @@ class TestGBOSEmailSendApproval(IntegrationTestCase):
                 else:
                     setattr(frappe.local, attribute, value)
 
+    def test_native_initial_route_derives_current_party_team_and_owner(self) -> None:
+        previous_config = frappe.conf.get(AUTHORITY_CONFIG_KEY, _MISSING)
+        previous_request = getattr(frappe.local, "request", _MISSING)
+        previous_response = getattr(frappe.local, "response", _MISSING)
+        previous_login_manager = getattr(frappe.local, "login_manager", _MISSING)
+        try:
+            live, identity = self._native_authority_snapshot()
+            request_id = f"native-initial-route-{frappe.generate_hash(length=8)}"
+            frappe.conf[AUTHORITY_CONFIG_KEY] = {
+                AUTHORITY_AUTH_REF: {
+                    "user": AUTHORITY_USER,
+                    "site_id": frappe.local.site,
+                    "processing_purposes": ["email_gateway_authority"],
+                }
+            }
+            self._authenticate_authority(request_id)
+
+            response = email_gateway_authority_api.resolve_initial_route(
+                {
+                    "site_id": frappe.local.site,
+                    "processing_purpose": "email_gateway_authority",
+                    "request_id": request_id,
+                    "auth_ref": AUTHORITY_AUTH_REF,
+                    "mapping_ref": identity.name,
+                    "expected_mapping_revision": int(identity.revision),
+                    "expected_team_ref": self.team.name,
+                }
+            )
+
+            self.assertNotIn("error", response)
+            authority = response["route_authority"]
+            self.assertEqual(authority["route_status"], "assigned")
+            self.assertEqual(authority["party_ref"], live["party_ref"])
+            self.assertEqual(authority["party_revision"], live["party_revision"])
+            self.assertEqual(authority["team_ref"], self.team.name)
+            self.assertEqual(authority["team_revision"], live["team_revision"])
+            self.assertEqual(authority["owner_user_ref"], TEST_OWNER)
+            self.assertEqual(
+                authority["owner_eligibility_revision"],
+                live["owner_eligibility_revision"],
+            )
+            self.assertEqual(frappe.local.response["headers"]["Cache-Control"], "no-store")
+        finally:
+            frappe.set_user("Administrator")
+            if previous_config is _MISSING:
+                frappe.conf.pop(AUTHORITY_CONFIG_KEY, None)
+            else:
+                frappe.conf[AUTHORITY_CONFIG_KEY] = previous_config
+            for attribute, value in (
+                ("request", previous_request),
+                ("response", previous_response),
+                ("login_manager", previous_login_manager),
+            ):
+                if value is _MISSING:
+                    if hasattr(frappe.local, attribute):
+                        delattr(frappe.local, attribute)
+                else:
+                    setattr(frappe.local, attribute, value)
+
     def test_native_publication_claim_heartbeat_ack_and_replay(self) -> None:
         previous_config = frappe.conf.get(PUBLICATION_CONFIG_KEY, _MISSING)
         previous_request = getattr(frappe.local, "request", _MISSING)
