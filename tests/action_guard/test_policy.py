@@ -90,6 +90,26 @@ def test_commitments_and_business_state_changes_require_human(
     assert "human_authorization_required" in result.reason_codes
 
 
+def test_generic_external_send_cannot_be_upgraded_by_human_shaped_payload() -> None:
+    action = request("external.message.send")
+
+    result = ActionGuard().evaluate(
+        action,
+        phase=EvaluationPhase.POST_RESULT,
+        result_payload={
+            "site_id": action.site_id,
+            "processing_purpose": action.processing_purpose,
+            "target_revision": action.target_revision,
+            "evidence_refs": list(action.evidence_refs),
+            "approved": True,
+        },
+        now=NOW,
+    )
+
+    assert result.outcome is GuardOutcome.REQUIRE_HUMAN
+    assert result.reason_codes == ("human_authorization_required",)
+
+
 @pytest.mark.parametrize(
     "action_type",
     [

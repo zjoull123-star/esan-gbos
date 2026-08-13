@@ -7,7 +7,19 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
-from .models import ActionRequest, EvaluationPhase, GuardDecision, GuardOutcome
+from .email_send import (
+    EmailSendAuthorityReceipt,
+    verify_email_send_command,
+    verify_email_send_post_result,
+)
+from .models import (
+    ActionRequest,
+    EvaluationPhase,
+    GuardDecision,
+    GuardOutcome,
+    VerifiedEmailSendCommand,
+    VerifiedEmailSendOutboxReceipt,
+)
 
 POLICY_VERSION = "action-guard-v1"
 
@@ -70,6 +82,24 @@ class ActionGuard:
     """Pure, deterministic policy decision point for Gate 4 actions."""
 
     policy_version = POLICY_VERSION
+
+    def verify_email_send(
+        self,
+        command: Mapping[str, Any],
+        *,
+        authority: EmailSendAuthorityReceipt,
+        now: datetime,
+    ) -> VerifiedEmailSendCommand:
+        """Use the purpose-specific verifier; generic human review never executes send."""
+
+        return verify_email_send_command(command, authority=authority, now=now)
+
+    def verify_email_send_result(
+        self,
+        verified: VerifiedEmailSendCommand,
+        result_payload: Mapping[str, Any],
+    ) -> VerifiedEmailSendOutboxReceipt:
+        return verify_email_send_post_result(verified, result_payload)
 
     def evaluate(
         self,

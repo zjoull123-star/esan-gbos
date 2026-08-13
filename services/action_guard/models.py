@@ -60,3 +60,23 @@ class GuardDecision:
     evidence_refs: tuple[str, ...]
     evaluated_at: datetime
     correlation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedEmailSendCommand:
+    """Minimal capability produced only after specialized email-send verification."""
+
+    command_ref: str
+    idempotency_key: str
+    stable_client_request_id: str
+    payload_digest: str
+    policy_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedEmailSendOutboxReceipt:
+    """Closed receipt proving only the immutable Send Outbox transaction."""
+
+    command_receipt_ref: str
+    send_outbox_ref: str
+    payload_digest: str
