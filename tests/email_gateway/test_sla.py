@@ -78,7 +78,7 @@ def test_quarantine_is_not_applicable(scope) -> None:
 
 
 def test_only_first_provider_accepted_receipt_completes_sla(scope) -> None:
-    from services.email_gateway.models import AuthorizationError
+    from services.email_gateway.models import AuthorizationError, ValidationError
     from services.email_gateway.sla import SlaClock
 
     clock = SlaClock.start(
@@ -104,6 +104,15 @@ def test_only_first_provider_accepted_receipt_completes_sla(scope) -> None:
     assert complete.completed_at == NOW + timedelta(minutes=5)
     assert (
         complete.complete(
+            accepted_at=NOW + timedelta(minutes=5),
+            provider_accepted=True,
+            receipt_ref="RCP-02",
+            policy_revision=1,
+        )
+        == complete
+    )
+    assert (
+        complete.complete(
             accepted_at=NOW + timedelta(minutes=6),
             provider_accepted=True,
             receipt_ref="RCP-03",
@@ -111,6 +120,13 @@ def test_only_first_provider_accepted_receipt_completes_sla(scope) -> None:
         )
         == complete
     )
+    with pytest.raises(ValidationError, match="regression"):
+        complete.complete(
+            accepted_at=NOW + timedelta(minutes=4),
+            provider_accepted=True,
+            receipt_ref="RCP-04",
+            policy_revision=1,
+        )
 
 
 def test_close_snapshots_outcome_and_reopen_preserves_original_clock(scope) -> None:
@@ -152,3 +168,72 @@ def test_sla_rejects_clock_regression_policy_drift_and_future_policy(scope) -> N
         clock.close(NOW - timedelta(seconds=1), policy_revision=1)
     with pytest.raises(RevisionConflict, match="policy"):
         clock.close(NOW + timedelta(seconds=1), policy_revision=2)
+
+    completed = clock.complete(
+        accepted_at=NOW + timedelta(minutes=5),
+        provider_accepted=True,
+        receipt_ref="RCP-01",
+        policy_revision=1,
+    )
+    closed = completed.close(NOW + timedelta(minutes=10), policy_revision=1)
+    with pytest.raises(ValidationError, match="regression"):
+        closed.reopen(NOW + timedelta(minutes=7), policy_revision=1)
+
+
+def test_transactional_sla_repository_rolls_back_inbox_sla_audit_and_receipt(scope) -> None:
+    from dataclasses import replace
+
+    from services.email_gateway.models import AuditEvent, InboxItem, canonical_digest
+    from services.email_gateway.repositories.sla import InMemorySlaRepository
+    from services.email_gateway.sla import SlaClock
+
+    inbox = InboxItem.new(
+        site_id=scope.site_id,
+        mailbox_ref="MBX-01",
+        message_ref="MSG-01",
+        team_ref="TEM-01",
+        received_at=NOW,
+        state="unassigned",
+    )
+    clock = SlaClock.start(
+        inbox_item_ref=inbox.inbox_item_ref,
+        received_at=inbox.received_at,
+        policy=_policy(),
+        quarantined=False,
+    )
+
+    def fail(phase: str) -> None:
+        if phase == "after_sla_write":
+            raise RuntimeError("injected")
+
+    repository = InMemorySlaRepository(transaction_failure_injector=fail)
+    repository.save_inbox_with_sla(scope, inbox, clock)
+    digest = canonical_digest({"operation": "close", "revision": 1})
+    revised = replace(inbox, state="closed", revision=2, updated_at=NOW + timedelta(minutes=2))
+    closed = clock.close(NOW + timedelta(minutes=2), policy_revision=1)
+    audit = AuditEvent(
+        audit_ref="AUD-01",
+        site_id=scope.site_id,
+        actor_ref="sales-01",
+        event_type="inbox_transitioned",
+        subject_ref=inbox.inbox_item_ref,
+        request_id="REQ-01",
+        idempotency_key="audit:close-01",
+        payload_digest=digest,
+        occurred_at=NOW + timedelta(minutes=2),
+    )
+    with pytest.raises(RuntimeError, match="injected"):
+        repository.apply_inbox_sla_operation(
+            scope,
+            before=inbox,
+            revised=revised,
+            sla_before=clock,
+            sla_revised=closed,
+            audit_event=audit,
+            idempotency_key="close-01",
+            payload_digest=digest,
+        )
+    assert repository.get_inbox(scope, inbox.inbox_item_ref) == inbox
+    assert repository.get_sla(scope, inbox.inbox_item_ref) == clock
+    assert repository.audit_count(scope) == 0
+    assert repository.replay(scope, "close-01", digest) is None

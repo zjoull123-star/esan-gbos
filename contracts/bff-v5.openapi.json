@@ -1250,8 +1250,6 @@
         "additionalProperties": false,
         "required": [
           "inbox_item_ref",
-          "assignee_team_ref",
-          "assignee_enabled",
           "expected_revision",
           "idempotency_key"
         ],
@@ -1261,18 +1259,10 @@
             "minLength": 1,
             "maxLength": 140
           },
-          "assignee_team_ref": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 140
-          },
           "assignee_user_ref": {
             "type": "string",
             "minLength": 1,
             "maxLength": 140
-          },
-          "assignee_enabled": {
-            "type": "boolean"
           },
           "expected_revision": {
             "type": "integer",
@@ -1416,8 +1406,6 @@
         "required": [
           "inbox_item_ref",
           "business_ref",
-          "authority_valid",
-          "authority_team_ref",
           "expected_revision",
           "idempotency_key"
         ],
@@ -1428,14 +1416,6 @@
             "maxLength": 140
           },
           "business_ref": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 140
-          },
-          "authority_valid": {
-            "type": "boolean"
-          },
-          "authority_team_ref": {
             "type": "string",
             "minLength": 1,
             "maxLength": 140

@@ -38,7 +38,7 @@ from .models import (
     canonical_digest,
     stable_ref,
 )
-from .operations import InboxOperations
+from .operations import InboxCommandAuthority, InboxOperations
 from .outbound import CommandIngestService, CommandPublication
 from .phase1_read import Phase1Mailbox, decode_cursor, encode_cursor
 from .postgres import (
@@ -1436,12 +1436,17 @@ def create_email_gateway_app(
                 request_id=request_id,
                 content_type=content_type,
                 header_idempotency_key=header_idempotency_key,
-                operation_fields={"inbox_item_ref", "expected_revision", "idempotency_key"},
+                operation_fields={
+                    "inbox_item_ref",
+                    "expected_revision",
+                    "idempotency_key",
+                    "authority_receipt",
+                },
             )
             result = active_operations.claim(
                 scope,
                 actor=actor,
-                actor_enabled=True,
+                authority=InboxCommandAuthority.from_wire(values["authority_receipt"]),
                 inbox_item_ref=_bounded_text(values["inbox_item_ref"], "inbox item ref", 140),
                 expected_revision=_nonnegative_integer(
                     values["expected_revision"], "expected revision"
@@ -1474,10 +1479,9 @@ def create_email_gateway_app(
                 header_idempotency_key=header_idempotency_key,
                 operation_fields={
                     "inbox_item_ref",
-                    "assignee_team_ref",
-                    "assignee_enabled",
                     "expected_revision",
                     "idempotency_key",
+                    "authority_receipt",
                 },
                 optional_fields={"assignee_user_ref"},
             )
@@ -1487,13 +1491,9 @@ def create_email_gateway_app(
             result = active_operations.reassign(
                 scope,
                 actor=actor,
-                actor_enabled=True,
+                authority=InboxCommandAuthority.from_wire(values["authority_receipt"]),
                 inbox_item_ref=_bounded_text(values["inbox_item_ref"], "inbox item ref", 140),
                 assignee_user_ref=assignee,
-                assignee_team_ref=_bounded_text(
-                    values["assignee_team_ref"], "assignee team ref", 140
-                ),
-                assignee_enabled=_boolean(values["assignee_enabled"], "assignee enabled"),
                 expected_revision=_nonnegative_integer(
                     values["expected_revision"], "expected revision"
                 ),
@@ -1683,22 +1683,17 @@ def create_email_gateway_app(
                 operation_fields={
                     "inbox_item_ref",
                     "business_ref",
-                    "authority_valid",
-                    "authority_team_ref",
                     "expected_revision",
                     "idempotency_key",
+                    "authority_receipt",
                 },
             )
             result = active_operations.link_business(
                 scope,
                 actor=actor,
-                actor_enabled=True,
+                authority=InboxCommandAuthority.from_wire(values["authority_receipt"]),
                 inbox_item_ref=_bounded_text(values["inbox_item_ref"], "inbox item ref", 140),
                 business_ref=_bounded_text(values["business_ref"], "business ref", 140),
-                authority_valid=_boolean(values["authority_valid"], "authority valid"),
-                authority_team_ref=_bounded_text(
-                    values["authority_team_ref"], "authority team ref", 140
-                ),
                 expected_revision=_nonnegative_integer(
                     values["expected_revision"], "expected revision"
                 ),

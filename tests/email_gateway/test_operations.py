@@ -44,6 +44,86 @@ def _service(scope, item):
     return InboxOperations(repository), repository
 
 
+def _authority(
+    command: str,
+    *,
+    actor=None,
+    inbox_ref: str | None = None,
+    expected_revision: int = 1,
+    target_user_ref: str | None = None,
+    business_ref: str | None = None,
+):
+    from services.email_gateway.models import canonical_digest
+    from services.email_gateway.operations import InboxCommandAuthority
+
+    actor = actor or _actor()
+    return InboxCommandAuthority(
+        schema_version="1.0",
+        command=command,
+        actor_ref_digest=canonical_digest({"site_id": actor.site_id, "user_ref": actor.actor_ref}),
+        actor_roles=actor.roles,
+        actor_team_refs=actor.team_refs,
+        actor_eligibility_revision="sha256:" + "a" * 64,
+        inbox_item_ref=inbox_ref or _item().inbox_item_ref,
+        expected_inbox_revision=expected_revision,
+        target_user_ref_digest=(
+            None
+            if target_user_ref is None
+            else canonical_digest({"site_id": actor.site_id, "user_ref": target_user_ref})
+        ),
+        target_team_refs=actor.team_refs if target_user_ref else (),
+        target_eligibility_revision=("sha256:" + "b" * 64) if target_user_ref else None,
+        business_ref=business_ref,
+        business_team_ref=actor.team_refs[0] if business_ref else None,
+        business_revision=3 if business_ref else None,
+    )
+
+
+def test_authority_receipt_is_closed_revisioned_and_contains_no_caller_booleans() -> None:
+    from dataclasses import fields
+
+    from services.email_gateway.operations import InboxCommandAuthority
+
+    names = {field.name for field in fields(InboxCommandAuthority)}
+    assert names == {
+        "schema_version",
+        "command",
+        "actor_ref_digest",
+        "actor_roles",
+        "actor_team_refs",
+        "actor_eligibility_revision",
+        "inbox_item_ref",
+        "expected_inbox_revision",
+        "target_user_ref_digest",
+        "target_team_refs",
+        "target_eligibility_revision",
+        "business_ref",
+        "business_team_ref",
+        "business_revision",
+    }
+    assert not names & {"actor_enabled", "assignee_enabled", "authority_valid"}
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("actor_ref_digest", None),
+        ("actor_eligibility_revision", "sha256:" + "z" * 64),
+        ("expected_inbox_revision", True),
+        ("business_revision", True),
+        ("business_revision", {"revision": 1}),
+    ],
+)
+def test_authority_wire_receipt_rejects_implicit_scalar_coercion(field, value) -> None:
+    from services.email_gateway.models import ValidationError
+    from services.email_gateway.operations import InboxCommandAuthority
+
+    receipt = _authority("claim").to_wire()
+    receipt[field] = value
+    with pytest.raises(ValidationError, match="authority receipt"):
+        InboxCommandAuthority.from_wire(receipt)
+
+
 class _ResponseLossRepository:
     def __init__(self, repository) -> None:
         self.repository = repository
@@ -64,7 +144,7 @@ def test_sales_user_claim_is_same_team_revision_pinned_idempotent_and_audited(sc
     service, repository = _service(scope, _item())
     command = dict(
         actor=_actor(),
-        actor_enabled=True,
+        authority=_authority("claim"),
         inbox_item_ref=_item().inbox_item_ref,
         expected_revision=1,
         request_id="REQ-CLAIM-01",
@@ -98,7 +178,7 @@ def test_inbox_operation_injected_failure_rolls_back_state_audit_and_receipt(sco
         service.claim(
             scope,
             actor=_actor(),
-            actor_enabled=True,
+            authority=_authority("claim"),
             inbox_item_ref=item.inbox_item_ref,
             expected_revision=1,
             request_id="REQ-CLAIM-ROLLBACK",
@@ -122,7 +202,7 @@ def test_inbox_operation_response_loss_replays_one_stable_result(scope) -> None:
     service = InboxOperations(repository)
     command = dict(
         actor=_actor(),
-        actor_enabled=True,
+        authority=_authority("claim"),
         inbox_item_ref=item.inbox_item_ref,
         expected_revision=1,
         request_id="REQ-CLAIM-LOSS",
@@ -139,16 +219,13 @@ def test_inbox_operation_response_loss_replays_one_stable_result(scope) -> None:
 
 
 @pytest.mark.parametrize(
-    ("actor", "enabled", "error"),
+    ("actor", "error"),
     [
-        (_actor(team="TEM-OTHER"), True, "team"),
-        (_actor(), False, "disabled"),
-        (_actor(role="AI Assistant"), True, "Sales User"),
+        (_actor(team="TEM-OTHER"), "team"),
+        (_actor(role="AI Assistant"), "Sales User"),
     ],
 )
-def test_claim_rejects_cross_team_disabled_or_non_sales_actor(
-    scope, actor, enabled: bool, error: str
-) -> None:
+def test_claim_rejects_cross_team_or_non_sales_actor(scope, actor, error: str) -> None:
     from services.email_gateway.models import AuthorizationError, ScopeViolation
 
     item = _item()
@@ -157,7 +234,7 @@ def test_claim_rejects_cross_team_disabled_or_non_sales_actor(
         service.claim(
             scope,
             actor=actor,
-            actor_enabled=enabled,
+            authority=_authority("claim", actor=actor),
             inbox_item_ref=item.inbox_item_ref,
             expected_revision=1,
             request_id="REQ-CLAIM-02",
@@ -173,17 +250,52 @@ def test_stale_revision_and_idempotency_payload_drift_fail_closed(scope) -> None
     service, _ = _service(scope, item)
     base = dict(
         actor=_actor(),
-        actor_enabled=True,
         inbox_item_ref=item.inbox_item_ref,
         request_id="REQ-CLAIM-03",
         idempotency_key="claim-03",
         now=NOW + timedelta(seconds=1),
     )
     with pytest.raises(RevisionConflict):
-        service.claim(scope, expected_revision=9, **base)
-    service.claim(scope, expected_revision=1, **base)
+        service.claim(
+            scope,
+            authority=_authority("claim", expected_revision=9),
+            expected_revision=9,
+            **base,
+        )
+    service.claim(scope, authority=_authority("claim"), expected_revision=1, **base)
     with pytest.raises(IdempotencyConflict):
-        service.claim(scope, expected_revision=2, **base)
+        service.claim(
+            scope,
+            authority=_authority("claim", expected_revision=2),
+            expected_revision=2,
+            **base,
+        )
+
+
+def test_idempotent_replay_rejects_authority_revision_drift(scope) -> None:
+    from services.email_gateway.models import IdempotencyConflict
+
+    item = _item()
+    service, _ = _service(scope, item)
+    authority = _authority("claim")
+    command = dict(
+        actor=_actor(),
+        inbox_item_ref=item.inbox_item_ref,
+        expected_revision=1,
+        request_id="REQ-CLAIM-AUTHORITY-DRIFT",
+        idempotency_key="claim-authority-drift",
+        now=NOW + timedelta(seconds=1),
+    )
+    service.claim(scope, authority=authority, **command)
+    with pytest.raises(IdempotencyConflict, match="drift"):
+        service.claim(
+            scope,
+            authority=replace(
+                authority,
+                actor_eligibility_revision="sha256:" + "c" * 64,
+            ),
+            **command,
+        )
 
 
 def test_idempotent_replay_rechecks_current_team_authorization(scope) -> None:
@@ -192,16 +304,16 @@ def test_idempotent_replay_rechecks_current_team_authorization(scope) -> None:
     item = _item()
     service, _ = _service(scope, item)
     command = dict(
-        actor_enabled=True,
         inbox_item_ref=item.inbox_item_ref,
         expected_revision=1,
         request_id="REQ-CLAIM-REPLAY",
         idempotency_key="claim-replay",
         now=NOW + timedelta(seconds=1),
     )
-    service.claim(scope, actor=_actor(), **command)
+    service.claim(scope, actor=_actor(), authority=_authority("claim"), **command)
     with pytest.raises(ScopeViolation, match="team"):
-        service.claim(scope, actor=_actor(team="TEM-OTHER"), **command)
+        other = _actor(team="TEM-OTHER")
+        service.claim(scope, actor=other, authority=_authority("claim", actor=other), **command)
 
 
 def test_manager_reassign_and_reopen_are_closed_role_transitions(scope) -> None:
@@ -211,11 +323,9 @@ def test_manager_reassign_and_reopen_are_closed_role_transitions(scope) -> None:
     reassigned = service.reassign(
         scope,
         actor=manager,
-        actor_enabled=True,
+        authority=_authority("reassign", actor=manager, target_user_ref="sales-02"),
         inbox_item_ref=assigned.inbox_item_ref,
         assignee_user_ref="sales-02",
-        assignee_team_ref="TEM-01",
-        assignee_enabled=True,
         expected_revision=1,
         request_id="REQ-REASSIGN-01",
         idempotency_key="reassign-01",
@@ -223,7 +333,25 @@ def test_manager_reassign_and_reopen_are_closed_role_transitions(scope) -> None:
     )
     assert (reassigned.state, reassigned.assignee_user_ref) == ("assigned", "sales-02")
 
-    closed = replace(reassigned, state="closed", revision=3)
+    unassigned = service.reassign(
+        scope,
+        actor=manager,
+        authority=_authority(
+            "reassign",
+            actor=manager,
+            inbox_ref=assigned.inbox_item_ref,
+            expected_revision=2,
+        ),
+        inbox_item_ref=assigned.inbox_item_ref,
+        assignee_user_ref=None,
+        expected_revision=2,
+        request_id="REQ-UNASSIGN-01",
+        idempotency_key="unassign-01",
+        now=NOW + timedelta(seconds=2),
+    )
+    assert (unassigned.state, unassigned.assignee_user_ref) == ("unassigned", None)
+
+    closed = replace(unassigned, state="closed", revision=4)
     service.repository.save_inbox(scope, closed)
     reopened = service.reopen(
         scope,
@@ -232,10 +360,10 @@ def test_manager_reassign_and_reopen_are_closed_role_transitions(scope) -> None:
         inbox_item_ref=closed.inbox_item_ref,
         target_state="unassigned",
         assignee_user_ref=None,
-        expected_revision=3,
+        expected_revision=4,
         request_id="REQ-REOPEN-01",
         idempotency_key="reopen-01",
-        now=NOW + timedelta(seconds=2),
+        now=NOW + timedelta(seconds=3),
     )
     assert (reopened.state, reopened.assignee_user_ref) == ("unassigned", None)
 
@@ -344,11 +472,9 @@ def test_business_link_requires_closed_frappe_authority_and_never_creates_crm(sc
     linked = service.link_business(
         scope,
         actor=_actor(),
-        actor_enabled=True,
+        authority=_authority("link_business", business_ref="CRM-DEAL-01"),
         inbox_item_ref=item.inbox_item_ref,
         business_ref="CRM-DEAL-01",
-        authority_valid=True,
-        authority_team_ref="TEM-01",
         expected_revision=1,
         request_id="REQ-LINK-01",
         idempotency_key="link-01",
@@ -359,11 +485,9 @@ def test_business_link_requires_closed_frappe_authority_and_never_creates_crm(sc
         service.link_business(
             scope,
             actor=_actor(),
-            actor_enabled=True,
+            authority=_authority("link_business", business_ref="CRM-DEAL-01", expected_revision=2),
             inbox_item_ref=item.inbox_item_ref,
             business_ref="CRM-DEAL-02",
-            authority_valid=False,
-            authority_team_ref="TEM-01",
             expected_revision=2,
             request_id="REQ-LINK-02",
             idempotency_key="link-02",

@@ -52,7 +52,9 @@ def test_postgres_repository_surface_is_complete() -> None:
         PostgresMailboxConfigOutboxRepository,
         PostgresMailboxRepository,
     )
+    from services.email_gateway.repositories.sla import PostgresSlaRepository
     from services.email_gateway.repositories.workflow import PostgresWorkflowRepository
+    from services.email_gateway.repository import SlaOperationRepository
 
     mailbox = PostgresMailboxRepository(
         _ExplodingConnection(),
@@ -67,6 +69,7 @@ def test_postgres_repository_surface_is_complete() -> None:
     )
     identity = PostgresIdentityProjectionRepository(_ExplodingConnection())
     workflow = PostgresWorkflowRepository(_ExplodingConnection())
+    sla = PostgresSlaRepository(_ExplodingConnection(), workflow)
     audit = PostgresAuditRepository(_ExplodingConnection())
 
     expected = {
@@ -98,11 +101,19 @@ def test_postgres_repository_surface_is_complete() -> None:
             "get_conversation",
             "split_conversation",
         },
+        sla: {"get_inbox", "get_sla", "replay", "apply_inbox_sla_operation"},
         audit: {"append"},
         config_outbox: {"claim", "heartbeat", "mark_delivered", "mark_failed"},
     }
     for repository, methods in expected.items():
         assert methods <= {name for name in dir(repository) if callable(getattr(repository, name))}
+
+    assert {
+        "get_inbox",
+        "get_sla",
+        "replay",
+        "apply_inbox_sla_operation",
+    } <= set(SlaOperationRepository.__dict__)
 
     assert timedelta(seconds=1) < timedelta(hours=1)
 

@@ -15,6 +15,25 @@ RAW_MAILBOX_ADDRESS = "mailbox-raw-sentinel@example.invalid"
 OPAQUE_MAILBOX_ADDRESS = "extid:v1:email:" + "M" * 43
 
 
+def command_authority(command: str = "claim") -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "command": command,
+        "actor_ref_digest": "sha256:" + "d" * 64,
+        "actor_roles": ["Sales User"],
+        "actor_team_refs": [TEAM_ONE, TEAM_TWO],
+        "actor_eligibility_revision": "sha256:" + "a" * 64,
+        "inbox_item_ref": "INB-01",
+        "expected_inbox_revision": 1,
+        "target_user_ref_digest": None,
+        "target_team_refs": [],
+        "target_eligibility_revision": None,
+        "business_ref": None,
+        "business_team_ref": None,
+        "business_revision": None,
+    }
+
+
 class FakeFrappe(ModuleType):
     def __init__(self) -> None:
         super().__init__("frappe")
@@ -670,6 +689,11 @@ def test_inbox_claim_delegates_exact_current_actor_scope_revision_and_idempotenc
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
         inbox,
+        "derive_inbox_command_authority",
+        lambda **_kwargs: command_authority(),
+    )
+    monkeypatch.setattr(
+        inbox,
         "call_gateway",
         lambda **kwargs: (
             calls.append(kwargs)
@@ -698,16 +722,85 @@ def test_inbox_claim_delegates_exact_current_actor_scope_revision_and_idempotenc
                 "inbox_item_ref": "INB-01",
                 "expected_revision": 1,
                 "idempotency_key": "claim-0001",
+                "authority_receipt": command_authority(),
             },
             "idempotency_key": "claim-0001",
         }
     ]
 
 
+def test_reassign_derives_closed_authority_server_side_and_forwards_no_boolean(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, _admin, inbox, _fake = v5_modules
+    calls: list[dict[str, Any]] = []
+    receipt = {
+        "schema_version": "1.0",
+        "command": "reassign",
+        "actor_ref_digest": "sha256:" + "d" * 64,
+        "actor_roles": ["Sales Manager"],
+        "actor_team_refs": [TEAM_ONE],
+        "actor_eligibility_revision": "sha256:" + "a" * 64,
+        "inbox_item_ref": "INB-01",
+        "expected_inbox_revision": 1,
+        "target_user_ref_digest": "sha256:" + "e" * 64,
+        "target_team_refs": [TEAM_ONE],
+        "target_eligibility_revision": "sha256:" + "b" * 64,
+        "business_ref": None,
+        "business_team_ref": None,
+        "business_revision": None,
+    }
+    monkeypatch.setattr(inbox, "derive_inbox_command_authority", lambda **_kwargs: receipt)
+    monkeypatch.setattr(
+        inbox,
+        "call_gateway",
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or {"inbox_item": {"inbox_item_ref": "INB-01", "state": "assigned", "revision": 2}}
+        ),
+    )
+
+    inbox.reassign(
+        "INB-01",
+        expected_revision="1",
+        idempotency_key="reassign-0001",
+        assignee_user_ref="other@example.invalid",
+    )
+
+    payload = calls[0]["payload"]
+    assert payload["authority_receipt"] == receipt
+    assert "assignee_enabled" not in payload
+    assert "assignee_team_ref" not in payload
+
+
+def test_inbox_authority_conflict_returns_bounded_409(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, _admin, inbox, _fake = v5_modules
+    authority = importlib.import_module("esan_gbos.api.internal.email_gateway_authority")
+    monkeypatch.setattr(
+        authority,
+        "derive_inbox_command_authority",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            authority.InboxCommandAuthorityConflict("authority_conflict")
+        ),
+    )
+
+    with pytest.raises(inbox.BFFError) as caught:
+        inbox.claim("INB-01", expected_revision="1", idempotency_key="claim-conflict")
+    assert caught.value.status == 409
+    assert caught.value.code == "authority_conflict"
+
+
 def test_inbox_command_projection_replaces_raw_actor_and_team_refs_with_labels(
     v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _gateway, _admin, inbox, _fake = v5_modules
+    monkeypatch.setattr(
+        inbox,
+        "derive_inbox_command_authority",
+        lambda **_kwargs: command_authority(),
+    )
     monkeypatch.setattr(
         inbox,
         "call_gateway",

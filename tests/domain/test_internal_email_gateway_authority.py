@@ -92,6 +92,7 @@ class _Database:
         self.rollbacks = 0
         self.raise_on_sql: Exception | None = None
         self.queries: list[str] = []
+        self.command_rows: list[dict[str, Any]] = []
 
     def sql(
         self,
@@ -106,6 +107,8 @@ class _Database:
             raise self.raise_on_sql
         if "owner_user_ref" in query:
             rows = self.route_rows_by_mapping.get(values["mapping_ref"], self.route_rows)
+        elif "actor_eligibility_revision" in query:
+            rows = self.command_rows
         else:
             rows = self.mapping_rows
         return deepcopy(rows)
@@ -870,3 +873,105 @@ def test_exact_service_identity_and_request_scope_are_fail_closed_and_cleaned(
     assert fake.local.response["http_status_code"] == 500
     assert fake.local.response["headers"]["Cache-Control"] == "no-store"
     assert not access.email_gateway_authority_scope_active()
+
+
+def test_bff_command_authority_is_closed_and_derived_from_locked_current_rows(
+    authority_api: tuple[Any, _Frappe],
+) -> None:
+    api, fake = authority_api
+    fake.session.user = OWNER
+    fake.roles[OWNER] = {"Sales User"}  # must not be the authority source
+    fake.db.command_rows = [
+        {
+            "actor_ref": OWNER,
+            "actor_enabled": 1,
+            "actor_modified": "2026-08-13T00:00:00Z",
+            "actor_team_ref": TEAM,
+            "actor_membership_enabled": 1,
+            "actor_membership_modified": "2026-08-13T00:00:00Z",
+            "target_user_ref": "other@example.invalid",
+            "target_enabled": 1,
+            "target_modified": "2026-08-13T00:00:01Z",
+            "target_team_ref": TEAM,
+            "target_membership_enabled": 1,
+            "target_membership_modified": "2026-08-13T00:00:01Z",
+            "actor_eligibility_revision": "ignored-by-server",
+            "actor_role": "Sales Manager",
+        }
+    ]
+
+    receipt = api.derive_inbox_command_authority(
+        command="reassign",
+        inbox_item_ref=INBOX,
+        expected_inbox_revision=4,
+        target_user_ref="other@example.invalid",
+        business_ref=None,
+    )
+
+    assert set(receipt) == {
+        "schema_version",
+        "command",
+        "actor_ref_digest",
+        "actor_roles",
+        "actor_team_refs",
+        "actor_eligibility_revision",
+        "inbox_item_ref",
+        "expected_inbox_revision",
+        "target_user_ref_digest",
+        "target_team_refs",
+        "target_eligibility_revision",
+        "business_ref",
+        "business_team_ref",
+        "business_revision",
+    }
+    assert receipt["actor_ref_digest"].startswith("sha256:")
+    assert OWNER not in repr(receipt)
+    assert receipt["actor_roles"] == ["Sales Manager"]
+    assert receipt["target_user_ref_digest"].startswith("sha256:")
+    assert "other@example.invalid" not in repr(receipt)
+    assert all("for update" in query.lower() for query in fake.db.queries)
+    assert any("tabhas role" in query.lower() for query in fake.db.queries)
+    assert not set(receipt) & {"actor_enabled", "assignee_enabled", "authority_valid"}
+
+
+def test_contact_business_link_authority_is_locked_and_team_revision_bound(
+    authority_api: tuple[Any, _Frappe],
+) -> None:
+    api, fake = authority_api
+    fake.session.user = OWNER
+    fake.db.command_rows = [
+        {
+            "actor_ref": OWNER,
+            "actor_enabled": 1,
+            "actor_modified": "2026-08-13T00:00:00Z",
+            "actor_team_ref": TEAM,
+            "actor_membership_enabled": 1,
+            "actor_membership_modified": "2026-08-13T00:00:00Z",
+            "target_user_ref": None,
+            "target_enabled": None,
+            "target_modified": None,
+            "target_team_ref": None,
+            "target_membership_enabled": None,
+            "target_membership_modified": None,
+            "actor_eligibility_revision": "ignored-by-server",
+            "actor_role": "Sales User",
+        }
+    ]
+    contact_ref = "CNT-01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    fake.documents[("Contact", contact_ref)] = SimpleNamespace(
+        name=contact_ref,
+        custom_esan_team=TEAM,
+        modified="2026-08-13T00:00:02Z",
+    )
+
+    receipt = api.derive_inbox_command_authority(
+        command="link_business",
+        inbox_item_ref=INBOX,
+        expected_inbox_revision=4,
+        business_ref=contact_ref,
+    )
+
+    assert receipt["business_ref"] == contact_ref
+    assert receipt["business_team_ref"] == TEAM
+    assert str(receipt["business_revision"]).startswith("sha256:")
+    assert fake.document_reads == [("Contact", contact_ref, True)]

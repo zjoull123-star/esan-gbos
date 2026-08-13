@@ -73,6 +73,24 @@ def _optional(value: str | None) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+def derive_inbox_command_authority(**values: Any) -> dict[str, Any]:
+    from esan_gbos.api.internal.email_gateway_authority import (
+        InboxCommandAuthorityConflict,
+    )
+    from esan_gbos.api.internal.email_gateway_authority import (
+        derive_inbox_command_authority as derive,
+    )
+
+    try:
+        return derive(**values)
+    except InboxCommandAuthorityConflict as error:
+        raise BFFError(
+            "authority_conflict",
+            "Inbox command authority changed",
+            status=409,
+        ) from error
+
+
 def _label(doctype: str, reference: object, field: str) -> str | None:
     if not isinstance(reference, str) or not reference:
         return None
@@ -168,6 +186,17 @@ def get(inbox_item_ref: str) -> dict[str, Any]:
 
 def _command(name: str, command: dict[str, Any], result_key: str) -> dict[str, Any]:
     require_roles(EMAIL_COMMAND_ROLES)
+    if name in {"claim", "reassign", "link_business"}:
+        command = {
+            **command,
+            "authority_receipt": derive_inbox_command_authority(
+                command=name,
+                inbox_item_ref=str(command["inbox_item_ref"]),
+                expected_inbox_revision=int(command["expected_revision"]),
+                target_user_ref=command.get("assignee_user_ref") if name == "reassign" else None,
+                business_ref=command.get("business_ref") if name == "link_business" else None,
+            ),
+        }
     payload = {**scope_payload(business_read=True), **command}
     key = str(command["idempotency_key"])
 
@@ -257,16 +286,12 @@ def claim(
 @bff_endpoint("POST")
 def reassign(
     inbox_item_ref: str,
-    assignee_team_ref: str,
-    assignee_enabled: bool | int | str,
     expected_revision: int | str,
     idempotency_key: str,
     assignee_user_ref: str | None = None,
 ) -> dict[str, Any]:
     command: dict[str, Any] = {
         "inbox_item_ref": inbox_item_ref,
-        "assignee_team_ref": assignee_team_ref,
-        "assignee_enabled": _boolean(assignee_enabled, "assignee_enabled"),
         "expected_revision": _integer(expected_revision, "expected_revision"),
         "idempotency_key": idempotency_key,
     }
@@ -350,8 +375,6 @@ def split(
 def link_business(
     inbox_item_ref: str,
     business_ref: str,
-    authority_valid: bool | int | str,
-    authority_team_ref: str,
     expected_revision: int | str,
     idempotency_key: str,
 ) -> dict[str, Any]:
@@ -360,8 +383,6 @@ def link_business(
         {
             "inbox_item_ref": inbox_item_ref,
             "business_ref": business_ref,
-            "authority_valid": _boolean(authority_valid, "authority_valid"),
-            "authority_team_ref": authority_team_ref,
             "expected_revision": _integer(expected_revision, "expected_revision"),
             "idempotency_key": idempotency_key,
         },

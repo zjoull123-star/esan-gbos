@@ -18,6 +18,8 @@ def _all_sql() -> str:
         "007_email_gateway_outbound.sql",
         "008_email_gateway_participant_authority.sql",
         "009_email_gateway_mailbox_identity.sql",
+        "010_email_gateway_sla_authority.sql",
+        "011_email_gateway_retention_runtime.sql",
     ]
     return "\n".join(path.read_text() for path in files).lower()
 
@@ -52,6 +54,10 @@ def test_migrations_create_exact_gateway_inventory() -> None:
         "email_gateway.send_attempts",
         "email_gateway.provider_receipts",
         "email_gateway.reconciliation_receipts",
+        "email_gateway.inbox_sla_events",
+        "email_gateway.inbox_authority_receipts",
+        "email_gateway.retention_run_items",
+        "email_gateway.retention_audit_events",
     }
     for relation in required:
         assert f"table if not exists {relation}" in sql
@@ -101,6 +107,10 @@ def test_every_business_table_forces_rls_and_public_has_no_grants() -> None:
         "send_attempts",
         "provider_receipts",
         "reconciliation_receipts",
+        "inbox_sla_events",
+        "inbox_authority_receipts",
+        "retention_run_items",
+        "retention_audit_events",
     ]
     for table in tables:
         relation = f"email_gateway.{table}"

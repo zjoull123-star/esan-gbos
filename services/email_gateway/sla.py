@@ -99,6 +99,9 @@ class SlaClock:
         if self.status == "not_applicable":
             raise AuthorizationError("quarantined SLA cannot complete")
         if self.completed_at is not None:
+            if not provider_accepted or not receipt_ref:
+                raise AuthorizationError("provider-accepted outbound receipt required")
+            self._require_no_regression(accepted_at)
             return self
         if not provider_accepted or not receipt_ref:
             raise AuthorizationError("provider-accepted outbound receipt required")
@@ -159,6 +162,13 @@ class SlaClock:
 
     def _require_no_regression(self, value: datetime) -> None:
         _aware(value, "SLA event time")
-        floor = self.completed_at or self.closed_at or self.started_at
+        floor = max(
+            (
+                event_at
+                for event_at in (self.started_at, self.completed_at, self.closed_at)
+                if event_at is not None
+            ),
+            default=None,
+        )
         if floor is not None and value < floor:
             raise ValidationError("SLA clock regression")

@@ -33,6 +33,12 @@ def contract() -> dict[str, object]:
     return json.loads(CONTRACT.read_text(encoding="utf-8"))
 
 
+def test_v5_commands_do_not_accept_caller_authority_booleans() -> None:
+    serialized = json.dumps(contract(), sort_keys=True)
+    for forbidden in ("assignee_enabled", "authority_valid", "authority_team_ref"):
+        assert forbidden not in serialized
+
+
 def resolve_schema(value: dict[str, object], schema: dict[str, object]) -> dict[str, object]:
     reference = schema.get("$ref")
     if not isinstance(reference, str):

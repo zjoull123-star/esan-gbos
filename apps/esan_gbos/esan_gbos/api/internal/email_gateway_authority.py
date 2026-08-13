@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -72,6 +74,8 @@ _COMMAND_FIELDS = frozenset(
         "payload_digest",
     }
 )
+_INBOX_COMMAND_ROLES = frozenset({"Sales Manager", "Sales User", "Reviewer", "GBOS Admin"})
+_INBOX_SUPERVISOR_ROLES = frozenset({"Sales Manager", "Reviewer", "GBOS Admin"})
 
 
 class _APIError(Exception):
@@ -79,6 +83,10 @@ class _APIError(Exception):
         super().__init__(code)
         self.code = code
         self.status = status
+
+
+class InboxCommandAuthorityConflict(ValueError):
+    """The live actor, target, or business authority could not be proven."""
 
 
 def _endpoint[Endpoint: Callable[[dict[str, Any]], dict[str, Any]]](
@@ -174,6 +182,227 @@ def resolve_email_send_command(payload: dict[str, Any]) -> dict[str, Any]:
         ):
             raise _APIError("email_send_authority_unavailable", 409) from None
     return {"email_send_authority": authority}
+
+
+def derive_inbox_command_authority(
+    *,
+    command: str,
+    inbox_item_ref: str,
+    expected_inbox_revision: int,
+    target_user_ref: str | None = None,
+    business_ref: str | None = None,
+) -> dict[str, Any]:
+    """Derive one closed command receipt inside the authenticated Frappe request."""
+
+    try:
+        return _derive_inbox_command_authority(
+            command=command,
+            inbox_item_ref=inbox_item_ref,
+            expected_inbox_revision=expected_inbox_revision,
+            target_user_ref=target_user_ref,
+            business_ref=business_ref,
+        )
+    except InboxCommandAuthorityConflict:
+        raise
+    except (
+        _APIError,
+        frappe.DoesNotExistError,
+        frappe.PermissionError,
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
+        raise InboxCommandAuthorityConflict("authority_conflict") from None
+
+
+def _derive_inbox_command_authority(
+    *,
+    command: str,
+    inbox_item_ref: str,
+    expected_inbox_revision: int,
+    target_user_ref: str | None = None,
+    business_ref: str | None = None,
+) -> dict[str, Any]:
+
+    actor = str(getattr(frappe.session, "user", ""))
+    if (
+        command not in {"claim", "reassign", "link_business"}
+        or not actor
+        or actor == "Guest"
+        or isinstance(expected_inbox_revision, bool)
+        or expected_inbox_revision < 1
+    ):
+        raise _APIError("authority_conflict", 409)
+    rows = frappe.db.sql(
+        """
+        select actor.`name` as `actor_ref`, actor.`enabled` as `actor_enabled`,
+               actor.`modified` as `actor_modified`,
+               actor_member.`parent` as `actor_team_ref`,
+               actor_member.`enabled` as `actor_membership_enabled`,
+               actor_member.`modified` as `actor_membership_modified`,
+               target.`name` as `target_user_ref`, target.`enabled` as `target_enabled`,
+               target.`modified` as `target_modified`,
+               target_member.`parent` as `target_team_ref`,
+               target_member.`enabled` as `target_membership_enabled`,
+               target_member.`modified` as `target_membership_modified`,
+               actor_role.`role` as `actor_role`,
+               actor.`modified` as `actor_eligibility_revision`
+          from `tabUser` actor
+          left join `tabHas Role` actor_role
+            on actor_role.`parent` = actor.`name`
+           and actor_role.`parenttype` = 'User'
+           and actor_role.`parentfield` = 'roles'
+          left join `tabGBOS Team Member` actor_member
+            on actor_member.`user` = actor.`name`
+          left join `tabUser` target on target.`name` = %(target_user_ref)s
+          left join `tabGBOS Team Member` target_member
+            on target_member.`user` = target.`name`
+         where actor.`name` = %(actor_ref)s
+         limit 201
+         for update
+        """,
+        {"actor_ref": actor, "target_user_ref": target_user_ref},
+        as_dict=True,
+    )
+    normalized = _rows(rows)
+    if not normalized or len(normalized) > 200:
+        raise _APIError("authority_conflict", 409)
+    roles = sorted(
+        {
+            str(row.get("actor_role"))
+            for row in normalized
+            if isinstance(row.get("actor_role"), str)
+            and row.get("actor_role") in _INBOX_COMMAND_ROLES
+        }
+    )
+    required_roles = _INBOX_SUPERVISOR_ROLES if command == "reassign" else _INBOX_COMMAND_ROLES
+    actor_teams = sorted(
+        {
+            _row_ref(row.get("actor_team_ref"))
+            for row in normalized
+            if row.get("actor_membership_enabled") == 1
+        }
+    )
+    if (
+        any(row.get("actor_ref") != actor or row.get("actor_enabled") != 1 for row in normalized)
+        or not set(roles) & required_roles
+        or not actor_teams
+    ):
+        raise _APIError("authority_conflict", 409)
+    actor_revision = _authority_revision(
+        {
+            "actor_ref": actor,
+            "actor_modified": normalized[0].get("actor_modified"),
+            "roles": roles,
+            "teams": [
+                [row.get("actor_team_ref"), row.get("actor_membership_modified")]
+                for row in normalized
+                if row.get("actor_membership_enabled") == 1
+            ],
+        }
+    )
+    target_teams: list[str] = []
+    target_revision: str | None = None
+    if target_user_ref is not None:
+        target_teams = sorted(
+            {
+                _row_ref(row.get("target_team_ref"))
+                for row in normalized
+                if row.get("target_membership_enabled") == 1
+            }
+        )
+        if (
+            any(
+                row.get("target_user_ref") != target_user_ref or row.get("target_enabled") != 1
+                for row in normalized
+            )
+            or not target_teams
+        ):
+            raise _APIError("authority_conflict", 409)
+        target_revision = _authority_revision(
+            {
+                "target_user_ref": target_user_ref,
+                "target_modified": normalized[0].get("target_modified"),
+                "teams": [
+                    [row.get("target_team_ref"), row.get("target_membership_modified")]
+                    for row in normalized
+                    if row.get("target_membership_enabled") == 1
+                ],
+            }
+        )
+    business_team_ref: str | None = None
+    business_revision: int | str | None = None
+    if business_ref is not None:
+        business_team_ref, business_revision = _business_link_authority(business_ref)
+    return {
+        "schema_version": "1.0",
+        "command": command,
+        "actor_ref_digest": _user_authority_digest(actor),
+        "actor_roles": roles,
+        "actor_team_refs": actor_teams,
+        "actor_eligibility_revision": actor_revision,
+        "inbox_item_ref": _ref(inbox_item_ref),
+        "expected_inbox_revision": expected_inbox_revision,
+        "target_user_ref_digest": (
+            None if target_user_ref is None else _user_authority_digest(target_user_ref)
+        ),
+        "target_team_refs": target_teams,
+        "target_eligibility_revision": target_revision,
+        "business_ref": business_ref,
+        "business_team_ref": business_team_ref,
+        "business_revision": business_revision,
+    }
+
+
+def _business_link_authority(business_ref: str) -> tuple[str, int | str]:
+    reference = _ref(business_ref)
+    if reference.startswith("PTY-"):
+        doctype, team_field = "GBOS Party Profile", "team"
+    elif reference.startswith("CNT-"):
+        doctype, team_field = "Contact", "custom_esan_team"
+    elif reference.startswith("CRM-LEAD-"):
+        doctype, team_field = "CRM Lead", "custom_esan_team"
+    elif reference.startswith("CRM-DEAL-"):
+        doctype, team_field = "CRM Deal", "custom_esan_team"
+    else:
+        raise _APIError("authority_conflict", 409)
+    document = frappe.get_doc(doctype, reference, for_update=True)
+    team = _row_ref(getattr(document, team_field, None))
+    if doctype == "GBOS Party Profile":
+        if (
+            getattr(document, "business_status", None) != "Active"
+            or getattr(document, "review_status", None) != "Approved"
+        ):
+            raise _APIError("authority_conflict", 409)
+        revision: int | str = _row_positive_integer(getattr(document, "revision", None))
+    else:
+        revision = _authority_revision(
+            {
+                "doctype": doctype,
+                "name": reference,
+                "team": team,
+                "modified": getattr(document, "modified", None),
+            }
+        )
+    return team, revision
+
+
+def _authority_revision(value: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+        default=str,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _user_authority_digest(user_ref: str) -> str:
+    return _authority_revision(
+        {"site_id": str(getattr(frappe.local, "site", "")), "user_ref": user_ref}
+    )
 
 
 def _email_send_command_authority(request: Mapping[str, Any]) -> dict[str, Any]:
@@ -806,4 +1035,10 @@ def _review_case_ref(value: object) -> str:
     return "RVC-" + name[4:]
 
 
-__all__ = ["project", "resolve_email_send_command", "resolve_route"]
+__all__ = [
+    "InboxCommandAuthorityConflict",
+    "derive_inbox_command_authority",
+    "project",
+    "resolve_email_send_command",
+    "resolve_route",
+]

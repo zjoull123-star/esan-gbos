@@ -15,6 +15,7 @@ from .models import (
     TenantScope,
 )
 from .phase1_read import ConnectorHealth, Page, Phase1InboxItem, Phase1Mailbox
+from .sla import SlaClock
 
 
 class MailboxRepository(Protocol):
@@ -59,6 +60,32 @@ class WorkflowRepository(Protocol):
     def save_draft(
         self, scope: TenantScope, draft: Draft, *, idempotency_key: str, payload_digest: str
     ) -> Draft: ...
+
+
+class SlaOperationRepository(Protocol):
+    """Atomic Inbox command persistence with its SLA and durable receipts."""
+
+    def get_inbox(self, scope: TenantScope, inbox_ref: str) -> InboxItem | None: ...
+
+    def get_sla(self, scope: TenantScope, inbox_ref: str) -> SlaClock | None: ...
+
+    def replay(
+        self, scope: TenantScope, idempotency_key: str, payload_digest: str
+    ) -> InboxItem | None: ...
+
+    def apply_inbox_sla_operation(
+        self,
+        scope: TenantScope,
+        *,
+        before: InboxItem,
+        revised: InboxItem,
+        sla_before: SlaClock,
+        sla_revised: SlaClock,
+        audit_event: AuditEvent,
+        idempotency_key: str,
+        payload_digest: str,
+        authority_receipt: Mapping[str, object] | None = None,
+    ) -> InboxItem: ...
 
 
 class AuditRepository(Protocol):
