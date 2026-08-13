@@ -12,6 +12,7 @@ from email.message import EmailMessage
 from email.policy import SMTP
 from typing import Any, Protocol
 
+from .email_draft_material_repository import EmailDraftMaterialRepository
 from .email_participant_authority import (
     EmailParticipantAuthorityBinding,
     canonical_binding_digest,
@@ -49,6 +50,8 @@ _ROLE_NAMES = frozenset(
     {"mailbox_owner", "original_sender", "original_to", "original_cc", "assigned_owner"}
 )
 _MAX_DRAFT_BYTES = 131_072
+_MAX_FINAL_MIME_BYTES = 262_144
+_PURPOSE = "email_draft_material"
 
 
 class CasStore(Protocol):
@@ -175,15 +178,16 @@ class EmailDraftMaterialService:
         self,
         *,
         store: CasStore,
+        repository: EmailDraftMaterialRepository,
         participant_resolver: ParticipantResolver,
         clock: Callable[[], datetime],
     ) -> None:
         if not callable(participant_resolver) or not callable(clock):
             raise TypeError("draft material dependencies must be callable")
         self._store = store
+        self._repository = repository
         self._participant_resolver = participant_resolver
         self._clock = clock
-        self._replays: dict[str, tuple[str, dict[str, object]]] = {}
 
     def __repr__(self) -> str:
         return "EmailDraftMaterialService(store=<redacted>, resolver=<redacted>)"
@@ -217,17 +221,66 @@ class EmailDraftMaterialService:
             or digest != authorization.request_digest
         ):
             raise ValueError("draft content digest drift")
-        replay = self._replay(idempotency_key, digest)
+        request_digest = _json_digest(
+            {
+                "authorization": _authorization_semantics(authorization),
+                "content_digest": digest,
+            }
+        )
+        replay = self._repository.replay(
+            scope,
+            purpose=_PURPOSE,
+            operation="save",
+            idempotency_key=idempotency_key,
+            request_digest=request_digest,
+        )
         if replay is not None:
-            return replay
+            receipt = _save_receipt(replay)
+            replayed = self._resolve_draft_material(
+                scope,
+                authorization=authorization,
+                evidence_ref=str(receipt["evidence_ref"]),
+                expected_digest=digest,
+            )
+            if not hmac.compare_digest(replayed, encoded):
+                raise ValueError("draft material replay integrity drift")
+            return receipt
         stored = self._store.put(scope, encoded, media_type="text/plain; charset=utf-8")
+        evidence_ref = "EVR-" + stable_ulid(
+            "email-draft-evidence",
+            scope.site_id,
+            authorization.inbox_item_ref,
+            authorization.draft_ref,
+            str(authorization.draft_revision),
+            digest,
+            str(stored.object_ref),
+        )
+        created_at = self._now()
         result: dict[str, object] = {
-            "evidence_ref": str(stored.object_ref),
+            "evidence_ref": evidence_ref,
             "digest": digest,
             "revision": authorization.draft_revision,
         }
-        self._replays[idempotency_key] = (digest, result)
-        return dict(result)
+        return _save_receipt(
+            self._repository.commit_save(
+                scope,
+                purpose=_PURPOSE,
+                idempotency_key=idempotency_key,
+                request_digest=request_digest,
+                receipt=result,
+                binding={
+                    "inbox_item_ref": authorization.inbox_item_ref,
+                    "draft_ref": authorization.draft_ref,
+                    "draft_revision": authorization.draft_revision,
+                    "evidence_ref": evidence_ref,
+                    "object_ref": str(stored.object_ref),
+                    "digest": digest,
+                    "media_type": "text/plain; charset=utf-8",
+                    "byte_size": len(encoded),
+                    "created_at": created_at,
+                },
+            )
+        )
 
     def finalize(
         self,
@@ -251,21 +304,21 @@ class EmailDraftMaterialService:
         role_binding = canonical_binding_digest(roles)
         if not hmac.compare_digest(role_binding, authorization.participant_roles_digest):
             raise PermissionError("participant role binding mismatch")
-        material = self._store.read(scope, draft_evidence_ref)
-        actual_digest = "sha256:" + hashlib.sha256(material).hexdigest()
-        if actual_digest != draft_digest or len(material) > _MAX_DRAFT_BYTES:
-            raise ValueError("draft evidence integrity drift")
+        material = self._resolve_draft_material(
+            scope,
+            authorization=authorization,
+            evidence_ref=draft_evidence_ref,
+            expected_digest=draft_digest,
+        )
         replay_digest = _json_digest(
             {
+                "authorization": _authorization_semantics(authorization),
                 "draft_evidence_ref": draft_evidence_ref,
                 "draft_digest": draft_digest,
                 "draft_revision": draft_revision,
                 "participant_roles": roles,
             }
         )
-        replay = self._replay(idempotency_key, replay_digest)
-        if replay is not None:
-            return replay
         resolved = self._participant_resolver(scope, authorization, roles)
         sender, recipients, cc, subject, participants = _resolved_participants(resolved, roles)
         try:
@@ -280,8 +333,30 @@ class EmailDraftMaterialService:
         message["Subject"] = subject
         message.set_content(body, charset="utf-8")
         final_bytes = message.as_bytes(policy=SMTP)
-        stored = self._store.put(scope, final_bytes, media_type="message/rfc822")
+        if not final_bytes or len(final_bytes) > _MAX_FINAL_MIME_BYTES:
+            raise ValueError("final MIME is outside the size budget")
         final_digest = "sha256:" + hashlib.sha256(final_bytes).hexdigest()
+        replay = self._repository.replay(
+            scope,
+            purpose=_PURPOSE,
+            operation="finalize",
+            idempotency_key=idempotency_key,
+            request_digest=replay_digest,
+        )
+        if replay is not None:
+            receipt = _finalize_receipt(replay)
+            replayed_bytes = self.resolve_final_mime(
+                scope,
+                evidence_ref=str(receipt["evidence_ref"]),
+            )
+            if not hmac.compare_digest(replayed_bytes, final_bytes):
+                raise ValueError("final MIME replay integrity drift")
+            return receipt
+
+        # CAS and PostgreSQL cannot share one transaction. CAS is written first; if the
+        # durable commit fails, the content-addressed object is an unreachable orphan
+        # because neither its object_ref nor an EvidenceRef binding is returned.
+        stored = self._store.put(scope, final_bytes, media_type="message/rfc822")
         evidence_ref = "EVR-" + stable_ulid(
             "email-final-mime-evidence",
             scope.site_id,
@@ -296,26 +371,139 @@ class EmailDraftMaterialService:
             "role_binding": role_binding,
             "participants": participants,
         }
-        self._replays[idempotency_key] = (replay_digest, result)
-        return dict(result)
+        created_at = self._now()
+        return _finalize_receipt(
+            self._repository.commit_finalize(
+                scope,
+                purpose=_PURPOSE,
+                idempotency_key=idempotency_key,
+                request_digest=replay_digest,
+                receipt=result,
+                binding={
+                    "inbox_item_ref": authorization.inbox_item_ref,
+                    "draft_ref": authorization.draft_ref,
+                    "draft_revision": authorization.draft_revision,
+                    "evidence_ref": evidence_ref,
+                    "object_ref": str(stored.object_ref),
+                    "digest": final_digest,
+                    "media_type": "message/rfc822",
+                    "byte_size": len(final_bytes),
+                    "authorization_receipt_ref": authorization.receipt_ref,
+                    "gateway_receipt_ref": authorization.gateway_receipt_ref,
+                    "publication_ref": authorization.publication_ref,
+                    "message_ref": authorization.message_ref,
+                    "mailbox_ref": authorization.mailbox_ref,
+                    "mailbox_config_revision": authorization.mailbox_config_revision,
+                    "observer_delivery_ref": authorization.observer_delivery_ref,
+                    "payload_digest": authorization.payload_digest,
+                    "participant_binding_digest": authorization.participant_binding_digest,
+                    "evidence_binding_digest": authorization.evidence_binding_digest,
+                    "participant_roles_digest": authorization.participant_roles_digest,
+                    "role_binding_digest": role_binding,
+                    "source_draft_evidence_ref": draft_evidence_ref,
+                    "source_draft_digest": draft_digest,
+                    "created_at": created_at,
+                },
+            )
+        )
+
+    def resolve_final_mime(self, scope: TenantScope, *, evidence_ref: str) -> bytes:
+        """Resolve one final EVR through its durable binding and verify CAS metadata."""
+
+        _evidence_ref(evidence_ref)
+        binding = self._repository.resolve_final(
+            scope,
+            purpose=_PURPOSE,
+            evidence_ref=evidence_ref,
+        )
+        if binding is None:
+            raise LookupError("final MIME evidence is unavailable")
+        return self._read_binding(
+            scope,
+            binding,
+            expected_evidence_ref=evidence_ref,
+            expected_media_type="message/rfc822",
+            maximum=_MAX_FINAL_MIME_BYTES,
+        )
 
     def _authorize(self, scope: TenantScope, authorization: DraftAuthorizationReceipt) -> None:
-        now = self._clock()
-        if not isinstance(now, datetime) or now.tzinfo is None:
-            raise ValueError("draft material clock must be timezone-aware")
-        normalized = now.astimezone(UTC)
+        normalized = self._now()
         if authorization.site_id != scope.site_id:
             raise PermissionError("draft authorization site mismatch")
         if not authorization.issued_at <= normalized <= authorization.expires_at:
             raise PermissionError("draft authorization is stale")
 
-    def _replay(self, key: str, digest: str) -> dict[str, object] | None:
-        replay = self._replays.get(key)
-        if replay is None:
-            return None
-        if replay[0] != digest:
-            raise ValueError("draft material replay drift")
-        return dict(replay[1])
+    def _now(self) -> datetime:
+        now = self._clock()
+        if not isinstance(now, datetime) or now.tzinfo is None:
+            raise ValueError("draft material clock must be timezone-aware")
+        return now.astimezone(UTC)
+
+    def _resolve_draft_material(
+        self,
+        scope: TenantScope,
+        *,
+        authorization: DraftAuthorizationReceipt,
+        evidence_ref: str,
+        expected_digest: str,
+    ) -> bytes:
+        _evidence_ref(evidence_ref)
+        binding = self._repository.resolve_draft(
+            scope,
+            purpose=_PURPOSE,
+            evidence_ref=evidence_ref,
+        )
+        if binding is None:
+            raise LookupError("draft evidence is unavailable")
+        expected = {
+            "inbox_item_ref": authorization.inbox_item_ref,
+            "draft_ref": authorization.draft_ref,
+            "draft_revision": authorization.draft_revision,
+            "evidence_ref": evidence_ref,
+            "digest": expected_digest,
+        }
+        if any(binding.get(field) != value for field, value in expected.items()):
+            raise ValueError("draft evidence binding drift")
+        return self._read_binding(
+            scope,
+            binding,
+            expected_evidence_ref=evidence_ref,
+            expected_media_type="text/plain; charset=utf-8",
+            maximum=_MAX_DRAFT_BYTES,
+        )
+
+    def _read_binding(
+        self,
+        scope: TenantScope,
+        binding: Mapping[str, object],
+        *,
+        expected_evidence_ref: str,
+        expected_media_type: str,
+        maximum: int,
+    ) -> bytes:
+        required = {"evidence_ref", "object_ref", "digest", "media_type", "byte_size"}
+        if not required <= set(binding) or binding.get("evidence_ref") != expected_evidence_ref:
+            raise ValueError("evidence binding is invalid")
+        object_ref = _text(binding.get("object_ref"), "object_ref", maximum=512)
+        digest = binding.get("digest")
+        byte_size = binding.get("byte_size")
+        if (
+            not isinstance(digest, str)
+            or _DIGEST.fullmatch(digest) is None
+            or binding.get("media_type") != expected_media_type
+            or isinstance(byte_size, bool)
+            or not isinstance(byte_size, int)
+            or not 1 <= byte_size <= maximum
+        ):
+            raise ValueError("evidence binding is invalid")
+        try:
+            content = self._store.read(scope, object_ref)
+        except FileNotFoundError, ValueError:
+            raise ValueError("evidence CAS integrity drift") from None
+        actual = "sha256:" + hashlib.sha256(content).hexdigest()
+        if len(content) != byte_size or not hmac.compare_digest(actual, digest):
+            raise ValueError("evidence CAS integrity drift")
+        return content
 
 
 def _participant_roles(value: Mapping[str, object]) -> dict[str, object]:
@@ -433,6 +621,88 @@ def _time(value: object, field: str) -> datetime:
     if result.tzinfo is None:
         raise ValueError(f"invalid {field}")
     return result.astimezone(UTC)
+
+
+def _evidence_ref(value: object) -> str:
+    text = _text(value, "evidence_ref", maximum=30)
+    if re.fullmatch(r"EVR-[0-9A-HJKMNP-TV-Z]{26}", text) is None:
+        raise ValueError("invalid evidence_ref")
+    return text
+
+
+def _authorization_semantics(value: DraftAuthorizationReceipt) -> dict[str, object]:
+    return {
+        "receipt_ref": value.receipt_ref,
+        "site_id": value.site_id,
+        "purpose": value.purpose,
+        "inbox_item_ref": value.inbox_item_ref,
+        "draft_ref": value.draft_ref,
+        "draft_revision": value.draft_revision,
+        "actor_ref": value.actor_ref,
+        "team_ref": value.team_ref,
+        "request_digest": value.request_digest,
+        "gateway_receipt_ref": value.gateway_receipt_ref,
+        "publication_ref": value.publication_ref,
+        "message_ref": value.message_ref,
+        "mailbox_ref": value.mailbox_ref,
+        "mailbox_config_revision": value.mailbox_config_revision,
+        "observer_delivery_ref": value.observer_delivery_ref,
+        "payload_digest": value.payload_digest,
+        "participant_binding_digest": value.participant_binding_digest,
+        "evidence_binding_digest": value.evidence_binding_digest,
+        "participant_roles_digest": value.participant_roles_digest,
+        "issued_at": value.issued_at.isoformat(),
+        "expires_at": value.expires_at.isoformat(),
+    }
+
+
+def _save_receipt(value: Mapping[str, object]) -> dict[str, object]:
+    if set(value) != {"evidence_ref", "digest", "revision"}:
+        raise ValueError("stored draft material receipt is invalid")
+    evidence_ref = _evidence_ref(value.get("evidence_ref"))
+    digest = value.get("digest")
+    revision = value.get("revision")
+    if (
+        not isinstance(digest, str)
+        or _DIGEST.fullmatch(digest) is None
+        or isinstance(revision, bool)
+        or not isinstance(revision, int)
+        or revision < 1
+    ):
+        raise ValueError("stored draft material receipt is invalid")
+    return {"evidence_ref": evidence_ref, "digest": digest, "revision": revision}
+
+
+def _finalize_receipt(value: Mapping[str, object]) -> dict[str, object]:
+    if set(value) != {"evidence_ref", "digest", "role_binding", "participants"}:
+        raise ValueError("stored final MIME receipt is invalid")
+    evidence_ref = _evidence_ref(value.get("evidence_ref"))
+    digest = value.get("digest")
+    role_binding = value.get("role_binding")
+    participants = value.get("participants")
+    if (
+        not isinstance(digest, str)
+        or _DIGEST.fullmatch(digest) is None
+        or not isinstance(role_binding, str)
+        or _DIGEST.fullmatch(role_binding) is None
+        or not isinstance(participants, list)
+    ):
+        raise ValueError("stored final MIME receipt is invalid")
+    protected = _protected_participants(
+        participants,
+        recipient_count=sum(
+            isinstance(item, Mapping) and item.get("address_role") == "to" for item in participants
+        ),
+        cc_count=sum(
+            isinstance(item, Mapping) and item.get("address_role") == "cc" for item in participants
+        ),
+    )
+    return {
+        "evidence_ref": evidence_ref,
+        "digest": digest,
+        "role_binding": role_binding,
+        "participants": protected,
+    }
 
 
 def _json_digest(value: object) -> str:

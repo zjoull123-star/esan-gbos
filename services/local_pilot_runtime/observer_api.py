@@ -22,6 +22,9 @@ from services.observer.observer.email_address_match import (
     EmailAddressMatchService,
 )
 from services.observer.observer.email_draft_material import EmailDraftMaterialService
+from services.observer.observer.email_draft_material_repository import (
+    PostgresEmailDraftMaterialRepository,
+)
 from services.observer.observer.email_mailbox_identity import EmailMailboxIdentityService
 from services.observer.observer.email_participant_authority import (
     EmailParticipantAuthorityResolver,
@@ -186,6 +189,7 @@ def build_postgres_runtime(
     storage = PostgresLocalPilotStorage(connection)  # type: ignore[arg-type]
     active_clock = clock or _utc_now
     evidence_reveal = None
+    email_draft_material_repository = None
     email_draft_material = None
     email_mailbox_identity = None
     email_address_match = None
@@ -202,8 +206,10 @@ def build_postgres_runtime(
             email_mailbox_identity = EmailMailboxIdentityService(
                 identity_resolver=identity_resolver
             )
+            email_draft_material_repository = PostgresEmailDraftMaterialRepository(connection)
             email_draft_material = EmailDraftMaterialService(
                 store=evidence_store,
+                repository=email_draft_material_repository,
                 participant_resolver=EmailParticipantAuthorityResolver(
                     repository=PostgresEmailParticipantAuthorityRepository(cast(Any, connection)),
                     store=evidence_store,
@@ -239,6 +245,7 @@ def build_postgres_runtime(
             connection  # type: ignore[arg-type]
         ),
         evidence_reveal=evidence_reveal,
+        email_draft_material_repository=email_draft_material_repository,
         email_draft_material=email_draft_material,
         email_mailbox_identity=email_mailbox_identity,
         email_address_match=email_address_match,
@@ -326,6 +333,8 @@ def main(
             identity_hmac_key = identity_secret.reveal()
             identity_resolver = HmacSha256IdentityTokenResolver(identity_hmac_key)
         connection = connect_postgres(config.postgres, connector=connector)
+        if draft_material_bearer is not None:
+            PostgresEmailDraftMaterialRepository(connection).preflight()
         runtime = build_postgres_runtime(
             connection=connection,
             bearer_token=bearer_token,

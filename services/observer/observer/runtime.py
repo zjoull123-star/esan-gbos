@@ -134,6 +134,7 @@ class PostgresLocalPilotRuntime:
     identity_resolution_metrics: IdentityResolutionMetrics
     email_connector_config_repository: Any
     evidence_reveal: Any | None
+    email_draft_material_repository: Any | None
     email_draft_material: Any | None
     email_mailbox_identity: Any | None
     email_address_match: Any | None
@@ -175,6 +176,7 @@ def compose_postgres_local_pilot_runtime(
     identity_resolution_metrics: IdentityResolutionMetrics | None = None,
     email_connector_configs: Any | None = None,
     evidence_reveal: Any | None = None,
+    email_draft_material_repository: Any | None = None,
     email_draft_material: Any | None = None,
     email_mailbox_identity: Any | None = None,
     email_address_match: Any | None = None,
@@ -277,6 +279,7 @@ def compose_postgres_local_pilot_runtime(
         identity_resolution_metrics=active_identity_resolution_metrics,
         email_connector_config_repository=active_email_connector_configs,
         evidence_reveal=evidence_reveal,
+        email_draft_material_repository=email_draft_material_repository,
         email_draft_material=email_draft_material,
         email_mailbox_identity=email_mailbox_identity,
         email_address_match=email_address_match,

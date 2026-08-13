@@ -13,6 +13,9 @@ from fastapi.testclient import TestClient
 
 from services.local_pilot_runtime import observer_api
 from services.local_pilot_runtime.runtime_support import SecretValue
+from services.observer.observer.email_draft_material_repository import (
+    PostgresEmailDraftMaterialRepository,
+)
 from services.observer.observer.email_participant_authority import (
     EmailParticipantAuthorityResolver,
     PostgresEmailParticipantAuthorityRepository,
@@ -234,6 +237,15 @@ def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_au
     assert "/internal/v1/bff/email-draft-material/finalize" in paths
     assert runtime.evidence_reveal is not None
     assert runtime.email_draft_material is not None
+    assert isinstance(
+        runtime.email_draft_material_repository,
+        PostgresEmailDraftMaterialRepository,
+    )
+    assert isinstance(
+        runtime.email_draft_material._repository,
+        PostgresEmailDraftMaterialRepository,
+    )
+    assert runtime.email_draft_material._repository._connection is runtime.connection
     resolver = runtime.email_draft_material._participant_resolver
     assert isinstance(resolver, EmailParticipantAuthorityResolver)
     assert isinstance(resolver._repository, PostgresEmailParticipantAuthorityRepository)
@@ -245,6 +257,57 @@ def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_au
     assert runtime.email_address_match is not None
     assert "/internal/v1/email-address-match/attest" in paths
     assert "signing_key=<redacted>" in repr(runtime.email_address_match)
+
+
+def test_observer_main_preflights_draft_repository_before_runtime_factory_and_server(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, config_path, observer_secret, cursor_secret = _files(tmp_path)
+    _enable_email_gateway(manifest_path)
+    secret_dir = tmp_path / "gateway-secrets"
+    secret_dir.mkdir()
+    projection = secret_dir / "mailbox_projection_bearer"
+    draft = secret_dir / "draft_material_bearer"
+    identity = secret_dir / "identity_hmac_key"
+    _secret(projection, "projection-token")
+    _secret(draft, "draft-token")
+    identity.write_bytes(b"i" * 32)
+    identity.chmod(0o600)
+    connection = _Connection()
+    events: list[str] = []
+
+    monkeypatch.setattr(
+        PostgresEmailDraftMaterialRepository,
+        "preflight",
+        lambda self: events.append("preflight"),
+    )
+
+    class Runtime:
+        app = FastAPI()
+
+    def build(**_kwargs: object) -> Runtime:
+        events.append("factory")
+        return Runtime()
+
+    monkeypatch.setattr(observer_api, "build_postgres_runtime", build)
+    result = observer_api.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        environ={"GBOS_LOCAL_RUNTIME_ENABLED": "true"},
+        observer_bearer_file=observer_secret,
+        observer_auth_ref="observer-auth-v1",
+        cursor_secret_file=cursor_secret,
+        mailbox_projection_bearer_file=projection,
+        draft_material_bearer_file=draft,
+        identity_hmac_key_file=identity,
+        connector=lambda **_kwargs: connection,
+        server_runner=lambda *_args, **_kwargs: events.append("server"),
+    )
+
+    assert result == 0
+    assert events == ["preflight", "factory", "server"]
+    assert connection.closed is True
 
 
 def test_address_match_evidence_reader_binds_delivered_publication_site_and_cas() -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -18,6 +19,89 @@ SCOPE = TenantScope(SITE, "observation_processing")
 NOW = datetime(2026, 8, 13, 10, tzinfo=UTC)
 DIGEST = "sha256:" + "a" * 64
 PARTICIPANT_ROLES = {"sender": "mailbox_owner", "recipients": ["original_sender"]}
+
+
+class _RestartRepository:
+    def __init__(self) -> None:
+        self.receipts: dict[tuple[str, str, str, str], tuple[str, dict[str, object]]] = {}
+        self.drafts: dict[tuple[str, str, str], dict[str, object]] = {}
+        self.finals: dict[tuple[str, str, str], dict[str, object]] = {}
+
+    def replay(
+        self,
+        scope: TenantScope,
+        *,
+        purpose: str,
+        operation: str,
+        idempotency_key: str,
+        request_digest: str,
+    ) -> dict[str, object] | None:
+        saved = self.receipts.get((scope.site_id, purpose, operation, idempotency_key))
+        if saved is None:
+            return None
+        if saved[0] != request_digest:
+            raise ValueError("draft material replay drift")
+        return dict(saved[1])
+
+    def commit_save(
+        self,
+        scope: TenantScope,
+        *,
+        purpose: str,
+        idempotency_key: str,
+        request_digest: str,
+        receipt: dict[str, object],
+        binding: dict[str, object],
+    ) -> dict[str, object]:
+        key = (scope.site_id, purpose, "save", idempotency_key)
+        existing = self.receipts.get(key)
+        if existing is not None:
+            if existing[0] != request_digest:
+                raise ValueError("draft material replay drift")
+            return dict(existing[1])
+        self.receipts[key] = (request_digest, dict(receipt))
+        self.drafts[(scope.site_id, purpose, str(binding["evidence_ref"]))] = dict(binding)
+        return dict(receipt)
+
+    def commit_finalize(
+        self,
+        scope: TenantScope,
+        *,
+        purpose: str,
+        idempotency_key: str,
+        request_digest: str,
+        receipt: dict[str, object],
+        binding: dict[str, object],
+    ) -> dict[str, object]:
+        key = (scope.site_id, purpose, "finalize", idempotency_key)
+        existing = self.receipts.get(key)
+        if existing is not None:
+            if existing[0] != request_digest:
+                raise ValueError("draft material replay drift")
+            return dict(existing[1])
+        self.receipts[key] = (request_digest, dict(receipt))
+        self.finals[(scope.site_id, purpose, str(binding["evidence_ref"]))] = dict(binding)
+        return dict(receipt)
+
+    def resolve_draft(
+        self,
+        scope: TenantScope,
+        *,
+        purpose: str,
+        evidence_ref: str,
+    ) -> dict[str, object] | None:
+        value = self.drafts.get((scope.site_id, purpose, evidence_ref))
+        return None if value is None else dict(value)
+
+    def resolve_final(
+        self,
+        scope: TenantScope,
+        *,
+        purpose: str,
+        evidence_ref: str,
+    ) -> dict[str, object] | None:
+        value = self.finals.get((scope.site_id, purpose, evidence_ref))
+        return None if value is None else dict(value)
 
 
 def _receipt(**changes: object) -> dict[str, object]:
@@ -48,8 +132,15 @@ def _receipt(**changes: object) -> dict[str, object]:
     return value
 
 
-def _service(root: Path) -> EmailDraftMaterialService:
+def _service(
+    root: Path,
+    *,
+    repository: Any | None = None,
+    resolve_calls: list[str] | None = None,
+) -> EmailDraftMaterialService:
     def resolve(_scope, authorization, roles):
+        if resolve_calls is not None:
+            resolve_calls.append(authorization.receipt_ref)
         if authorization.participant_binding_digest != "sha256:" + "c" * 64:
             raise PermissionError("participant authority binding mismatch")
         return {
@@ -70,6 +161,7 @@ def _service(root: Path) -> EmailDraftMaterialService:
 
     return EmailDraftMaterialService(
         store=ContentAddressedEvidenceStore(root),
+        repository=repository or _RestartRepository(),
         participant_resolver=resolve,
         clock=lambda: NOW,
     )
@@ -92,9 +184,79 @@ def test_save_accepts_only_fresh_closed_gateway_receipt_and_returns_opaque_proje
     )
 
     assert set(result) == {"evidence_ref", "digest", "revision"}
+    assert str(result["evidence_ref"]).startswith("EVR-")
+    assert "obs:v1:" not in repr(result)
     assert result["digest"] == digest
     assert result["revision"] == 1
     assert "Thank you" not in repr((authorization, result, service))
+
+
+def test_save_exact_replay_survives_service_restart_and_payload_drift_fails_closed(
+    tmp_path: Path,
+) -> None:
+    repository = _RestartRepository()
+    content = "Durable draft receipt"
+    digest = EmailDraftMaterialService.digest_text(content)
+    authorization = DraftAuthorizationReceipt.from_wire(_receipt(request_digest=digest))
+    first = _service(tmp_path / "cas", repository=repository).save(
+        SCOPE,
+        authorization=authorization,
+        content=content,
+        content_digest=digest,
+        idempotency_key="draft-save-restart-01",
+    )
+
+    restarted = _service(tmp_path / "cas", repository=repository)
+    replay = restarted.save(
+        SCOPE,
+        authorization=authorization,
+        content=content,
+        content_digest=digest,
+        idempotency_key="draft-save-restart-01",
+    )
+
+    assert replay == first
+    drifted = "Different durable draft"
+    drifted_digest = restarted.digest_text(drifted)
+    with pytest.raises(ValueError, match="replay drift"):
+        restarted.save(
+            SCOPE,
+            authorization=DraftAuthorizationReceipt.from_wire(
+                _receipt(request_digest=drifted_digest)
+            ),
+            content=drifted,
+            content_digest=drifted_digest,
+            idempotency_key="draft-save-restart-01",
+        )
+
+
+def test_save_replay_rejects_durable_binding_or_cas_digest_drift(tmp_path: Path) -> None:
+    repository = _RestartRepository()
+    root = tmp_path / "cas"
+    service = _service(root, repository=repository)
+    content = "Durable save integrity"
+    digest = service.digest_text(content)
+    authorization = DraftAuthorizationReceipt.from_wire(_receipt(request_digest=digest))
+    saved = service.save(
+        SCOPE,
+        authorization=authorization,
+        content=content,
+        content_digest=digest,
+        idempotency_key="draft-save-integrity-01",
+    )
+    assert (SITE, "email_draft_material", str(saved["evidence_ref"])) in repository.drafts
+    path = next(root.rglob(digest.removeprefix("sha256:")))
+    path.chmod(0o600)
+    path.write_bytes(b"corrupt draft")
+
+    with pytest.raises(ValueError, match="integrity"):
+        _service(root, repository=repository).save(
+            SCOPE,
+            authorization=authorization,
+            content=content,
+            content_digest=digest,
+            idempotency_key="draft-save-integrity-01",
+        )
 
 
 @pytest.mark.parametrize(
@@ -167,6 +329,120 @@ def test_finalize_resolves_addresses_from_opaque_roles_and_returns_only_cas_bind
         },
     ]
     assert "@" not in repr(result)
+
+
+def test_finalize_exact_replay_rechecks_current_authority_and_final_cas_after_restart(
+    tmp_path: Path,
+) -> None:
+    repository = _RestartRepository()
+    resolve_calls: list[str] = []
+    root = tmp_path / "cas"
+    content = "Restart-safe final MIME"
+    digest = EmailDraftMaterialService.digest_text(content)
+    authorization = DraftAuthorizationReceipt.from_wire(_receipt(request_digest=digest))
+    service = _service(root, repository=repository, resolve_calls=resolve_calls)
+    saved = service.save(
+        SCOPE,
+        authorization=authorization,
+        content=content,
+        content_digest=digest,
+        idempotency_key="draft-save-final-restart-01",
+    )
+    first = service.finalize(
+        SCOPE,
+        authorization=authorization,
+        draft_evidence_ref=str(saved["evidence_ref"]),
+        draft_digest=digest,
+        draft_revision=1,
+        participant_roles=PARTICIPANT_ROLES,
+        idempotency_key="draft-finalize-restart-01",
+    )
+
+    restarted = _service(root, repository=repository, resolve_calls=resolve_calls)
+    replay = restarted.finalize(
+        SCOPE,
+        authorization=authorization,
+        draft_evidence_ref=str(saved["evidence_ref"]),
+        draft_digest=digest,
+        draft_revision=1,
+        participant_roles=PARTICIPANT_ROLES,
+        idempotency_key="draft-finalize-restart-01",
+    )
+
+    assert replay == first
+    assert resolve_calls == [authorization.receipt_ref, authorization.receipt_ref]
+    binding = repository.finals[(SITE, "email_draft_material", str(first["evidence_ref"]))]
+    assert binding == {
+        **binding,
+        "inbox_item_ref": authorization.inbox_item_ref,
+        "draft_ref": authorization.draft_ref,
+        "draft_revision": 1,
+        "authorization_receipt_ref": authorization.receipt_ref,
+        "gateway_receipt_ref": authorization.gateway_receipt_ref,
+        "publication_ref": authorization.publication_ref,
+        "message_ref": authorization.message_ref,
+        "mailbox_ref": authorization.mailbox_ref,
+        "mailbox_config_revision": authorization.mailbox_config_revision,
+        "observer_delivery_ref": authorization.observer_delivery_ref,
+        "payload_digest": authorization.payload_digest,
+        "participant_binding_digest": authorization.participant_binding_digest,
+        "evidence_binding_digest": authorization.evidence_binding_digest,
+        "participant_roles_digest": authorization.participant_roles_digest,
+        "source_draft_evidence_ref": saved["evidence_ref"],
+        "source_draft_digest": digest,
+        "media_type": "message/rfc822",
+    }
+    assert "@" not in repr(binding)
+
+    final_path = next(root.rglob(str(binding["digest"]).removeprefix("sha256:")))
+    final_path.chmod(0o600)
+    final_path.write_bytes(b"corrupt final MIME")
+    with pytest.raises(ValueError, match="integrity"):
+        restarted.finalize(
+            SCOPE,
+            authorization=authorization,
+            draft_evidence_ref=str(saved["evidence_ref"]),
+            draft_digest=digest,
+            draft_revision=1,
+            participant_roles=PARTICIPANT_ROLES,
+            idempotency_key="draft-finalize-restart-01",
+        )
+
+
+def test_finalize_database_failure_leaves_only_unbound_cas_orphan(tmp_path: Path) -> None:
+    class FailingRepository(_RestartRepository):
+        def commit_finalize(self, *args: object, **kwargs: object) -> dict[str, object]:
+            del args, kwargs
+            raise RuntimeError("database unavailable")
+
+    repository = FailingRepository()
+    root = tmp_path / "cas"
+    service = _service(root, repository=repository)
+    content = "CAS first, binding second"
+    digest = service.digest_text(content)
+    authorization = DraftAuthorizationReceipt.from_wire(_receipt(request_digest=digest))
+    saved = service.save(
+        SCOPE,
+        authorization=authorization,
+        content=content,
+        content_digest=digest,
+        idempotency_key="draft-save-orphan-01",
+    )
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        service.finalize(
+            SCOPE,
+            authorization=authorization,
+            draft_evidence_ref=str(saved["evidence_ref"]),
+            draft_digest=digest,
+            draft_revision=1,
+            participant_roles=PARTICIPANT_ROLES,
+            idempotency_key="draft-finalize-orphan-01",
+        )
+
+    assert repository.finals == {}
+    assert not any(key[2] == "finalize" for key in repository.receipts)
+    assert len([path for path in root.rglob("*") if path.is_file()]) == 2
 
 
 def test_finalize_rejects_raw_browser_addresses_and_stale_authorization(tmp_path: Path) -> None:
