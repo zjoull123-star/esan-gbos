@@ -18,8 +18,8 @@ No-Go。当前主线/feature handoff 的来源基线是 `8c40731`，feature bran
 本仓库的本地、合成数据技术边界包括：
 
 - 冻结的 Frappe v16、ERPNext v16、Frappe CRM v1 兼容基线；
-- `esan_gbos` Frappe App、15 个父 DocType 与 3 个 Child DocType（15 个父项含
-  Gate 4 审计 `GBOS Review Decision`）；
+- `esan_gbos` Frappe App、18 个父 DocType 与 3 个 Child DocType（18 个父项含
+  Gate 4 审计 `GBOS Review Decision` 及 3 个邮件发送治理 DocType）；
 - 销售 → 产品需求 → 样品 → 反馈 → 需求 → 询源 → 工作项/审核闭环；
 - 版本化 BFF、团队级权限、revision、幂等与服务端状态机；
 - 观察事件、不可变证据、事实提案与最小 Context Service；
@@ -38,8 +38,9 @@ DeepSeek gateway 已实现并完成配置边界（endpoint 为
 
 以下能力保持关闭、不代表已验证或不存在：真实金蝶连接及任何金蝶写入、生产
 渠道采集、真实 AI 模型调用、自动外发、自动报价、正式订单创建、腾讯云部署和
-生产发布。本地拓扑与当前源码镜像现已记录为 `composition.status=composed`；这只
-表示声明的服务和源绑定镜像具备组合条件。正式 manifest 仍保持
+生产发布。本地拓扑与上一轮 source-bound 镜像基线已记录为
+`composition.status=composed`；本轮 mailbox-identity 源码尚需在任何 canary 前重新
+构建、记录与 attestation。这只表示声明的服务和已记录镜像具备组合条件。正式 manifest 仍保持
 `local_pilot_go=false`（No-Go），real channels、real model、Kingdee、cloud 和
 production 均未验证。Observer profile 承载 Gate 3–6 的 PostgreSQL 本地验证，
 但仍不是核心 CRM/PWA 的启动依赖。

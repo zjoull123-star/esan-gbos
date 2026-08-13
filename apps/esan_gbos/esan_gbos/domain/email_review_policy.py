@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 EMAIL_SEND_REVIEW_POLICY = "email_send_owner_v1"
-_EMAIL_SEND_PARTICIPANT_ROLES = {
+_EMAIL_SEND_PARTICIPANT_ROLES: dict[str, object] = {
     "sender": "mailbox_owner",
     "recipients": ["original_sender"],
 }

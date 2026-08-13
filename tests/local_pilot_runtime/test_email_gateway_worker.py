@@ -205,6 +205,7 @@ def _config_claim(*, provider: str = "imap_smtp") -> MailboxConfigOutboxClaim:
         inbound_enabled=True,
         outbound_enabled=False,
         mailbox_status="active",
+        mailbox_address_identity_ref="extid:v1:email:" + "M" * 43,
         activation_not_before=NOW,
         processing_purpose="sales_follow_up",
         request_id="mailbox-config-request-1",

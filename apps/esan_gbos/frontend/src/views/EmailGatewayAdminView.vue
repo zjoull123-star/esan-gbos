@@ -22,7 +22,7 @@
         <p v-if="commandError" class="email-gateway-error" role="alert">
           {{ commandError }}
         </p>
-        <form data-mailbox-create class="email-mailbox-create" @submit.prevent="createMailbox">
+        <form data-mailbox-create class="email-mailbox-create" autocomplete="off" @submit.prevent="createMailbox">
           <div>
             <h2>新增邮箱入口</h2>
             <p>新邮箱默认使用模拟接入、主入口与关闭外发；启用前仍需单独确认。</p>
@@ -34,6 +34,18 @@
               name="display_label"
               required
               maxlength="240"
+            >
+          </label>
+          <label>
+            真实邮箱地址
+            <input
+              v-model.trim="createForm.canonicalMailboxAddress"
+              name="canonical_mailbox_address"
+              type="email"
+              autocomplete="off"
+              spellcheck="false"
+              required
+              maxlength="254"
             >
           </label>
           <label>
@@ -314,6 +326,7 @@ const auditEvents = ref<{ id: string; label: string }[]>([]);
 const ruleReplacements = ref(new Map<string, EmailRoutingRule>());
 const ruleForm = reactive({ teamRef: "", mailboxRef: "", ownerUserRef: "", priority: 10, enabled: true });
 const createForm = reactive<{
+  canonicalMailboxAddress: string;
   displayLabel: string;
   providerKind: EmailProviderKind;
   businessMode: EmailBusinessMode;
@@ -325,6 +338,7 @@ const createForm = reactive<{
   priority: number;
   credentialRef: string;
 }>({
+  canonicalMailboxAddress: "",
   displayLabel: "",
   providerKind: "fake",
   businessMode: "primary",
@@ -436,6 +450,7 @@ const createMailbox = async () => {
   commandError.value = "";
   try {
     const response = await client.upsertMailbox({
+      canonical_mailbox_address: createForm.canonicalMailboxAddress,
       display_label: createForm.displayLabel,
       provider_kind: createForm.providerKind,
       business_mode: createForm.businessMode,
@@ -468,6 +483,8 @@ const createMailbox = async () => {
   } catch (error) {
     commandError.value = error instanceof BffError ? error.displayMessage : "邮箱入口未保存，请检查内容后重试。";
     if (error instanceof BffError && error.status === 409) await mailboxResource.load();
+  } finally {
+    createForm.canonicalMailboxAddress = "";
   }
 };
 const saveRule = async () => {

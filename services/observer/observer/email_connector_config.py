@@ -17,6 +17,7 @@ from .storage import Connection
 _SITE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,139}$")
 _ULID_REF = re.compile(r"^(?P<prefix>[A-Z]{3})-[0-9A-HJKMNP-TV-Z]{26}$")
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
+_EMAIL_IDENTITY_REF = re.compile(r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
 _SECRET_REF = re.compile(r"^secretref:v1/[A-Za-z0-9][A-Za-z0-9._/-]*$")
 _PROVIDERS = frozenset({"imap_smtp", "wecom_app_mail"})
 _ENTRY_ROLES = frozenset({"primary", "workflow", "migration", "selective_archive"})
@@ -34,7 +35,7 @@ _BUSINESS_PURPOSES = frozenset(
         "audit_compliance",
     }
 )
-_PROJECTION_FIELDS = frozenset(
+_PROJECTION_V1_FIELDS = frozenset(
     {
         "site_id",
         "observer_connector_instance_ref",
@@ -49,6 +50,7 @@ _PROJECTION_FIELDS = frozenset(
         "projection_digest",
     }
 )
+_PROJECTION_V2_FIELDS = _PROJECTION_V1_FIELDS | {"mailbox_address_identity_ref"}
 _WATERMARK_FIELDS = frozenset({"mailbox_id", "mailbox_config_revision", "not_before"})
 
 
@@ -75,10 +77,14 @@ class EmailConnectorConfigProjection:
     activation_not_before: datetime
     projection_revision: int
     projection_digest: str
+    mailbox_address_identity_ref: str | None = None
 
     @classmethod
     def from_wire(cls, value: Mapping[str, object]) -> EmailConnectorConfigProjection:
-        if not isinstance(value, Mapping) or set(value) != _PROJECTION_FIELDS:
+        if not isinstance(value, Mapping) or set(value) not in {
+            _PROJECTION_V1_FIELDS,
+            _PROJECTION_V2_FIELDS,
+        }:
             raise ValueError("invalid mailbox connector projection")
         watermark = value.get("activation_watermark")
         if not isinstance(watermark, Mapping) or set(watermark) != _WATERMARK_FIELDS:
@@ -96,6 +102,7 @@ class EmailConnectorConfigProjection:
         not_before = watermark.get("not_before")
         projection_revision = value.get("projection_revision")
         projection_digest = value.get("projection_digest")
+        mailbox_address_identity_ref = value.get("mailbox_address_identity_ref")
         if not isinstance(site_id, str) or _SITE.fullmatch(site_id) is None:
             raise ValueError("invalid projection site")
         validated_instance_ref = _require_ref(instance_ref, "OCI", "connector instance ref")
@@ -131,6 +138,11 @@ class EmailConnectorConfigProjection:
         _require_aware(activation_not_before, "activation_not_before")
         if not isinstance(projection_digest, str) or _DIGEST.fullmatch(projection_digest) is None:
             raise ValueError("invalid projection digest")
+        if set(value) == _PROJECTION_V2_FIELDS and (
+            not isinstance(mailbox_address_identity_ref, str)
+            or _EMAIL_IDENTITY_REF.fullmatch(mailbox_address_identity_ref) is None
+        ):
+            raise ValueError("invalid mailbox address identity ref")
         digest_payload = {key: value[key] for key in value if key != "projection_digest"}
         if not _constant_digest_equal(projection_digest, _canonical_digest(digest_payload)):
             raise ValueError("projection digest mismatch")
@@ -148,6 +160,11 @@ class EmailConnectorConfigProjection:
             activation_not_before=activation_not_before.astimezone(UTC),
             projection_revision=projection_revision,
             projection_digest=projection_digest,
+            mailbox_address_identity_ref=(
+                mailbox_address_identity_ref
+                if isinstance(mailbox_address_identity_ref, str)
+                else None
+            ),
         )
 
     def comparable(self) -> tuple[object, ...]:
@@ -165,6 +182,7 @@ class EmailConnectorConfigProjection:
             self.activation_not_before,
             self.projection_revision,
             self.projection_digest,
+            self.mailbox_address_identity_ref,
         )
 
     def __repr__(self) -> str:
@@ -173,7 +191,7 @@ class EmailConnectorConfigProjection:
             f"site_id={self.site_id!r}, mailbox_ref={self.mailbox_ref!r}, "
             f"provider_kind={self.provider_kind!r}, "
             f"projection_revision={self.projection_revision}, "
-            "credential_ref=<redacted>)"
+            "credential_ref=<redacted>, mailbox_address_identity_ref=<redacted>)"
         )
 
 
@@ -283,7 +301,8 @@ class PostgresEmailConnectorConfigRepository:
                     SELECT config_publication_ref, connector_instance_id, provider_kind,
                            entry_role, business_purpose, team_ref, credential_ref,
                            inbound_enabled, activation_not_before,
-                           projection_revision, projection_digest
+                           projection_revision, projection_digest,
+                           mailbox_address_identity_ref
                       FROM observer.email_connector_config_projections
                      WHERE site_id = %s AND mailbox_id = %s
                        AND mailbox_config_revision = %s
@@ -378,10 +397,11 @@ class PostgresEmailConnectorConfigRepository:
                         provider_kind, entry_role, business_purpose, team_ref,
                         credential_ref, inbound_enabled, activation_watermark,
                         activation_not_before, projection_revision,
-                        projection_digest, projected_at
+                        projection_digest, projected_at,
+                        mailbox_address_identity_ref
                     ) VALUES (
                         %s, %s, %s, %s, 'email', %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     """,
                     (
@@ -411,6 +431,7 @@ class PostgresEmailConnectorConfigRepository:
                         candidate.projection_revision,
                         candidate.projection_digest.removeprefix("sha256:"),
                         projected_at,
+                        candidate.mailbox_address_identity_ref,
                     ),
                 )
         except EmailConnectorConfigConflict:
@@ -478,6 +499,7 @@ def _row_matches(
         and row[8] == projection.activation_not_before
         and int(row[9]) == projection.projection_revision
         and str(row[10]) == projection.projection_digest.removeprefix("sha256:")
+        and (None if row[11] is None else str(row[11])) == projection.mailbox_address_identity_ref
     )
 
 

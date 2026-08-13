@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/email-gateway/v2.0/mailbox-connector-projection.schema.json",
+  "title": "MailboxConnectorProjection v2.0",
+  "description": "Provider-neutral Gateway projection consumed by Observer. V2 binds the mailbox's opaque email identity to the frozen V1 activation watermark without exposing the canonical mailbox address.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "site_id",
+    "observer_connector_instance_ref",
+    "provider_kind",
+    "entry_role",
+    "business_purpose",
+    "team_ref",
+    "credential_ref",
+    "inbound_enabled",
+    "activation_watermark",
+    "projection_revision",
+    "projection_digest",
+    "mailbox_address_identity_ref"
+  ],
+  "properties": {
+    "site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+    },
+    "observer_connector_instance_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^OCI-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "provider_kind": {
+      "type": "string",
+      "minLength": 9,
+      "maxLength": 14,
+      "enum": [
+        "wecom_app_mail",
+        "imap_smtp"
+      ]
+    },
+    "entry_role": {
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 17,
+      "enum": [
+        "primary",
+        "workflow",
+        "migration",
+        "selective_archive"
+      ]
+    },
+    "business_purpose": {
+      "type": "string",
+      "minLength": 11,
+      "maxLength": 25,
+      "enum": [
+        "business_operations",
+        "observation_processing",
+        "entity_resolution",
+        "customer_service",
+        "sales_follow_up",
+        "procurement_coordination",
+        "product_sample_management",
+        "risk_review",
+        "metric_reporting",
+        "audit_compliance"
+      ]
+    },
+    "team_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^TEM-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "credential_ref": {
+      "type": "string",
+      "minLength": 14,
+      "maxLength": 128,
+      "pattern": "^secretref:v1/[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "inbound_enabled": {
+      "type": "boolean"
+    },
+    "activation_watermark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mailbox_id",
+        "mailbox_config_revision",
+        "not_before"
+      ],
+      "properties": {
+        "mailbox_id": {
+          "type": "string",
+          "minLength": 30,
+          "maxLength": 30,
+          "pattern": "^MBX-[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "mailbox_config_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "not_before": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 35,
+          "format": "date-time"
+        }
+      }
+    },
+    "projection_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "projection_digest": {
+      "type": "string",
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "mailbox_address_identity_ref": {
+      "type": "string",
+      "minLength": 58,
+      "maxLength": 58,
+      "pattern": "^extid:v1:email:[A-Za-z0-9_-]{43}$"
+    }
+  }
+}

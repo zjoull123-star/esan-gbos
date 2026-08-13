@@ -128,6 +128,7 @@ def test_v5_closed_shapes_expose_only_safe_mailbox_inbox_and_health_projections(
     assert mailbox["properties"]["outbound_enabled"]["const"] is False
     command = schemas["MailboxUpsertCommand"]
     assert {
+        "canonical_mailbox_address",
         "provider_account_ref",
         "observer_connector_instance_ref",
         "default_team_ref",
@@ -135,6 +136,12 @@ def test_v5_closed_shapes_expose_only_safe_mailbox_inbox_and_health_projections(
         "priority",
         "credential_ref",
     } <= set(command["required"])
+    assert command["properties"]["canonical_mailbox_address"] == {
+        "type": "string",
+        "format": "email",
+        "maxLength": 254,
+        "writeOnly": True,
+    }
     assert command["properties"]["business_purpose"]["enum"] == [
         "business_operations",
         "observation_processing",
@@ -148,6 +155,9 @@ def test_v5_closed_shapes_expose_only_safe_mailbox_inbox_and_health_projections(
         "audit_compliance",
     ]
     assert "credential_ref" not in mailbox["properties"]
+    assert "canonical_mailbox_address" not in mailbox["properties"]
+    assert "mailbox_address_identity_ref" not in mailbox["properties"]
+    assert "mailbox_address_identity_ref" not in command["properties"]
 
     inbox = schemas["InboxItem"]
     assert inbox["additionalProperties"] is False

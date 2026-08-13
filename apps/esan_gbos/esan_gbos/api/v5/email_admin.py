@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import builtins
+import re
 from typing import Any
 
 import frappe
 
 from esan_gbos.api.v1.audit import run_idempotent
 from esan_gbos.api.v1.common import BFFError, bff_endpoint, require_roles
-from esan_gbos.api.v5.gateway import call_gateway, scope_payload, v5_success
+from esan_gbos.api.v5.gateway import call_gateway, call_observer, scope_payload, v5_success
 from esan_gbos.domain.v5_email_dto import (
     V5EmailDTOValidationError,
     map_connector_health,
@@ -17,6 +18,8 @@ from esan_gbos.domain.v5_email_dto import (
 )
 
 EMAIL_ADMIN_ROLES = frozenset({"Integration Admin", "GBOS Admin"})
+_OPAQUE_MAILBOX_ADDRESS = re.compile(r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
+_TEAM_REF = re.compile(r"^TEM-[0-9A-HJKMNP-TV-Z]{26}$")
 _GATEWAY_MAILBOX_FIELDS = frozenset(
     {
         "mailbox_ref",
@@ -48,6 +51,17 @@ def _integer(value: int | str, field: str, *, maximum: int | None = None) -> int
 
 def _optional(value: str | None) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _safe_transient_text(value: object, field: str, *, maximum: int) -> str:
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= maximum
+        or value != value.strip()
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise BFFError("invalid_dto", f"{field} is invalid")
+    return value
 
 
 def _map_mailbox_response(data: dict[str, Any]) -> dict[str, Any]:
@@ -167,6 +181,7 @@ def get_mailbox(mailbox_ref: str) -> dict[str, Any]:
 @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # type: ignore[untyped-decorator]
 @bff_endpoint("POST")
 def upsert_mailbox(
+    canonical_mailbox_address: str,
     display_label: str,
     provider_kind: str,
     business_mode: str,
@@ -184,21 +199,67 @@ def upsert_mailbox(
     mailbox_ref: str | None = None,
 ) -> dict[str, Any]:
     require_roles(EMAIL_ADMIN_ROLES)
+    canonical_address = _safe_transient_text(
+        canonical_mailbox_address,
+        "canonical_mailbox_address",
+        maximum=254,
+    )
+    team_ref = _safe_transient_text(default_team_ref, "default_team_ref", maximum=140)
+    if _TEAM_REF.fullmatch(team_ref) is None:
+        raise BFFError("invalid_dto", "default_team_ref is invalid")
+    owner_ref = _safe_transient_text(
+        account_owner_user_ref,
+        "account_owner_user_ref",
+        maximum=140,
+    )
+    safe_idempotency_key = _safe_transient_text(
+        idempotency_key,
+        "idempotency_key",
+        maximum=256,
+    )
+    _require_mailbox_authority(team_ref, owner_ref)
+    identity = call_observer(
+        path="/internal/v1/bff/email-mailbox-identity/derive",
+        purpose="email_mailbox_identity",
+        payload={
+            "canonical_mailbox_address": canonical_address,
+            "idempotency_key": safe_idempotency_key,
+        },
+        idempotency_key=safe_idempotency_key,
+    )
+    if set(identity) != {"opaque_address_ref", "normalization_version"}:
+        raise BFFError(
+            "internal_error",
+            "Observer returned an invalid mailbox identity response",
+            status=503,
+        )
+    opaque_address_ref = identity.get("opaque_address_ref")
+    if (
+        not isinstance(opaque_address_ref, str)
+        or _OPAQUE_MAILBOX_ADDRESS.fullmatch(opaque_address_ref) is None
+        or identity.get("normalization_version") != "email-v1"
+    ):
+        raise BFFError(
+            "internal_error",
+            "Observer returned an invalid mailbox identity response",
+            status=503,
+        )
     command: dict[str, Any] = {
+        "mailbox_address_identity_ref": opaque_address_ref,
         "display_label": display_label,
         "provider_kind": provider_kind,
         "business_mode": business_mode,
         "business_purpose": business_purpose,
         "provider_account_ref": provider_account_ref,
         "observer_connector_instance_ref": observer_connector_instance_ref,
-        "default_team_ref": default_team_ref,
-        "account_owner_user_ref": account_owner_user_ref,
+        "default_team_ref": team_ref,
+        "account_owner_user_ref": owner_ref,
         "priority": _integer(priority, "priority", maximum=1000),
         "credential_ref": credential_ref,
         "inbound_enabled": _form_boolean(inbound_enabled, "inbound_enabled"),
         "outbound_enabled": _form_boolean(outbound_enabled, "outbound_enabled"),
         "expected_revision": _integer(expected_revision, "expected_revision"),
-        "idempotency_key": idempotency_key,
+        "idempotency_key": safe_idempotency_key,
     }
     if reference := _optional(mailbox_ref):
         command["mailbox_ref"] = reference
@@ -206,10 +267,6 @@ def upsert_mailbox(
         command = validate_mailbox_upsert(command)
     except V5EmailDTOValidationError as error:
         raise BFFError("invalid_dto", str(error)) from error
-    _require_mailbox_authority(
-        str(command["default_team_ref"]),
-        str(command["account_owner_user_ref"]),
-    )
     return _mailbox_command("upsert", command)
 
 

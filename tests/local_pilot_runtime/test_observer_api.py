@@ -19,6 +19,7 @@ from services.observer.observer.email_participant_authority import (
 from services.observer.observer.identity_resolution_work import (
     PostgresIdentityResolutionWorkRepository,
 )
+from services.observer.observer.identity_tokens import HmacSha256IdentityTokenResolver
 
 
 class _Connection:
@@ -163,6 +164,7 @@ def test_observer_runtime_composes_real_health_without_model_projection() -> Non
 def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_auth(
     tmp_path: Path,
 ) -> None:
+    identity_resolver = HmacSha256IdentityTokenResolver(b"i" * 32)
     runtime = observer_api.build_postgres_runtime(
         connection=_Connection(),
         bearer_token=SecretValue("observer-token"),
@@ -172,6 +174,7 @@ def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_au
         mailbox_projection_auth_ref="gateway-mailbox-projection-v1",
         draft_material_bearer_token=SecretValue("draft-material-token"),
         draft_material_auth_ref="observer-email-draft-material-v1",
+        identity_resolver=identity_resolver,
         evidence_cas_root=tmp_path / "cas",
         bind_host="0.0.0.0",
         network_mode="internal_network",
@@ -187,7 +190,10 @@ def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_au
     assert isinstance(resolver, EmailParticipantAuthorityResolver)
     assert isinstance(resolver._repository, PostgresEmailParticipantAuthorityRepository)
     assert resolver._repository._connection is runtime.connection
-    assert resolver._identity_resolver is None
+    assert resolver._identity_resolver is identity_resolver
+    assert runtime.email_mailbox_identity is not None
+    assert runtime.email_mailbox_identity._identity_resolver is identity_resolver
+    assert "/internal/v1/bff/email-mailbox-identity/derive" in paths
 
 
 def test_observer_main_starts_injected_server_and_closes_connection(tmp_path: Path) -> None:
@@ -241,6 +247,104 @@ def test_observer_main_requires_distinct_mailbox_projection_secret_before_postgr
     )
 
     assert missing == 78
+    assert connect_calls == []
+
+
+@pytest.mark.parametrize("case", ["missing", "short", "long", "symlink", "wrong_mode"])
+def test_observer_main_requires_exact_identity_key_before_postgres_when_gateway_enabled(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    manifest_path, config_path, observer_secret, cursor_secret = _files(tmp_path)
+    _enable_email_gateway(manifest_path)
+    secret_dir = tmp_path / "gateway-secrets"
+    secret_dir.mkdir()
+    projection = secret_dir / "mailbox_projection_bearer"
+    draft = secret_dir / "draft_material_bearer"
+    identity = secret_dir / "identity_hmac_key"
+    _secret(projection, "projection-token")
+    _secret(draft, "draft-token")
+    if case == "short":
+        identity.write_bytes(b"x" * 31)
+        identity.chmod(0o600)
+    elif case == "long":
+        identity.write_bytes(b"x" * 33)
+        identity.chmod(0o600)
+    elif case == "symlink":
+        target = secret_dir / "identity-target"
+        target.write_bytes(b"x" * 32)
+        target.chmod(0o600)
+        identity.symlink_to(target)
+    elif case == "wrong_mode":
+        identity.write_bytes(b"x" * 32)
+        identity.chmod(0o644)
+    connect_calls: list[dict[str, object]] = []
+
+    result = observer_api.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        environ={"GBOS_LOCAL_RUNTIME_ENABLED": "true"},
+        observer_bearer_file=observer_secret,
+        observer_auth_ref="observer-auth-v1",
+        cursor_secret_file=cursor_secret,
+        mailbox_projection_bearer_file=projection,
+        draft_material_bearer_file=draft,
+        identity_hmac_key_file=identity,
+        connector=lambda **kwargs: connect_calls.append(kwargs),
+        server_runner=lambda *_args, **_kwargs: None,
+    )
+
+    assert result == 78
+    assert connect_calls == []
+
+
+def test_observer_main_rejects_identity_key_replacement_during_provider_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, config_path, observer_secret, cursor_secret = _files(tmp_path)
+    _enable_email_gateway(manifest_path)
+    secret_dir = tmp_path / "gateway-secrets"
+    secret_dir.mkdir()
+    projection = secret_dir / "mailbox_projection_bearer"
+    draft = secret_dir / "draft_material_bearer"
+    identity = secret_dir / "identity_hmac_key"
+    _secret(projection, "projection-token")
+    _secret(draft, "draft-token")
+    identity.write_bytes(b"x" * 32)
+    identity.chmod(0o600)
+    connect_calls: list[dict[str, object]] = []
+    original_read = os.read
+    replaced = False
+
+    def replacing_read(descriptor: int, size: int) -> bytes:
+        nonlocal replaced
+        payload = original_read(descriptor, size)
+        if not replaced and size == 32 and payload == b"x" * 32:
+            replacement = secret_dir / "identity-replacement"
+            replacement.write_bytes(b"y" * 32)
+            replacement.chmod(0o600)
+            replacement.replace(identity)
+            replaced = True
+        return payload
+
+    monkeypatch.setattr(os, "read", replacing_read)
+    result = observer_api.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        environ={"GBOS_LOCAL_RUNTIME_ENABLED": "true"},
+        observer_bearer_file=observer_secret,
+        observer_auth_ref="observer-auth-v1",
+        cursor_secret_file=cursor_secret,
+        mailbox_projection_bearer_file=projection,
+        draft_material_bearer_file=draft,
+        identity_hmac_key_file=identity,
+        connector=lambda **kwargs: connect_calls.append(kwargs),
+        server_runner=lambda *_args, **_kwargs: None,
+    )
+
+    assert replaced is True
+    assert result == 78
     assert connect_calls == []
 
 

@@ -115,6 +115,7 @@ const inboxSorts = new Set(["received_at_desc", "sla_due_at_asc"]);
 const teamRefPattern = /^TEM-[0-9A-HJKMNP-TV-Z]{26}$/u;
 const connectorRefPattern = /^OCI-[0-9A-HJKMNP-TV-Z]{26}$/u;
 const credentialRefPattern = /^secretref:v1\/[A-Za-z0-9][A-Za-z0-9._/-]*$/u;
+const mailboxAddressPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/u;
 
 const invalidResponse = (requestId?: string): never => {
   throw new BffError("invalid_response", { requestId });
@@ -346,7 +347,10 @@ export const createEmailGatewayClient = (dependencies: EmailGatewayDependencies 
     },
     upsertMailbox: async (command: EmailMailboxUpsertCommand) => {
       validateRevision(command);
-      if (!safeProjectionText(command.display_label, 240) || !providerKinds.has(command.provider_kind) ||
+      if (!boundedText(command.canonical_mailbox_address, 254) ||
+        command.canonical_mailbox_address !== command.canonical_mailbox_address.trim() ||
+        !mailboxAddressPattern.test(command.canonical_mailbox_address) ||
+        !safeProjectionText(command.display_label, 240) || !providerKinds.has(command.provider_kind) ||
         !businessModes.has(command.business_mode) || !businessPurposes.has(command.business_purpose) ||
         !boundedText(command.provider_account_ref, 256) || !connectorRefPattern.test(command.observer_connector_instance_ref) ||
         !teamRefPattern.test(command.default_team_ref) || !boundedText(command.account_owner_user_ref, 140) ||

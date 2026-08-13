@@ -219,6 +219,7 @@ def call_observer(
     if path not in {
         "/internal/v1/bff/email-draft-material/save",
         "/internal/v1/bff/email-draft-material/finalize",
+        "/internal/v1/bff/email-mailbox-identity/derive",
     }:
         raise BFFError("invalid_query", "Observer email material path is invalid")
     try:

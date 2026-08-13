@@ -62,6 +62,7 @@ from .security import (
 )
 
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
+_MAILBOX_ADDRESS_IDENTITY_REF = re.compile(r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
 _AUTH_REF = "observer-email-publication-v1"
 _PURPOSE = "observation_processing"
 _BFF_AUTH_REF = "email-gateway-bff-v1"
@@ -1169,6 +1170,7 @@ def create_email_gateway_app(
                 "account_owner_user_ref",
                 "priority",
                 "credential_ref",
+                "mailbox_address_identity_ref",
                 "inbound_enabled",
                 "outbound_enabled",
                 "expected_revision",
@@ -1230,6 +1232,9 @@ def create_email_gateway_app(
                 observer_config_projection_receipt=(
                     None if current is None else current.observer_config_projection_receipt
                 ),
+                mailbox_address_identity_ref=_mailbox_address_identity_ref(
+                    values["mailbox_address_identity_ref"]
+                ),
             )
             receipt = mailbox_registry.upsert(
                 scope,
@@ -1284,6 +1289,8 @@ def create_email_gateway_app(
             if current is None:
                 raise _BFFError("not_found", 404)
             action = _choice(values["action"], "action", {"enable", "pause", "revoke"})
+            if action == "enable" and current.mailbox_address_identity_ref is None:
+                raise _BFFError("mailbox_identity_required", 409)
             expected_revision = _nonnegative_integer(
                 values["expected_revision"], "expected revision"
             )
@@ -2164,6 +2171,13 @@ def _bounded_text(value: object, name: str, maximum: int) -> str:
     ):
         raise _BFFError("invalid_query", 400)
     return value
+
+
+def _mailbox_address_identity_ref(value: object) -> str:
+    reference = _bounded_text(value, "mailbox address identity ref", 58)
+    if _MAILBOX_ADDRESS_IDENTITY_REF.fullmatch(reference) is None:
+        raise _BFFError("invalid_query", 400)
+    return reference
 
 
 def _boolean(value: object, _name: str) -> bool:

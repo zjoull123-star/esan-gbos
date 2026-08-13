@@ -135,6 +135,7 @@ class PostgresLocalPilotRuntime:
     email_connector_config_repository: Any
     evidence_reveal: Any | None
     email_draft_material: Any | None
+    email_mailbox_identity: Any | None
     app: Any
     connection: Any
     storage: Any
@@ -174,6 +175,7 @@ def compose_postgres_local_pilot_runtime(
     email_connector_configs: Any | None = None,
     evidence_reveal: Any | None = None,
     email_draft_material: Any | None = None,
+    email_mailbox_identity: Any | None = None,
 ) -> PostgresLocalPilotRuntime:
     """Wire the PostgreSQL repositories, worker and authenticated internal app."""
 
@@ -258,6 +260,7 @@ def compose_postgres_local_pilot_runtime(
         email_connector_configs=active_email_connector_configs,
         evidence_reveal=evidence_reveal,
         email_draft_material=email_draft_material,
+        email_mailbox_identity=email_mailbox_identity,
     )
     return PostgresLocalPilotRuntime(
         guard=guard,
@@ -272,6 +275,7 @@ def compose_postgres_local_pilot_runtime(
         email_connector_config_repository=active_email_connector_configs,
         evidence_reveal=evidence_reveal,
         email_draft_material=email_draft_material,
+        email_mailbox_identity=email_mailbox_identity,
         app=app,
         connection=connection,
         storage=storage,

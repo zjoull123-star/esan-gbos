@@ -75,6 +75,20 @@ def test_repr_redacts_restricted_values(mailbox, publication) -> None:
         assert forbidden not in rendered
 
 
+def test_mailbox_identity_ref_is_optional_only_for_legacy_read_and_redacted(mailbox) -> None:
+    from services.email_gateway.models import ValidationError
+
+    identity_ref = "extid:v1:email:" + "M" * 43
+    legacy = replace(mailbox, mailbox_address_identity_ref=None)
+    current = replace(mailbox, mailbox_address_identity_ref=identity_ref)
+
+    assert legacy.mailbox_address_identity_ref is None
+    assert current.to_wire()["mailbox_address_identity_ref"] == identity_ref
+    assert identity_ref not in repr(current)
+    with pytest.raises(ValidationError, match="mailbox address identity"):
+        replace(mailbox, mailbox_address_identity_ref="mailbox@example.invalid")
+
+
 def test_wire_factories_reject_extra_fields_and_cross_site(mailbox) -> None:
     from services.email_gateway.models import Mailbox, ValidationError
 
@@ -214,6 +228,7 @@ def test_mailbox_connector_projection_builds_exact_closed_wire_and_digest() -> N
         mailbox_config_revision=2,
         activation_not_before=NOW,
         projection_revision=2,
+        mailbox_address_identity_ref="extid:v1:email:" + "M" * 43,
     )
 
     wire = projection.to_wire()
@@ -227,6 +242,7 @@ def test_mailbox_connector_projection_builds_exact_closed_wire_and_digest() -> N
         "team_ref",
         "credential_ref",
         "inbound_enabled",
+        "mailbox_address_identity_ref",
         "activation_watermark",
         "projection_revision",
         "projection_digest",
@@ -244,7 +260,7 @@ def test_mailbox_connector_projection_builds_exact_closed_wire_and_digest() -> N
             Path(__file__).resolve().parents[2]
             / "contracts"
             / "email_gateway"
-            / "mailbox-connector-projection-v1.0.schema.json"
+            / "mailbox-connector-projection-v2.0.schema.json"
         ).read_text()
     )
     jsonschema.Draft202012Validator(schema).validate(wire)
@@ -266,6 +282,7 @@ def test_mailbox_connector_projection_rejects_fake_and_naive_watermark() -> None
         "mailbox_config_revision": 1,
         "activation_not_before": NOW,
         "projection_revision": 1,
+        "mailbox_address_identity_ref": "extid:v1:email:" + "M" * 43,
     }
     with pytest.raises(ValidationError, match="provider"):
         MailboxConnectorProjection(**values)  # type: ignore[arg-type]
@@ -277,3 +294,24 @@ def test_mailbox_connector_projection_rejects_fake_and_naive_watermark() -> None
                 "activation_not_before": NOW.replace(tzinfo=None),
             }  # type: ignore[arg-type]
         )
+
+
+def test_legacy_mailbox_projection_remains_exact_v1() -> None:
+    from services.email_gateway.models import MailboxConnectorProjection
+
+    projection = MailboxConnectorProjection(
+        site_id=SITE,
+        observer_connector_instance_ref="OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        provider_kind="imap_smtp",
+        entry_role="primary",
+        business_purpose="sales_follow_up",
+        team_ref="TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        credential_ref="secretref:v1/email/primary",
+        inbound_enabled=True,
+        mailbox_ref="MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        mailbox_config_revision=1,
+        activation_not_before=NOW,
+        projection_revision=1,
+    )
+
+    assert "mailbox_address_identity_ref" not in projection.to_wire()

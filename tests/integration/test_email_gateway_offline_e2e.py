@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import socket
 from collections.abc import Mapping
 from dataclasses import fields, replace
@@ -769,3 +771,175 @@ def test_legacy_imap_cutover_is_pure_disabled_and_contains_no_history_state(
     }
     assert forbidden_state.isdisjoint(field.name for field in fields(first))
     assert forbidden_state.isdisjoint(field.name for field in fields(gateway_declaration))
+
+
+def test_transient_mailbox_address_becomes_only_opaque_revisioned_authority(
+    tmp_path: Path,
+) -> None:
+    from services.email_gateway.models import MailboxConnectorProjection
+    from services.observer.observer.email_connector_config import (
+        InMemoryEmailConnectorConfigRepository,
+    )
+    from services.observer.observer.email_mailbox_identity import EmailMailboxIdentityService
+    from services.observer.observer.email_participant_authority import (
+        EmailParticipantAuthorityBinding,
+        EmailParticipantAuthorityRecord,
+        EmailParticipantAuthorityResolver,
+        InMemoryEmailParticipantAuthorityRepository,
+        canonical_binding_digest,
+    )
+
+    canonical_address = "mailbox.owner@example.invalid"
+    identity_resolver = HmacSha256IdentityTokenResolver(b"x" * 32)
+    identity = EmailMailboxIdentityService(identity_resolver=identity_resolver).derive(
+        OBSERVER_SCOPE,
+        canonical_mailbox_address=canonical_address,
+    )
+    other_site_identity = EmailMailboxIdentityService(identity_resolver=identity_resolver).derive(
+        ObserverTenantScope("other.example", "observation_processing"),
+        canonical_mailbox_address=canonical_address,
+    )
+    assert identity.normalization_version == "email-v1"
+    assert identity.opaque_address_ref.startswith("extid:v1:email:")
+    assert identity.opaque_address_ref != other_site_identity.opaque_address_ref
+
+    mailbox = replace(
+        _mailbox("B1", instance_id="mailbox-identity"),
+        address_display="Main customer inbox",
+        mailbox_address_identity_ref=identity.opaque_address_ref,
+        config_revision=1,
+    )
+    receipt = MailboxRegistry(InMemoryMailboxRepository()).upsert(
+        SCOPE,
+        mailbox,
+        expected_revision=0,
+        actor_ref="offline-admin",
+        request_id="offline-mailbox-identity",
+        idempotency_key="offline-mailbox-identity",
+    )
+    projection = MailboxConnectorProjection(
+        site_id=SCOPE.site_id,
+        observer_connector_instance_ref=mailbox.observer_connector_instance_ref,
+        provider_kind="imap_smtp",
+        entry_role=mailbox.entry_role,
+        business_purpose=mailbox.business_purpose,
+        team_ref="TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        credential_ref="secretref:v1/email/main",
+        inbound_enabled=True,
+        mailbox_ref=mailbox.mailbox_ref,
+        mailbox_config_revision=receipt.mailbox.config_revision,
+        activation_not_before=NOW,
+        projection_revision=receipt.mailbox.config_revision,
+        mailbox_address_identity_ref=identity.opaque_address_ref,
+    )
+    projection_wire = projection.to_wire()
+    config_repository = InMemoryEmailConnectorConfigRepository()
+    config_repository.apply(
+        config_publication_ref=receipt.config_publication_ref,
+        projection=projection_wire,
+        projected_at=NOW,
+    )
+    assert config_repository.projections[0].mailbox_address_identity_ref == (
+        identity.opaque_address_ref
+    )
+
+    message = EmailMessage()
+    message["From"] = "customer@example.invalid"
+    message["To"] = canonical_address
+    message["Subject"] = "Offline mailbox identity"
+    message["Message-ID"] = "<mailbox-identity@example.invalid>"
+    message.set_content("Offline body")
+    raw = message.as_bytes()
+    store = ContentAddressedEvidenceStore(tmp_path / "mailbox-identity-cas")
+    stored = store.put(OBSERVER_SCOPE, raw, media_type="message/rfc822")
+    item = EmailRawDeliveryDecoder().decode_delivery(
+        raw,
+        delivery_id="provider-mailbox-identity",
+        received_at=NOW,
+        source_ref=stored.object_ref,
+    )[0]
+    normalized = EmailObservationNormalizer(
+        identity_resolver=identity_resolver,
+        site_id=OBSERVER_SCOPE.site_id,
+        purpose=OBSERVER_SCOPE.processing_purpose,
+    ).normalize(item, source_ref=stored.object_ref)
+    publication = build_email_publication(
+        scope=OBSERVER_SCOPE,
+        key=ConnectorKey("email", "mailbox-identity"),
+        item=item,
+        normalized=normalized,
+        mailbox_id=mailbox.mailbox_ref,
+        mailbox_config_revision=receipt.mailbox.config_revision,
+        observer_delivery_ref="provider-mailbox-identity",
+        received_at=NOW,
+        publication_revision=1,
+    )
+    publication_payload = publication.to_wire()
+    binding = EmailParticipantAuthorityBinding.from_wire(
+        {
+            "gateway_receipt_ref": "EGR-"
+            + stable_ulid("gateway-receipt", publication.publication_id),
+            "publication_ref": publication.publication_id,
+            "inbox_item_ref": "INB-" + stable_ulid("inbox", publication.publication_id),
+            "message_ref": "MSG-" + stable_ulid("message", publication.publication_id),
+            "mailbox_ref": mailbox.mailbox_ref,
+            "mailbox_config_revision": receipt.mailbox.config_revision,
+            "observer_delivery_ref": publication.observer_delivery_ref,
+            "payload_digest": canonical_binding_digest(publication_payload),
+            "participant_binding_digest": canonical_binding_digest(
+                publication_payload["participants"]
+            ),
+            "evidence_binding_digest": canonical_binding_digest(
+                publication_payload["evidence_refs"]
+            ),
+        }
+    )
+    authority = EmailParticipantAuthorityResolver(
+        repository=InMemoryEmailParticipantAuthorityRepository(
+            (
+                EmailParticipantAuthorityRecord(
+                    binding=binding,
+                    publication_payload=publication_payload,
+                    delivery_id="provider-mailbox-identity",
+                    object_ref=stored.object_ref,
+                    exact_body_sha256=hashlib.sha256(raw).hexdigest(),
+                    byte_size=len(raw),
+                    media_type="message/rfc822",
+                    received_at=NOW,
+                    mailbox_address_identity_ref=(identity.opaque_address_ref),
+                ),
+            )
+        ),
+        store=store,
+        identity_resolver=identity_resolver,
+    )
+    resolved = authority(
+        OBSERVER_SCOPE,
+        binding,
+        {"sender": "mailbox_owner", "recipients": ["original_sender"]},
+    )
+
+    assert resolved["participant_projection"] == [
+        {"address_role": "sender", "opaque_address_ref": identity.opaque_address_ref},
+        {
+            "address_role": "to",
+            "opaque_address_ref": identity_resolver.resolve(
+                OBSERVER_SCOPE.site_id,
+                OBSERVER_SCOPE.processing_purpose,
+                "email",
+                "customer@example.invalid",
+            ),
+        },
+    ]
+    durable_rendering = json.dumps(
+        {
+            "mailbox": receipt.mailbox.to_wire(),
+            "projection": projection_wire,
+            "observer_config": [value.comparable() for value in config_repository.projections],
+            "participant_projection": resolved["participant_projection"],
+        },
+        default=str,
+        sort_keys=True,
+    )
+    assert canonical_address not in durable_rendering
+    assert canonical_address not in repr((identity, receipt, projection, authority))

@@ -59,7 +59,7 @@ def test_readme_reports_the_current_doctype_inventory_and_local_boundary() -> No
     parent_count = sum(not document.get("istable") for document in documents)
     child_count = sum(bool(document.get("istable")) for document in documents)
 
-    assert (parent_count, child_count) == (15, 3)
+    assert (parent_count, child_count) == (18, 3)
     assert f"{parent_count} 个父 DocType 与 {child_count} 个 Child DocType" in readme
     assert "13 个父 DocType 与 2 个 Child DocType" not in readme
     assert "local pilot" in readme.lower()
@@ -114,7 +114,7 @@ def test_handoff_binds_source_baseline_current_runtime_truth_and_historical_boun
     assert "historical" in handoff.lower()
     assert "current main" in handoff.lower()
     assert "do not modify" in handoff.lower()
-    assert "15 parent" in handoff
+    assert "18 parent" in handoff
     assert "3 child" in handoff
     assert "CEO" in handoff and "System User" in handoff
     assert "DeepSeek gateway" in handoff

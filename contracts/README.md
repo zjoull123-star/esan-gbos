@@ -159,6 +159,16 @@ to enforce them.
 ## Trust boundary
 
 - Evidence and model output are untrusted inputs.
+- `MailboxUpsertCommand` accepts the canonical mailbox address only at the
+  browser-to-Frappe administrative boundary. Frappe must resolve it to an
+  `extid:v1:email:` reference before calling the Email Gateway; neither the
+  canonical address nor the opaque reference is part of the public mailbox
+  response.
+- `mailbox-connector-projection-v1.0` remains frozen. New mailbox revisions use
+  `mailbox-connector-projection-v2.0`, whose only additional field is the
+  required `mailbox_address_identity_ref`; the projection digest covers that
+  field. Legacy Gateway rows remain readable but cannot be enabled or relayed
+  until a new revision supplies the opaque reference.
 - A `DraftMutation` cannot approve itself or modify formal stage, outcome,
   price, discount, outbound communication, or order fields.
 - An `ApprovedCommand` is only valid after the command service verifies the

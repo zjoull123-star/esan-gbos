@@ -77,6 +77,15 @@
         "auth_ref": "observer-email-draft-material-v1",
         "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
         "network": "local-internal-only"
+      },
+      "email_mailbox_identity": {
+        "path": "/internal/v1/bff/email-mailbox-identity/derive",
+        "auth_ref": "observer-email-draft-material-v1",
+        "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
+        "identity_key_file": "/run/secrets/identity_hmac_key",
+        "processing_purpose": "email_mailbox_identity",
+        "resolver_purpose": "observation_processing",
+        "network": "local-internal-only"
       }
     },
     "email-gateway-api": {

@@ -10,6 +10,7 @@ from typing import Any, ClassVar, Self
 _SITE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,139}$")
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 _OPAQUE_EMAIL_IDENTITY = re.compile(r"^extid:v1:[a-z][a-z0-9_]{0,31}:[A-Za-z0-9_-]{43}$")
+_OPAQUE_MAILBOX_ADDRESS_IDENTITY = re.compile(r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
 _OPAQUE_PUBLICATION_PARTICIPANT = re.compile(
     r"^(?:extid:v1:email:[A-Za-z0-9_-]{43}|unresolved:delivery:[0-9A-HJKMNP-TV-Z]{26})$"
 )
@@ -205,6 +206,7 @@ class Mailbox:
     status: str
     config_revision: int
     observer_config_projection_receipt: str | None
+    mailbox_address_identity_ref: str | None = None
 
     WIRE_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
@@ -225,6 +227,7 @@ class Mailbox:
             "status",
             "config_revision",
             "observer_config_projection_receipt",
+            "mailbox_address_identity_ref",
         }
     )
 
@@ -271,6 +274,11 @@ class Mailbox:
             "observer config projection receipt",
             allow_at=False,
         )
+        if self.mailbox_address_identity_ref is not None and (
+            not isinstance(self.mailbox_address_identity_ref, str)
+            or _OPAQUE_MAILBOX_ADDRESS_IDENTITY.fullmatch(self.mailbox_address_identity_ref) is None
+        ):
+            raise ValidationError("invalid mailbox address identity ref")
 
     def to_wire(self) -> dict[str, object]:
         return asdict(self)
@@ -291,7 +299,8 @@ class Mailbox:
             f"provider={self.provider!r}, "
             f"entry_role={self.entry_role!r}, status={self.status!r}, "
             f"config_revision={self.config_revision}, address_display=<redacted>, "
-            "account_owner_user_ref=<redacted>, credential_ref=<redacted>)"
+            "account_owner_user_ref=<redacted>, credential_ref=<redacted>, "
+            "mailbox_address_identity_ref=<redacted>)"
         )
 
 
@@ -326,6 +335,7 @@ class MailboxConnectorProjection:
     mailbox_config_revision: int
     activation_not_before: datetime
     projection_revision: int
+    mailbox_address_identity_ref: str | None = None
 
     def __post_init__(self) -> None:
         if not _SITE.fullmatch(self.site_id):
@@ -359,6 +369,11 @@ class MailboxConnectorProjection:
         ):
             raise ValidationError("invalid connector projection revision")
         _aware(self.activation_not_before, "activation not before")
+        if self.mailbox_address_identity_ref is not None and (
+            not isinstance(self.mailbox_address_identity_ref, str)
+            or _OPAQUE_MAILBOX_ADDRESS_IDENTITY.fullmatch(self.mailbox_address_identity_ref) is None
+        ):
+            raise ValidationError("invalid connector projection mailbox address identity ref")
 
     def to_wire(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -379,6 +394,8 @@ class MailboxConnectorProjection:
             },
             "projection_revision": self.projection_revision,
         }
+        if self.mailbox_address_identity_ref is not None:
+            payload["mailbox_address_identity_ref"] = self.mailbox_address_identity_ref
         return {**payload, "projection_digest": canonical_digest(payload)}
 
     def __repr__(self) -> str:
@@ -388,7 +405,7 @@ class MailboxConnectorProjection:
             f"provider_kind={self.provider_kind!r}, "
             f"projection_revision={self.projection_revision}, "
             f"activation_not_before={self.activation_not_before!r}, "
-            "credential_ref=<redacted>)"
+            "credential_ref=<redacted>, mailbox_address_identity_ref=<redacted>)"
         )
 
 

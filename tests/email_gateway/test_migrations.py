@@ -17,6 +17,7 @@ def _all_sql() -> str:
         "006_email_gateway_human_retention.sql",
         "007_email_gateway_outbound.sql",
         "008_email_gateway_participant_authority.sql",
+        "009_email_gateway_mailbox_identity.sql",
     ]
     return "\n".join(path.read_text() for path in files).lower()
 
@@ -141,3 +142,23 @@ def test_participant_authority_binding_columns_are_nullable_for_legacy_and_diges
     assert "update email_gateway.publication_receipts" not in sql
     for forbidden in ("from_address", "to_address", "cc_address", "bcc_address"):
         assert forbidden not in sql
+
+
+def test_mailbox_identity_migration_is_idempotent_nullable_and_reasserts_inventory() -> None:
+    migration = (MIGRATIONS / "009_email_gateway_mailbox_identity.sql").read_text().lower()
+
+    assert "add column if not exists mailbox_address_identity_ref text" in migration
+    assert "mailbox_address_identity_ref is null" in migration
+    assert "^extid:v1:email:[a-za-z0-9_-]{43}$" in migration
+    assert "if not exists" in migration
+    assert "add constraint mailboxes_mailbox_address_identity_ref_check" in migration
+    assert "alter table email_gateway.mailboxes enable row level security" in migration
+    assert "alter table email_gateway.mailboxes force row level security" in migration
+    assert "revoke all on email_gateway.mailboxes from public" in migration
+    assert (
+        "grant select, insert, update on email_gateway.mailboxes to gbos_email_gateway_app"
+        in migration
+    )
+    assert "grant select on email_gateway.mailboxes to gbos_email_gateway_worker" in migration
+    for forbidden in ("canonical_mailbox_address", "@example", "sentinel"):
+        assert forbidden not in migration

@@ -31,6 +31,8 @@ def _run_prepare_secrets_fixture(
     cursor_value: str = "cursor-text-secret",
     email_value: str = '{"username":"email-user","password":"email-password"}',
     deepseek_value: str | None = None,
+    email_channel_enabled: bool = True,
+    email_gateway_enabled: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     fixture_root = tmp_path / "prepare-secrets-fixture"
     scripts = fixture_root / "scripts" / "local-pilot"
@@ -84,10 +86,11 @@ def _run_prepare_secrets_fixture(
     manifest = json.loads(_read(MANIFEST))
     for channel in manifest["channels"].values():
         channel["enabled"] = False
-    manifest["channels"]["email"]["enabled"] = True
+    manifest["channels"]["email"]["enabled"] = email_channel_enabled
     manifest["channels"]["email"]["credential_ref"] = (
         "keychain://com.esan.gbos.local-pilot/email-credential"
     )
+    manifest["email_gateway"]["kill_switch"] = not email_gateway_enabled
     if deepseek_value is not None:
         manifest["deepseek"]["enabled"] = True
         manifest["deepseek"]["keychain_ref"] = (
@@ -864,6 +867,24 @@ def test_identity_hmac_key_materializes_hex_keychain_output_as_exact_raw_bytes(
     assert keychain_output not in result.stdout
     assert keychain_output not in result.stderr
     assert keychain_output not in security_log.read_text(encoding="utf-8")
+
+
+def test_gateway_materializes_identity_key_when_legacy_channels_are_disabled(
+    tmp_path: Path,
+) -> None:
+    expected = bytes(reversed(range(32)))
+
+    result, security_log = _run_prepare_secrets_fixture(
+        tmp_path,
+        identity_value=expected.hex(),
+        email_channel_enabled=False,
+        email_gateway_enabled=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    identity_key = Path(result.stdout.strip()) / "identity_hmac_key"
+    assert identity_key.read_bytes() == expected
+    assert "identity-hmac-key" in security_log.read_text(encoding="utf-8")
 
 
 def test_multiline_email_json_hex_export_materializes_as_exact_json_bytes(

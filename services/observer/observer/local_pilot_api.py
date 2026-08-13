@@ -245,6 +245,15 @@ class EmailDraftMaterial(Protocol):
     ) -> dict[str, object]: ...
 
 
+class EmailMailboxIdentity(Protocol):
+    def derive(
+        self,
+        scope: TenantScope,
+        *,
+        canonical_mailbox_address: str,
+    ) -> object: ...
+
+
 class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -344,9 +353,20 @@ class EmailConnectorConfigRequest(_ClosedModel):
     activation_watermark: ActivationWatermarkRequest
     projection_revision: int = Field(ge=1, le=2_147_483_647)
     projection_digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    mailbox_address_identity_ref: str | None = Field(
+        default=None,
+        pattern=r"^extid:v1:email:[A-Za-z0-9_-]{43}$",
+    )
+
+    def model_post_init(self, __context: object) -> None:
+        del __context
+        if "mailbox_address_identity_ref" in self.model_fields_set and (
+            self.mailbox_address_identity_ref is None
+        ):
+            raise ValueError("explicit null mailbox address identity ref is invalid")
 
     def to_wire(self) -> dict[str, object]:
-        return {
+        value: dict[str, object] = {
             "site_id": self.site_id,
             "observer_connector_instance_ref": self.observer_connector_instance_ref,
             "provider_kind": self.provider_kind,
@@ -363,6 +383,9 @@ class EmailConnectorConfigRequest(_ClosedModel):
             "projection_revision": self.projection_revision,
             "projection_digest": self.projection_digest,
         }
+        if self.mailbox_address_identity_ref is not None:
+            value["mailbox_address_identity_ref"] = self.mailbox_address_identity_ref
+        return value
 
 
 class EvidenceRevealAuthorizationRequest(_ClosedModel):
@@ -431,6 +454,11 @@ class EmailDraftFinalizeRequest(_ClosedModel):
     idempotency_key: str = Field(min_length=8, max_length=256)
 
 
+class EmailMailboxIdentityRequest(_ClosedModel):
+    canonical_mailbox_address: str = Field(min_length=1, max_length=254)
+    idempotency_key: str = Field(min_length=8, max_length=256)
+
+
 def create_local_pilot_app(
     *,
     config: LocalPilotAPIConfig,
@@ -443,6 +471,7 @@ def create_local_pilot_app(
     email_connector_configs: EmailConnectorConfigs | None = None,
     evidence_reveal: EvidenceReveal | None = None,
     email_draft_material: EmailDraftMaterial | None = None,
+    email_mailbox_identity: EmailMailboxIdentity | None = None,
 ) -> FastAPI:
     """Create the authenticated Frappe v4 downstream surface without starting I/O."""
 
@@ -841,6 +870,34 @@ def create_local_pilot_app(
         )
         return _bff_envelope(result, site_id=scope.site_id, request_id=request_id)
 
+    @application.post("/internal/v1/bff/email-mailbox-identity/derive")
+    def bff_email_mailbox_identity_derive(
+        request: Request,
+        payload: Annotated[EmailMailboxIdentityRequest, Body()],
+    ) -> dict[str, object]:
+        guard.require_running()
+        scope, request_id = _governed_scope(
+            request,
+            expected_purpose="email_mailbox_identity",
+        )
+        _matching_idempotency(request, payload.idempotency_key)
+        if email_mailbox_identity is None:
+            raise KillSwitchEngaged("email mailbox identity is unavailable")
+        result = email_mailbox_identity.derive(
+            scope,
+            canonical_mailbox_address=payload.canonical_mailbox_address,
+        )
+        to_wire = getattr(result, "to_wire", None)
+        if not callable(to_wire):
+            raise KillSwitchEngaged("email mailbox identity is unavailable")
+        data = to_wire()
+        if not isinstance(data, dict) or set(data) != {
+            "opaque_address_ref",
+            "normalization_version",
+        }:
+            raise KillSwitchEngaged("email mailbox identity is unavailable")
+        return _bff_envelope(data, site_id=scope.site_id, request_id=request_id)
+
     @application.post("/internal/v1/identity-authority/deny")
     def deny_identity_authority(
         request: Request,
@@ -902,6 +959,7 @@ async def _validate_internal_request(
     elif request.url.path in {
         "/internal/v1/bff/email-draft-material/save",
         "/internal/v1/bff/email-draft-material/finalize",
+        "/internal/v1/bff/email-mailbox-identity/derive",
     }:
         bearer_token = config.draft_material_bearer_token
         expected_auth_ref = config.draft_material_auth_ref

@@ -4,7 +4,7 @@
 channel ingestion, identity resolution and model proposals without enabling outbound
 actions, Kingdee, cloud deployment or production state changes.
 
-**Current validation references:** Frappe source reference
+**Recorded pre-mailbox-identity image references:** Frappe source reference
 `485d3def0ea30ee49a3899d71c10b0787ba0429f`, runtime source reference
 `bb260632ff44c7065a88327f264612139a9070a2`, and image-lock recording commit
 `a599a5200e2a8e1b5e42301d74fe8d9d914161c4`. The locked Frappe/PWA image is
@@ -33,8 +33,9 @@ its own exact source revision and source-hash label.
 
 - [x] Compose isolation, loopback exposure, profiles, secrets, image locks and
   fail-closed preflight.
-- [x] Current-source Frappe/PWA and runtime images rebuilt, inspected and recorded;
-  the synthetic core was restarted from these recorded images.
+- [x] The earlier Frappe/PWA and runtime source baseline was rebuilt, inspected and recorded;
+  the synthetic core was restarted from those recorded images. The newer mailbox-identity
+  source explicitly requires another rebuild before use.
 - [x] Fresh Frappe v16 site install for ERPNext, CRM and `esan_gbos`, followed by two
   migrations and native identity permission tests.
 - [x] Observer, Context, Agent and Media PostgreSQL migration chain executed twice with
@@ -47,6 +48,9 @@ its own exact source revision and source-hash label.
   attachment quarantine, model retry/protocol failure, identity restart and revocation.
 - [x] Immediate identity authority denial, dynamic target eligibility, rejected mapping
   resubmission, governed revoke/review PWA and automatic retention scheduling verified.
+- [x] Email Gateway 独立邮箱地址录入已闭环：Observer 以统一 Secret Provider 读取
+  32-byte HMAC key，只持久化 opaque mailbox identity；v1 兼容、v2 revision/digest、
+  legacy fail-closed、PWA 一次性清空和 participant-authority 重算均已验证。
 - [x] The earlier disposable PostgreSQL matrix passed 43 tests; the current runtime
   source additionally passed isolated three-role migration/start-guard/chain SQL.
   Fresh current-image Frappe v16 identity/app native suites passed 13/59 tests after
@@ -82,6 +86,16 @@ unrun due missing working client authorization, DeepSeek response-reported model
 
 The earlier `3060 passed, 44 skipped, 3 failed` result is retained in current closure evidence
 as pre-doc-fix stale-current-doc mismatch only; the final run above closed that mismatch.
+
+The 2026-08-14 mailbox-identity source closure is a newer, separate verification slice:
+backend `3630 passed, 48 skipped, 1 warning`, frontend unit `217 passed`, frontend-harness
+Playwright `27 passed`, and lint/typecheck/build/Ruff/format/mypy (`130 sources`)/compileall
+all green. A disposable PostgreSQL run applied the Observer chain and Email Gateway 001–009
+twice and passed `3 + 2` focused real-DB tests; an isolated Frappe v16 site completed install,
+two migrations and five native email/identity test modules. All disposable state was removed.
+No provider, model or external-send network was used. These changes are not present in the
+currently recorded images; a clean-source rebuild, image-lock refresh and attestation are
+mandatory before any new canary or deployment run.
 
 ## Deferred by explicit scope decision
 

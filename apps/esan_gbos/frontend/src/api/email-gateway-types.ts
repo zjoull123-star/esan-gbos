@@ -65,6 +65,7 @@ export interface EmailMailboxPayload { mailbox: EmailMailbox }
 export interface EmailMailboxListQuery { cursor?: string; pageSize?: number }
 
 export interface EmailMailboxUpsertCommand {
+  canonical_mailbox_address: string;
   mailbox_ref?: string;
   display_label: string;
   provider_kind: EmailProviderKind;

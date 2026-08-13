@@ -11,7 +11,7 @@ import json
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 import frappe
 
@@ -171,7 +171,7 @@ def materialize_association_suggestion(request: Mapping[str, Any]) -> dict[str, 
         execute,
         api_version="domain",
     )
-    return cast(dict[str, Any], result)
+    return result
 
 
 def rematerialize_rejected_association_suggestion(
@@ -221,7 +221,7 @@ def rematerialize_rejected_association_suggestion(
         execute,
         api_version="domain",
     )
-    return cast(dict[str, Any], result)
+    return result
 
 
 def submit_for_review(request: Mapping[str, Any]) -> dict[str, Any]:
@@ -312,7 +312,7 @@ def submit_for_review(request: Mapping[str, Any]) -> dict[str, Any]:
         execute,
         api_version="domain",
     )
-    return cast(dict[str, Any], result)
+    return result
 
 
 def submit_human_identity_for_review(request: Mapping[str, Any]) -> dict[str, Any]:
@@ -406,7 +406,7 @@ def submit_human_identity_for_review(request: Mapping[str, Any]) -> dict[str, An
         execute,
         api_version="domain",
     )
-    return cast(dict[str, Any], result)
+    return result
 
 
 def approve_human_identity_review(request: Mapping[str, Any]) -> dict[str, Any]:
@@ -486,7 +486,7 @@ def approve_human_identity_review(request: Mapping[str, Any]) -> dict[str, Any]:
         execute,
         api_version="domain",
     )
-    return cast(dict[str, Any], result)
+    return result
 
 
 def _materialize_payload(request: Mapping[str, Any]) -> dict[str, Any]:

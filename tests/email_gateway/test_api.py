@@ -412,6 +412,7 @@ def test_upsert_is_closed_domain_complete_and_creates_revisioned_mailbox() -> No
         "account_owner_user_ref": "owner-01",
         "priority": 10,
         "credential_ref": "secretref:v1/email/fake",
+        "mailbox_address_identity_ref": "extid:v1:email:" + "M" * 43,
         "inbound_enabled": False,
         "outbound_enabled": False,
         "expected_revision": 0,
@@ -435,6 +436,7 @@ def test_upsert_is_closed_domain_complete_and_creates_revisioned_mailbox() -> No
     mailbox = first.json()["data"]["mailbox"]
     assert mailbox["config_revision"] == 1
     assert mailbox["outbound_enabled"] is False
+    assert "mailbox_address_identity_ref" not in mailbox
     assert set(mailbox) == {
         "mailbox_ref",
         "display_label",
@@ -450,6 +452,49 @@ def test_upsert_is_closed_domain_complete_and_creates_revisioned_mailbox() -> No
     }
     scope = TenantScope(SITE, "sales_follow_up")
     assert repository.get(scope, mailbox["mailbox_ref"]) is not None
+
+
+def test_upsert_requires_opaque_mailbox_identity_ref_and_never_accepts_raw_address() -> None:
+    client, repository, _ = _app()
+    payload = {
+        **_scope_payload(roles=["GBOS Admin"], teams=["*"]),
+        "display_label": "Gulf Sales",
+        "provider_kind": "fake",
+        "business_mode": "primary",
+        "business_purpose": "sales_follow_up",
+        "provider_account_ref": "provider-account-01",
+        "observer_connector_instance_ref": "OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "default_team_ref": "TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "account_owner_user_ref": "owner-01",
+        "priority": 10,
+        "credential_ref": "secretref:v1/email/fake",
+        "inbound_enabled": False,
+        "outbound_enabled": False,
+        "expected_revision": 0,
+        "idempotency_key": "missing-mailbox-identity-01",
+    }
+    headers = {
+        **ADMIN_HEADERS,
+        "X-Processing-Purpose": "email_mailbox_admin",
+        "Idempotency-Key": "missing-mailbox-identity-01",
+    }
+
+    missing = client.post(
+        "/internal/v1/bff/email-admin/mailboxes/upsert", headers=headers, json=payload
+    )
+    raw = client.post(
+        "/internal/v1/bff/email-admin/mailboxes/upsert",
+        headers=headers,
+        json={**payload, "canonical_mailbox_address": "sales@example.invalid"},
+    )
+    invalid = client.post(
+        "/internal/v1/bff/email-admin/mailboxes/upsert",
+        headers=headers,
+        json={**payload, "mailbox_address_identity_ref": "sales@example.invalid"},
+    )
+
+    assert missing.status_code == raw.status_code == invalid.status_code == 400
+    assert repository.list(TenantScope(SITE, "sales_follow_up")) == ()
 
 
 def test_status_preserves_domain_fields_and_forces_outbound_false() -> None:
@@ -529,6 +574,67 @@ def test_status_preserves_domain_fields_and_forces_outbound_false() -> None:
     assert changed.config_revision == 2
 
 
+def test_status_enable_fails_closed_for_legacy_mailbox_without_identity_ref() -> None:
+    repository = InMemoryMailboxRepository()
+    scope = TenantScope(SITE, "sales_follow_up")
+    legacy = Mailbox(
+        mailbox_ref="MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        site_id=SITE,
+        address_display="Gulf Sales",
+        provider="fake",
+        provider_account_ref="provider-account-01",
+        observer_connector_instance_ref="OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        entry_role="primary",
+        business_purpose="sales_follow_up",
+        default_team_ref="TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        account_owner_user_ref="owner-01",
+        priority=10,
+        inbound_enabled=False,
+        outbound_enabled=False,
+        credential_ref="secretref:v1/email/fake",
+        status="paused",
+        config_revision=1,
+        observer_config_projection_receipt=None,
+        mailbox_address_identity_ref=None,
+    )
+    durable = (
+        MailboxRegistry(repository)
+        .upsert(
+            scope,
+            legacy,
+            expected_revision=0,
+            actor_ref="seed",
+            request_id="seed",
+            idempotency_key="seed-legacy",
+        )
+        .mailbox
+    )
+    client, _, _ = _app(
+        read_repository=InMemoryPhase1ReadRepository(mailboxes=(_mailbox_projection(),)),
+        mailbox_repository=repository,
+    )
+
+    response = client.post(
+        "/internal/v1/bff/email-admin/mailboxes/status",
+        headers={
+            **ADMIN_HEADERS,
+            "X-Processing-Purpose": "email_mailbox_admin",
+            "Idempotency-Key": "enable-legacy-mailbox-01",
+        },
+        json={
+            **_scope_payload(roles=["Integration Admin"], teams=[]),
+            "mailbox_ref": durable.mailbox_ref,
+            "action": "enable",
+            "expected_revision": 1,
+            "idempotency_key": "enable-legacy-mailbox-01",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"error": {"code": "mailbox_identity_required"}}
+    assert repository.get(scope, durable.mailbox_ref) == durable
+
+
 def test_existing_mailbox_upsert_replays_with_original_expected_revision() -> None:
     repository = InMemoryMailboxRepository()
     scope = TenantScope(SITE, "sales_follow_up")
@@ -573,6 +679,7 @@ def test_existing_mailbox_upsert_replays_with_original_expected_revision() -> No
         "account_owner_user_ref": "owner-01",
         "priority": 10,
         "credential_ref": "secretref:v1/email/fake",
+        "mailbox_address_identity_ref": "extid:v1:email:" + "M" * 43,
         "inbound_enabled": True,
         "outbound_enabled": False,
         "expected_revision": 1,

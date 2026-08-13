@@ -94,7 +94,8 @@ class PostgresMailboxRepository:
                provider_account_ref, observer_connector_instance_ref, entry_role,
                business_purpose, default_team_ref, account_owner_user_ref, priority,
                inbound_enabled, outbound_enabled, credential_ref, status,
-               config_revision, observer_config_projection_receipt
+               config_revision, observer_config_projection_receipt,
+               mailbox_address_identity_ref
           FROM email_gateway.mailboxes
          WHERE site_id = %s AND business_purpose = %s AND mailbox_ref = %s
     """
@@ -104,7 +105,8 @@ class PostgresMailboxRepository:
                provider_account_ref, observer_connector_instance_ref, entry_role,
                business_purpose, default_team_ref, account_owner_user_ref, priority,
                inbound_enabled, outbound_enabled, credential_ref, status,
-               config_revision, observer_config_projection_receipt
+               config_revision, observer_config_projection_receipt,
+               mailbox_address_identity_ref
           FROM email_gateway.mailboxes
          WHERE site_id = %s AND business_purpose = %s
          ORDER BY mailbox_ref
@@ -215,10 +217,11 @@ class PostgresMailboxRepository:
                         business_purpose, default_team_ref, account_owner_user_ref, priority,
                         inbound_enabled, outbound_enabled, credential_ref, status,
                         config_revision, observer_config_projection_receipt,
+                        mailbox_address_identity_ref,
                         created_by, updated_by
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     """,
                     (
@@ -239,6 +242,7 @@ class PostgresMailboxRepository:
                         mailbox.status,
                         next_revision,
                         mailbox.observer_config_projection_receipt,
+                        mailbox.mailbox_address_identity_ref,
                         actor_ref,
                         actor_ref,
                     ),
@@ -261,6 +265,7 @@ class PostgresMailboxRepository:
                            status = %s,
                            config_revision = %s,
                            observer_config_projection_receipt = %s,
+                           mailbox_address_identity_ref = %s,
                            updated_by = %s,
                            updated_at = now()
                      WHERE site_id = %s AND business_purpose = %s
@@ -281,6 +286,7 @@ class PostgresMailboxRepository:
                         mailbox.status,
                         next_revision,
                         mailbox.observer_config_projection_receipt,
+                        mailbox.mailbox_address_identity_ref,
                         actor_ref,
                         scope.site_id,
                         scope.processing_purpose,
@@ -336,6 +342,30 @@ class PostgresMailboxRepository:
                 """
                 UPDATE email_gateway.mailbox_config_outbox AS outbox
                    SET status = 'dead_letter',
+                       safe_error_code = 'missing_mailbox_identity',
+                       lease_owner = NULL,
+                       lease_expires_at = NULL,
+                       updated_at = %s
+                  FROM email_gateway.mailboxes AS mailbox
+                 WHERE mailbox.site_id = outbox.site_id
+                   AND mailbox.mailbox_ref = outbox.mailbox_ref
+                   AND outbox.site_id = %s
+                   AND outbox.processing_purpose = %s
+                   AND mailbox.business_purpose = %s
+                   AND mailbox.mailbox_address_identity_ref IS NULL
+                   AND outbox.status IN ('queued', 'retry')
+                """,
+                (
+                    now,
+                    scope.site_id,
+                    scope.processing_purpose,
+                    scope.processing_purpose,
+                ),
+            )
+            cursor.execute(
+                """
+                UPDATE email_gateway.mailbox_config_outbox AS outbox
+                   SET status = 'dead_letter',
                        safe_error_code = 'superseded_revision',
                        lease_owner = NULL,
                        lease_expires_at = NULL,
@@ -368,6 +398,7 @@ class PostgresMailboxRepository:
                      WHERE outbox.site_id = %s
                        AND outbox.processing_purpose = %s
                        AND mailbox.business_purpose = %s
+                       AND mailbox.mailbox_address_identity_ref IS NOT NULL
                        AND outbox.attempt < 5
                        AND (
                            (outbox.status IN ('queued', 'retry')
@@ -416,7 +447,8 @@ class PostgresMailboxRepository:
                 SELECT mailbox_ref, config_revision,
                        observer_connector_instance_ref, provider, entry_role,
                        business_purpose, default_team_ref, credential_ref,
-                       inbound_enabled, outbound_enabled, status
+                       inbound_enabled, outbound_enabled, status,
+                       mailbox_address_identity_ref
                   FROM email_gateway.mailboxes
                  WHERE site_id = %s AND business_purpose = %s AND mailbox_ref = %s
                 """,
@@ -441,6 +473,7 @@ class PostgresMailboxRepository:
                 inbound_enabled=bool(mailbox_row[8]),
                 outbound_enabled=bool(mailbox_row[9]),
                 mailbox_status=str(mailbox_row[10]),
+                mailbox_address_identity_ref=str(mailbox_row[11]),
                 activation_not_before=row[12],
                 processing_purpose=str(row[3]),
                 request_id=str(row[4]),
@@ -627,7 +660,7 @@ class PostgresMailboxRepository:
             return status  # type: ignore[return-value]
 
     def _mailbox_from_row(self, row: tuple[Any, ...]) -> Mailbox:
-        if len(row) != 17:
+        if len(row) != 18:
             raise ValidationError("invalid mailbox database row")
         return Mailbox(
             mailbox_ref=str(row[0]),
@@ -647,6 +680,7 @@ class PostgresMailboxRepository:
             status=str(row[14]),
             config_revision=int(row[15]),
             observer_config_projection_receipt=(None if row[16] is None else str(row[16])),
+            mailbox_address_identity_ref=(None if row[17] is None else str(row[17])),
         )
 
 
@@ -669,6 +703,7 @@ class MailboxConfigOutboxClaim:
         "inbound_enabled",
         "outbound_enabled",
         "mailbox_status",
+        "mailbox_address_identity_ref",
         "activation_not_before",
         "processing_purpose",
         "request_id",
@@ -698,6 +733,7 @@ class MailboxConfigOutboxClaim:
         inbound_enabled: bool,
         outbound_enabled: bool,
         mailbox_status: str,
+        mailbox_address_identity_ref: str,
         activation_not_before: datetime,
         processing_purpose: str,
         request_id: str,
@@ -723,6 +759,7 @@ class MailboxConfigOutboxClaim:
         self.inbound_enabled = inbound_enabled
         self.outbound_enabled = outbound_enabled
         self.mailbox_status = mailbox_status
+        self.mailbox_address_identity_ref = mailbox_address_identity_ref
         _aware(activation_not_before, "activation not before")
         self.activation_not_before = activation_not_before
         self.processing_purpose = processing_purpose
@@ -742,7 +779,8 @@ class MailboxConfigOutboxClaim:
             f"config_publication_ref={self.config_publication_ref!r}, "
             f"mailbox_ref={self.mailbox_ref!r}, status={self.status!r}, "
             f"attempt={self.attempt}, lease_generation={self.lease_generation}, "
-            "credential_ref=<redacted>, fence_token=<redacted>)"
+            "credential_ref=<redacted>, mailbox_address_identity_ref=<redacted>, "
+            "fence_token=<redacted>)"
         )
 
     def to_connector_projection_wire(self) -> dict[str, object]:
@@ -759,6 +797,7 @@ class MailboxConfigOutboxClaim:
             mailbox_config_revision=self.mailbox_config_revision,
             activation_not_before=self.activation_not_before,
             projection_revision=self.mailbox_config_revision,
+            mailbox_address_identity_ref=self.mailbox_address_identity_ref,
         ).to_wire()
 
 

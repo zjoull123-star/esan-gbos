@@ -48,6 +48,7 @@ _BUSINESS_PURPOSES = frozenset(
 _TEAM_REF = re.compile(r"^TEM-[0-9A-HJKMNP-TV-Z]{26}$")
 _CONNECTOR_REF = re.compile(r"^OCI-[0-9A-HJKMNP-TV-Z]{26}$")
 _CREDENTIAL_REF = re.compile(r"^secretref:v1/[A-Za-z0-9][A-Za-z0-9._/-]*$")
+_MAILBOX_ADDRESS_IDENTITY_REF = re.compile(r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
 
 
 def _object(value: object, field: str) -> Mapping[str, object]:
@@ -232,6 +233,7 @@ def map_connector_health(value: object) -> dict[str, Any]:
 def validate_mailbox_upsert(value: object) -> dict[str, Any]:
     item = _object(value, "mailbox command")
     required = {
+        "mailbox_address_identity_ref",
         "display_label",
         "provider_kind",
         "business_mode",
@@ -252,6 +254,12 @@ def validate_mailbox_upsert(value: object) -> dict[str, Any]:
     if outbound:
         raise V5EmailDTOValidationError("outbound_enabled must remain false in Phase 1")
     result: dict[str, Any] = {
+        "mailbox_address_identity_ref": _matching_text(
+            item["mailbox_address_identity_ref"],
+            "mailbox_address_identity_ref",
+            _MAILBOX_ADDRESS_IDENTITY_REF,
+            maximum=58,
+        ),
         "display_label": _text(item["display_label"], "display_label"),
         "provider_kind": _choice(item["provider_kind"], "provider_kind", _PROVIDER_KINDS),
         "business_mode": _choice(item["business_mode"], "business_mode", _BUSINESS_MODES),

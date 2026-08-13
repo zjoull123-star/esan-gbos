@@ -407,7 +407,14 @@ def test_email_connector_config_repository_replays_and_fences_revisions() -> Non
     second_ref = "MCP-" + stable_ulid("email-config-two", suffix)
     now = datetime.now(UTC).replace(microsecond=0)
 
-    def projection(revision: int, team_ref: str) -> dict[str, object]:
+    mailbox_address_identity_ref = "extid:v1:email:" + ("A" * 43)
+
+    def projection(
+        revision: int,
+        team_ref: str,
+        *,
+        address_identity_ref: str | None = None,
+    ) -> dict[str, object]:
         payload: dict[str, object] = {
             "site_id": site_id,
             "observer_connector_instance_ref": instance_ref,
@@ -424,6 +431,8 @@ def test_email_connector_config_repository_replays_and_fences_revisions() -> Non
             },
             "projection_revision": revision,
         }
+        if address_identity_ref is not None:
+            payload["mailbox_address_identity_ref"] = address_identity_ref
         return {**payload, "projection_digest": canonical_digest(payload)}
 
     connection = connect_postgres_components(
@@ -456,7 +465,11 @@ def test_email_connector_config_repository_replays_and_fences_revisions() -> Non
         )
         second = restarted.apply(
             config_publication_ref=second_ref,
-            projection=projection(2, team_two),
+            projection=projection(
+                2,
+                team_two,
+                address_identity_ref=mailbox_address_identity_ref,
+            ),
             projected_at=now + timedelta(seconds=2),
         )
 
@@ -489,6 +502,17 @@ def test_email_connector_config_repository_replays_and_fences_revisions() -> Non
                 (site_id, instance_ref),
             )
             assert cursor.fetchone() == (team_two, "sales", "healthy", 2)
+            cursor.execute(
+                """
+                SELECT mailbox_address_identity_ref
+                  FROM observer.email_connector_config_projections
+                 WHERE site_id = %s
+                   AND mailbox_id = %s
+                   AND mailbox_config_revision = 2
+                """,
+                (site_id, mailbox_ref),
+            )
+            assert cursor.fetchone() == (mailbox_address_identity_ref,)
     finally:
         if restart is not None:
             restart.close()

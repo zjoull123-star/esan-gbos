@@ -54,7 +54,7 @@ def _gateway_enabled() -> str:
 def _apply_gateway_migrations(connection) -> None:
     root = Path(__file__).resolve().parents[2]
     migrations = sorted((root / "services" / "email_gateway" / "migrations").glob("*.sql"))
-    assert len(migrations) == 8
+    assert len(migrations) == 9
     for path in migrations:
         connection.execute(path.read_text())
 
@@ -66,7 +66,7 @@ def test_email_gateway_migrations_run_twice_with_forced_rls_and_no_forbidden_tab
 
     root = Path(__file__).resolve().parents[2]
     migrations = sorted((root / "services" / "email_gateway" / "migrations").glob("*.sql"))
-    assert len(migrations) == 8
+    assert len(migrations) == 9
     with psycopg.connect(dsn, autocommit=True) as connection:
         for _ in range(2):
             for path in migrations:
@@ -246,6 +246,7 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
             status="draft",
             config_revision=1,
             observer_config_projection_receipt=None,
+            mailbox_address_identity_ref="extid:v1:email:" + "M" * 43,
         )
         created = mailboxes.upsert(
             alpha,
@@ -322,6 +323,7 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
             address_display="private-alpha-2@example.invalid",
             provider_account_ref="provider-alpha-2",
             observer_connector_instance_ref="OCI-01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            mailbox_address_identity_ref="extid:v1:email:" + "N" * 43,
             config_revision=1,
         )
         second_mailbox = mailboxes.upsert(
@@ -690,6 +692,12 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
         assert workflow.audit_count(alpha) == audit_count_before_manual + 2
 
         connection.execute("RESET ROLE")
+        connection.execute(
+            "UPDATE email_gateway.mailboxes "
+            "SET mailbox_address_identity_ref = NULL "
+            "WHERE site_id = %s AND mailbox_ref = %s",
+            (alpha.site_id, second_mailbox.mailbox_ref),
+        )
         connection.execute("SET ROLE gbos_email_gateway_worker")
         config_outbox = PostgresMailboxConfigOutboxRepository(connection)
         lease_now = datetime.now(UTC) + timedelta(seconds=1)
@@ -701,9 +709,10 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
         )
         assert claim is not None
         assert claim.site_id == alpha.site_id
-        assert claim.mailbox_ref in {mailbox.mailbox_ref, second_mailbox.mailbox_ref}
+        assert claim.mailbox_ref == mailbox.mailbox_ref
         assert claim.activation_not_before.tzinfo is not None
         assert "private-alpha" not in repr(claim)
+        assert mailbox.mailbox_address_identity_ref not in repr(claim)
         projection_wire = claim.to_connector_projection_wire()
         assert set(projection_wire) == {
             "site_id",
@@ -714,10 +723,23 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
             "team_ref",
             "credential_ref",
             "inbound_enabled",
+            "mailbox_address_identity_ref",
             "activation_watermark",
             "projection_revision",
             "projection_digest",
         }
+        assert (
+            projection_wire["mailbox_address_identity_ref"] == mailbox.mailbox_address_identity_ref
+        )
+        connection.execute("RESET ROLE")
+        legacy_outbox = connection.execute(
+            "SELECT status, safe_error_code "
+            "FROM email_gateway.mailbox_config_outbox "
+            "WHERE site_id = %s AND mailbox_ref = %s",
+            (alpha.site_id, second_mailbox.mailbox_ref),
+        ).fetchone()
+        assert legacy_outbox == ("dead_letter", "missing_mailbox_identity")
+        connection.execute("SET ROLE gbos_email_gateway_worker")
         config_outbox.heartbeat(
             alpha,
             claim.config_publication_ref,

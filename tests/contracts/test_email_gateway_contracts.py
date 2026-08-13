@@ -24,6 +24,7 @@ SCHEMAS = {
 
 STANDALONE_SCHEMAS = {
     "mailbox-sla-policy-v1.0.schema.json",
+    "mailbox-connector-projection-v2.0.schema.json",
     "email-send-approved-command-v2.0.schema.json",
 }
 
@@ -279,6 +280,36 @@ def test_mailbox_activation_watermark_owns_the_exact_mailbox_config_revision() -
     invalid["activation_watermark"]["mailbox_config_revision"] = 0
     with pytest.raises(ValidationError):
         validator.validate(invalid)
+
+
+def test_mailbox_connector_projection_v2_only_adds_required_opaque_mailbox_identity() -> None:
+    frozen_v1 = _schema("mailbox-connector-projection-v1.0.schema.json")
+    v2 = _schema("mailbox-connector-projection-v2.0.schema.json")
+
+    assert set(v2["properties"]) == {
+        *frozen_v1["properties"],
+        "mailbox_address_identity_ref",
+    }
+    assert set(v2["required"]) == {
+        *frozen_v1["required"],
+        "mailbox_address_identity_ref",
+    }
+    assert v2["properties"]["mailbox_address_identity_ref"] == {
+        "type": "string",
+        "minLength": 58,
+        "maxLength": 58,
+        "pattern": "^extid:v1:email:[A-Za-z0-9_-]{43}$",
+    }
+    validator = _validator("mailbox-connector-projection-v2.0.schema.json")
+    valid = _case("mailbox-connector-projection-v1.0.schema.json", "valid", "primary_inbound")
+    validator.validate(
+        {
+            **valid,
+            "mailbox_address_identity_ref": "extid:v1:email:" + "M" * 43,
+        }
+    )
+    with pytest.raises(ValidationError):
+        validator.validate(valid)
 
 
 def test_identity_projection_is_closed_and_never_contains_raw_subject_or_address() -> None:

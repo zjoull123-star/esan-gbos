@@ -26,6 +26,7 @@ def test_gateway_and_relays_are_default_killed_least_privilege_and_local_only() 
     frappe_worker = _block(compose, "frappe-worker")
     frappe_scheduler = _block(compose, "frappe-scheduler")
     observer_api = _block(compose, "observer-api")
+    connector = _block(compose, "connector-worker")
 
     assert "GBOS_EMAIL_GATEWAY_KILL_SWITCH: ${GBOS_EMAIL_GATEWAY_KILL_SWITCH:-true}" in gateway
     assert (
@@ -69,6 +70,10 @@ def test_gateway_and_relays_are_default_killed_least_privilege_and_local_only() 
         frappe_scheduler,
     ):
         assert "observer_email_draft_material_bearer" not in service
+    assert "identity_hmac_key" in observer_api
+    assert "identity_hmac_key" in connector
+    for service in (gateway, frappe_site, frappe_backend):
+        assert "identity_hmac_key" not in service
     assert "gbos_email_gateway_url http://email-gateway-api:8004" in frappe_site
     assert "gbos_email_gateway_auth_ref email-gateway-bff-v1" in frappe_site
     assert "gbos_email_gateway_token_file /run/secrets/email_gateway_bff_bearer" in frappe_site
@@ -129,6 +134,15 @@ def test_renderer_emits_role_separated_gateway_configs(tmp_path: Path) -> None:
     assert runtime["services"]["observer-api"]["email_draft_material"] == {
         "auth_ref": "observer-email-draft-material-v1",
         "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
+        "network": "local-internal-only",
+    }
+    assert runtime["services"]["observer-api"]["email_mailbox_identity"] == {
+        "path": "/internal/v1/bff/email-mailbox-identity/derive",
+        "auth_ref": "observer-email-draft-material-v1",
+        "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
+        "identity_key_file": "/run/secrets/identity_hmac_key",
+        "processing_purpose": "email_mailbox_identity",
+        "resolver_purpose": "observation_processing",
         "network": "local-internal-only",
     }
 

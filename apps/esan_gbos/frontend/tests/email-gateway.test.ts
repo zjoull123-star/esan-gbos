@@ -119,6 +119,61 @@ describe("Email Gateway v5 typed client", () => {
     });
   });
 
+  it("accepts one bounded email address only for the mailbox upsert request", async () => {
+    const rawAddress = "mailbox-raw-sentinel@example.invalid";
+    const fetcher = vi.fn<EmailGatewayFetcher>().mockResolvedValue(okV5({
+      mailbox: { ...mailbox, config_revision: 4 },
+    }));
+    const client = createEmailGatewayClient({
+      fetcher,
+      isOnline: () => true,
+      getCsrfToken: () => "csrf-v5",
+    });
+
+    await client.upsertMailbox({
+      canonical_mailbox_address: rawAddress,
+      display_label: "主入口",
+      provider_kind: "fake",
+      business_mode: "primary",
+      business_purpose: "sales_follow_up",
+      provider_account_ref: "provider-account-sales",
+      observer_connector_instance_ref: "OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      default_team_ref: "TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      account_owner_user_ref: "owner@example.invalid",
+      priority: 10,
+      credential_ref: "secretref:v1/email-sales",
+      inbound_enabled: false,
+      outbound_enabled: false,
+      expected_revision: 3,
+      idempotency_key: "mailbox-create-valid",
+    });
+
+    const [, init] = fetcher.mock.calls[0] ?? [];
+    const params = new URLSearchParams(String(init?.body));
+    const body = Object.fromEntries(params);
+    expect(body.canonical_mailbox_address).toBe(rawAddress);
+    expect(params.getAll("canonical_mailbox_address")).toEqual([rawAddress]);
+
+    await expect(client.upsertMailbox({
+      canonical_mailbox_address: "not-an-email",
+      display_label: "主入口",
+      provider_kind: "fake",
+      business_mode: "primary",
+      business_purpose: "sales_follow_up",
+      provider_account_ref: "provider-account-sales",
+      observer_connector_instance_ref: "OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      default_team_ref: "TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      account_owner_user_ref: "owner@example.invalid",
+      priority: 10,
+      credential_ref: "secretref:v1/email-sales",
+      inbound_enabled: false,
+      outbound_enabled: false,
+      expected_revision: 3,
+      idempotency_key: "mailbox-create-invalid-address",
+    })).rejects.toMatchObject({ code: "validation_error" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed when downstream adds a sensitive field", async () => {
     const fetcher = vi.fn<EmailGatewayFetcher>().mockResolvedValue(
       okV5({ mailboxes: [{ ...mailbox, credential_ref: "protected-ref" }], next_cursor: null }),
@@ -352,6 +407,7 @@ describe("Email inbox operator views", () => {
 
 describe("Email Gateway admin Phase 1 view", () => {
   it("creates another primary mailbox with outbound locked off", async () => {
+    const rawAddress = "mailbox-raw-sentinel@example.invalid";
     const created = { ...mailbox, mailbox_ref: "MBX-03", config_revision: 1 };
     const client = {
       listMailboxes: vi.fn().mockResolvedValue({
@@ -367,6 +423,13 @@ describe("Email Gateway admin Phase 1 view", () => {
     await flushPromises();
 
     await wrapper.get("[data-mailbox-create] input[name='display_label']").setValue("新增主入口");
+    const addressInput = wrapper.get("[data-mailbox-create] input[name='canonical_mailbox_address']");
+    expect(addressInput.attributes()).toMatchObject({
+      type: "email",
+      autocomplete: "off",
+      spellcheck: "false",
+    });
+    await addressInput.setValue(rawAddress);
     await wrapper
       .get("[data-mailbox-create] select[name='business_purpose']")
       .setValue("sales_follow_up");
@@ -391,6 +454,7 @@ describe("Email Gateway admin Phase 1 view", () => {
 
     expect(client.upsertMailbox).toHaveBeenCalledWith(
       expect.objectContaining({
+        canonical_mailbox_address: rawAddress,
         display_label: "新增主入口",
         business_mode: "primary",
         provider_kind: "fake",
@@ -405,6 +469,43 @@ describe("Email Gateway admin Phase 1 view", () => {
         expected_revision: 0,
       }),
     );
+    expect(addressInput.element).toHaveProperty("value", "");
+    expect(wrapper.text()).not.toContain(rawAddress);
+  });
+
+  it("clears the real address after a failed mailbox request without auditing or displaying it", async () => {
+    const rawAddress = "mailbox-failure-sentinel@example.invalid";
+    const client = {
+      listMailboxes: vi.fn().mockResolvedValue({ data: { mailboxes: [mailbox], next_cursor: null } }),
+      listConnectorHealth: vi.fn().mockResolvedValue({ data: { connector_health: [] } }),
+      listRules: vi.fn().mockResolvedValue({ data: { rules: [] } }),
+      upsertMailbox: vi.fn().mockRejectedValue(new BffError("internal_error", { status: 503 })),
+      setMailboxStatus: vi.fn(),
+    };
+    const wrapper = mount(EmailGatewayAdminView, {
+      global: { provide: { [EMAIL_GATEWAY_CLIENT_KEY as symbol]: client } },
+    });
+    await flushPromises();
+
+    await wrapper.get("[data-mailbox-create] input[name='display_label']").setValue("失败入口");
+    const addressInput = wrapper.get("[data-mailbox-create] input[name='canonical_mailbox_address']");
+    await addressInput.setValue(rawAddress);
+    await wrapper.get("[data-mailbox-create] input[name='provider_account_ref']").setValue("provider-account-sales");
+    await wrapper.get("[data-mailbox-create] input[name='observer_connector_instance_ref']").setValue("OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    await wrapper.get("[data-mailbox-create] input[name='default_team_ref']").setValue("TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    await wrapper.get("[data-mailbox-create] input[name='account_owner_user_ref']").setValue("owner@example.invalid");
+    await wrapper.get("[data-mailbox-create] input[name='credential_ref']").setValue("secretref:v1/email-sales");
+    await wrapper.get("[data-mailbox-create]").trigger("submit");
+    await flushPromises();
+
+    expect(client.upsertMailbox).toHaveBeenCalledWith(expect.objectContaining({
+      canonical_mailbox_address: rawAddress,
+    }));
+    expect(addressInput.element).toHaveProperty("value", "");
+    expect(wrapper.text()).not.toContain(rawAddress);
+    expect(wrapper.get(".email-audit-section").text()).not.toContain(rawAddress);
+    expect(window.location.href).not.toContain(rawAddress);
+    expect(Object.values(localStorage)).not.toContain(rawAddress);
   });
 
   it("keeps multiple primary mailboxes and confirms revision-fenced status changes", async () => {

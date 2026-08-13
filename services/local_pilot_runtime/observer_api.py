@@ -16,6 +16,7 @@ from services.agent_runtime.local_entrypoint import (
     require_component_enabled,
 )
 from services.observer.observer.email_draft_material import EmailDraftMaterialService
+from services.observer.observer.email_mailbox_identity import EmailMailboxIdentityService
 from services.observer.observer.email_participant_authority import (
     EmailParticipantAuthorityResolver,
     PostgresEmailParticipantAuthorityRepository,
@@ -24,6 +25,7 @@ from services.observer.observer.evidence_store import ContentAddressedEvidenceSt
 from services.observer.observer.identity_resolution_work import (
     PostgresIdentityResolutionWorkRepository,
 )
+from services.observer.observer.identity_tokens import HmacSha256IdentityTokenResolver
 from services.observer.observer.local_pilot_api import LocalPilotAPIConfig
 from services.observer.observer.local_pilot_storage import PostgresLocalPilotStorage
 from services.observer.observer.read_service import (
@@ -47,6 +49,7 @@ from .runtime_support import (
     reject_plaintext_secret_environment,
     validate_manifest_binding,
 )
+from .secret_provider import MountedFileSecretProvider, SecretSpec
 from .server import ServerBindingError, run_server, validate_server_binding
 
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
@@ -54,6 +57,7 @@ DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
 DEFAULT_CURSOR_SECRET = Path("/run/secrets/cursor_hmac_key")
 DEFAULT_MAILBOX_PROJECTION_BEARER = Path("/run/secrets/mailbox_projection_bearer")
 DEFAULT_DRAFT_MATERIAL_BEARER = Path("/run/secrets/observer_email_draft_material_bearer")
+DEFAULT_IDENTITY_HMAC_KEY = Path("/run/secrets/identity_hmac_key")
 DEFAULT_EVIDENCE_CAS_ROOT = Path("/var/lib/gbos/evidence")
 DEFAULT_OBSERVER_PORT = 8003
 ServerRunner = Callable[..., None]
@@ -69,6 +73,7 @@ def build_postgres_runtime(
     mailbox_projection_auth_ref: str | None = None,
     draft_material_bearer_token: SecretValue | None = None,
     draft_material_auth_ref: str | None = None,
+    identity_resolver: HmacSha256IdentityTokenResolver | None = None,
     evidence_cas_root: Path = DEFAULT_EVIDENCE_CAS_ROOT,
     bind_host: str,
     network_mode: str,
@@ -100,6 +105,7 @@ def build_postgres_runtime(
     active_clock = clock or _utc_now
     evidence_reveal = None
     email_draft_material = None
+    email_mailbox_identity = None
     if mailbox_projection_bearer_token is not None:
         evidence_store = ContentAddressedEvidenceStore(evidence_cas_root)
         evidence_reveal = EvidenceRevealService(
@@ -108,11 +114,17 @@ def build_postgres_runtime(
             clock=active_clock,
         )
         if draft_material_bearer_token is not None:
+            if identity_resolver is None:
+                raise ValueError("email Gateway identity resolver is unavailable")
+            email_mailbox_identity = EmailMailboxIdentityService(
+                identity_resolver=identity_resolver
+            )
             email_draft_material = EmailDraftMaterialService(
                 store=evidence_store,
                 participant_resolver=EmailParticipantAuthorityResolver(
                     repository=PostgresEmailParticipantAuthorityRepository(cast(Any, connection)),
                     store=evidence_store,
+                    identity_resolver=identity_resolver,
                 ),
                 clock=active_clock,
             )
@@ -131,6 +143,7 @@ def build_postgres_runtime(
         ),
         evidence_reveal=evidence_reveal,
         email_draft_material=email_draft_material,
+        email_mailbox_identity=email_mailbox_identity,
     )
 
 
@@ -144,6 +157,7 @@ def main(
     cursor_secret_file: Path = DEFAULT_CURSOR_SECRET,
     mailbox_projection_bearer_file: Path = DEFAULT_MAILBOX_PROJECTION_BEARER,
     draft_material_bearer_file: Path = DEFAULT_DRAFT_MATERIAL_BEARER,
+    identity_hmac_key_file: Path = DEFAULT_IDENTITY_HMAC_KEY,
     observer_port: int = DEFAULT_OBSERVER_PORT,
     internal_network: bool = False,
     connector: Callable[..., object] | None = None,
@@ -188,11 +202,28 @@ def main(
         mailbox_projection_auth_ref = None
         draft_material_bearer = None
         draft_material_auth_ref = None
+        identity_resolver = None
         if isinstance(gateway, Mapping) and gateway.get("kill_switch") is False:
             mailbox_projection_bearer = load_secret_file(mailbox_projection_bearer_file)
             mailbox_projection_auth_ref = MAILBOX_PROJECTION_AUTH_REF
             draft_material_bearer = load_secret_file(draft_material_bearer_file)
             draft_material_auth_ref = "observer-email-draft-material-v1"
+            identity_provider = MountedFileSecretProvider(
+                identity_hmac_key_file.absolute().parent,
+                (
+                    SecretSpec(
+                        "identity_hmac_key",
+                        identity_hmac_key_file.name,
+                        "bytes",
+                        32,
+                        32,
+                        exact_bytes=32,
+                    ),
+                ),
+            )
+            identity_resolver = HmacSha256IdentityTokenResolver.from_secret_provider(
+                identity_provider
+            )
         connection = connect_postgres(config.postgres, connector=connector)
         runtime = build_postgres_runtime(
             connection=connection,
@@ -203,6 +234,7 @@ def main(
             mailbox_projection_auth_ref=mailbox_projection_auth_ref,
             draft_material_bearer_token=draft_material_bearer,
             draft_material_auth_ref=draft_material_auth_ref,
+            identity_resolver=identity_resolver,
             bind_host=bind_host,
             network_mode=network_mode,
             clock=clock,

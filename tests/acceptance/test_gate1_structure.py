@@ -27,6 +27,11 @@ LOCAL_PILOT_DOCTYPES = {
     "GBOS Informal Observation",
     "GBOS Informal Evidence Ref",
 }
+EMAIL_SEND_DOCTYPES = {
+    "GBOS Email Send Approval",
+    "GBOS Approved Command",
+    "GBOS Command Publication",
+}
 DEFERRED_DOCTYPE_TERMS = {
     "Observation",
     "Extracted Fact",
@@ -107,9 +112,16 @@ def test_gate_one_set_remains_frozen_and_later_doctypes_are_explicit() -> None:
         name
         for name, payload in doctypes.items()
         if name.startswith("GBOS ") and not payload.get("custom")
-    } == (PARENT_DOCTYPES | CHILD_DOCTYPES | GATE4_AUDIT_DOCTYPES | LOCAL_PILOT_DOCTYPES)
+    } == (
+        PARENT_DOCTYPES
+        | CHILD_DOCTYPES
+        | GATE4_AUDIT_DOCTYPES
+        | LOCAL_PILOT_DOCTYPES
+        | EMAIL_SEND_DOCTYPES
+    )
     assert all(
-        name in LOCAL_PILOT_DOCTYPES or not any(term in name for term in DEFERRED_DOCTYPE_TERMS)
+        name in (LOCAL_PILOT_DOCTYPES | EMAIL_SEND_DOCTYPES)
+        or not any(term in name for term in DEFERRED_DOCTYPE_TERMS)
         for name in doctypes
     )
 

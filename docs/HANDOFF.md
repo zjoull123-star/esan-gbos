@@ -1,6 +1,6 @@
 # GBOS 当前交接真相
 
-更新时间：2026-08-12。本文是 current main/feature handoff 的可复核状态面，
+更新时间：2026-08-14。本文是 current main/feature handoff 的可复核状态面，
 不授予外部权限，也不把本地验证解释为生产发布。
 
 ## 来源与证据边界
@@ -10,8 +10,9 @@
   `485d3def0ea30ee49a3899d71c10b0787ba0429f`，runtime source reference 是
   `bb260632ff44c7065a88327f264612139a9070a2`，image-lock recording commit 是
   `a599a5200e2a8e1b5e42301d74fe8d9d914161c4`。镜像 labels、源码哈希和 inspect
-  digest 已逐项复核；后续 handoff/evidence 文档不在镜像内。真实 canary 仍受外部
-  凭据与正式 go 门阻断。
+  digest 已逐项复核；它们是 mailbox-identity 变更之前的锁定镜像基线，不包含本轮
+  源码。后续 handoff/evidence 文档也不在镜像内。真实 canary 仍受正式 go 门及当前
+  source 未重建的硬门阻断。
 - 身份解析离线实现基线 `c98f6a5` 保留为历史里程碑；本轮在其上补齐了真实
   Frappe v16 站点、最终镜像、Prometheus live scrape 与安全扫描证据；这些历史
   真实 Frappe 观察不自动代表当前 HEAD live runtime。
@@ -42,7 +43,8 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 
 ### 当前功能面
 
-- `esan_gbos` 当前有 **15 parent + 3 child DocTypes**。
+- `esan_gbos` 当前有 **18 parent + 3 child DocTypes**；新增的 3 个 parent 是
+  邮件发送审批、Approved Command 与 Command Publication 的治理记录。
 - CEO `before_validate` 自动补齐封闭角色 bundle：`CEO`、`GBOS Admin`、
   `Integration Admin`、`Reviewer`、`System Manager`，并设为 `System User`；
   `after_install`/`after_migrate` 执行同一幂等 backfill。该升权不等于 Restricted
@@ -51,9 +53,28 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
   `deepseek-v4-flash`，具备标记化、schema、预算、kill switch 和 no-tools 边界；
   仍没有 real call，也没有 observed response model identity。
 
+### 邮箱主入口身份闭环（2026-08-14）
+
+- Email Gateway 管理页现单独录入一次 `canonical_mailbox_address`。Frappe 在角色、
+  团队与负责人校验后把该值瞬时交给 Observer；Observer 使用只读挂载的 32-byte
+  `identity_hmac_key` 生成 site/purpose 隔离的 `extid:v1:email:*`。
+- 只有 opaque ref 进入 Frappe 幂等 payload、Gateway mailbox、config outbox、v2
+  connector projection 与 Observer immutable config revision。原始地址不进入这些
+  持久对象，也不进入 mailbox 响应、URL、浏览器存储、审计文本或普通 UI。
+- 冻结的 connector projection v1 未改变。legacy NULL 行仍可读，但不能 enable 或
+  relay；管理员重新录入地址后才会产生带 opaque ref 的新 revision。缺失身份的旧
+  publication 使用固定安全错误码直接 dead-letter，不猜测 backfill。
+- Observer participant authority 使用同一 HMAC resolver 重新解析原始 EML，只有唯一
+  匹配时才赋予 `mailbox_owner`；缺 key、缺 token、跨 site、token/digest/revision 漂移
+  均失败关闭。
+- 本轮源码尚未重建进下列锁定 runtime/Frappe 镜像。任何新的本地 canary 或部署验证
+  必须先从包含本轮提交的 clean source 重建、重新记录 image lock 并重新 attestation；
+  既有 image digest 只能作为此前快照，不能证明本轮能力已运行。
+
 ## 当前验证快照
 
-当前 image lock 中的两套本地镜像已分别绑定到其实际源码：
+当前 image lock 中的两套本地镜像已分别绑定到其记录时的实际源码；它们是本轮
+mailbox-identity 变更之前的运行基线：
 
 | Service | Local image digest | Revision label |
 | --- | --- | --- |
@@ -65,9 +86,9 @@ Frappe/PWA 的 source SHA256 label 是
 source SHA256 label 是
 `c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3`。
 
-当前 source-bound images 已重新构建并记录到上述 image lock；当前 synthetic core 也已
-使用这两套镜像重启。它只表示本地 Frappe/PWA、Observer、Context、Agent 的 synthetic
-core 可重启，不改变正式 `local_pilot_go=false`，也不启动真实渠道或模型。
+上述 baseline source-bound images 已重新构建并记录到 image lock；synthetic core 也曾
+使用这两套镜像重启。它只证明此前基线可重启，不证明本轮 mailbox-identity 源码已进入
+镜像；正式 `local_pilot_go=false` 不变，也不启动真实渠道或模型。
 
 当前 credential-free P0 验证快照为：full backend `3064 passed, 44 skipped, 1 warning`、
 failed `0`；唯一 warning 是既有 Starlette TestClient/httpx deprecation。Ruff check、
@@ -101,6 +122,15 @@ Earlier source-bound closure snapshot (`2850 passed, 44 skipped, 1 warning`) 与
 red (`3060 passed, 44 skipped, 3 failed`, stale-current-doc mismatch only) 均保留在当前
 closure evidence，最终 fresh run 已关闭该文档 mismatch。formal `production_go=false`、
 `local_pilot_go=false` 与 real Email/DeepSeek No-Go 不变。
+
+本轮 mailbox identity closure 的 fresh source verification 为：全仓 backend
+`3630 passed, 48 skipped, 1 warning`、failed `0`；前端 unit `217 passed`、
+frontend-harness Playwright `27 passed`，lint/typecheck/build 均 green；Ruff check、
+Ruff format（`668 files`）、mypy（`130 sources`）与 compileall 均 green。一次性
+PostgreSQL 环境将 Observer 与 Email Gateway migrations（Gateway 001–009）应用两遍，
+Observer 3 个聚焦 gate 与 Gateway 2 个真实 repository/RLS 测试通过；隔离 Frappe v16
+site 完成安装、连续两次 migrate 与 5 个邮件/身份原生模块测试。两类临时容器、网络、
+volume 与运行目录均已清理。该验证没有真实邮箱、模型或 external-send 网络活动。
 
 这些结果不等于真实 Email/DeepSeek canary 或正式 Go。当前镜像已完成
 governed current-image rebuild/record；数据库隔离矩阵结果见 closure evidence，且

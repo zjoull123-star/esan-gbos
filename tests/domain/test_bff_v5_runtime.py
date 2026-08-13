@@ -151,3 +151,44 @@ def test_observer_email_material_client_uses_exact_separate_mounted_bearer(
     assert call["headers"]["Authorization"] == "Bearer mounted-bearer"
     assert call["headers"]["X-GBOS-Local-Auth-Ref"] == ("observer-email-draft-material-v1")
     assert "mounted-bearer" not in repr(client)
+
+
+def test_observer_mailbox_identity_derive_uses_the_existing_mounted_client(
+    gateway_module: tuple[Any, SimpleNamespace], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway, _fake = gateway_module
+    calls: list[dict[str, Any]] = []
+    client = SimpleNamespace(
+        request=lambda **kwargs: (
+            calls.append(kwargs)
+            or {
+                "data": {
+                    "opaque_address_ref": "extid:v1:email:" + "M" * 43,
+                    "normalization_version": "email-v1",
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(gateway, "configured_observer_email_material_client", lambda: client)
+
+    result = gateway.call_observer(
+        path="/internal/v1/bff/email-mailbox-identity/derive",
+        purpose="email_mailbox_identity",
+        payload={
+            "canonical_mailbox_address": "mailbox-raw-sentinel@example.invalid",
+            "idempotency_key": "mailbox-create-01",
+        },
+        idempotency_key="mailbox-create-01",
+    )
+
+    assert result["normalization_version"] == "email-v1"
+    assert len(calls) == 1
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["path"] == "/internal/v1/bff/email-mailbox-identity/derive"
+    assert calls[0]["site_id"] == "gbos.localhost"
+    assert calls[0]["purpose"] == "email_mailbox_identity"
+    assert calls[0]["payload"] == {
+        "canonical_mailbox_address": "mailbox-raw-sentinel@example.invalid",
+        "idempotency_key": "mailbox-create-01",
+    }
+    assert calls[0]["idempotency_key"] == "mailbox-create-01"

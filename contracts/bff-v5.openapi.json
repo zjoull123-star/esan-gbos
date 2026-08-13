@@ -971,6 +971,7 @@
           "provider_kind",
           "business_mode",
           "business_purpose",
+          "canonical_mailbox_address",
           "provider_account_ref",
           "observer_connector_instance_ref",
           "default_team_ref",
@@ -1023,6 +1024,12 @@
               "metric_reporting",
               "audit_compliance"
             ]
+          },
+          "canonical_mailbox_address": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254,
+            "writeOnly": true
           },
           "provider_account_ref": {
             "type": "string",

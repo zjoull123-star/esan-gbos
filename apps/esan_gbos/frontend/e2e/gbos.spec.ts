@@ -633,6 +633,12 @@ const harnessFixtures = new Map<string, unknown>([
   ],
   [`GET ${EMAIL_GATEWAY_ENDPOINTS.ruleList}`, v5Envelope({ rules: [] })],
   [
+    `POST ${EMAIL_GATEWAY_ENDPOINTS.mailboxUpsert}`,
+    v5Envelope({
+      mailbox: { ...syntheticEmailMailbox, mailbox_ref: "MBX-E2E-CREATED", config_revision: 2 },
+    }),
+  ],
+  [
     `GET ${EMAIL_GATEWAY_ENDPOINTS.inboxList}`,
     v5Envelope({ inbox_items: [syntheticEmailInboxItem], next_cursor: null }),
   ],
@@ -1104,6 +1110,45 @@ test("邮件收件箱与独立网关遵守隐私、角色、缩放和仅草稿�
   expect(zoomed.body).toBeLessThanOrEqual(zoomed.viewport);
   expect(zoomed.offscreenButtons).toEqual([]);
   await page.evaluate(() => { document.documentElement.style.zoom = ""; });
+});
+
+test("真实邮箱地址只进入一次请求并在成功后从页面与浏览器状态清除", async ({ page }, testInfo) => {
+  test.skip(!isHarness(testInfo), "邮箱地址一次性使用验收仅用于前端 harness");
+  const rawAddress = "mailbox-e2e-raw-sentinel@example.invalid";
+  const upsertBodies: string[] = [];
+  await setHarnessSession(page, ["GBOS Admin"]);
+  await page.route(`**${EMAIL_GATEWAY_ENDPOINTS.mailboxUpsert}`, async (route) => {
+    upsertBodies.push(route.request().postData() ?? "");
+    await route.fallback();
+  });
+  await page.goto(harnessEntry);
+  await navigateHarnessRoute(page, "/gbos/email-gateway");
+
+  const form = page.locator("[data-mailbox-create]");
+  const addressInput = form.locator("input[name='canonical_mailbox_address']");
+  await expect(addressInput).toHaveAttribute("type", "email");
+  await expect(addressInput).toHaveAttribute("autocomplete", "off");
+  await expect(addressInput).toHaveAttribute("spellcheck", "false");
+  await form.locator("input[name='display_label']").fill("E2E 新入口");
+  await addressInput.fill(rawAddress);
+  await form.locator("input[name='provider_account_ref']").fill("provider-account-e2e");
+  await form.locator("input[name='observer_connector_instance_ref']").fill("OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV");
+  await form.locator("input[name='default_team_ref']").fill("TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV");
+  await form.locator("input[name='account_owner_user_ref']").fill("owner@example.invalid");
+  await form.locator("input[name='credential_ref']").fill("secretref:v1/email-e2e");
+  await form.getByRole("button", { name: "新增主入口" }).click();
+
+  await expect(page.getByText("新邮箱入口已保存为关闭外发的安全配置。", { exact: true })).toBeVisible();
+  expect(upsertBodies).toHaveLength(1);
+  expect(new URLSearchParams(upsertBodies[0]).get("canonical_mailbox_address")).toBe(rawAddress);
+  await expect(addressInput).toHaveValue("");
+  expect(page.url()).not.toContain(rawAddress);
+  expect(await page.locator("html").textContent()).not.toContain(rawAddress);
+  const persisted = await page.evaluate(() => [
+    ...Object.values(localStorage),
+    ...Object.values(sessionStorage),
+  ].join("\n"));
+  expect(persisted).not.toContain(rawAddress);
 });
 
 test("全部真实路由在 320、375、768、1024、1440 与 200% 等效视口无溢出", async ({

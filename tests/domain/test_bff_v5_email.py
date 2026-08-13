@@ -11,6 +11,8 @@ import pytest
 
 TEAM_ONE = "TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV"
 TEAM_TWO = "TEM-01ARZ3NDEKTSV4RRFFQ69G5FB0"
+RAW_MAILBOX_ADDRESS = "mailbox-raw-sentinel@example.invalid"
+OPAQUE_MAILBOX_ADDRESS = "extid:v1:email:" + "M" * 43
 
 
 class FakeFrappe(ModuleType):
@@ -154,6 +156,27 @@ def gateway_mailbox_payload() -> dict[str, Any]:
     }
 
 
+def mailbox_upsert_kwargs(**overrides: Any) -> dict[str, Any]:
+    return {
+        "canonical_mailbox_address": RAW_MAILBOX_ADDRESS,
+        "display_label": "海湾销售主入口",
+        "provider_kind": "fake",
+        "business_mode": "primary",
+        "business_purpose": "sales_follow_up",
+        "provider_account_ref": "provider-account-sales",
+        "observer_connector_instance_ref": "OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "default_team_ref": TEAM_ONE,
+        "account_owner_user_ref": "owner@example.invalid",
+        "priority": "10",
+        "credential_ref": "secretref:v1/email-sales",
+        "inbound_enabled": "false",
+        "outbound_enabled": "false",
+        "expected_revision": "0",
+        "idempotency_key": "create-mailbox-01",
+        **overrides,
+    }
+
+
 def test_mailbox_reads_delegate_exact_actor_role_and_team_scope(
     v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -246,31 +269,48 @@ def test_mailbox_upsert_is_domain_complete_and_authority_checked(
 ) -> None:
     _gateway, admin, _inbox, fake = v5_modules
     fake._roles = {"Integration Admin"}
-    calls: list[dict[str, Any]] = []
-    monkeypatch.setattr(
-        admin,
-        "call_gateway",
-        lambda **kwargs: calls.append(kwargs) or {"mailbox": gateway_mailbox_payload()},
-    )
+    events: list[tuple[str, dict[str, Any]]] = []
+    idempotency_payloads: list[dict[str, Any]] = []
 
-    admin.upsert_mailbox(
-        display_label="海湾销售主入口",
-        provider_kind="fake",
-        business_mode="primary",
-        business_purpose="sales_follow_up",
-        provider_account_ref="provider-account-sales",
-        observer_connector_instance_ref="OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        default_team_ref=TEAM_ONE,
-        account_owner_user_ref="owner@example.invalid",
-        priority="10",
-        credential_ref="secretref:v1/email-sales",
-        inbound_enabled="false",
-        outbound_enabled="false",
-        expected_revision="0",
-        idempotency_key="create-mailbox-01",
-    )
+    def observer_call(**kwargs: Any) -> dict[str, str]:
+        assert fake.exists_calls
+        events.append(("observer", kwargs))
+        return {
+            "opaque_address_ref": OPAQUE_MAILBOX_ADDRESS,
+            "normalization_version": "email-v1",
+        }
 
-    payload = calls[0]["payload"]
+    def gateway_call(**kwargs: Any) -> dict[str, Any]:
+        events.append(("gateway", kwargs))
+        return {"mailbox": gateway_mailbox_payload()}
+
+    def run_idempotent(
+        _operation: str,
+        _key: str,
+        payload: dict[str, Any],
+        execute: Any,
+        **_kwargs: Any,
+    ) -> tuple[dict[str, Any], bool, None]:
+        idempotency_payloads.append(payload)
+        return execute(), False, None
+
+    monkeypatch.setattr(admin, "call_observer", observer_call)
+    monkeypatch.setattr(admin, "call_gateway", gateway_call)
+    monkeypatch.setattr(admin, "run_idempotent", run_idempotent)
+
+    response = admin.upsert_mailbox(**mailbox_upsert_kwargs())
+
+    assert [event[0] for event in events] == ["observer", "gateway"]
+    assert events[0][1] == {
+        "path": "/internal/v1/bff/email-mailbox-identity/derive",
+        "purpose": "email_mailbox_identity",
+        "payload": {
+            "canonical_mailbox_address": RAW_MAILBOX_ADDRESS,
+            "idempotency_key": "create-mailbox-01",
+        },
+        "idempotency_key": "create-mailbox-01",
+    }
+    payload = events[1][1]["payload"]
     assert payload["provider_account_ref"] == "provider-account-sales"
     assert payload["observer_connector_instance_ref"].startswith("OCI-")
     assert payload["default_team_ref"] == TEAM_ONE
@@ -278,6 +318,11 @@ def test_mailbox_upsert_is_domain_complete_and_authority_checked(
     assert payload["priority"] == 10
     assert payload["credential_ref"] == "secretref:v1/email-sales"
     assert payload["outbound_enabled"] is False
+    assert payload["mailbox_address_identity_ref"] == OPAQUE_MAILBOX_ADDRESS
+    assert "canonical_mailbox_address" not in payload
+    assert idempotency_payloads == [payload]
+    assert RAW_MAILBOX_ADDRESS not in repr(idempotency_payloads)
+    assert RAW_MAILBOX_ADDRESS not in repr(response)
     assert (
         "GBOS Team",
         {
@@ -294,6 +339,191 @@ def test_mailbox_upsert_is_domain_complete_and_authority_checked(
             "user_type": "System User",
         },
     ) in fake.exists_calls
+
+
+def test_mailbox_command_validator_requires_only_the_opaque_address_identity() -> None:
+    from esan_gbos.domain.v5_email_dto import (
+        V5EmailDTOValidationError,
+        validate_mailbox_upsert,
+    )
+
+    command = mailbox_upsert_kwargs()
+    command.pop("canonical_mailbox_address")
+    command["mailbox_address_identity_ref"] = OPAQUE_MAILBOX_ADDRESS
+    command["priority"] = 10
+    command["inbound_enabled"] = False
+    command["outbound_enabled"] = False
+    command["expected_revision"] = 0
+
+    assert validate_mailbox_upsert(command)["mailbox_address_identity_ref"] == (
+        OPAQUE_MAILBOX_ADDRESS
+    )
+    with pytest.raises(V5EmailDTOValidationError, match="mailbox_address_identity_ref"):
+        validate_mailbox_upsert(
+            {key: value for key, value in command.items() if key != "mailbox_address_identity_ref"}
+        )
+    with pytest.raises(V5EmailDTOValidationError, match="canonical_mailbox_address"):
+        validate_mailbox_upsert({**command, "canonical_mailbox_address": RAW_MAILBOX_ADDRESS})
+
+
+def test_mailbox_observer_failure_blocks_gateway_and_does_not_echo_raw_address(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    gateway_calls: list[dict[str, Any]] = []
+
+    def fail_observer(**_kwargs: Any) -> dict[str, Any]:
+        raise admin.BFFError(
+            "internal_error",
+            "Observer email material service is unavailable",
+            status=503,
+        )
+
+    monkeypatch.setattr(admin, "call_observer", fail_observer)
+    monkeypatch.setattr(admin, "call_gateway", lambda **kwargs: gateway_calls.append(kwargs))
+
+    with pytest.raises(admin.BFFError) as raised:
+        admin.upsert_mailbox(**mailbox_upsert_kwargs())
+
+    assert gateway_calls == []
+    assert RAW_MAILBOX_ADDRESS not in repr(raised.value)
+    assert RAW_MAILBOX_ADDRESS not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("canonical_mailbox_address", "x" * 255),
+        ("canonical_mailbox_address", "mailbox\n@example.invalid"),
+        ("canonical_mailbox_address", 123),
+        ("default_team_ref", "TEM-invalid"),
+        ("default_team_ref", TEAM_ONE + "\n"),
+        ("account_owner_user_ref", "owner\x7f@example.invalid"),
+        ("account_owner_user_ref", "x" * 141),
+        ("idempotency_key", "key\rvalue"),
+        ("idempotency_key", "x" * 257),
+    ],
+)
+def test_mailbox_upsert_rejects_unsafe_transient_inputs_before_authority_or_services(
+    v5_modules: tuple[Any, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    observer_calls: list[dict[str, Any]] = []
+    gateway_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(admin, "call_observer", lambda **kwargs: observer_calls.append(kwargs))
+    monkeypatch.setattr(admin, "call_gateway", lambda **kwargs: gateway_calls.append(kwargs))
+
+    with pytest.raises(admin.BFFError) as raised:
+        admin.upsert_mailbox(**mailbox_upsert_kwargs(**{field: value}))
+
+    assert fake.exists_calls == []
+    assert observer_calls == []
+    assert gateway_calls == []
+    assert repr(value) not in repr(raised.value)
+
+
+@pytest.mark.parametrize(
+    "observer_response",
+    [
+        {"opaque_address_ref": OPAQUE_MAILBOX_ADDRESS},
+        {
+            "opaque_address_ref": OPAQUE_MAILBOX_ADDRESS,
+            "normalization_version": "email-v1",
+            "extra": "invented",
+        },
+        {
+            "opaque_address_ref": "extid:v1:email:" + "A" * 42,
+            "normalization_version": "email-v1",
+        },
+        {
+            "opaque_address_ref": OPAQUE_MAILBOX_ADDRESS,
+            "normalization_version": "email-address-v1",
+        },
+    ],
+)
+def test_mailbox_upsert_rejects_untrusted_observer_identity_responses_without_gateway(
+    v5_modules: tuple[Any, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    observer_response: dict[str, str],
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    gateway_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(admin, "call_observer", lambda **_kwargs: observer_response)
+    monkeypatch.setattr(admin, "call_gateway", lambda **kwargs: gateway_calls.append(kwargs))
+
+    with pytest.raises(admin.BFFError) as raised:
+        admin.upsert_mailbox(**mailbox_upsert_kwargs())
+
+    assert gateway_calls == []
+    assert raised.value.status == 503
+    assert RAW_MAILBOX_ADDRESS not in repr(raised.value)
+
+
+def test_mailbox_idempotency_replays_same_derived_identity_and_conflicts_on_drift(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    derived_refs = iter(
+        [OPAQUE_MAILBOX_ADDRESS, OPAQUE_MAILBOX_ADDRESS, "extid:v1:email:" + "N" * 43]
+    )
+    gateway_calls: list[dict[str, Any]] = []
+    stored: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+
+    monkeypatch.setattr(
+        admin,
+        "call_observer",
+        lambda **_kwargs: {
+            "opaque_address_ref": next(derived_refs),
+            "normalization_version": "email-v1",
+        },
+    )
+    monkeypatch.setattr(
+        admin,
+        "call_gateway",
+        lambda **kwargs: gateway_calls.append(kwargs) or {"mailbox": gateway_mailbox_payload()},
+    )
+
+    def run_idempotent(
+        _operation: str,
+        key: str,
+        payload: dict[str, Any],
+        execute: Any,
+        **_kwargs: Any,
+    ) -> tuple[dict[str, Any], bool, str | None]:
+        assert RAW_MAILBOX_ADDRESS not in repr(payload)
+        previous = stored.get(key)
+        if previous is not None:
+            previous_payload, result = previous
+            if previous_payload != payload:
+                raise admin.BFFError(
+                    "idempotency_conflict",
+                    "Mailbox command idempotency conflict",
+                    status=409,
+                )
+            return result, True, "REQ-original"
+        result = execute()
+        stored[key] = (payload, result)
+        return result, False, None
+
+    monkeypatch.setattr(admin, "run_idempotent", run_idempotent)
+
+    first = admin.upsert_mailbox(**mailbox_upsert_kwargs())
+    replay = admin.upsert_mailbox(**mailbox_upsert_kwargs())
+    with pytest.raises(admin.BFFError) as raised:
+        admin.upsert_mailbox(**mailbox_upsert_kwargs())
+
+    assert len(gateway_calls) == 1
+    assert first["meta"]["replayed"] is False
+    assert replay["meta"]["replayed"] is True
+    assert raised.value.code == "idempotency_conflict"
+    assert RAW_MAILBOX_ADDRESS not in repr(first) + repr(replay) + repr(raised.value)
 
 
 def test_ceo_and_gbos_admin_delegate_wildcard_but_teamless_sales_fails_closed(

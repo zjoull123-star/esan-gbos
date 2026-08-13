@@ -273,6 +273,7 @@ services:
       - cursor_hmac_key
       - context_client_bearer
       - mailbox_projection_bearer
+      - identity_hmac_key
       - source: observer_email_draft_material_bearer
         target: observer_email_draft_material_bearer
         mode: 0600

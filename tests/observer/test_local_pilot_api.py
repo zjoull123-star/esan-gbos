@@ -243,6 +243,7 @@ def _app(
     connector_configs: InMemoryEmailConnectorConfigRepository | None = None,
     evidence_reveal: FakeEvidenceReveal | None = None,
     draft_material: FakeEmailDraftMaterial | None = None,
+    mailbox_identity: object | None = None,
 ) -> tuple[FastAPI, FakeControlService, FakeReadService]:
     control = FakeControlService()
     reader = FakeReadService()
@@ -257,8 +258,31 @@ def _app(
         email_connector_configs=connector_configs,
         evidence_reveal=evidence_reveal,
         email_draft_material=draft_material,
+        email_mailbox_identity=mailbox_identity,
     )
     return app, control, reader
+
+
+class FakeEmailMailboxIdentity:
+    def __init__(self) -> None:
+        self.calls: list[tuple[TenantScope, str]] = []
+
+    def derive(
+        self,
+        scope: TenantScope,
+        *,
+        canonical_mailbox_address: str,
+    ) -> object:
+        self.calls.append((scope, canonical_mailbox_address))
+
+        class Result:
+            def to_wire(self) -> dict[str, object]:
+                return {
+                    "opaque_address_ref": "extid:v1:email:" + "A" * 43,
+                    "normalization_version": "email-v1",
+                }
+
+        return Result()
 
 
 def _connector_projection() -> dict[str, object]:
@@ -329,6 +353,34 @@ def test_mailbox_projection_uses_distinct_auth_and_exact_replay_receipt() -> Non
         "payload_digest": payload["projection_digest"],
     }
     assert len(configs.projections) == 1
+
+
+def test_mailbox_projection_accepts_exact_v2_identity_ref_but_not_explicit_null() -> None:
+    from services.email_gateway.models import canonical_digest
+
+    legacy = _connector_projection()
+    body = {key: value for key, value in legacy.items() if key != "projection_digest"}
+    body["mailbox_address_identity_ref"] = "extid:v1:email:" + "M" * 43
+    payload = {**body, "projection_digest": canonical_digest(body)}
+    configs = InMemoryEmailConnectorConfigRepository()
+    app, _control, _reader = _app(connector_configs=configs)
+    client = TestClient(app)
+
+    accepted = client.post(
+        "/internal/v1/email-connectors/apply-config",
+        headers=_connector_projection_headers(payload),
+        json=payload,
+    )
+    explicit_null = {**payload, "mailbox_address_identity_ref": None}
+    rejected = client.post(
+        "/internal/v1/email-connectors/apply-config",
+        headers=_connector_projection_headers(payload),
+        json=explicit_null,
+    )
+
+    assert accepted.status_code == 200
+    assert configs.projections[0].mailbox_address_identity_ref == ("extid:v1:email:" + "M" * 43)
+    assert rejected.status_code == 422
 
 
 def test_mailbox_projection_rejects_missing_repo_fake_extra_and_digest_drift() -> None:
@@ -928,3 +980,142 @@ def test_email_draft_material_uses_separate_bearer_and_closed_save_finalize_shap
     assert saved.status_code == finalized.status_code == 200
     assert raw_address.status_code == 422
     assert [name for name, _call in material.calls] == ["save", "finalize"]
+
+
+def test_email_mailbox_identity_uses_draft_material_auth_and_exact_closed_shape(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from observer.email_mailbox_identity import EmailMailboxIdentityService
+    from observer.identity_tokens import HmacSha256IdentityTokenResolver
+
+    identity = EmailMailboxIdentityService(
+        identity_resolver=HmacSha256IdentityTokenResolver(b"m" * 32)
+    )
+    app, _control, _reader = _app(mailbox_identity=identity)
+    client = TestClient(app)
+    headers = {
+        **_headers(purpose="email_mailbox_identity", request_id="mailbox-id-req-01"),
+        "Authorization": "Bearer observer-draft-material-token",
+        "X-GBOS-Local-Auth-Ref": "observer-email-draft-material-v1",
+        "Idempotency-Key": "mailbox-identity-01",
+    }
+
+    response = client.post(
+        "/internal/v1/bff/email-mailbox-identity/derive",
+        headers=headers,
+        json={
+            "canonical_mailbox_address": "Sales.Primary@Example.COM",
+            "idempotency_key": "mailbox-identity-01",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    response_payload = response.json()
+    assert response_payload["site_id"] == "alpha.example"
+    assert response_payload["data"] == {
+        "opaque_address_ref": response_payload["data"]["opaque_address_ref"],
+        "normalization_version": "email-v1",
+    }
+    assert response_payload["data"]["opaque_address_ref"].startswith("extid:v1:email:")
+    assert response_payload["meta"] == {
+        "request_id": "mailbox-id-req-01",
+        "schema_version": "1.0",
+    }
+
+    wrong_purpose = client.post(
+        "/internal/v1/bff/email-mailbox-identity/derive",
+        headers={**headers, "X-Processing-Purpose": "email_draft_material"},
+        json={
+            "canonical_mailbox_address": "owner@example.com",
+            "idempotency_key": "mailbox-identity-01",
+        },
+    )
+    extra = client.post(
+        "/internal/v1/bff/email-mailbox-identity/derive",
+        headers=headers,
+        json={
+            "canonical_mailbox_address": "owner@example.com",
+            "idempotency_key": "mailbox-identity-01",
+            "raw_address": "must-not-be-accepted@example.com",
+        },
+    )
+    mismatch = client.post(
+        "/internal/v1/bff/email-mailbox-identity/derive",
+        headers={**headers, "Idempotency-Key": "different-mailbox-id"},
+        json={
+            "canonical_mailbox_address": "owner@example.com",
+            "idempotency_key": "mailbox-identity-01",
+        },
+    )
+    invalid_address = "private invalid mailbox@example.invalid"
+    invalid = client.post(
+        "/internal/v1/bff/email-mailbox-identity/derive",
+        headers=headers,
+        json={
+            "canonical_mailbox_address": invalid_address,
+            "idempotency_key": "mailbox-identity-01",
+        },
+    )
+    oversized_address = "oversized-private-" + "x" * 300 + "@example.invalid"
+    oversized = client.post(
+        "/internal/v1/bff/email-mailbox-identity/derive",
+        headers=headers,
+        json={
+            "canonical_mailbox_address": oversized_address,
+            "idempotency_key": "mailbox-identity-01",
+        },
+    )
+
+    assert wrong_purpose.status_code == 403
+    assert extra.status_code == 422
+    assert mismatch.status_code == 409
+    assert invalid.status_code == oversized.status_code == 422
+    exposed_values = (
+        "must-not-be-accepted@example.com",
+        invalid_address,
+        oversized_address,
+    )
+    rendered_responses = "".join(
+        repr(dict(response.headers)) + response.text for response in (extra, invalid, oversized)
+    )
+    rendered_logs = caplog.text
+    assert all(value not in rendered_responses for value in exposed_values)
+    assert all(value not in rendered_logs for value in exposed_values)
+
+
+def test_email_mailbox_identity_fails_closed_when_service_or_auth_is_missing() -> None:
+    config = LocalPilotAPIConfig(
+        bind_host="127.0.0.1",
+        network_mode="loopback",
+        bearer_token="synthetic-local-token",
+        auth_ref="observer-token-v1",
+    )
+    app, _control, _reader = _app(config=config)
+    payload = {
+        "canonical_mailbox_address": "owner@example.com",
+        "idempotency_key": "mailbox-identity-01",
+    }
+
+    missing_auth = TestClient(app).post(
+        "/internal/v1/bff/email-mailbox-identity/derive",
+        headers={
+            **_headers(purpose="email_mailbox_identity"),
+            "Idempotency-Key": "mailbox-identity-01",
+        },
+        json=payload,
+    )
+    assert missing_auth.status_code == 401
+
+    configured_app, _control, _reader = _app()
+    unavailable = TestClient(configured_app).post(
+        "/internal/v1/bff/email-mailbox-identity/derive",
+        headers={
+            **_headers(purpose="email_mailbox_identity"),
+            "Authorization": "Bearer observer-draft-material-token",
+            "X-GBOS-Local-Auth-Ref": "observer-email-draft-material-v1",
+            "Idempotency-Key": "mailbox-identity-01",
+        },
+        json=payload,
+    )
+    assert unavailable.status_code == 503
