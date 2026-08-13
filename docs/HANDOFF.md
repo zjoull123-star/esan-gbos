@@ -8,8 +8,8 @@
 - 规划来源基线是 `8c40731`（观察身份解析 roadmap）；当前分支为
   `feat/user-identity-resolution-20260810`。当前 Frappe source reference 是
   `35beb2586f12043ce4b89b6875527ec4a75150b9`，runtime source reference 是
-  `2efcf2810c1f215a02b19458fd5a565663d2f3bc`，image-lock recording commit 是
-  `9c121d5741798ebf9c97369eec83a900521b7840`。镜像 labels、源码哈希和 inspect
+  `1fd20d4df930fc9a70168453d29be1c9dc192522`，image-lock recording commit 是
+  `54d9aa7866189d5fe2028aeea177f6cff8102b41`。镜像 labels、源码哈希和 inspect
   digest 已逐项复核；它们包含本轮 Email Gateway、身份投影、人工路由、SLA、草稿
   证据与 terminal-material retention 的 credential-free 实现。后续 handoff 文档不在
   镜像 source group 内。真实 canary 仍受正式 go、供应商合同与外部授权阻断。
@@ -78,21 +78,21 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 | Service | Local image digest | Revision label |
 | --- | --- | --- |
 | `frappe-pwa` | `sha256:0b0e24d7e25c2e384e977c1aa00ef8d032e54aadbb84af813fb077c58fd28460` | `35beb2586f12043ce4b89b6875527ec4a75150b9` |
-| `local-runtime` | `sha256:61f2b48817983b82795542fdf0eb2cae3a27b8c637d23e71d34c265fb7d9fd8f` | `2efcf2810c1f215a02b19458fd5a565663d2f3bc` |
+| `local-runtime` | `sha256:489ad22e95300ec27156904d583f67979cf8142f8b31479d8b938ad3d3a6c0b1` | `1fd20d4df930fc9a70168453d29be1c9dc192522` |
 
 Frappe/PWA 的 source SHA256 label 是
 `f6fe3ab3938890e6d041df03bfd5857528c8e1269a631b38d6bbb527978c959d`；local-runtime 的
 source SHA256 label 是
-`cdb14db857668b50efd2cf3e1dfdfd9534dcd1041ca5a4988d391fac93a075c6`。
+`e946cdf903d87b9d387107b82801556ad85994cb7e5702c21854eebda804fd3e`。
 
 上述 source-bound images 已重新构建并记录到 image lock；synthetic core 使用它们
 完成受治理重启。正式 `local_pilot_go=false` 不变，真实渠道、模型、外发与 terminal
 material deletion 均未启用。
 
 当前 credential-free source verification 为：full backend
-`3980 passed, 59 skipped, 1 warning`、failed `0`；唯一 warning 是既有 Starlette
+`3989 passed, 59 skipped, 1 warning`、failed `0`；唯一 warning 是既有 Starlette
 TestClient/httpx deprecation。Ruff check 与 format（`720 files`）、CI-scope mypy
-（`121 sources`）、compileall 和 `scripts/dev/secret-scan` 全部 green。Frontend
+（`151 sources`）、compileall 和 `scripts/dev/secret-scan` 全部 green。Frontend
 lint/typecheck/build green、unit
 `232 passed`、Playwright harness `29 passed`。当前 migration chain 的一次性 PostgreSQL
 `--all` gate 为 Observer/Context `3 passed, 16 deselected, 1 warning` 与 Gateway
@@ -118,6 +118,12 @@ receipt 仍只允许 source-bound `STATUS_UIDVALIDITY_UIDNEXT`，但真实 Email
 checkpoint 与 canary 未执行；本地凭据存在不等于已完成正式 go、activation-time、
 checkpoint receipt 或 provider login 验证。DeepSeek real call 未执行，
 `response_reported_observed_model=unknown`。
+
+Email Gateway 的紧急停止边界已补齐：`email-send-worker` 与 command-publication relay
+在启动前、领取前及 provider/Gateway effect 前动态检查 `/run/gbos/EMERGENCY_STOP`；
+containment 同时停止并复核 7 个 effect-producing Gateway workers，保留只读管理 API
+用于取证。broken symlink 与无法检查 latch 均失败关闭；此闭环没有改变
+`external_send=false` 或任何默认 kill switch。
 
 Earlier source-bound closure snapshot (`2850 passed, 44 skipped, 1 warning`) 与 pre-doc-fix
 red (`3060 passed, 44 skipped, 3 failed`, stale-current-doc mismatch only) 均保留在当前
@@ -200,8 +206,8 @@ checked_in_deepseek_enabled=false
 
 ## 后续实施顺序
 
-1. Frappe source reference `35beb25`、runtime source reference `2efcf28` 与 current
-   image lock `9c121d5` 已完成 governed rebuild/record；后续 canary 仍必须复核
+1. Frappe source reference `35beb25`、runtime source reference `1fd20d4` 与 current
+   image lock `54d9aa7` 已完成 governed rebuild/record；后续 canary 仍必须复核
    revision label、source hash 与 manifest binding。
 2. 在不读取/输出 secret value 的前提下，为当前选定的 Eric 主入口生成正式
    activation-time 与 repo-external canary manifest/control；凭据仍只进入 macOS

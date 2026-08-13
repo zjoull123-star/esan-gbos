@@ -33,13 +33,13 @@ services use local-pilot-specific volume names. The Frappe services use the
 recorded local image `esan-gbos-local-pilot-frappe:2026-08-08` with inspect digest
 `sha256:0b0e24d7e25c2e384e977c1aa00ef8d032e54aadbb84af813fb077c58fd28460`;
 the local runtime digest is
-`sha256:61f2b48817983b82795542fdf0eb2cae3a27b8c637d23e71d34c265fb7d9fd8f`.
+`sha256:489ad22e95300ec27156904d583f67979cf8142f8b31479d8b938ad3d3a6c0b1`.
 The Frappe source reference is
 `35beb2586f12043ce4b89b6875527ec4a75150b9`; the runtime source reference is
-`2efcf2810c1f215a02b19458fd5a565663d2f3bc`; the image-lock recording commit is
-`9c121d5741798ebf9c97369eec83a900521b7840`. Their source SHA256 labels are
+`1fd20d4df930fc9a70168453d29be1c9dc192522`; the image-lock recording commit is
+`54d9aa7866189d5fe2028aeea177f6cff8102b41`. Their source SHA256 labels are
 `f6fe3ab3938890e6d041df03bfd5857528c8e1269a631b38d6bbb527978c959d` and
-`cdb14db857668b50efd2cf3e1dfdfd9534dcd1041ca5a4988d391fac93a075c6`; each image label
+`e946cdf903d87b9d387107b82801556ad85994cb7e5702c21854eebda804fd3e`; each image label
 and source hash was inspected independently.
 the upstream ERPNext image is not treated as a GBOS PWA. The governed synthetic restart
 from these images reported
@@ -89,9 +89,9 @@ The current-source synthetic core restart is separate from formal pilot approval
 `local_pilot_go=false`, with channels, models, media and tunnel still disabled; the core is
 healthy on the current locked images. Formal preflight returns `rc78` solely because
 `local_pilot_go=false`. The current credential-free source run records full backend
-`3980 passed, 59 skipped, 1 warning`, failed `0`; the warning is the existing Starlette
+`3989 passed, 59 skipped, 1 warning`, failed `0`; the warning is the existing Starlette
 TestClient/httpx deprecation. Ruff check/format (`720 files`), CI-scope mypy
-(`121 sources`), compileall and `scripts/dev/secret-scan` are green. Frontend
+(`151 sources`), compileall and `scripts/dev/secret-scan` are green. Frontend
 lint/typecheck/build are green, unit
 `232 passed`, and frontend-harness Playwright `29 passed`. The current disposable PostgreSQL
 `--all` gate passed Observer/Context `3` tests with 16 deselected and one existing warning,

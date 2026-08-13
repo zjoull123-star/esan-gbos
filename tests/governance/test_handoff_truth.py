@@ -46,10 +46,10 @@ HISTORICAL_IDENTITY_RUNTIME_DIGEST = (
     "sha256:de037ad28a020689fec8b72f743ad0224afdf5c2ca6856a2ea5568fabd45e568"
 )
 CURRENT_FRAPPE_SOURCE_COMMIT = "35beb2586f12043ce4b89b6875527ec4a75150b9"
-CURRENT_RUNTIME_SOURCE_COMMIT = "2efcf2810c1f215a02b19458fd5a565663d2f3bc"
-CURRENT_IMAGE_LOCK_COMMIT = "9c121d5741798ebf9c97369eec83a900521b7840"
+CURRENT_RUNTIME_SOURCE_COMMIT = "1fd20d4df930fc9a70168453d29be1c9dc192522"
+CURRENT_IMAGE_LOCK_COMMIT = "54d9aa7866189d5fe2028aeea177f6cff8102b41"
 CURRENT_FRAPPE_SOURCE_SHA256 = "f6fe3ab3938890e6d041df03bfd5857528c8e1269a631b38d6bbb527978c959d"
-CURRENT_RUNTIME_SOURCE_SHA256 = "cdb14db857668b50efd2cf3e1dfdfd9534dcd1041ca5a4988d391fac93a075c6"
+CURRENT_RUNTIME_SOURCE_SHA256 = "e946cdf903d87b9d387107b82801556ad85994cb7e5702c21854eebda804fd3e"
 HISTORICAL_GITLEAKS_ALLOWLIST_COMMIT = "c27687ec6b39e669014b9ae8980cf6565556aaba"
 CURRENT_GITLEAKS_ALLOWLIST_COMMIT = "6ee371e164480e967a2b4ffeb48b482e5eab3c97"
 CURRENT_LIVE_SITE_BASE_URL = "http://127.0.0.1:58080"
@@ -348,9 +348,11 @@ def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
     assert "runtime source reference" in handoff.lower()
     assert "current code HEAD 是" not in handoff
     assert "governed rebuild/record" in handoff.lower()
-    assert "3980 passed, 59 skipped, 1 warning" in handoff
+    assert "3989 passed, 59 skipped, 1 warning" in handoff
     assert "720 files" in handoff
-    assert "121 sources" in handoff
+    assert "151 sources" in handoff
+    assert "紧急停止边界已补齐" in handoff
+    assert "7 个 effect-producing Gateway workers" in handoff
     assert "232 passed" in handoff
     assert "29 passed" in handoff
     assert "3 passed, 16 deselected, 1 warning" in handoff

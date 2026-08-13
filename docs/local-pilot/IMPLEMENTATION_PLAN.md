@@ -6,14 +6,14 @@ actions, Kingdee, cloud deployment or production state changes.
 
 **Current source-bound image references:** Frappe source reference
 `35beb2586f12043ce4b89b6875527ec4a75150b9`, runtime source reference
-`2efcf2810c1f215a02b19458fd5a565663d2f3bc`, and image-lock recording commit
-`9c121d5741798ebf9c97369eec83a900521b7840`. The locked Frappe/PWA image is
+`1fd20d4df930fc9a70168453d29be1c9dc192522`, and image-lock recording commit
+`54d9aa7866189d5fe2028aeea177f6cff8102b41`. The locked Frappe/PWA image is
 `sha256:0b0e24d7e25c2e384e977c1aa00ef8d032e54aadbb84af813fb077c58fd28460`;
 the local runtime image is
-`sha256:61f2b48817983b82795542fdf0eb2cae3a27b8c637d23e71d34c265fb7d9fd8f`.
+`sha256:489ad22e95300ec27156904d583f67979cf8142f8b31479d8b938ad3d3a6c0b1`.
 Their source SHA256 labels are respectively
 `f6fe3ab3938890e6d041df03bfd5857528c8e1269a631b38d6bbb527978c959d` and
-`cdb14db857668b50efd2cf3e1dfdfd9534dcd1041ca5a4988d391fac93a075c6`; each image carries
+`e946cdf903d87b9d387107b82801556ad85994cb7e5702c21854eebda804fd3e`; each image carries
 its own exact source revision and source-hash label.
 
 ## Current architecture
@@ -59,9 +59,9 @@ its own exact source revision and source-hash label.
   external activity without modifying historical Gate evidence.
 
 The current credential-free source run records full backend
-`3980 passed, 59 skipped, 1 warning`, failed `0`; the warning is the existing Starlette
+`3989 passed, 59 skipped, 1 warning`, failed `0`; the warning is the existing Starlette
 TestClient/httpx deprecation. Ruff check/format (`720 files`), CI-scope mypy
-(`121 sources`), compileall, and `scripts/dev/secret-scan` are green. Frontend
+(`151 sources`), compileall, and `scripts/dev/secret-scan` are green. Frontend
 lint/typecheck/build are green, with unit
 `232 passed` and frontend-harness Playwright `29 passed`. The disposable PostgreSQL `--all`
 gate passed Observer/Context `3` tests with 16 deselected and one existing warning, plus
@@ -134,6 +134,11 @@ external_send=false
   decision is approved.
 - [ ] Obtain an auditable outbound idempotency/receipt/status-reconciliation contract before
   Task 18. Task 19 remains prohibited and `external_send=false` remains mandatory.
+
+The provider-independent emergency-stop boundary is closed: command publication and send
+workers dynamically re-read `/run/gbos/EMERGENCY_STOP` before their effects, and containment
+stops/verifies all seven effect-producing Email Gateway workers while preserving the API for
+forensics. This does not enable external send or relax any kill switch.
 
 Only after those steps may the project declare
 `Email + DeepSeek + identity resolution local shadow Go`. Kingdee, cloud deployment,
