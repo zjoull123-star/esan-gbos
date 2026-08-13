@@ -94,12 +94,6 @@
       "network": "local-internal-only",
       "database_role": "gbos_email_gateway_app"
     },
-    "email-gateway-worker": {
-      "path": "services/local_pilot_runtime/email_gateway_worker.py",
-      "status": "blocked_default_factory",
-      "network": "local-internal-only",
-      "database_role": "gbos_email_gateway_worker"
-    },
     "email-gateway-retention-worker": {
       "path": "services/local_pilot_runtime/email_gateway_retention_worker.py",
       "status": "default_off_fail_closed_verifier",
@@ -110,17 +104,15 @@
     },
     "observer-email-publication-worker": {
       "path": "services/local_pilot_runtime/email_publication_worker.py",
-      "status": "blocked_role_grant",
+      "status": "executable",
       "network": "local-internal-only",
-      "database_role": "gbos_observer_publisher",
-      "reason": "runtime is composed but Observer migration must grant the dedicated publisher role least-column relay access"
+      "database_role": "gbos_observer_publisher"
     },
     "mailbox-config-projection-worker": {
       "path": "services/local_pilot_runtime/mailbox_config_projection_worker.py",
-      "status": "blocked_default_factory",
+      "status": "executable",
       "network": "local-internal-only",
-      "database_role": "gbos_email_gateway_worker",
-      "reason": "standalone main exits 78 until the Observer apply-config HTTP boundary is installed"
+      "database_role": "gbos_email_gateway_worker"
     },
     "connector-worker": {
       "path": "services/local_pilot_runtime/observer_worker.py",

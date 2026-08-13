@@ -22,7 +22,6 @@ _ROLES = {
 }
 _EMAIL_GATEWAY_ROLES = {
     "email-gateway-api": "gbos_email_gateway_app",
-    "email-gateway-worker": "gbos_email_gateway_worker",
     "email-publication-worker": "gbos_observer_publisher",
     "mailbox-config-projection-worker": "gbos_email_gateway_worker",
 }
@@ -36,7 +35,6 @@ _ROLE_PASSWORD_FILES = {
     "communication": "/run/secrets/postgres_context_password",
     "retention": "/run/secrets/postgres_observer_password",
     "email-gateway-api": "/run/secrets/postgres_email_gateway_password",
-    "email-gateway-worker": "/run/secrets/postgres_email_gateway_password",
     "email-publication-worker": "/run/secrets/postgres_observer_publisher_password",
     "mailbox-config-projection-worker": "/run/secrets/postgres_email_gateway_password",
     "email-send-worker": "/run/secrets/postgres_email_send_worker_password",
@@ -269,16 +267,10 @@ def _email_gateway_runtime_config(
     role_name: str,
 ) -> dict[str, Any]:
     gateway = manifest["email_gateway"]
-    gateway_enabled = (
-        manifest["local_pilot_go"] is True
-        and gateway["kill_switch"] is False
-    )
-    publication_enabled = (
-        gateway_enabled and gateway["publication_kill_switch"] is False
-    )
+    gateway_enabled = manifest["local_pilot_go"] is True and gateway["kill_switch"] is False
+    publication_enabled = gateway_enabled and gateway["publication_kill_switch"] is False
     enabled_component = {
         "email-gateway-api": "email_gateway_api",
-        "email-gateway-worker": "email_gateway_worker",
         "email-publication-worker": "email_publication_worker",
         "mailbox-config-projection-worker": "mailbox_config_projection_worker",
     }[purpose]
@@ -322,9 +314,7 @@ def _email_gateway_runtime_config(
             "observer_email_draft_material_bearer_file": (
                 "/run/secrets/observer_email_draft_material_bearer"
             ),
-            "observer_email_draft_material_auth_ref": (
-                "observer-email-draft-material-v1"
-            ),
+            "observer_email_draft_material_auth_ref": ("observer-email-draft-material-v1"),
             "frappe_email_gateway_authority_api_key_file": (
                 "/run/secrets/frappe_email_gateway_authority_api_key"
             ),
@@ -390,15 +380,9 @@ def _email_command_publication_runtime_config(
             "gateway": "http://email-gateway-api:8004",
         },
         "auth": {
-            "frappe_api_key_file": (
-                "/run/secrets/frappe_email_command_publication_api_key"
-            ),
-            "frappe_api_secret_file": (
-                "/run/secrets/frappe_email_command_publication_api_secret"
-            ),
-            "gateway_bearer_file": (
-                "/run/secrets/email_gateway_command_ingest_bearer"
-            ),
+            "frappe_api_key_file": ("/run/secrets/frappe_email_command_publication_api_key"),
+            "frappe_api_secret_file": ("/run/secrets/frappe_email_command_publication_api_secret"),
+            "gateway_bearer_file": ("/run/secrets/email_gateway_command_ingest_bearer"),
         },
         "worker": {
             "worker_id": "local-pilot-email-command-publication-worker",
@@ -443,15 +427,11 @@ def _email_gateway_retention_runtime_config(manifest: dict[str, Any]) -> dict[st
             "port": 5432,
             "database": "gbos_local_pilot",
             "user": "gbos_email_gateway_retention_worker",
-            "password_file": (
-                "/run/secrets/postgres_email_gateway_retention_worker_password"
-            ),
+            "password_file": ("/run/secrets/postgres_email_gateway_retention_worker_password"),
             "connect_timeout_seconds": 5,
         },
         "observer_verifier": {
-            "endpoint": (
-                "http://observer-api:8003/internal/v1/retention/tombstones/verify"
-            ),
+            "endpoint": ("http://observer-api:8003/internal/v1/retention/tombstones/verify"),
             "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
             "auth_ref": "observer-retention-verifier-v1",
         },

@@ -17,10 +17,10 @@ def _block(text: str, service: str) -> str:
 
 def test_gateway_and_relays_are_default_killed_least_privilege_and_local_only() -> None:
     compose = (ROOT / "infra/local/compose.yml").read_text()
+    assert "\n  email-gateway-worker:\n" not in compose
     gateway = _block(compose, "email-gateway-api")
     frappe_site = _block(compose, "frappe-site")
     frappe_backend = _block(compose, "frappe-backend")
-    gateway_worker = _block(compose, "email-gateway-worker")
     publication = _block(compose, "observer-email-publication-worker")
     projection = _block(compose, "mailbox-config-projection-worker")
     frappe_worker = _block(compose, "frappe-worker")
@@ -51,7 +51,6 @@ def test_gateway_and_relays_are_default_killed_least_privilege_and_local_only() 
         for service in (
             frappe_site,
             frappe_backend,
-            gateway_worker,
             publication,
             projection,
             frappe_worker,
@@ -73,7 +72,7 @@ def test_gateway_and_relays_are_default_killed_least_privilege_and_local_only() 
         assert "source: email_gateway_bff_bearer" in service
         assert "target: email_gateway_bff_bearer" in service
         assert "mode: 0600" in service
-    for service in (gateway_worker, publication, projection, frappe_worker, frappe_scheduler):
+    for service in (publication, projection, frappe_worker, frappe_scheduler):
         assert "email_gateway_bff_bearer" not in service
         assert "postgres_email_command_executor_password" not in service
     for service in (frappe_site, frappe_backend, observer_api):
@@ -82,7 +81,6 @@ def test_gateway_and_relays_are_default_killed_least_privilege_and_local_only() 
         assert "mode: 0600" in service
     for service in (
         gateway,
-        gateway_worker,
         publication,
         projection,
         frappe_worker,
@@ -129,10 +127,10 @@ def test_renderer_emits_role_separated_gateway_configs(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     expected = {
         "runtime-email-gateway-api.json": "gbos_email_gateway_app",
-        "runtime-email-gateway-worker.json": "gbos_email_gateway_worker",
         "runtime-email-publication-worker.json": "gbos_observer_publisher",
         "runtime-mailbox-config-projection-worker.json": "gbos_email_gateway_worker",
     }
+    assert not (tmp_path / "runtime-email-gateway-worker.json").exists()
     for name, role in expected.items():
         payload = json.loads((tmp_path / name).read_text())
         assert payload["postgres"]["user"] == role
@@ -159,6 +157,9 @@ def test_renderer_emits_role_separated_gateway_configs(tmp_path: Path) -> None:
         )
 
     runtime = json.loads((ROOT / "infra/local/runtime-entrypoints.json").read_text())
+    assert "email-gateway-worker" not in runtime["services"]
+    assert runtime["services"]["observer-email-publication-worker"]["status"] == "executable"
+    assert runtime["services"]["mailbox-config-projection-worker"]["status"] == "executable"
     assert runtime["services"]["observer-api"]["email_draft_material"] == {
         "auth_ref": "observer-email-draft-material-v1",
         "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
@@ -533,7 +534,7 @@ def test_start_requires_two_exact_email_gateway_retention_opt_ins() -> None:
     enabled = start.split('if [[ "${ENABLE_EMAIL_GATEWAY_RETENTION}" == "true" ]]', maxsplit=1)[1]
     assert 'GBOS_GLOBAL_KILL_SWITCH="false"' in enabled
     assert 'GBOS_EMAIL_GATEWAY_KILL_SWITCH="false"' in enabled
-    assert 'profile_args+=(--profile email-gateway-retention)' in start
+    assert "profile_args+=(--profile email-gateway-retention)" in start
 
 
 def test_retention_worker_secret_is_required_private_and_materialized_before_migrate() -> None:
@@ -546,8 +547,7 @@ def test_retention_worker_secret_is_required_private_and_materialized_before_mig
     )
     assert invocation in prepare
     assert (
-        "write_optional_keychain_secret \\\n"
-        "  postgres_email_gateway_retention_worker_password"
+        "write_optional_keychain_secret \\\n  postgres_email_gateway_retention_worker_password"
     ) not in prepare
     assert "Required Keychain item is unavailable" in prepare
     assert "Required Keychain item is empty" in prepare
@@ -567,9 +567,7 @@ def test_migrate_materializes_dedicated_retention_login_idempotently_and_redacte
         "\\copy local_secret_input(password) FROM "
         "'/run/secrets/postgres_email_gateway_retention_worker_password'"
     )
-    insert = migrate.index(
-        "SELECT 'gbos_email_gateway_retention_worker', password", copy
-    )
+    insert = migrate.index("SELECT 'gbos_email_gateway_retention_worker', password", copy)
     truncate = migrate.index("TRUNCATE local_secret_input;", insert)
     role_create = migrate.index("WHERE NOT EXISTS (SELECT 1 FROM pg_roles", truncate)
     alter = migrate.index("ALTER ROLE gbos_email_gateway_retention_worker", role_create)
@@ -579,7 +577,7 @@ def test_migrate_materializes_dedicated_retention_login_idempotently_and_redacte
     assert "local role secret import failed closed" in migrate
     assert "RAISE EXCEPTION 'local role secret import failed closed'" in migrate
     assert "password=%" not in migrate.lower()
-    assert "echo \"${password}" not in migrate
+    assert 'echo "${password}' not in migrate
 
     migration = (
         ROOT / "services/email_gateway/migrations/011_email_gateway_retention_runtime.sql"

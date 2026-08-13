@@ -343,28 +343,6 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  email-gateway-worker:
-    image: *runtime-image
-    pull_policy: never
-    profiles: ["email-gateway"]
-    command: ["python", "-m", "services.local_pilot_runtime.email_gateway_worker"]
-    environment:
-      <<: *runtime-environment
-      GBOS_EMAIL_GATEWAY_KILL_SWITCH: ${GBOS_EMAIL_GATEWAY_KILL_SWITCH:-true}
-      GBOS_EXTERNAL_SEND_ENABLED: "false"
-    secrets:
-      - postgres_email_gateway_password
-      - email_gateway_data_key
-    volumes:
-      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
-      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-email-gateway-worker.json:/config/email-gateway-runtime.json:ro
-      - ../../.runtime/local-pilot:/run/gbos:ro
-    networks: [local-internal]
-    depends_on:
-      migrations:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
   email-gateway-retention-worker:
     image: *runtime-image
     pull_policy: never
