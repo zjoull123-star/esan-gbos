@@ -30,11 +30,26 @@ IDENTITY_CLOSURE_SUMMARY = IDENTITY_CLOSURE_DIR / "identity-governance-summary.m
 IDENTITY_CLOSURE_SUMS = IDENTITY_CLOSURE_DIR / "SHA256SUMS"
 
 HISTORICAL_TASK13_SOURCE_COMMIT = "ad58ab3ea8c0d521cebd90c2642709d135f98fac"
-CURRENT_FRAPPE_SOURCE_COMMIT = "485d3def0ea30ee49a3899d71c10b0787ba0429f"
-CURRENT_RUNTIME_SOURCE_COMMIT = "bb260632ff44c7065a88327f264612139a9070a2"
-CURRENT_IMAGE_LOCK_COMMIT = "a599a5200e2a8e1b5e42301d74fe8d9d914161c4"
-CURRENT_FRAPPE_SOURCE_SHA256 = "441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405"
-CURRENT_RUNTIME_SOURCE_SHA256 = "c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3"
+HISTORICAL_IDENTITY_FRAPPE_SOURCE_COMMIT = "485d3def0ea30ee49a3899d71c10b0787ba0429f"
+HISTORICAL_IDENTITY_RUNTIME_SOURCE_COMMIT = "bb260632ff44c7065a88327f264612139a9070a2"
+HISTORICAL_IDENTITY_IMAGE_LOCK_COMMIT = "a599a5200e2a8e1b5e42301d74fe8d9d914161c4"
+HISTORICAL_IDENTITY_FRAPPE_SOURCE_SHA256 = (
+    "441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405"
+)
+HISTORICAL_IDENTITY_RUNTIME_SOURCE_SHA256 = (
+    "c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3"
+)
+HISTORICAL_IDENTITY_FRAPPE_DIGEST = (
+    "sha256:2a0440df614314dec036ecc934e37aa0b3713b8cb8610e3ca2bd8ed69f9187c2"
+)
+HISTORICAL_IDENTITY_RUNTIME_DIGEST = (
+    "sha256:de037ad28a020689fec8b72f743ad0224afdf5c2ca6856a2ea5568fabd45e568"
+)
+CURRENT_FRAPPE_SOURCE_COMMIT = "35beb2586f12043ce4b89b6875527ec4a75150b9"
+CURRENT_RUNTIME_SOURCE_COMMIT = "2efcf2810c1f215a02b19458fd5a565663d2f3bc"
+CURRENT_IMAGE_LOCK_COMMIT = "9c121d5741798ebf9c97369eec83a900521b7840"
+CURRENT_FRAPPE_SOURCE_SHA256 = "f6fe3ab3938890e6d041df03bfd5857528c8e1269a631b38d6bbb527978c959d"
+CURRENT_RUNTIME_SOURCE_SHA256 = "cdb14db857668b50efd2cf3e1dfdfd9534dcd1041ca5a4988d391fac93a075c6"
 CURRENT_GITLEAKS_ALLOWLIST_COMMIT = "c27687ec6b39e669014b9ae8980cf6565556aaba"
 CURRENT_LIVE_SITE_BASE_URL = "http://127.0.0.1:58080"
 
@@ -320,6 +335,7 @@ def test_current_task13_closure_snapshot_checksums_cover_only_current_files() ->
 
 def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
     handoff = _read(HANDOFF)
+    normalized_handoff = " ".join(handoff.split())
 
     assert CURRENT_FRAPPE_SOURCE_COMMIT in handoff
     assert CURRENT_RUNTIME_SOURCE_COMMIT in handoff
@@ -330,59 +346,63 @@ def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
     assert "runtime source reference" in handoff.lower()
     assert "current code HEAD 是" not in handoff
     assert "governed rebuild/record" in handoff.lower()
-    assert "3064 passed, 44 skipped, 1 warning" in handoff
-    assert "528 files" in handoff
-    assert "101 sources" in handoff
-    assert "263 commits" in handoff
-    assert "17 passed, 1 warning" in handoff
+    assert "3978 passed, 59 skipped, 1 warning" in handoff
+    assert "720 files" in handoff
+    assert "121 sources" in handoff
+    assert "232 passed" in handoff
+    assert "29 passed" in handoff
+    assert "3 passed, 16 deselected, 1 warning" in handoff
+    assert "Gateway\n`2 passed`" in handoff
     assert "rc78" in handoff
-    assert "missing working client authorization" in handoff
     assert "test:e2e:site" in handoff
     assert "4 passed, 21 skipped, 0 failed" in handoff
     assert "6.5s" in handoff
-    assert "not all 25 live" in handoff.lower()
+    assert "not rerun on the current source-bound" in normalized_handoff.lower()
+    assert "errcode=45009" in handoff
+    assert "批准 45009 暂停邮箱并由管理员人工恢复" in handoff
+    assert "Task 19 因此禁止启动" in handoff
     assert "response_reported_observed_model=unknown" in handoff
     assert "real_email_deepseek_canary=no_go" in handoff
     assert "72 小时连续运行不再作为本阶段退出条件" in handoff
 
 
-def test_current_identity_governance_closure_is_source_bound_and_honest() -> None:
+def test_historical_identity_governance_closure_remains_source_bound_and_honest() -> None:
     evidence = json.loads(_read(IDENTITY_CLOSURE_EVIDENCE))
     summary = _read(IDENTITY_CLOSURE_SUMMARY)
-    image_lock = json.loads(_read(IMAGE_LOCK))
-    locked_digests = {
-        image["service"]: image["local_inspect_digest"]
-        for image in image_lock["images"]
-        if image["service"] in {"frappe-pwa", "local-runtime"}
-    }
 
     assert evidence["schema_version"] == "1.0"
     assert evidence["status"] == "credential_free_design_closure_real_canary_deferred"
     assert evidence["source_scope"] == {
         "branch": "feat/user-identity-resolution-20260810",
-        "frappe_source_reference": CURRENT_FRAPPE_SOURCE_COMMIT,
-        "runtime_source_reference": CURRENT_RUNTIME_SOURCE_COMMIT,
-        "image_lock_commit": CURRENT_IMAGE_LOCK_COMMIT,
+        "frappe_source_reference": HISTORICAL_IDENTITY_FRAPPE_SOURCE_COMMIT,
+        "runtime_source_reference": HISTORICAL_IDENTITY_RUNTIME_SOURCE_COMMIT,
+        "image_lock_commit": HISTORICAL_IDENTITY_IMAGE_LOCK_COMMIT,
         "historical_evidence_modified": False,
     }
+    assert evidence["source_scope"]["image_lock_commit"] != CURRENT_IMAGE_LOCK_COMMIT
     assert (
-        evidence["runtime_images"]["frappe_pwa"]["inspect_digest"] == locked_digests["frappe-pwa"]
+        evidence["runtime_images"]["frappe_pwa"]["inspect_digest"]
+        == HISTORICAL_IDENTITY_FRAPPE_DIGEST
     )
     assert (
         evidence["runtime_images"]["local_runtime"]["inspect_digest"]
-        == locked_digests["local-runtime"]
+        == HISTORICAL_IDENTITY_RUNTIME_DIGEST
     )
     assert (
-        evidence["runtime_images"]["frappe_pwa"]["revision_label"] == CURRENT_FRAPPE_SOURCE_COMMIT
+        evidence["runtime_images"]["frappe_pwa"]["revision_label"]
+        == HISTORICAL_IDENTITY_FRAPPE_SOURCE_COMMIT
     )
-    assert evidence["runtime_images"]["frappe_pwa"]["source_sha256"] == CURRENT_FRAPPE_SOURCE_SHA256
+    assert (
+        evidence["runtime_images"]["frappe_pwa"]["source_sha256"]
+        == HISTORICAL_IDENTITY_FRAPPE_SOURCE_SHA256
+    )
     assert (
         evidence["runtime_images"]["local_runtime"]["revision_label"]
-        == CURRENT_RUNTIME_SOURCE_COMMIT
+        == HISTORICAL_IDENTITY_RUNTIME_SOURCE_COMMIT
     )
     assert (
         evidence["runtime_images"]["local_runtime"]["source_sha256"]
-        == CURRENT_RUNTIME_SOURCE_SHA256
+        == HISTORICAL_IDENTITY_RUNTIME_SOURCE_SHA256
     )
     assert evidence["verification"]["pytest"] == {
         "passed": 3064,
@@ -404,7 +424,7 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
         "disposable_environment_removed": True,
     }
     assert evidence["verification"]["postgresql_current_source_canary_closure"] == {
-        "runtime_source_reference": CURRENT_RUNTIME_SOURCE_COMMIT,
+        "runtime_source_reference": HISTORICAL_IDENTITY_RUNTIME_SOURCE_COMMIT,
         "observer_migrations": "001-013_applied_twice",
         "context_migrations": "001-005_applied_twice",
         "agent_migrations": "001-006_applied_twice",
@@ -611,21 +631,27 @@ def test_current_identity_governance_closure_is_source_bound_and_honest() -> Non
         assert forbidden not in evidence_text
 
 
-def test_current_live_site_playwright_evidence_is_qualified_across_owned_docs() -> None:
+def test_live_site_playwright_evidence_is_historical_until_current_rerun() -> None:
     current_truth_docs = (
         HANDOFF,
         EXTERNAL_DEPS,
         LOCAL_PLAN,
         LOCAL_INFRA_README,
-        IDENTITY_CLOSURE_SUMMARY,
     )
 
     for path in current_truth_docs:
         document = _read(path)
+        normalized = " ".join(document.split())
         assert "test:e2e:site" in document, path
         assert "4 passed, 21 skipped, 0 failed" in document, path
         assert "6.5s" in document, path
-        assert "not all 25 live" in document.lower(), path
+        assert "historical-only" in document.lower(), path
+        assert "not rerun on the current source-bound images" in normalized.lower(), path
+
+    historical_summary = _read(IDENTITY_CLOSURE_SUMMARY)
+    assert "4 passed, 21 skipped, 0 failed" in historical_summary
+    assert "6.5s" in historical_summary
+    assert "not all 25 live" in historical_summary.lower()
 
 
 def test_current_identity_governance_closure_checksums_cover_only_current_files() -> None:

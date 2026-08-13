@@ -4,16 +4,16 @@
 channel ingestion, identity resolution and model proposals without enabling outbound
 actions, Kingdee, cloud deployment or production state changes.
 
-**Recorded pre-mailbox-identity image references:** Frappe source reference
-`485d3def0ea30ee49a3899d71c10b0787ba0429f`, runtime source reference
-`bb260632ff44c7065a88327f264612139a9070a2`, and image-lock recording commit
-`a599a5200e2a8e1b5e42301d74fe8d9d914161c4`. The locked Frappe/PWA image is
-`sha256:2a0440df614314dec036ecc934e37aa0b3713b8cb8610e3ca2bd8ed69f9187c2`;
+**Current source-bound image references:** Frappe source reference
+`35beb2586f12043ce4b89b6875527ec4a75150b9`, runtime source reference
+`2efcf2810c1f215a02b19458fd5a565663d2f3bc`, and image-lock recording commit
+`9c121d5741798ebf9c97369eec83a900521b7840`. The locked Frappe/PWA image is
+`sha256:0b0e24d7e25c2e384e977c1aa00ef8d032e54aadbb84af813fb077c58fd28460`;
 the local runtime image is
-`sha256:de037ad28a020689fec8b72f743ad0224afdf5c2ca6856a2ea5568fabd45e568`.
+`sha256:61f2b48817983b82795542fdf0eb2cae3a27b8c637d23e71d34c265fb7d9fd8f`.
 Their source SHA256 labels are respectively
-`441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405` and
-`c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3`; each image carries
+`f6fe3ab3938890e6d041df03bfd5857528c8e1269a631b38d6bbb527978c959d` and
+`cdb14db857668b50efd2cf3e1dfdfd9534dcd1041ca5a4988d391fac93a075c6`; each image carries
 its own exact source revision and source-hash label.
 
 ## Current architecture
@@ -33,9 +33,9 @@ its own exact source revision and source-hash label.
 
 - [x] Compose isolation, loopback exposure, profiles, secrets, image locks and
   fail-closed preflight.
-- [x] The earlier Frappe/PWA and runtime source baseline was rebuilt, inspected and recorded;
-  the synthetic core was restarted from those recorded images. The newer mailbox-identity
-  source explicitly requires another rebuild before use.
+- [x] The current Frappe/PWA and runtime source was rebuilt, inspected and recorded; the
+  synthetic core was restarted from those images. Real channels, models, sends and terminal
+  material deletion remain disabled.
 - [x] Fresh Frappe v16 site install for ERPNext, CRM and `esan_gbos`, followed by two
   migrations and native identity permission tests.
 - [x] Observer, Context, Agent and Media PostgreSQL migration chain executed twice with
@@ -58,31 +58,28 @@ its own exact source revision and source-hash label.
 - [x] Current pre-canary evidence package records source/image bindings and zero
   external activity without modifying historical Gate evidence.
 
-The final credential-free P0 run records full backend `3064 passed, 44 skipped, 1 warning`,
-failed `0`; the warning is the existing Starlette TestClient/httpx deprecation. Ruff check,
-Ruff format (`528 files`), mypy (`101 sources`), compileall, and `scripts/dev/secret-scan`
-are green. Frontend lint/typecheck/build are green, with unit `197 passed` and
-frontend-harness Playwright `25 passed`. A disposable no-volume pgvector Gate 3 run recorded
-15 migration-ledger entries, applied migrations twice, passed `17` integration tests with
-one existing warning, and removed its container. Full-history Gitleaks scanned `263 commits`
-with `0 leaks` using the reviewed exact synthetic allowlist committed at
-`c27687ec6b39e669014b9ae8980cf6565556aaba`; this is not an unreviewed zero claim.
+The current credential-free source run records full backend
+`3978 passed, 59 skipped, 1 warning`, failed `0`; the warning is the existing Starlette
+TestClient/httpx deprecation. Ruff check/format (`720 files`), CI-scope mypy
+(`121 sources`), compileall, and `scripts/dev/secret-scan` are green. Frontend
+lint/typecheck/build are green, with unit
+`232 passed` and frontend-harness Playwright `29 passed`. The disposable PostgreSQL `--all`
+gate passed Observer/Context `3` tests with 16 deselected and one existing warning, plus
+`2` Gateway tests, and removed its container.
 
-Current-image live-site Playwright `test:e2e:site` at `http://127.0.0.1:58080` completed in
-`6.5s`: `4 passed, 21 skipped, 0 failed`. Applicable live scopes were five role workspaces axe,
-CEO cockpit governance/source values, keyboard skip/nav order, and
-integrations+communications Restricted/3 viewports. The 21 skipped scenarios were
-harness-only by design; this is not all 25 live. The repo-external `0600` synthetic CEO
-storage state was sourced in-process from Keychain, and temporary auth state/test-results
-were deleted afterward.
+The `test:e2e:site` result at `http://127.0.0.1:58080` (`4 passed, 21 skipped, 0 failed` in
+`6.5s`) is historical-only and is **not rerun on the current source-bound images**. The prior
+21 skipped scenarios were harness-only by design, so that snapshot was not all 25 live and
+is not current proof.
 
 Trivy filesystem and current locked-image scans exited `0`; report only `0` unwaived
 High/Critical, `0` image secrets and `0` misconfigurations. The historical waiver set has
 `57` entries covering `103` exact PURLs, expiring `2026-09-30`, and is not a total-findings
 zero claim. The synthetic core is healthy on the current images; formal preflight returns
 `rc78` solely because `local_pilot_go=false`. Email IMAP login/checkpoint/canary remains
-unrun due missing working client authorization, DeepSeek response-reported model remains
-`unknown`, and `production_go=false`/`local_pilot_go=false` remain unchanged.
+unrun because formal go, activation-time/checkpoint control and provider validation have not
+completed; local credential presence alone is insufficient. DeepSeek response-reported model
+remains `unknown`, and `production_go=false`/`local_pilot_go=false` remain unchanged.
 
 The earlier `3060 passed, 44 skipped, 3 failed` result is retained in current closure evidence
 as pre-doc-fix stale-current-doc mismatch only; the final run above closed that mismatch.
@@ -93,9 +90,9 @@ Playwright `27 passed`, and lint/typecheck/build/Ruff/format/mypy (`130 sources`
 all green. A disposable PostgreSQL run applied the Observer chain and Email Gateway 001–009
 twice and passed `3 + 2` focused real-DB tests; an isolated Frappe v16 site completed install,
 two migrations and five native email/identity test modules. All disposable state was removed.
-No provider, model or external-send network was used. These changes are not present in the
-currently recorded images; a clean-source rebuild, image-lock refresh and attestation are
-mandatory before any new canary or deployment run.
+No provider, model or external-send network was used. These earlier mailbox-identity changes
+are now included in the current source-bound images; a later source-group change still requires
+a clean-source rebuild, image-lock refresh and attestation before canary or deployment.
 
 ## Deferred by explicit scope decision
 
@@ -119,8 +116,9 @@ external_send=false
 
 - [x] Generate and store the local identity HMAC key and Frappe identity-resolver API
   key/secret in macOS Keychain without putting values in the repository or evidence.
-- [ ] Securely provide an Email credential, DeepSeek API key and approved
-  trusted-phrase lexicon through macOS Keychain; none may enter the repository or evidence.
+- [x] Store the local Email, DeepSeek, trusted lexicon and runtime credential references in
+  macOS Keychain without putting values in the repository or evidence. Presence is metadata,
+  not provider-validity or schema proof.
 - [ ] Generate a repository-external canary manifest enabling only one Email instance
   and model projection after an approved activation time; do not backfill history.
 - [ ] Prove IMAP TLS, `BODY.PEEK`, UID/UIDVALIDITY checkpoints, attachment isolation and
@@ -131,6 +129,11 @@ external_send=false
   record the returned model identity and stop on mismatch, invalid JSON or budget gate.
 - [ ] Re-run live restart, provider failure, revocation, retention and emergency-stop
   drills; capture a new real-canary evidence package.
+- [ ] Resolve the WeCom `errcode=45009` governance contract explicitly. Official material does
+  not prove HTTP 429/`Retry-After`; Tasks 7–9 remain stopped until the exact pause/manual-recovery
+  decision is approved.
+- [ ] Obtain an auditable outbound idempotency/receipt/status-reconciliation contract before
+  Task 18. Task 19 remains prohibited and `external_send=false` remains mandatory.
 
 Only after those steps may the project declare
 `Email + DeepSeek + identity resolution local shadow Go`. Kingdee, cloud deployment,

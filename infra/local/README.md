@@ -31,18 +31,18 @@ rechecked on another container runtime.
 The Frappe, MariaDB, Redis, backend, worker, scheduler, websocket, and PWA
 services use local-pilot-specific volume names. The Frappe services use the
 recorded local image `esan-gbos-local-pilot-frappe:2026-08-08` with inspect digest
-`sha256:2a0440df614314dec036ecc934e37aa0b3713b8cb8610e3ca2bd8ed69f9187c2`;
+`sha256:0b0e24d7e25c2e384e977c1aa00ef8d032e54aadbb84af813fb077c58fd28460`;
 the local runtime digest is
-`sha256:de037ad28a020689fec8b72f743ad0224afdf5c2ca6856a2ea5568fabd45e568`.
+`sha256:61f2b48817983b82795542fdf0eb2cae3a27b8c637d23e71d34c265fb7d9fd8f`.
 The Frappe source reference is
-`485d3def0ea30ee49a3899d71c10b0787ba0429f`; the runtime source reference is
-`bb260632ff44c7065a88327f264612139a9070a2`; the image-lock recording commit is
-`a599a5200e2a8e1b5e42301d74fe8d9d914161c4`. Their source SHA256 labels are
-`441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405` and
-`c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3`; each image label
+`35beb2586f12043ce4b89b6875527ec4a75150b9`; the runtime source reference is
+`2efcf2810c1f215a02b19458fd5a565663d2f3bc`; the image-lock recording commit is
+`9c121d5741798ebf9c97369eec83a900521b7840`. Their source SHA256 labels are
+`f6fe3ab3938890e6d041df03bfd5857528c8e1269a631b38d6bbb527978c959d` and
+`cdb14db857668b50efd2cf3e1dfdfd9534dcd1041ca5a4988d391fac93a075c6`; each image label
 and source hash was inspected independently.
-the upstream ERPNext image is not treated as a GBOS PWA. The previous synthetic
-snapshot, rather than this rebuild alone, reported
+the upstream ERPNext image is not treated as a GBOS PWA. The governed synthetic restart
+from these images reported
 `setup_complete=1`, Frappe/ERPNext/CRM/esan_gbos versions
 `16.30.0`/`16.31.0`/`1.81.0`/`0.1.0`, and `bench migrate` was checksum-consistent
 across two runs. The optional `frappe-synthetic-bootstrap` profile reads a
@@ -88,22 +88,17 @@ deferred by user decision, is not assessed, and is no longer an exit requirement
 The current-source synthetic core restart is separate from formal pilot approval:
 `local_pilot_go=false`, with channels, models, media and tunnel still disabled; the core is
 healthy on the current locked images. Formal preflight returns `rc78` solely because
-`local_pilot_go=false`. The final credential-free P0 run records full backend
-`3064 passed, 44 skipped, 1 warning`, failed `0`; the warning is the existing Starlette
-TestClient/httpx deprecation. Ruff check/format, mypy, compileall and `scripts/dev/secret-scan`
-are green; format covers `528 files` and mypy `101 sources`. Frontend lint/typecheck/build are
-green, unit `197 passed`, and frontend-harness Playwright `25 passed`. A disposable no-volume
-pgvector Gate 3 run recorded 15 migration-ledger entries, applied migrations twice, passed
-`17` integration tests with one existing warning, and removed its container. Full-history
-Gitleaks scanned `263 commits` with `0 leaks` under the reviewed exact synthetic allowlist
-committed at `c27687ec6b39e669014b9ae8980cf6565556aaba`; this is not an unreviewed zero claim.
-Current-image live-site Playwright `test:e2e:site` at `http://127.0.0.1:58080` completed in
-`6.5s`: `4 passed, 21 skipped, 0 failed`. Applicable live scopes were five role workspaces axe,
-CEO cockpit governance/source values, keyboard skip/nav order, and
-integrations+communications Restricted/3 viewports. The 21 skipped scenarios were
-harness-only by design; this is not all 25 live. The repo-external `0600` synthetic CEO
-storage state was sourced in-process from Keychain, and temporary auth state/test-results
-were deleted afterward.
+`local_pilot_go=false`. The current credential-free source run records full backend
+`3978 passed, 59 skipped, 1 warning`, failed `0`; the warning is the existing Starlette
+TestClient/httpx deprecation. Ruff check/format (`720 files`), CI-scope mypy
+(`121 sources`), compileall and `scripts/dev/secret-scan` are green. Frontend
+lint/typecheck/build are green, unit
+`232 passed`, and frontend-harness Playwright `29 passed`. The current disposable PostgreSQL
+`--all` gate passed Observer/Context `3` tests with 16 deselected and one existing warning,
+plus `2` Gateway tests, and removed its container.
+The `test:e2e:site` result `4 passed, 21 skipped, 0 failed` in `6.5s` is historical-only;
+it is **not rerun on the current source-bound images**. The 21 skipped scenarios were
+harness-only by design, so the prior snapshot was not all 25 live and is not current proof.
 Trivy filesystem and current locked-image scans exited `0`, with only `0` unwaived
 High/Critical, `0` image secrets and `0` misconfigurations reported. The historical waiver
 set has `57` entries covering `103` exact PURLs expiring `2026-09-30`; total findings are not

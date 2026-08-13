@@ -7,20 +7,21 @@
 
 - 规划来源基线是 `8c40731`（观察身份解析 roadmap）；当前分支为
   `feat/user-identity-resolution-20260810`。当前 Frappe source reference 是
-  `485d3def0ea30ee49a3899d71c10b0787ba0429f`，runtime source reference 是
-  `bb260632ff44c7065a88327f264612139a9070a2`，image-lock recording commit 是
-  `a599a5200e2a8e1b5e42301d74fe8d9d914161c4`。镜像 labels、源码哈希和 inspect
-  digest 已逐项复核；它们是 mailbox-identity 变更之前的锁定镜像基线，不包含本轮
-  源码。后续 handoff/evidence 文档也不在镜像内。真实 canary 仍受正式 go 门及当前
-  source 未重建的硬门阻断。
+  `35beb2586f12043ce4b89b6875527ec4a75150b9`，runtime source reference 是
+  `2efcf2810c1f215a02b19458fd5a565663d2f3bc`，image-lock recording commit 是
+  `9c121d5741798ebf9c97369eec83a900521b7840`。镜像 labels、源码哈希和 inspect
+  digest 已逐项复核；它们包含本轮 Email Gateway、身份投影、人工路由、SLA、草稿
+  证据与 terminal-material retention 的 credential-free 实现。后续 handoff 文档不在
+  镜像 source group 内。真实 canary 仍受正式 go、供应商合同与外部授权阻断。
 - 身份解析离线实现基线 `c98f6a5` 保留为历史里程碑；本轮在其上补齐了真实
   Frappe v16 站点、最终镜像、Prometheus live scrape 与安全扫描证据；这些历史
   真实 Frappe 观察不自动代表当前 HEAD live runtime。
 - `docs/evidence/` 中既有 Gate、local-pilot、identity-resolution 和
   `task13-readiness` 文件均是 historical snapshots。**do not modify** historical
   evidence；本次 credential-free closure 写入独立的
-  `task13-credential-free-closure` 证据包。本轮不改这些历史文件，另建
-  `user-identity-governance-closure` 当前证据包。
+  `task13-credential-free-closure` 证据包。`user-identity-governance-closure` 也是
+  2026-08-12 historical snapshot，**do not modify**；当前事实由本文、image lock 与
+  可重复验证命令共同约束。
 
 ## 已实现的业务与治理边界
 
@@ -67,56 +68,55 @@ Review Case 和人工决定。confirmed User 投影只有在同 site、同团队
 - Observer participant authority 使用同一 HMAC resolver 重新解析原始 EML，只有唯一
   匹配时才赋予 `mailbox_owner`；缺 key、缺 token、跨 site、token/digest/revision 漂移
   均失败关闭。
-- 本轮源码尚未重建进下列锁定 runtime/Frappe 镜像。任何新的本地 canary 或部署验证
-  必须先从包含本轮提交的 clean source 重建、重新记录 image lock 并重新 attestation；
-  既有 image digest 只能作为此前快照，不能证明本轮能力已运行。
+- 本轮源码已从 clean source 重建并记录到下列 runtime/Frappe 镜像。此事实只证明
+  credential-free 代码与镜像绑定，不证明真实邮箱、DeepSeek、供应商发送或生产部署。
 
 ## 当前验证快照
 
-当前 image lock 中的两套本地镜像已分别绑定到其记录时的实际源码；它们是本轮
-mailbox-identity 变更之前的运行基线：
+当前 image lock 中的两套本地镜像已分别绑定到其记录时的实际源码：
 
 | Service | Local image digest | Revision label |
 | --- | --- | --- |
-| `frappe-pwa` | `sha256:2a0440df614314dec036ecc934e37aa0b3713b8cb8610e3ca2bd8ed69f9187c2` | `485d3def0ea30ee49a3899d71c10b0787ba0429f` |
-| `local-runtime` | `sha256:de037ad28a020689fec8b72f743ad0224afdf5c2ca6856a2ea5568fabd45e568` | `bb260632ff44c7065a88327f264612139a9070a2` |
+| `frappe-pwa` | `sha256:0b0e24d7e25c2e384e977c1aa00ef8d032e54aadbb84af813fb077c58fd28460` | `35beb2586f12043ce4b89b6875527ec4a75150b9` |
+| `local-runtime` | `sha256:61f2b48817983b82795542fdf0eb2cae3a27b8c637d23e71d34c265fb7d9fd8f` | `2efcf2810c1f215a02b19458fd5a565663d2f3bc` |
 
 Frappe/PWA 的 source SHA256 label 是
-`441e33dec9acd744dd1b461ae49e950d18f764f05ae74e90357091a698320405`；local-runtime 的
+`f6fe3ab3938890e6d041df03bfd5857528c8e1269a631b38d6bbb527978c959d`；local-runtime 的
 source SHA256 label 是
-`c23d41903977fb350764ceee8a21efad70ce1079a7b6eed4503a87af3ac37db3`。
+`cdb14db857668b50efd2cf3e1dfdfd9534dcd1041ca5a4988d391fac93a075c6`。
 
-上述 baseline source-bound images 已重新构建并记录到 image lock；synthetic core 也曾
-使用这两套镜像重启。它只证明此前基线可重启，不证明本轮 mailbox-identity 源码已进入
-镜像；正式 `local_pilot_go=false` 不变，也不启动真实渠道或模型。
+上述 source-bound images 已重新构建并记录到 image lock；synthetic core 使用它们
+完成受治理重启。正式 `local_pilot_go=false` 不变，真实渠道、模型、外发与 terminal
+material deletion 均未启用。
 
-当前 credential-free P0 验证快照为：full backend `3064 passed, 44 skipped, 1 warning`、
-failed `0`；唯一 warning 是既有 Starlette TestClient/httpx deprecation。Ruff check、
-Ruff format `528 files`、mypy `101 sources`、compileall 和 `scripts/dev/secret-scan`
-全部 green；frontend lint/typecheck/build green、unit `197 passed`、Playwright harness
-`25 passed`。一次性无 volume 的 pgvector Gate 3 记录 15 条 migration ledger，迁移应用两次，
-integration `17 passed, 1 warning`，容器已移除。
+当前 credential-free source verification 为：full backend
+`3978 passed, 59 skipped, 1 warning`、failed `0`；唯一 warning 是既有 Starlette
+TestClient/httpx deprecation。Ruff check 与 format（`720 files`）、CI-scope mypy
+（`121 sources`）、compileall 和 `scripts/dev/secret-scan` 全部 green。Frontend
+lint/typecheck/build green、unit
+`232 passed`、Playwright harness `29 passed`。当前 migration chain 的一次性 PostgreSQL
+`--all` gate 为 Observer/Context `3 passed, 16 deselected, 1 warning` 与 Gateway
+`2 passed`；临时容器已清理。隔离 Frappe v16 原生 runner 也在当前代码上 exit `0`。
 
-Current-image live-site Playwright `test:e2e:site` at `http://127.0.0.1:58080` completed in
-`6.5s`: `4 passed, 21 skipped, 0 failed`。Applicable live scopes were five role workspaces axe,
-CEO cockpit governance/source values, keyboard skip/nav order, and
-integrations+communications Restricted/3 viewports. The 21 skipped scenarios were
-harness-only by design; this is not all 25 live. The repo-external `0600` synthetic CEO
-storage state was sourced in-process from Keychain, and temporary auth state/test-results
-were deleted afterward.
+`test:e2e:site` 的 `4 passed, 21 skipped, 0 failed` / `6.5s` 是 2026-08-12
+historical-only evidence；它不是本轮镜像的证明，**not rerun on the current source-bound
+images**。当前源码只重新运行了 29 个 frontend-harness 场景，因此不宣称当前镜像已有
+authenticated live-site Playwright 证据。
 
-Full-history Gitleaks 扫描 `263 commits`、`0 leaks`，使用已审阅且已提交的 exact synthetic
-allowlist（commit `c27687ec6b39e669014b9ae8980cf6565556aaba`）；不把未审阅结果称为 zero。
-Trivy filesystem scan 与两套当前 locked image scan 均 exit `0`，这里只报告 `0` unwaived
-High/Critical、`0` image secrets、`0` misconfigurations；历史 `57` 条 waiver 覆盖 `103`
+Full-history Gitleaks 使用已审阅且已提交的 exact synthetic allowlist（commit
+`c27687ec6b39e669014b9ae8980cf6565556aaba`）；结果必须以本轮最终提交后的重新扫描为准，
+不把 worktree 元数据错误或未审阅结果称为 zero。Trivy filesystem scan 与两套当前
+locked image scan 均必须 exit `0` 后才可称 current；这里只报告 `0` unwaived
+High/Critical、`0` image secrets、`0` misconfigurations。历史 `57` 条 waiver 覆盖 `103`
 个 exact PURL，均于 `2026-09-30` 到期，不宣称 total findings 为零。
 
 当前 synthetic core 使用锁定镜像重启且健康；formal preflight 返回 `rc78`，唯一 blocker
-是 `local_pilot_go=false`。全新隔离 Frappe v16 site 连续 migrate 两次后，身份原生测试
-`13 passed`、全 app 原生测试 `59 passed`，临时容器、网络和卷均已移除。Email checkpoint
+是 `local_pilot_go=false`。全新隔离 Frappe v16 site 的邮件/身份原生 runner exit `0`，
+临时容器、网络和卷均已移除。Email checkpoint
 receipt 仍只允许 source-bound `STATUS_UIDVALIDITY_UIDNEXT`，但真实 Email IMAP login、
-checkpoint 与 canary 未执行，原因是 missing working client authorization；DeepSeek real call
-未执行，`response_reported_observed_model=unknown`。
+checkpoint 与 canary 未执行；本地凭据存在不等于已完成正式 go、activation-time、
+checkpoint receipt 或 provider login 验证。DeepSeek real call 未执行，
+`response_reported_observed_model=unknown`。
 
 Earlier source-bound closure snapshot (`2850 passed, 44 skipped, 1 warning`) 与 pre-doc-fix
 red (`3060 passed, 44 skipped, 3 failed`, stale-current-doc mismatch only) 均保留在当前
@@ -176,21 +176,22 @@ checked_in_deepseek_enabled=false
 详见 [腾讯云 TKE 密钥投影设计](superpowers/specs/2026-08-11-gbos-tencent-tke-secret-projection-design.md)
 与 [部署密钥生命周期](deployment-secrets.md)。
 
-- Task 1–12 以及本轮身份权限即时撤销、目标动态资格、Rejected 重提、审核/撤回 PWA、
-  自动 retention scheduler 和 canary 启动防护均已完成 credential-free 验证；计数见
-  当前 closure evidence。Frappe 与 runtime 镜像分别绑定上述实际源码版本，但这仍不
-  等于真实 Email/DeepSeek canary 或正式 Go。
-- Task 13 的 credential-free closure 已完成；真实 Email + DeepSeek canary **未执行**。
-  当前缺少 Email credential、DeepSeek API Key 和人工批准的 trusted phrase lexicon，
-  且人工业务 scope 尚未提供。real Email/DeepSeek
-  call、real channels 与 `response_reported_observed_model` 仍为 No-Go/unknown。
-- 2026-08-11 的只读存在性审计没有读取任何 secret value。随后按用户授权创建了
-  `identity-hmac-key` 与两项 Frappe identity-resolver 凭据；三个本地随机凭据分别使用
-  独立 256-bit 值，格式和互异性已验证。目前 17 个固定基础 Keychain 项存在，仅
-  `trusted-phrase-lexicon` 不存在。Email/DeepSeek 的动态 Keychain reference、activation
-  time、team/account owner、reviewer 与目标 User/Party 尚未提供。使用占位 reference 的
-  仓库外 formal manifest source/image preflight 已通过并清理临时声明；这不等于凭据或
-  真实 provider 已验证。
+- Email Gateway Tasks 1–5 与 10–17 的 provider-free 合同、数据库、BFF/PWA、worker、
+  证据、SLA、人工路由、Send Outbox 与 terminal-material retention 切片已实现并纳入
+  当前回归；所有 provider worker 与真实删除仍保持关闭。Tasks 6–9 未实现：企业微信
+  官方材料证明的是 JSON `errcode=45009`，不是计划冻结的 HTTP 429/`Retry-After`。
+  当前也没有收到精确批准“批准 45009 暂停邮箱并由管理员人工恢复”，不得自行改写
+  供应商合同或继续 Tasks 7–9。
+- Task 18 仍被正式阻断：现有企业微信普通发信资料没有可证明的 provider idempotency
+  key、send receipt/status lookup 或 uncertain-send reconciliation。Task 19 因此禁止启动；
+  `external_send=false` 不变。
+- 历史 local-pilot Task 13 credential-free closure 已完成；真实 Email + DeepSeek canary
+  **未执行**。Keychain 中 Email、DeepSeek、trusted lexicon 与本地运行所需条目已存在，
+  但本轮没有读取或记录 secret value；存在性不证明 provider login、内容/schema、有效期
+  或 observed model identity。用户已提供试点团队/人员/Party 业务范围，但正式
+  activation-time、repo-external control/manifest、Email checkpoint receipt 与独立 go
+  尚未建立。real Email/DeepSeek call、real channels 与
+  `response_reported_observed_model` 仍为 No-Go/unknown。
 - 72 小时连续运行不再作为本阶段退出条件；该稳定性窗口按用户决定 deferred/not
   required for this stage，未执行、未评估，也不再单独阻塞本阶段。真实 UIDVALIDITY、
   429、超时和断网恢复演练仍未执行。
@@ -198,10 +199,12 @@ checked_in_deepseek_enabled=false
 
 ## 后续实施顺序
 
-1. Frappe source reference `485d3def`、runtime source reference `bb260632` 与 current
-   image lock `a599a520` 已完成 governed rebuild/record；后续 canary 仍必须复核
+1. Frappe source reference `35beb25`、runtime source reference `2efcf28` 与 current
+   image lock `9c121d5` 已完成 governed rebuild/record；后续 canary 仍必须复核
    revision label、source hash 与 manifest binding。
-2. 用户以安全方式提供 Task 13 外部输入；凭据只进入 macOS Keychain，不写仓库。
+2. 在不读取/输出 secret value 的前提下，为当前选定的 Eric 主入口生成正式
+   activation-time 与 repo-external canary manifest/control；凭据仍只进入 macOS
+   Keychain，不写仓库。
 3. 按 [运行手册](local-pilot/RUNBOOK.md) 创建 repo-external canary dir/control，
    用 activation-time 做 Email STATUS-only checkpoint probe，复制 exact checkpoint
    JSON value 到 Keychain credential 的 `initial_checkpoint`，然后让 canary-preflight
@@ -212,5 +215,8 @@ checked_in_deepseek_enabled=false
 5. 完成证据绑定的短时健康采样、真实故障演练和新 evidence package 后，才可讨论
    Email + DeepSeek local shadow Go；证据记录实际运行时长但不要求 72 小时。
    正式 `local_pilot_go` 与 production Go 仍需独立审批。
+6. WeCom application-mail ingestion 必须先取得 45009 的精确治理决定；真实 outbound
+   必须先取得可审计的 idempotency/receipt/status reconciliation 合同。两者都不得用
+   一般“批准”替代。
 
 本 handoff 不包含凭据、token、cookie、原始消息、模型响应或生产业务数据。
