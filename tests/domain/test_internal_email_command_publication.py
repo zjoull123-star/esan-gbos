@@ -302,7 +302,7 @@ def test_heartbeat_acknowledge_and_release_require_the_exact_live_fence(
     stale = {**_claim_identity(claimed, "publication-ack-0001"), "generation": 2}
     stale.update(
         command_receipt_ref="ECR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        send_outbox_ref="SND-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        send_outbox_ref="SOB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
         payload_digest=_payload_digest(),
     )
     fake.local.request.headers["X-Request-ID"] = "publication-ack-0001"
@@ -312,7 +312,7 @@ def test_heartbeat_acknowledge_and_release_require_the_exact_live_fence(
         {
             **_claim_identity(claimed, "publication-ack-0001"),
             "command_receipt_ref": "ECR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
-            "send_outbox_ref": "SND-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "send_outbox_ref": "SOB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
             "payload_digest": _payload_digest(),
         }
     )
@@ -320,7 +320,7 @@ def test_heartbeat_acknowledge_and_release_require_the_exact_live_fence(
         "acknowledgement": {
             "publication_ref": PUBLICATION,
             "command_receipt_ref": "ECR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
-            "send_outbox_ref": "SND-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "send_outbox_ref": "SOB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
             "payload_digest": _payload_digest(),
             "status": "acknowledged",
         }

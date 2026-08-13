@@ -216,7 +216,7 @@ def _request(payload: dict[str, Any], fields: frozenset[str]) -> dict[str, Any]:
     if "command_receipt_ref" in fields:
         result.update(
             command_receipt_ref=_prefixed(payload.get("command_receipt_ref"), "ECR"),
-            send_outbox_ref=_prefixed(payload.get("send_outbox_ref"), "SND"),
+            send_outbox_ref=_prefixed(payload.get("send_outbox_ref"), "SOB"),
             payload_digest=_digest(payload.get("payload_digest")),
         )
     if "safe_code" in fields:
