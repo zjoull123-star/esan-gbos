@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import os
@@ -20,6 +21,7 @@ from services.observer.observer.identity_resolution_work import (
     PostgresIdentityResolutionWorkRepository,
 )
 from services.observer.observer.identity_tokens import HmacSha256IdentityTokenResolver
+from services.observer.observer.models import TenantScope
 
 
 class _Connection:
@@ -28,6 +30,51 @@ class _Connection:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _QueryCursor:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self.rows = iter(rows)
+        self.calls: list[tuple[str, object]] = []
+
+    def __enter__(self) -> _QueryCursor:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def execute(self, statement: str, params: object = None) -> None:
+        self.calls.append((statement, params))
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        return next(self.rows, None)
+
+
+class _QueryConnection:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self.query_cursor = _QueryCursor(rows)
+
+    def transaction(self) -> _QueryConnection:
+        return self
+
+    def cursor(self) -> _QueryCursor:
+        return self.query_cursor
+
+    def __enter__(self) -> _QueryConnection:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+
+class _CasStore:
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+        self.calls: list[tuple[TenantScope, str]] = []
+
+    def read(self, scope: TenantScope, object_ref: str) -> bytes:
+        self.calls.append((scope, object_ref))
+        return self.content
 
 
 def _secret(path: Path, value: str) -> None:
@@ -175,6 +222,7 @@ def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_au
         draft_material_bearer_token=SecretValue("draft-material-token"),
         draft_material_auth_ref="observer-email-draft-material-v1",
         identity_resolver=identity_resolver,
+        identity_hmac_key=b"i" * 32,
         evidence_cas_root=tmp_path / "cas",
         bind_host="0.0.0.0",
         network_mode="internal_network",
@@ -194,6 +242,61 @@ def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_au
     assert runtime.email_mailbox_identity is not None
     assert runtime.email_mailbox_identity._identity_resolver is identity_resolver
     assert "/internal/v1/bff/email-mailbox-identity/derive" in paths
+    assert runtime.email_address_match is not None
+    assert "/internal/v1/email-address-match/attest" in paths
+    assert "signing_key=<redacted>" in repr(runtime.email_address_match)
+
+
+def test_address_match_evidence_reader_binds_delivered_publication_site_and_cas() -> None:
+    content = b"From: private@example.invalid\nTo: target@example.invalid\n\nbody"
+    connection = _QueryConnection(
+        [
+            (
+                "obs:v1:partition:sha256:" + "a" * 64,
+                hashlib.sha256(content).hexdigest(),
+                len(content),
+                "message/rfc822",
+            )
+        ]
+    )
+    store = _CasStore(content)
+    reader = observer_api.PostgresEmailAddressMatchEvidenceReader(connection, store)
+    scope = TenantScope(
+        "alpha.example",
+        "email_address_identity_confirmation",
+    )
+
+    result = reader.read_authorized(
+        scope,
+        "EVR-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
+        caller_ref="frappe-identity-command",
+        purpose="email_address_identity_confirmation",
+    )
+
+    assert result == content
+    statement, params = connection.query_cursor.calls[1]
+    assert "email_message_publication_outbox" in statement
+    assert "relay_status = 'delivered'" in statement
+    assert "jsonb_array_elements_text" in statement
+    assert params == (
+        "alpha.example",
+        "alpha.example",
+        "EVR-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
+    )
+    assert store.calls == [
+        (
+            scope,
+            "obs:v1:partition:sha256:" + "a" * 64,
+        )
+    ]
+
+    with pytest.raises(PermissionError):
+        reader.read_authorized(
+            scope,
+            "EVR-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
+            caller_ref="other-caller",
+            purpose="email_address_identity_confirmation",
+        )
 
 
 def test_observer_main_starts_injected_server_and_closes_connection(tmp_path: Path) -> None:

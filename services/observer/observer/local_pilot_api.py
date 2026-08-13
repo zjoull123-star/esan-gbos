@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import ipaddress
+import json
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ from .control_service import (
     IdempotencyConflict,
     RevisionConflict,
 )
+from .email_address_match import AddressMatchRejected, AddressMatchRequest
 from .email_connector_config import (
     EmailConnectorConfigConflict,
     EmailConnectorConfigReceipt,
@@ -254,6 +256,10 @@ class EmailMailboxIdentity(Protocol):
     ) -> object: ...
 
 
+class EmailAddressMatch(Protocol):
+    def attest(self, request: AddressMatchRequest) -> object: ...
+
+
 class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -459,6 +465,20 @@ class EmailMailboxIdentityRequest(_ClosedModel):
     idempotency_key: str = Field(min_length=8, max_length=256)
 
 
+class EmailAddressMatchRequest(_ClosedModel):
+    request_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$")
+    site_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]{0,139}$")
+    processing_purpose: Literal["email_address_identity_confirmation"]
+    caller_ref: Literal["frappe-identity-command"]
+    evidence_ref: str = Field(pattern=r"^EVR-[0-9A-HJKMNP-TV-Z]{26}$")
+    address_role: Literal["from", "to", "cc", "bcc"]
+    role_index: int = Field(ge=0, le=999)
+    opaque_address_ref: str = Field(pattern=r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
+    candidate_target_ref: str = Field(pattern=r"^(USR|PTY)-[0-9A-HJKMNP-TV-Z]{26}$")
+    candidate_target_type: Literal["User", "Party"]
+    candidate_address: str = Field(min_length=1, max_length=254)
+
+
 def create_local_pilot_app(
     *,
     config: LocalPilotAPIConfig,
@@ -472,6 +492,7 @@ def create_local_pilot_app(
     evidence_reveal: EvidenceReveal | None = None,
     email_draft_material: EmailDraftMaterial | None = None,
     email_mailbox_identity: EmailMailboxIdentity | None = None,
+    email_address_match: EmailAddressMatch | None = None,
 ) -> FastAPI:
     """Create the authenticated Frappe v4 downstream surface without starting I/O."""
 
@@ -898,6 +919,34 @@ def create_local_pilot_app(
             raise KillSwitchEngaged("email mailbox identity is unavailable")
         return _bff_envelope(data, site_id=scope.site_id, request_id=request_id)
 
+    @application.post("/internal/v1/email-address-match/attest")
+    def email_address_match_attest(
+        request: Request,
+        payload: Annotated[EmailAddressMatchRequest, Body()],
+    ) -> dict[str, object]:
+        guard.require_running()
+        scope, request_id = _governed_scope(
+            request,
+            expected_purpose="email_address_identity_confirmation",
+        )
+        if payload.site_id != scope.site_id or payload.request_id != request_id:
+            raise PermissionError("address match request scope mismatch")
+        if email_address_match is None:
+            raise KillSwitchEngaged("email address match is unavailable")
+        try:
+            result = email_address_match.attest(AddressMatchRequest(**payload.model_dump()))
+        except AddressMatchRejected as error:
+            if error.code in {"caller_forbidden", "purpose_forbidden", "site_or_purpose_invalid"}:
+                raise PermissionError("address match request rejected") from None
+            raise ValueError("address match request rejected") from None
+        to_wire = getattr(result, "to_wire", None)
+        if not callable(to_wire):
+            raise KillSwitchEngaged("email address match is unavailable")
+        data = to_wire()
+        if not _closed_address_match_response(data):
+            raise KillSwitchEngaged("email address match is unavailable")
+        return _bff_envelope(data, site_id=scope.site_id, request_id=request_id)
+
     @application.post("/internal/v1/identity-authority/deny")
     def deny_identity_authority(
         request: Request,
@@ -960,6 +1009,7 @@ async def _validate_internal_request(
         "/internal/v1/bff/email-draft-material/save",
         "/internal/v1/bff/email-draft-material/finalize",
         "/internal/v1/bff/email-mailbox-identity/derive",
+        "/internal/v1/email-address-match/attest",
     }:
         bearer_token = config.draft_material_bearer_token
         expected_auth_ref = config.draft_material_auth_ref
@@ -1071,6 +1121,63 @@ def _bff_envelope(
         "data": data,
         "meta": meta,
     }
+
+
+def _closed_address_match_response(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != {"attestation_ref", "attestation"}:
+        return False
+    attestation_ref = value.get("attestation_ref")
+    attestation = value.get("attestation")
+    fields = {
+        "opaque_address_ref",
+        "candidate_target_ref",
+        "candidate_target_type",
+        "evidence_ref",
+        "normalization_version",
+        "matched",
+        "observed_at",
+        "expires_at",
+        "digest",
+    }
+    if (
+        not isinstance(attestation_ref, str)
+        or re.fullmatch(r"EMA-[0-9A-HJKMNP-TV-Z]{26}", attestation_ref) is None
+        or not isinstance(attestation, dict)
+        or set(attestation) != fields
+        or re.fullmatch(
+            r"extid:v1:email:[A-Za-z0-9_-]{43}",
+            str(attestation.get("opaque_address_ref") or ""),
+        )
+        is None
+        or re.fullmatch(
+            r"(USR|PTY)-[0-9A-HJKMNP-TV-Z]{26}",
+            str(attestation.get("candidate_target_ref") or ""),
+        )
+        is None
+        or attestation.get("candidate_target_type") not in {"User", "Party"}
+        or re.fullmatch(
+            r"EVR-[0-9A-HJKMNP-TV-Z]{26}",
+            str(attestation.get("evidence_ref") or ""),
+        )
+        is None
+        or attestation.get("normalization_version") != "email-address-v1"
+        or not isinstance(attestation.get("matched"), bool)
+        or re.fullmatch(r"sha256:[a-f0-9]{64}", str(attestation.get("digest") or "")) is None
+        or any(
+            not isinstance(attestation.get(field), str)
+            or not 20 <= len(str(attestation[field])) <= 35
+            for field in ("observed_at", "expires_at")
+        )
+    ):
+        return False
+    expected_prefix = "USR" if attestation["candidate_target_type"] == "User" else "PTY"
+    if not str(attestation["candidate_target_ref"]).startswith(expected_prefix + "-"):
+        return False
+    try:
+        encoded = json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    except TypeError, ValueError:
+        return False
+    return len(encoded) <= 8_192
 
 
 def _render_identity_resolution_metrics(

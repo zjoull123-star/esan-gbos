@@ -168,6 +168,33 @@ class FakeEmailDraftMaterial:
         }
 
 
+class FakeEmailAddressMatch:
+    def __init__(self) -> None:
+        self.calls: list[object] = []
+
+    def attest(self, request: object) -> object:
+        self.calls.append(request)
+
+        class Result:
+            def to_wire(self) -> dict[str, object]:
+                return {
+                    "attestation_ref": "EMA-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
+                    "attestation": {
+                        "opaque_address_ref": "extid:v1:email:" + "e" * 43,
+                        "candidate_target_ref": "USR-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
+                        "candidate_target_type": "User",
+                        "evidence_ref": "EVR-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
+                        "normalization_version": "email-address-v1",
+                        "matched": True,
+                        "observed_at": "2026-08-08T09:00:00Z",
+                        "expires_at": "2026-08-08T09:05:00Z",
+                        "digest": "sha256:" + "d" * 64,
+                    },
+                }
+
+        return Result()
+
+
 def _metrics_snapshot(
     *,
     ready: bool = True,
@@ -244,6 +271,7 @@ def _app(
     evidence_reveal: FakeEvidenceReveal | None = None,
     draft_material: FakeEmailDraftMaterial | None = None,
     mailbox_identity: object | None = None,
+    address_match: object | None = None,
 ) -> tuple[FastAPI, FakeControlService, FakeReadService]:
     control = FakeControlService()
     reader = FakeReadService()
@@ -259,6 +287,7 @@ def _app(
         evidence_reveal=evidence_reveal,
         email_draft_material=draft_material,
         email_mailbox_identity=mailbox_identity,
+        email_address_match=address_match,
     )
     return app, control, reader
 
@@ -1119,3 +1148,123 @@ def test_email_mailbox_identity_fails_closed_when_service_or_auth_is_missing() -
         json=payload,
     )
     assert unavailable.status_code == 503
+
+
+def _address_match_payload(**changes: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "request_id": "address-match-req-01",
+        "site_id": "alpha.example",
+        "processing_purpose": "email_address_identity_confirmation",
+        "caller_ref": "frappe-identity-command",
+        "evidence_ref": "EVR-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
+        "address_role": "from",
+        "role_index": 0,
+        "opaque_address_ref": "extid:v1:email:" + "e" * 43,
+        "candidate_target_ref": "USR-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
+        "candidate_target_type": "User",
+        "candidate_address": "private-address@example.invalid",
+    }
+    payload.update(changes)
+    return payload
+
+
+def _address_match_headers(**changes: str) -> dict[str, str]:
+    headers = {
+        **_headers(
+            purpose="email_address_identity_confirmation",
+            request_id="address-match-req-01",
+        ),
+        "Authorization": "Bearer observer-draft-material-token",
+        "X-GBOS-Local-Auth-Ref": "observer-email-draft-material-v1",
+    }
+    headers.update(changes)
+    return headers
+
+
+def test_email_address_match_internal_post_is_closed_site_bound_and_no_store(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    authority = FakeEmailAddressMatch()
+    app, _control, _reader = _app(address_match=authority)
+    client = TestClient(app)
+
+    response = client.post(
+        "/internal/v1/email-address-match/attest",
+        headers=_address_match_headers(),
+        json=_address_match_payload(),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert set(body) == {"data", "site_id", "meta"}
+    assert body["site_id"] == "alpha.example"
+    assert set(body["data"]) == {"attestation_ref", "attestation"}
+    assert set(body["data"]["attestation"]) == {
+        "opaque_address_ref",
+        "candidate_target_ref",
+        "candidate_target_type",
+        "evidence_ref",
+        "normalization_version",
+        "matched",
+        "observed_at",
+        "expires_at",
+        "digest",
+    }
+    assert len(authority.calls) == 1
+    request = authority.calls[0]
+    assert request.site_id == "alpha.example"
+    assert request.processing_purpose == ("email_address_identity_confirmation")
+    assert request.caller_ref == "frappe-identity-command"
+    assert "private-address@example.invalid" not in response.text
+    assert "private-address@example.invalid" not in caplog.text
+
+    wrong_site = client.post(
+        "/internal/v1/email-address-match/attest",
+        headers=_address_match_headers(),
+        json=_address_match_payload(site_id="other.example"),
+    )
+    wrong_purpose = client.post(
+        "/internal/v1/email-address-match/attest",
+        headers=_address_match_headers(**{"X-Processing-Purpose": "email_draft_material"}),
+        json=_address_match_payload(),
+    )
+    wrong_auth_ref = client.post(
+        "/internal/v1/email-address-match/attest",
+        headers=_address_match_headers(**{"X-GBOS-Local-Auth-Ref": "observer-token-v1"}),
+        json=_address_match_payload(),
+    )
+    assert wrong_site.status_code == 403
+    assert wrong_purpose.status_code == 403
+    assert wrong_auth_ref.status_code == 401
+
+
+def test_email_address_match_rejects_unavailable_extra_or_unbounded_raw_address_safely(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app, _control, _reader = _app()
+    client = TestClient(app)
+    raw_extra = "extra-private@example.invalid"
+    raw_oversized = "oversized-private-" + "x" * 300 + "@example.invalid"
+
+    unavailable = client.post(
+        "/internal/v1/email-address-match/attest",
+        headers=_address_match_headers(),
+        json=_address_match_payload(),
+    )
+    extra = client.post(
+        "/internal/v1/email-address-match/attest",
+        headers=_address_match_headers(),
+        json={**_address_match_payload(), "raw_address": raw_extra},
+    )
+    oversized = client.post(
+        "/internal/v1/email-address-match/attest",
+        headers=_address_match_headers(),
+        json=_address_match_payload(candidate_address=raw_oversized),
+    )
+
+    assert unavailable.status_code == 503
+    assert extra.status_code == oversized.status_code == 422
+    rendered = extra.text + oversized.text + caplog.text
+    assert raw_extra not in rendered
+    assert raw_oversized not in rendered

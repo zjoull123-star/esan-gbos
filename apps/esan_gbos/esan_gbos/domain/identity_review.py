@@ -736,6 +736,15 @@ def _request_human_attestation(
     *, mapping: Any, evidence_ref: str, request_id: str
 ) -> tuple[str, Mapping[str, Any]]:
     client = getattr(frappe.local, "gbos_email_address_match_authority_client", None)
+    if client is None:
+        try:
+            from esan_gbos.api.internal.email_address_match_authority_client import (
+                inject_email_address_match_authority_client,
+            )
+
+            client = inject_email_address_match_authority_client()
+        except Exception:
+            raise IdentityReviewError("address-match authority is unavailable") from None
     attest = getattr(client, "attest", None)
     site_id = str(getattr(frappe.local, "site", "") or "").strip()
     if not site_id or not callable(attest):

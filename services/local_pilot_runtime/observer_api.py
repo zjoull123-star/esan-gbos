@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -14,6 +16,10 @@ from services.agent_runtime.local_entrypoint import (
     LocalEntrypointDisabled,
     load_local_manifest,
     require_component_enabled,
+)
+from services.observer.observer.email_address_match import (
+    EMAIL_ADDRESS_MATCH_PURPOSE,
+    EmailAddressMatchService,
 )
 from services.observer.observer.email_draft_material import EmailDraftMaterialService
 from services.observer.observer.email_mailbox_identity import EmailMailboxIdentityService
@@ -28,6 +34,7 @@ from services.observer.observer.identity_resolution_work import (
 from services.observer.observer.identity_tokens import HmacSha256IdentityTokenResolver
 from services.observer.observer.local_pilot_api import LocalPilotAPIConfig
 from services.observer.observer.local_pilot_storage import PostgresLocalPilotStorage
+from services.observer.observer.models import TenantScope
 from services.observer.observer.read_service import (
     EvidenceRevealService,
     PostgresEvidenceBindingResolver,
@@ -49,7 +56,7 @@ from .runtime_support import (
     reject_plaintext_secret_environment,
     validate_manifest_binding,
 )
-from .secret_provider import MountedFileSecretProvider, SecretSpec
+from .secret_provider import MountedFileSecretProvider, SecretBytes, SecretSpec
 from .server import ServerBindingError, run_server, validate_server_binding
 
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
@@ -61,6 +68,80 @@ DEFAULT_IDENTITY_HMAC_KEY = Path("/run/secrets/identity_hmac_key")
 DEFAULT_EVIDENCE_CAS_ROOT = Path("/var/lib/gbos/evidence")
 DEFAULT_OBSERVER_PORT = 8003
 ServerRunner = Callable[..., None]
+ADDRESS_MATCH_CALLER_REF = "frappe-identity-command"
+_ADDRESS_MATCH_SIGNING_CONTEXT = b"gbos:observer:email-address-match:v1"
+_MAX_ADDRESS_MATCH_MESSAGE_BYTES = 10_000_000
+
+
+class PostgresEmailAddressMatchEvidenceReader:
+    """Load one delivered publication's RFC 822 object without exposing its address."""
+
+    def __init__(self, connection: object, store: ContentAddressedEvidenceStore) -> None:
+        self._connection = cast(Any, connection)
+        self._store = store
+
+    def read_authorized(
+        self,
+        scope: TenantScope,
+        evidence_ref: str,
+        *,
+        caller_ref: str,
+        purpose: str,
+    ) -> bytes:
+        if (
+            caller_ref != ADDRESS_MATCH_CALLER_REF
+            or purpose != EMAIL_ADDRESS_MATCH_PURPOSE
+            or scope.processing_purpose != EMAIL_ADDRESS_MATCH_PURPOSE
+        ):
+            raise PermissionError("email address match evidence authority rejected")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (scope.site_id,))
+            cursor.execute(
+                """
+                SELECT delivery.object_ref, delivery.exact_body_sha256,
+                       delivery.byte_size, delivery.media_type
+                  FROM observer.email_message_publication_outbox AS publication
+                  JOIN observer.inbound_deliveries AS delivery
+                    ON delivery.site_id = publication.site_id
+                   AND delivery.connector = publication.connector
+                   AND delivery.connector_instance_id = publication.connector_instance_id
+                   AND delivery.delivery_id = publication.observer_delivery_ref
+                 WHERE publication.site_id = %s
+                   AND publication.payload->>'site_id' = %s
+                   AND publication.relay_status = 'delivered'
+                   AND %s IN (
+                       SELECT jsonb_array_elements_text(
+                           publication.payload->'evidence_refs'
+                       )
+                   )
+                 ORDER BY publication.publication_id
+                 LIMIT 2
+                """,
+                (scope.site_id, scope.site_id, evidence_ref),
+            )
+            row = cursor.fetchone()
+            duplicate = cursor.fetchone()
+        if row is None or duplicate is not None:
+            raise LookupError("email address match evidence is unavailable")
+        object_ref, expected_digest, byte_size, media_type = row
+        if (
+            not isinstance(object_ref, str)
+            or not isinstance(expected_digest, str)
+            or isinstance(byte_size, bool)
+            or not isinstance(byte_size, int)
+            or not 1 <= byte_size <= _MAX_ADDRESS_MATCH_MESSAGE_BYTES
+            or str(media_type).casefold() != "message/rfc822"
+        ):
+            raise LookupError("email address match evidence is unavailable")
+        content = self._store.read(scope, object_ref)
+        if len(content) != byte_size or not hmac.compare_digest(
+            hashlib.sha256(content).hexdigest(), expected_digest
+        ):
+            raise LookupError("email address match evidence is unavailable")
+        return content
+
+    def __repr__(self) -> str:
+        return "PostgresEmailAddressMatchEvidenceReader(connection=<redacted>, store=<redacted>)"
 
 
 def build_postgres_runtime(
@@ -74,6 +155,7 @@ def build_postgres_runtime(
     draft_material_bearer_token: SecretValue | None = None,
     draft_material_auth_ref: str | None = None,
     identity_resolver: HmacSha256IdentityTokenResolver | None = None,
+    identity_hmac_key: bytes | None = None,
     evidence_cas_root: Path = DEFAULT_EVIDENCE_CAS_ROOT,
     bind_host: str,
     network_mode: str,
@@ -106,6 +188,7 @@ def build_postgres_runtime(
     evidence_reveal = None
     email_draft_material = None
     email_mailbox_identity = None
+    email_address_match = None
     if mailbox_projection_bearer_token is not None:
         evidence_store = ContentAddressedEvidenceStore(evidence_cas_root)
         evidence_reveal = EvidenceRevealService(
@@ -114,7 +197,7 @@ def build_postgres_runtime(
             clock=active_clock,
         )
         if draft_material_bearer_token is not None:
-            if identity_resolver is None:
+            if identity_resolver is None or identity_hmac_key is None:
                 raise ValueError("email Gateway identity resolver is unavailable")
             email_mailbox_identity = EmailMailboxIdentityService(
                 identity_resolver=identity_resolver
@@ -126,6 +209,20 @@ def build_postgres_runtime(
                     store=evidence_store,
                     identity_resolver=identity_resolver,
                 ),
+                clock=active_clock,
+            )
+            address_match_signing_key = hmac.new(
+                identity_hmac_key,
+                _ADDRESS_MATCH_SIGNING_CONTEXT,
+                hashlib.sha256,
+            ).digest()
+            email_address_match = EmailAddressMatchService(
+                evidence_reader=PostgresEmailAddressMatchEvidenceReader(
+                    connection,
+                    evidence_store,
+                ),
+                signing_key=address_match_signing_key,
+                allowed_caller_ref=ADDRESS_MATCH_CALLER_REF,
                 clock=active_clock,
             )
     return compose_postgres_local_pilot_runtime(
@@ -144,6 +241,7 @@ def build_postgres_runtime(
         evidence_reveal=evidence_reveal,
         email_draft_material=email_draft_material,
         email_mailbox_identity=email_mailbox_identity,
+        email_address_match=email_address_match,
     )
 
 
@@ -203,6 +301,7 @@ def main(
         draft_material_bearer = None
         draft_material_auth_ref = None
         identity_resolver = None
+        identity_hmac_key = None
         if isinstance(gateway, Mapping) and gateway.get("kill_switch") is False:
             mailbox_projection_bearer = load_secret_file(mailbox_projection_bearer_file)
             mailbox_projection_auth_ref = MAILBOX_PROJECTION_AUTH_REF
@@ -221,9 +320,11 @@ def main(
                     ),
                 ),
             )
-            identity_resolver = HmacSha256IdentityTokenResolver.from_secret_provider(
-                identity_provider
-            )
+            identity_secret = identity_provider.read_bytes("identity_hmac_key")
+            if not isinstance(identity_secret, SecretBytes):
+                raise ValueError("email Gateway identity resolver is unavailable")
+            identity_hmac_key = identity_secret.reveal()
+            identity_resolver = HmacSha256IdentityTokenResolver(identity_hmac_key)
         connection = connect_postgres(config.postgres, connector=connector)
         runtime = build_postgres_runtime(
             connection=connection,
@@ -235,6 +336,7 @@ def main(
             draft_material_bearer_token=draft_material_bearer,
             draft_material_auth_ref=draft_material_auth_ref,
             identity_resolver=identity_resolver,
+            identity_hmac_key=identity_hmac_key,
             bind_host=bind_host,
             network_mode=network_mode,
             clock=clock,

@@ -1002,6 +1002,29 @@ def test_authorized_human_can_submit_without_ai_suggestion(
     }
 
 
+def test_human_submission_lazily_injects_production_address_match_client(
+    identity_review: tuple[Any, _Frappe],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, fake = identity_review
+    fake.session.user = "admin@example.invalid"
+    delattr(fake.local, "gbos_email_address_match_authority_client")
+    injected = _AddressMatchClient()
+    client_module = ModuleType("esan_gbos.api.internal.email_address_match_authority_client")
+
+    def inject() -> _AddressMatchClient:
+        fake.local.gbos_email_address_match_authority_client = injected
+        return injected
+
+    client_module.inject_email_address_match_authority_client = inject  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, client_module.__name__, client_module)
+
+    service.submit_human_identity_for_review(_human_request())
+
+    assert len(injected.calls) == 1
+    assert injected.calls[0]["candidate_address"] == "user-target@example.invalid"
+
+
 @pytest.mark.parametrize(
     ("actor", "overrides"),
     (
