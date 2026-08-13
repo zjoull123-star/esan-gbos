@@ -15,11 +15,11 @@ from ..postgres import Connection, redacted_database_errors, site_transaction
 
 class InMemoryIdentityProjectionRepository:
     def __init__(self) -> None:
-        self._projections: dict[tuple[str, str], IdentityProjection] = {}
+        self._projections: dict[tuple[str, str, str], IdentityProjection] = {}
         self._lock = RLock()
 
     def get(self, scope: TenantScope, opaque_address_ref: str) -> IdentityProjection | None:
-        return self._projections.get((scope.site_id, opaque_address_ref))
+        return self._projections.get((scope.site_id, scope.processing_purpose, opaque_address_ref))
 
     def apply(self, scope: TenantScope, projection: IdentityProjection) -> IdentityProjection:
         require_scope(
@@ -27,7 +27,7 @@ class InMemoryIdentityProjectionRepository:
             site_id=projection.site_id,
             processing_purpose=projection.processing_purpose,
         )
-        key = (scope.site_id, projection.opaque_address_ref)
+        key = (scope.site_id, scope.processing_purpose, projection.opaque_address_ref)
         with self._lock:
             current = self._projections.get(key)
             if current is not None:
@@ -120,7 +120,10 @@ class PostgresIdentityProjectionRepository:
                     external_identity_ref, external_identity_revision, identity_type,
                     team_ref, status, projection_receipt_ref, observed_at, payload_digest
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (site_id, opaque_address_ref, external_identity_revision)
+                ON CONFLICT (
+                    site_id, processing_purpose, opaque_address_ref,
+                    external_identity_revision
+                )
                 DO NOTHING
                 """,
                 (

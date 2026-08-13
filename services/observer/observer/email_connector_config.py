@@ -434,6 +434,15 @@ class PostgresEmailConnectorConfigRepository:
                         candidate.mailbox_address_identity_ref,
                     ),
                 )
+                if candidate.inbound_enabled:
+                    from .identity_projection_outbox import seed_current_resolutions_for_config
+
+                    seed_current_resolutions_for_config(
+                        cursor,
+                        site_id=scope.site_id,
+                        team_ref=candidate.team_ref,
+                        processing_purpose=candidate.business_purpose,
+                    )
         except EmailConnectorConfigConflict:
             raise
         except Exception as exc:

@@ -19,6 +19,7 @@ from .conversations import ConversationService
 from .drafts import DraftService
 from .email_send_authority import EmailSendAuthority, EmailSendAuthorityConflict
 from .evidence import EvidenceBindingAuthority, ObserverEvidenceRevealClient
+from .identity_projection import IdentityProjectionService, projection_receipt
 from .mailboxes import MailboxRegistry
 from .models import (
     AuthorizationError,
@@ -27,6 +28,7 @@ from .models import (
     EmailMessagePublication,
     GatewayActorScope,
     IdempotencyConflict,
+    IdentityProjection,
     InboxItem,
     IntakeResult,
     Mailbox,
@@ -62,6 +64,7 @@ from .security import (
 )
 
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
+_OPAQUE_EMAIL_IDENTITY = re.compile(r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
 _MAILBOX_ADDRESS_IDENTITY_REF = re.compile(r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
 _AUTH_REF = "observer-email-publication-v1"
 _PURPOSE = "observation_processing"
@@ -291,6 +294,7 @@ class PostgresGovernedInboxRead:
                          JOIN email_gateway.identity_projection_receipts AS projection
                            ON projection.site_id = participant.site_id
                           AND projection.opaque_address_ref = participant.identity_ref
+                          AND projection.processing_purpose = mailbox.business_purpose
                         WHERE participant.site_id = inbox.site_id
                           AND participant.message_ref = inbox.message_ref
                           AND participant.role = 'from'
@@ -336,6 +340,7 @@ class PostgresGovernedInboxRead:
                            JOIN email_gateway.identity_projection_receipts AS projection
                              ON projection.site_id = participant.site_id
                             AND projection.opaque_address_ref = participant.identity_ref
+                            AND projection.processing_purpose = mailbox.business_purpose
                           WHERE participant.site_id = inbox.site_id
                             AND participant.message_ref = inbox.message_ref
                             AND participant.role = 'from'), 'unknown')
@@ -624,6 +629,9 @@ def create_email_gateway_app(
     command_ingest_service: CommandIngestService | None = None,
     command_ingest_bearer_token: str | None = None,
     command_ingest_auth_ref: str | None = None,
+    identity_projection_service: IdentityProjectionService | None = None,
+    identity_projection_bearer_token: str | None = None,
+    identity_projection_auth_ref: str | None = None,
     clock: Any | None = None,
 ) -> FastAPI:
     if (
@@ -667,6 +675,26 @@ def create_email_gateway_app(
         or command_ingest_auth_ref != "email-command-ingest-v1"
     ):
         raise ValueError("invalid email command ingest credentials")
+    identity_projection_values = (
+        identity_projection_service,
+        identity_projection_bearer_token,
+        identity_projection_auth_ref,
+    )
+    identity_projection_enabled = all(value is not None for value in identity_projection_values)
+    if (
+        any(value is not None for value in identity_projection_values)
+        and not identity_projection_enabled
+    ):
+        raise ValueError("incomplete identity projection ingest composition")
+    if identity_projection_enabled and (
+        not isinstance(identity_projection_service, IdentityProjectionService)
+        or not isinstance(identity_projection_bearer_token, str)
+        or not identity_projection_bearer_token
+        or identity_projection_bearer_token != identity_projection_bearer_token.strip()
+        or len(identity_projection_bearer_token) > 4096
+        or identity_projection_auth_ref != "observer-identity-projection-v1"
+    ):
+        raise ValueError("invalid identity projection ingest credentials")
     active_participant_authority_reader = participant_authority_reader
     if active_participant_authority_reader is None and callable(
         getattr(intake, "load_participant_authority_binding", None)
@@ -852,6 +880,125 @@ def create_email_gateway_app(
             "external_send": False,
             "provider_credentials_loaded": False,
         }
+
+    if identity_projection_enabled:
+        assert identity_projection_service is not None
+        assert identity_projection_bearer_token is not None
+
+        @application.post("/internal/v1/identity-projections/accept")
+        def accept_identity_projection(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(
+                default=None,
+                alias="X-GBOS-Local-Auth-Ref",
+            ),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            processing_purpose: str | None = Header(
+                default=None,
+                alias="X-Processing-Purpose",
+            ),
+            request_payload_digest: str | None = Header(
+                default=None,
+                alias="X-Payload-Digest",
+            ),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+        ) -> dict[str, object]:
+            expected_authorization = f"Bearer {identity_projection_bearer_token}"
+            if authorization is None or not hmac.compare_digest(
+                authorization,
+                expected_authorization,
+            ):
+                raise HTTPException(
+                    status_code=401,
+                    detail={"code": "identity_projection_unauthorized"},
+                )
+            if request_auth_ref is None or not hmac.compare_digest(
+                request_auth_ref,
+                "observer-identity-projection-v1",
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail={"code": "identity_projection_scope_rejected"},
+                )
+            opaque_address_ref = (
+                payload.get("opaque_address_ref") if isinstance(payload, dict) else None
+            )
+            external_identity_revision = (
+                payload.get("external_identity_revision") if isinstance(payload, dict) else None
+            )
+            observed_at = payload.get("observed_at") if isinstance(payload, dict) else None
+            if (
+                not isinstance(payload, dict)
+                or not isinstance(opaque_address_ref, str)
+                or _OPAQUE_EMAIL_IDENTITY.fullmatch(opaque_address_ref) is None
+                or not isinstance(external_identity_revision, int)
+                or isinstance(external_identity_revision, bool)
+                or not 1 <= external_identity_revision <= 2_147_483_647
+                or not isinstance(observed_at, str)
+                or not 20 <= len(observed_at) <= 35
+                or not isinstance(site_id, str)
+                or not site_id
+                or not isinstance(processing_purpose, str)
+                or not processing_purpose
+                or not isinstance(request_id, str)
+                or not request_id
+                or request_id != request_id.strip()
+                or len(request_id) > 256
+                or content_type is None
+                or content_type.split(";", 1)[0].strip().lower() != "application/json"
+                or request_payload_digest is None
+                or _DIGEST.fullmatch(request_payload_digest) is None
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "identity_projection_request_invalid"},
+                )
+            calculated_digest = _canonical_digest(payload)
+            if not hmac.compare_digest(request_payload_digest, calculated_digest):
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "identity_projection_digest_mismatch"},
+                )
+            try:
+                candidate = IdentityProjection.from_wire(
+                    payload,
+                    payload_digest=request_payload_digest,
+                )
+                if (
+                    candidate.site_id != site_id
+                    or candidate.processing_purpose != processing_purpose
+                ):
+                    raise ScopeViolation("identity projection header scope mismatch")
+                receipt_fields = {
+                    key: value for key, value in payload.items() if key != "projection_receipt"
+                }
+                expected_receipt = projection_receipt(receipt_fields)
+                if not hmac.compare_digest(
+                    candidate.projection_receipt_ref,
+                    expected_receipt,
+                ):
+                    raise ValidationError("identity projection receipt mismatch")
+                expected_request_id = "identity-projection:" + expected_receipt.removeprefix(
+                    "sha256:"
+                )
+                if not hmac.compare_digest(request_id, expected_request_id):
+                    raise ScopeViolation("identity projection request binding mismatch")
+                applied = identity_projection_service.apply(
+                    TenantScope(site_id, processing_purpose),
+                    candidate,
+                )
+            except ScopeViolation as exc:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"code": "identity_projection_scope_rejected"},
+                ) from exc
+            return {
+                "schema_version": "1.0",
+                "projection_receipt": applied.projection_receipt_ref,
+                "payload_digest": applied.payload_digest,
+            }
 
     @application.post("/internal/v1/email-publications/accept")
     def accept(

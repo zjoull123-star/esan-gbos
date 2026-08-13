@@ -78,6 +78,27 @@ def test_projection_cross_site_is_rejected(scope) -> None:
         service.apply(scope, replace(_projection(), site_id="other.local"))
 
 
+def test_same_identity_revision_is_independent_under_different_business_purposes(scope) -> None:
+    from services.email_gateway.identity_projection import IdentityProjectionService
+    from services.email_gateway.models import TenantScope
+    from services.email_gateway.repositories.identity import InMemoryIdentityProjectionRepository
+
+    service = IdentityProjectionService(InMemoryIdentityProjectionRepository())
+    sales = _projection()
+    customer = replace(
+        sales,
+        processing_purpose="customer_service",
+        projection_receipt_ref="IPR-02",
+        payload_digest=DIGEST_B,
+    )
+
+    assert service.apply(scope, sales) == sales
+    customer_scope = TenantScope(scope.site_id, "customer_service")
+    assert service.apply(customer_scope, customer) == customer
+    assert service.get(scope, OPAQUE_FROM) == sales
+    assert service.get(customer_scope, OPAQUE_FROM) == customer
+
+
 def test_projection_wire_is_exact_frappe_contract() -> None:
     from services.email_gateway.models import IdentityProjection, ValidationError
 

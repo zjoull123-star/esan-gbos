@@ -50,6 +50,7 @@ services:
     secrets:
       - postgres_password
       - postgres_observer_password
+      - postgres_observer_identity_projector_password
       - postgres_context_password
       - postgres_agent_password
       - postgres_media_password
@@ -274,6 +275,7 @@ services:
       - cursor_hmac_key
       - context_client_bearer
       - mailbox_projection_bearer
+      - identity_projection_bearer
       - identity_hmac_key
       - source: observer_email_draft_material_bearer
         target: observer_email_draft_material_bearer
@@ -315,6 +317,7 @@ services:
     environment:
       <<: *runtime-environment
       GBOS_EMAIL_GATEWAY_KILL_SWITCH: ${GBOS_EMAIL_GATEWAY_KILL_SWITCH:-true}
+      GBOS_IDENTITY_PROJECTION_KILL_SWITCH: ${GBOS_IDENTITY_PROJECTION_KILL_SWITCH:-true}
       GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH: ${GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH:-true}
       GBOS_EXTERNAL_SEND_ENABLED: "false"
     secrets:
@@ -329,6 +332,7 @@ services:
         target: frappe_email_gateway_authority_api_secret
         mode: 0400
       - mailbox_projection_bearer
+      - identity_projection_bearer
       - email_gateway_data_key
       - source: email_gateway_bff_bearer
         target: email_gateway_bff_bearer
@@ -606,8 +610,11 @@ services:
     environment:
       <<: *runtime-environment
       GBOS_IDENTITY_RESOLUTION_KILL_SWITCH: ${GBOS_IDENTITY_RESOLUTION_KILL_SWITCH:-true}
+      GBOS_IDENTITY_PROJECTION_KILL_SWITCH: ${GBOS_IDENTITY_PROJECTION_KILL_SWITCH:-true}
     secrets:
       - postgres_observer_password
+      - postgres_observer_identity_projector_password
+      - identity_projection_bearer
       - source: frappe_identity_resolver_api_key
         target: identity_resolver_api_key
         mode: 0600
@@ -1383,6 +1390,8 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_password
   postgres_observer_password:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_observer_password
+  postgres_observer_identity_projector_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_observer_identity_projector_password
   postgres_context_password:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_context_password
   postgres_agent_password:
@@ -1413,6 +1422,8 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/context_client_bearer
   email_publication_bearer:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_publication_bearer
+  identity_projection_bearer:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/identity_projection_bearer
   email_gateway_bff_bearer:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_gateway_bff_bearer
   email_gateway_command_ingest_bearer:

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from services.email_gateway.api import build_email_publication_api
 from services.email_gateway.command_authority import EmailCommandAuthorityResolver
+from services.email_gateway.identity_projection import IdentityProjectionService
 from services.email_gateway.models import IntakeResult
 from services.email_gateway.outbound import CommandIngestReceipt
 from services.email_gateway.phase1_read import Phase1Mailbox
@@ -200,6 +201,7 @@ def _enabled_runtime(tmp_path: Path) -> tuple[Path, Path, Path]:
         "deepseek": {},
         "email_gateway": {
             "kill_switch": False,
+            "identity_projection_kill_switch": True,
             "publication_kill_switch": False,
             "external_send": False,
             "mailboxes": [],
@@ -229,6 +231,8 @@ def _enabled_runtime(tmp_path: Path) -> tuple[Path, Path, Path]:
             "email_gateway_bff_auth_ref": "email-gateway-bff-v1",
             "mailbox_projection_bearer_file": "/run/secrets/mailbox_projection_bearer",
             "mailbox_projection_auth_ref": "gateway-mailbox-projection-v1",
+            "identity_projection_bearer_file": "/run/secrets/identity_projection_bearer",
+            "identity_projection_auth_ref": "observer-identity-projection-v1",
             "observer_email_draft_material_bearer_file": (
                 "/run/secrets/observer_email_draft_material_bearer"
             ),
@@ -282,6 +286,13 @@ def _provider(root: Path) -> MountedFileSecretProvider:
             SecretSpec("email_publication_bearer", "email_publication_bearer", "text", 16, 4096),
             SecretSpec("email_gateway_bff_bearer", "email_gateway_bff_bearer", "text", 16, 4096),
             SecretSpec("mailbox_projection_bearer", "mailbox_projection_bearer", "text", 16, 4096),
+            SecretSpec(
+                "identity_projection_bearer",
+                "identity_projection_bearer",
+                "text",
+                16,
+                4096,
+            ),
             SecretSpec("email_gateway_data_key", "email_gateway_data_key", "text", 64, 64),
         ),
     )
@@ -301,6 +312,13 @@ def _provider_with_command_ingest(root: Path) -> MountedFileSecretProvider:
             SecretSpec("email_publication_bearer", "email_publication_bearer", "text", 16, 4096),
             SecretSpec("email_gateway_bff_bearer", "email_gateway_bff_bearer", "text", 16, 4096),
             SecretSpec("mailbox_projection_bearer", "mailbox_projection_bearer", "text", 16, 4096),
+            SecretSpec(
+                "identity_projection_bearer",
+                "identity_projection_bearer",
+                "text",
+                16,
+                4096,
+            ),
             SecretSpec("email_gateway_data_key", "email_gateway_data_key", "text", 64, 64),
             SecretSpec(
                 "email_gateway_command_ingest_bearer",
@@ -409,6 +427,45 @@ def test_main_supplies_distinct_publication_and_bff_credentials_to_application_f
         captured["connector_health_reader"],
         email_gateway_api.ObserverConnectorHealthReader,
     )
+
+
+def test_main_enables_identity_ingest_only_with_manifest_env_and_mounted_secret(
+    tmp_path: Path,
+) -> None:
+    manifest, config, secret_root = _enabled_runtime(tmp_path)
+    manifest_value = json.loads(manifest.read_text())
+    manifest_value["email_gateway"]["identity_projection_kill_switch"] = False
+    manifest.write_text(json.dumps(manifest_value))
+    _private(secret_root / "email_gateway_bff_bearer", "bff-secret-value-1")
+    _private(secret_root / "identity_projection_bearer", "identity-projection-secret")
+    captured: dict[str, object] = {}
+    connection = type("Connection", (), {"close": lambda self: None})()
+
+    def factory(**kwargs: object) -> FastAPI:
+        captured.update(kwargs)
+        return FastAPI()
+
+    result = main(
+        manifest_path=manifest,
+        config_path=config,
+        emergency_stop_path=tmp_path / "no-emergency-stop",
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_EMAIL_GATEWAY_KILL_SWITCH": "false",
+            "GBOS_IDENTITY_PROJECTION_KILL_SWITCH": "false",
+            "GBOS_EXTERNAL_SEND_ENABLED": "false",
+        },
+        connector=lambda **_: connection,
+        application_factory=factory,
+        server_runner=lambda *_args, **_kwargs: None,
+        secret_provider=_provider(secret_root),
+        internal_network=True,
+    )
+
+    assert result == 0
+    assert captured["identity_projection_bearer_token"] == "identity-projection-secret"
+    assert captured["identity_projection_auth_ref"] == "observer-identity-projection-v1"
+    assert isinstance(captured["identity_projection_service"], IdentityProjectionService)
 
 
 def test_main_mounts_command_ingest_on_port_8004_with_distinct_executor_connection(

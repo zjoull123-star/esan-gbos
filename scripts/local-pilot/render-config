@@ -108,6 +108,7 @@ def _load_manifest(path: Path, *, synthetic: bool) -> dict[str, Any]:
         set(email_gateway)
         != {
             "kill_switch",
+            "identity_projection_kill_switch",
             "publication_kill_switch",
             "command_publication_kill_switch",
             "send_kill_switch",
@@ -311,6 +312,10 @@ def _email_gateway_runtime_config(
             "email_gateway_bff_auth_ref": "email-gateway-bff-v1",
             "mailbox_projection_bearer_file": "/run/secrets/mailbox_projection_bearer",
             "mailbox_projection_auth_ref": "gateway-mailbox-projection-v1",
+            "identity_projection_bearer_file": (
+                "/run/secrets/identity_projection_bearer"
+            ),
+            "identity_projection_auth_ref": "observer-identity-projection-v1",
             "observer_email_draft_material_bearer_file": (
                 "/run/secrets/observer_email_draft_material_bearer"
             ),

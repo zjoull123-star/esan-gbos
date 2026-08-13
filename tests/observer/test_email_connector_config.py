@@ -207,6 +207,9 @@ class _RecordingCursor:
     def fetchone(self) -> None:
         return None
 
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return []
+
 
 class _RecordingTransaction:
     def __enter__(self) -> None:
@@ -250,3 +253,24 @@ def test_postgres_config_insert_writes_nullable_mailbox_identity_ref(
     assert "mailbox_address_identity_ref" in insert_sql
     assert insert_params is not None
     assert insert_params[-1] == expected_identity_ref
+
+
+def test_postgres_config_arrival_seeds_only_latest_team_resolution_for_exact_purpose() -> None:
+    connection = _RecordingConnection()
+    PostgresEmailConnectorConfigRepository(connection).apply(
+        config_publication_ref="MCP-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        projection=_projection_v2(),
+        projected_at=NOW,
+    )
+
+    statements = [" ".join(sql.split()) for sql, _params in connection.recording_cursor.statements]
+    latest_query = next(
+        sql for sql in statements if "SELECT DISTINCT ON (external_subject_ref)" in sql
+    )
+    assert "identity_provider = 'email'" in latest_query
+    assert "ORDER BY external_subject_ref, mapping_revision DESC" in latest_query
+    assert any(
+        "pg_advisory_xact_lock" in " ".join(sql.split())
+        and params == ("identity-projection-seed:alpha.example:TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV",)
+        for sql, params in connection.recording_cursor.statements
+    )

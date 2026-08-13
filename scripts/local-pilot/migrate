@@ -14,6 +14,7 @@ fi
 for secret_file in \
   /run/secrets/postgres_password \
   /run/secrets/postgres_observer_password \
+  /run/secrets/postgres_observer_identity_projector_password \
   /run/secrets/postgres_context_password \
   /run/secrets/postgres_agent_password \
   /run/secrets/postgres_media_password \
@@ -167,6 +168,10 @@ CREATE TEMP TABLE local_secret_input (password text NOT NULL);
 INSERT INTO local_role_secrets
 SELECT 'gbos_observer_app', password FROM local_secret_input;
 TRUNCATE local_secret_input;
+\copy local_secret_input(password) FROM '/run/secrets/postgres_observer_identity_projector_password' WITH (FORMAT text)
+INSERT INTO local_role_secrets
+SELECT 'gbos_observer_identity_projector', password FROM local_secret_input;
+TRUNCATE local_secret_input;
 \copy local_secret_input(password) FROM '/run/secrets/postgres_context_password' WITH (FORMAT text)
 INSERT INTO local_role_secrets
 SELECT 'gbos_context_app', password FROM local_secret_input;
@@ -204,7 +209,7 @@ TRUNCATE local_secret_input;
 
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM local_role_secrets) NOT BETWEEN 8 AND 10
+  IF (SELECT count(*) FROM local_role_secrets) NOT BETWEEN 9 AND 11
     OR EXISTS (
       SELECT 1
       FROM local_role_secrets
@@ -226,6 +231,8 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name)
 \gexec
 
 ALTER ROLE gbos_observer_app
+  LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+ALTER ROLE gbos_observer_identity_projector
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE gbos_context_app
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;

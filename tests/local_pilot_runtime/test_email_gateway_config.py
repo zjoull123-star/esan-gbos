@@ -45,6 +45,8 @@ def _value(tmp_path: Path) -> dict[str, object]:
             "email_gateway_bff_auth_ref": "email-gateway-bff-v1",
             "mailbox_projection_bearer_file": "/run/secrets/mailbox_projection_bearer",
             "mailbox_projection_auth_ref": "gateway-mailbox-projection-v1",
+            "identity_projection_bearer_file": "/run/secrets/identity_projection_bearer",
+            "identity_projection_auth_ref": "observer-identity-projection-v1",
             "observer_email_draft_material_bearer_file": (
                 "/run/secrets/observer_email_draft_material_bearer"
             ),
@@ -86,6 +88,10 @@ def test_closed_config_defaults_off_and_uses_exact_internal_urls(tmp_path: Path)
         "/run/secrets/email_gateway_bff_bearer"
     )
     assert config.auth.email_gateway_bff_auth_ref == "email-gateway-bff-v1"
+    assert config.auth.identity_projection_bearer_file == Path(
+        "/run/secrets/identity_projection_bearer"
+    )
+    assert config.auth.identity_projection_auth_ref == "observer-identity-projection-v1"
     assert config.auth.observer_email_draft_material_bearer_file == Path(
         "/run/secrets/observer_email_draft_material_bearer"
     )
@@ -116,6 +122,7 @@ def test_closed_config_defaults_off_and_uses_exact_internal_urls(tmp_path: Path)
         lambda value: value["auth"].update({"email_publication_auth_ref": "wrong"}),
         lambda value: value["auth"].update({"email_gateway_bff_auth_ref": "wrong"}),
         lambda value: value["auth"].update({"email_gateway_bff_bearer_file": "/tmp/inline"}),
+        lambda value: value["auth"].update({"identity_projection_auth_ref": "wrong"}),
         lambda value: value["auth"].update({"observer_email_draft_material_auth_ref": "wrong"}),
         lambda value: value["auth"].update(
             {"frappe_email_gateway_authority_api_key_file": "/tmp/inline"}

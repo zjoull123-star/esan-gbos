@@ -21,6 +21,10 @@ from services.agent_runtime.local_entrypoint import (
     load_local_manifest,
     require_component_enabled,
 )
+from services.observer.observer.identity_projection_outbox import (
+    IdentityProjectionRelayClaim,
+    PostgresIdentityProjectionOutbox,
+)
 from services.observer.observer.identity_resolution import (
     IdentityResolutionConflict,
     IdentityResolutionRepository,
@@ -36,7 +40,10 @@ from services.observer.observer.identity_resolution_work import (
 from services.observer.observer.models import TenantScope, _require_aware
 from services.observer.observer.storage import Connection
 
+from .email_gateway_config import EMAIL_GATEWAY_API_URL
+from .email_gateway_worker import RelayResult, RelayStatus
 from .runtime_support import (
+    PostgresSettings,
     RuntimeSupportError,
     close_connection,
     connect_postgres,
@@ -50,6 +57,10 @@ DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
 DEFAULT_API_KEY_FILE = Path("/run/secrets/identity_resolver_api_key")
 DEFAULT_API_SECRET_FILE = Path("/run/secrets/identity_resolver_api_secret")
+DEFAULT_IDENTITY_PROJECTION_BEARER_FILE = Path("/run/secrets/identity_projection_bearer")
+DEFAULT_IDENTITY_PROJECTOR_PASSWORD_FILE = Path(
+    "/run/secrets/postgres_observer_identity_projector_password"
+)
 DEFAULT_FRAPPE_BASE_URL = "http://frappe-backend:8000"
 DEFAULT_FRAPPE_UNIX_SOCKET = Path("/run/gbos/sockets/frappe.sock")
 
@@ -338,6 +349,325 @@ class FrappeIdentityResolverClient:
             status=cast(Literal["confirmed", "revoked"], resolution.status),
             resolution=resolution,
         )
+
+
+class IdentityProjectionOutbox(Protocol):
+    def claim(
+        self,
+        *,
+        site_id: str,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> IdentityProjectionRelayClaim | None: ...
+
+    def heartbeat(
+        self,
+        claim: IdentityProjectionRelayClaim,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None: ...
+
+    def acknowledge(
+        self,
+        claim: IdentityProjectionRelayClaim,
+        *,
+        worker_id: str,
+        now: datetime,
+        receipt_ref: str,
+    ) -> None: ...
+
+    def fail(
+        self,
+        claim: IdentityProjectionRelayClaim,
+        *,
+        worker_id: str,
+        now: datetime,
+        retry_at: datetime,
+        error_code: str,
+        retryable: bool,
+    ) -> str: ...
+
+
+class IdentityProjectionTransport(Protocol):
+    def post(
+        self,
+        *,
+        url: str,
+        headers: Mapping[str, str],
+        payload: Mapping[str, Any],
+        timeout_seconds: float,
+    ) -> tuple[int, dict[str, Any]]: ...
+
+
+class HttpxIdentityProjectionTransport:
+    """Proxy-free, redirect-free transport for the one internal Gateway boundary."""
+
+    def post(
+        self,
+        *,
+        url: str,
+        headers: Mapping[str, str],
+        payload: Mapping[str, Any],
+        timeout_seconds: float,
+    ) -> tuple[int, dict[str, Any]]:
+        expected = EMAIL_GATEWAY_API_URL + "/internal/v1/identity-projections/accept"
+        if url != expected:
+            raise ValueError("identity projection endpoint rejected")
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        if len(encoded) > _MAX_REQUEST_BYTES:
+            raise ValueError("identity projection request is too large")
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(timeout_seconds),
+                follow_redirects=False,
+                trust_env=False,
+            ) as client:
+                response = client.post(url, headers=dict(headers), content=encoded)
+        except httpx.TimeoutException:
+            raise
+        except httpx.HTTPError as exc:
+            raise ValueError("identity projection transport rejected") from exc
+        if 300 <= response.status_code < 400 or len(response.content) > _MAX_RESPONSE_BYTES:
+            raise ValueError("identity projection response rejected")
+        try:
+            value = response.json()
+        except ValueError as exc:
+            raise ValueError("identity projection response rejected") from exc
+        if not isinstance(value, dict):
+            raise ValueError("identity projection response rejected")
+        return int(response.status_code), value
+
+
+class IdentityProjectionOutboxAdapter:
+    """Bind one least-privilege outbox repository to its exact site."""
+
+    def __init__(self, outbox: IdentityProjectionOutbox, *, site_id: str) -> None:
+        if not site_id or site_id != site_id.strip():
+            raise ValueError("invalid identity projection outbox site")
+        self._outbox = outbox
+        self._site_id = site_id
+
+    def claim(
+        self,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> IdentityProjectionRelayClaim | None:
+        return self._outbox.claim(
+            site_id=self._site_id,
+            worker_id=worker_id,
+            now=now,
+            lease_duration=lease_duration,
+        )
+
+    def heartbeat(
+        self,
+        claim: IdentityProjectionRelayClaim,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None:
+        self._outbox.heartbeat(
+            claim,
+            worker_id=worker_id,
+            now=now,
+            lease_duration=lease_duration,
+        )
+
+    def acknowledge(
+        self,
+        claim: IdentityProjectionRelayClaim,
+        *,
+        worker_id: str,
+        now: datetime,
+        receipt_ref: str,
+    ) -> None:
+        self._outbox.acknowledge(
+            claim,
+            worker_id=worker_id,
+            now=now,
+            receipt_ref=receipt_ref,
+        )
+
+    def fail(
+        self,
+        claim: IdentityProjectionRelayClaim,
+        *,
+        worker_id: str,
+        now: datetime,
+        retry_at: datetime,
+        error_code: str,
+        retryable: bool,
+    ) -> str:
+        return self._outbox.fail(
+            claim,
+            worker_id=worker_id,
+            now=now,
+            retry_at=retry_at,
+            error_code=error_code,
+            retryable=retryable,
+        )
+
+
+class IdentityProjectionRelayWorker:
+    """Deliver one frozen identity projection with bounded retry and exact receipt."""
+
+    def __init__(
+        self,
+        *,
+        outbox: IdentityProjectionOutboxAdapter,
+        transport: IdentityProjectionTransport,
+        bearer_token: str,
+        worker_id: str,
+        clock: Callable[[], datetime],
+        lease_duration: timedelta,
+        retry_delay: timedelta = timedelta(seconds=30),
+        timeout_seconds: float = 5,
+    ) -> None:
+        if (
+            not bearer_token
+            or bearer_token != bearer_token.strip()
+            or len(bearer_token) > 4096
+            or not worker_id
+            or worker_id != worker_id.strip()
+            or not timedelta(0) < lease_duration <= timedelta(minutes=5)
+            or not timedelta(0) < retry_delay <= timedelta(hours=1)
+            or not 0 < timeout_seconds < lease_duration.total_seconds()
+        ):
+            raise ValueError("invalid identity projection relay configuration")
+        self._outbox = outbox
+        self._transport = transport
+        self._bearer_token = bearer_token
+        self._worker_id = worker_id
+        self._clock = clock
+        self._lease_duration = lease_duration
+        self._retry_delay = retry_delay
+        self._timeout_seconds = timeout_seconds
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(outbox=<redacted>, transport=<redacted>, "
+            "credentials=<redacted>)"
+        )
+
+    def run_once(self) -> RelayResult:
+        now = self._now()
+        claim = self._outbox.claim(
+            worker_id=self._worker_id,
+            now=now,
+            lease_duration=self._lease_duration,
+        )
+        if claim is None:
+            return RelayResult(RelayStatus.IDLE)
+        try:
+            self._outbox.heartbeat(
+                claim,
+                worker_id=self._worker_id,
+                now=self._now(),
+                lease_duration=self._lease_duration,
+            )
+        except Exception:
+            return RelayResult(RelayStatus.LEASE_LOST, claim.attempt)
+        try:
+            status, response = self._transport.post(
+                url=EMAIL_GATEWAY_API_URL + "/internal/v1/identity-projections/accept",
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {self._bearer_token}",
+                    "Content-Type": "application/json",
+                    "X-GBOS-Local-Auth-Ref": "observer-identity-projection-v1",
+                    "X-Payload-Digest": claim.payload_digest,
+                    "X-Processing-Purpose": claim.processing_purpose,
+                    "X-Request-ID": claim.request_id,
+                    "X-Site-ID": claim.site_id,
+                },
+                payload=claim.payload,
+                timeout_seconds=self._timeout_seconds,
+            )
+        except httpx.TimeoutException:
+            return self._fail(claim, now=now, code="gateway_timeout", retryable=True)
+        except Exception:
+            return self._fail(
+                claim,
+                now=now,
+                code="gateway_transport_rejected",
+                retryable=False,
+            )
+        receipt = _identity_projection_receipt(status, response, claim)
+        if receipt is None:
+            retryable = status == 429 or 500 <= status <= 599
+            return self._fail(
+                claim,
+                now=now,
+                code=("gateway_retryable" if retryable else "gateway_rejected"),
+                retryable=retryable,
+            )
+        try:
+            self._outbox.acknowledge(
+                claim,
+                worker_id=self._worker_id,
+                now=self._now(),
+                receipt_ref=receipt,
+            )
+        except Exception:
+            return RelayResult(RelayStatus.LEASE_LOST, claim.attempt)
+        return RelayResult(RelayStatus.DELIVERED, claim.attempt)
+
+    def _fail(
+        self,
+        claim: IdentityProjectionRelayClaim,
+        *,
+        now: datetime,
+        code: str,
+        retryable: bool,
+    ) -> RelayResult:
+        try:
+            state = self._outbox.fail(
+                claim,
+                worker_id=self._worker_id,
+                now=now,
+                retry_at=now + self._retry_delay,
+                error_code=code,
+                retryable=retryable,
+            )
+        except Exception:
+            return RelayResult(RelayStatus.LEASE_LOST, claim.attempt)
+        return RelayResult(
+            RelayStatus.RETRY if state == "retry" else RelayStatus.DEAD_LETTER,
+            claim.attempt,
+        )
+
+    def _now(self) -> datetime:
+        value = self._clock()
+        _require_aware(value, "clock")
+        return value.astimezone(UTC)
+
+
+def _identity_projection_receipt(
+    status: int,
+    response: object,
+    claim: IdentityProjectionRelayClaim,
+) -> str | None:
+    if (
+        status != 200
+        or not isinstance(response, dict)
+        or set(response) != {"schema_version", "projection_receipt", "payload_digest"}
+        or response.get("schema_version") != "1.0"
+        or response.get("payload_digest") != claim.payload_digest
+        or response.get("projection_receipt") != claim.projection_receipt
+    ):
+        return None
+    return claim.projection_receipt
 
 
 class IdentityResolutionRunStatus(StrEnum):
@@ -666,12 +996,17 @@ class StopEvent(Protocol):
     def wait(self, timeout: float) -> bool: ...
 
 
+class IdentityProjectionRelayRunner(Protocol):
+    def run_once(self) -> RelayResult: ...
+
+
 def run_worker_daemon(
     worker: IdentityResolutionWorker,
     scope: TenantScope,
     *,
     stop_event: StopEvent,
     idle_delay_seconds: float,
+    identity_projection_worker: IdentityProjectionRelayRunner | None = None,
 ) -> None:
     if (
         not callable(getattr(worker, "run_once", None))
@@ -684,7 +1019,15 @@ def run_worker_daemon(
         result = worker.run_once(scope)
         if result.status is IdentityResolutionRunStatus.CLOSED:
             raise RuntimeSupportError("identity resolver readiness failed closed")
-        if result.status is IdentityResolutionRunStatus.IDLE:
+        relay_result = (
+            RelayResult(RelayStatus.IDLE)
+            if identity_projection_worker is None
+            else identity_projection_worker.run_once()
+        )
+        if (
+            result.status is IdentityResolutionRunStatus.IDLE
+            and relay_result.status is RelayStatus.IDLE
+        ):
             stop_event.wait(float(idle_delay_seconds))
 
 
@@ -698,10 +1041,13 @@ def main(
     runtime_config_path: Path = DEFAULT_RUNTIME_CONFIG,
     api_key_file: Path = DEFAULT_API_KEY_FILE,
     api_secret_file: Path = DEFAULT_API_SECRET_FILE,
+    identity_projection_bearer_file: Path = DEFAULT_IDENTITY_PROJECTION_BEARER_FILE,
+    identity_projector_password_file: Path = DEFAULT_IDENTITY_PROJECTOR_PASSWORD_FILE,
     environ: Mapping[str, str] | None = None,
     connector: Callable[..., object] | None = None,
     components_factory: ComponentsFactory | None = None,
     transport_factory: TransportFactory | None = None,
+    identity_projection_transport_factory: Callable[[], IdentityProjectionTransport] | None = None,
     daemon_runner: Callable[..., None] | None = None,
     stop_event: StopEvent | None = None,
     clock: Callable[[], datetime] | None = None,
@@ -710,6 +1056,7 @@ def main(
 
     environment = os.environ if environ is None else environ
     connection: object | None = None
+    identity_projector_connection: object | None = None
     try:
         reject_plaintext_secret_environment(environment)
         if environment.get("GBOS_IDENTITY_RESOLUTION_KILL_SWITCH") != "false":
@@ -738,6 +1085,14 @@ def main(
 
         api_key = load_secret_file(api_key_file)
         api_secret = load_secret_file(api_secret_file)
+        identity_projection_enabled = _identity_projection_enabled(manifest, environment)
+        identity_projection_bearer = None
+        identity_projector_password = None
+        if identity_projection_enabled:
+            identity_projection_bearer = load_secret_file(identity_projection_bearer_file)
+            identity_projector_password = load_secret_file(identity_projector_password_file)
+            if not identity_projection_bearer.reveal() or not identity_projector_password.reveal():
+                raise RuntimeSupportError("identity projection credentials unavailable")
         active_transport = (
             HttpxIdentityResolverTransport(socket)
             if transport_factory is None
@@ -779,17 +1134,55 @@ def main(
                 interval_seconds=runtime.worker.heartbeat_interval_seconds
             ),
         )
-        runner = daemon_runner or run_worker_daemon
-        runner(
-            worker,
-            TenantScope(runtime.site_id, _WORK_PURPOSE),
-            stop_event=stop_event or Event(),
-            idle_delay_seconds=runtime.worker.idle_delay_seconds,
-        )
+        identity_projection_worker = None
+        if identity_projection_enabled:
+            assert identity_projection_bearer is not None
+            projector_settings = PostgresSettings(
+                host=runtime.postgres.host,
+                port=runtime.postgres.port,
+                database=runtime.postgres.database,
+                user="gbos_observer_identity_projector",
+                password_file=identity_projector_password_file,
+                connect_timeout_seconds=runtime.postgres.connect_timeout_seconds,
+            )
+            identity_projector_connection = connect_postgres(
+                projector_settings,
+                connector=connector,
+            )
+            identity_projection_worker = IdentityProjectionRelayWorker(
+                outbox=IdentityProjectionOutboxAdapter(
+                    PostgresIdentityProjectionOutbox(
+                        cast(Connection, identity_projector_connection)
+                    ),
+                    site_id=runtime.site_id,
+                ),
+                transport=(
+                    HttpxIdentityProjectionTransport()
+                    if identity_projection_transport_factory is None
+                    else identity_projection_transport_factory()
+                ),
+                bearer_token=identity_projection_bearer.reveal(),
+                worker_id=f"{runtime.worker.worker_id}-projection",
+                clock=active_clock,
+                lease_duration=lease_duration,
+                retry_delay=timedelta(seconds=30),
+                timeout_seconds=timeout_seconds,
+            )
+        runner: Callable[..., None] = daemon_runner or run_worker_daemon
+        runner_kwargs: dict[str, object] = {
+            "stop_event": stop_event or Event(),
+            "idle_delay_seconds": runtime.worker.idle_delay_seconds,
+        }
+        if identity_projection_worker is not None:
+            runner_kwargs["identity_projection_worker"] = identity_projection_worker
+        runner(worker, TenantScope(runtime.site_id, _WORK_PURPOSE), **runner_kwargs)
         return 0
     except Exception:
         return 78
     finally:
+        if identity_projector_connection is not None:
+            with suppress(Exception):
+                close_connection(identity_projector_connection)
         if connection is not None:
             with suppress(Exception):
                 close_connection(connection)
@@ -802,6 +1195,19 @@ def _identity_capable_channel_enabled(manifest: Mapping[str, Any]) -> bool:
     return any(
         isinstance(channels.get(channel), Mapping) and channels[channel].get("enabled") is True
         for channel in ("email", "wecom", "whatsapp")
+    )
+
+
+def _identity_projection_enabled(
+    manifest: Mapping[str, Any],
+    environment: Mapping[str, str],
+) -> bool:
+    gateway = manifest.get("email_gateway")
+    return (
+        environment.get("GBOS_IDENTITY_PROJECTION_KILL_SWITCH", "true") == "false"
+        and isinstance(gateway, Mapping)
+        and gateway.get("kill_switch") is False
+        and gateway.get("identity_projection_kill_switch") is False
     )
 
 
@@ -1016,11 +1422,16 @@ if __name__ == "__main__":
 __all__ = [
     "DEFAULT_API_KEY_FILE",
     "DEFAULT_API_SECRET_FILE",
+    "DEFAULT_IDENTITY_PROJECTION_BEARER_FILE",
+    "DEFAULT_IDENTITY_PROJECTOR_PASSWORD_FILE",
     "DEFAULT_FRAPPE_BASE_URL",
     "DEFAULT_FRAPPE_UNIX_SOCKET",
     "FrappeIdentityResolverClient",
     "HeartbeatRunner",
     "HttpxIdentityResolverTransport",
+    "HttpxIdentityProjectionTransport",
+    "IdentityProjectionOutboxAdapter",
+    "IdentityProjectionRelayWorker",
     "IdentityLookupResult",
     "IdentityResolutionClientError",
     "IdentityResolutionComponents",

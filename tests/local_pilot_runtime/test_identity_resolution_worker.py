@@ -690,6 +690,7 @@ def _manifest(
     *,
     enabled: bool,
     identity_channel_enabled: bool | None = None,
+    identity_projection_enabled: bool = False,
 ) -> Path:
     channel_enabled = enabled if identity_channel_enabled is None else identity_channel_enabled
     value = {
@@ -700,6 +701,10 @@ def _manifest(
         "local_pilot_go": enabled,
         "local_pilot_status": "ready" if enabled else "disabled",
         "deepseek": {"enabled": False, "kill_switch": True},
+        "email_gateway": {
+            "kill_switch": not identity_projection_enabled,
+            "identity_projection_kill_switch": not identity_projection_enabled,
+        },
         "channels": {
             "email": {"enabled": channel_enabled},
             "wecom": {"enabled": False},
@@ -911,6 +916,93 @@ def test_enabled_main_loads_files_then_builds_repositories_and_closes_connection
     assert result == 0
     assert len(captured) == 1
     assert connection.closed is True
+
+
+def test_identity_projection_opt_in_validates_both_secrets_before_database(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+
+    result = main(
+        manifest_path=_manifest(
+            tmp_path / "manifest.json",
+            enabled=True,
+            identity_projection_enabled=True,
+        ),
+        runtime_config_path=_runtime_config(tmp_path / "runtime.json", tmp_path),
+        api_key_file=_secret(tmp_path / "api-key", "resolver-key"),
+        api_secret_file=_secret(tmp_path / "api-secret", "resolver-secret"),
+        identity_projection_bearer_file=tmp_path / "missing-projection-bearer",
+        identity_projector_password_file=_secret(
+            tmp_path / "projector-password",
+            "projector-password-value",
+        ),
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_IDENTITY_RESOLUTION_KILL_SWITCH": "false",
+            "GBOS_IDENTITY_PROJECTION_KILL_SWITCH": "false",
+        },
+        connector=lambda **_: calls.append("db"),
+        transport_factory=lambda _socket: _Transport([]),
+    )
+
+    assert result == 78
+    assert calls == []
+
+
+def test_identity_projection_opt_in_connects_dedicated_role_and_composes_relay(
+    tmp_path: Path,
+) -> None:
+    connections: list[_Connection] = []
+    captured: dict[str, object] = {}
+
+    def connector(**_kwargs: object) -> _Connection:
+        connection = _Connection()
+        connections.append(connection)
+        return connection
+
+    def components_factory(_connection: object) -> IdentityResolutionComponents:
+        return IdentityResolutionComponents(
+            work_repository=InMemoryIdentityResolutionWorkRepository(),
+            projection_repository=InMemoryIdentityResolutionRepository(),
+        )
+
+    def daemon_runner(*_args: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    result = main(
+        manifest_path=_manifest(
+            tmp_path / "manifest.json",
+            enabled=True,
+            identity_projection_enabled=True,
+        ),
+        runtime_config_path=_runtime_config(tmp_path / "runtime.json", tmp_path),
+        api_key_file=_secret(tmp_path / "api-key", "resolver-key"),
+        api_secret_file=_secret(tmp_path / "api-secret", "resolver-secret"),
+        identity_projection_bearer_file=_secret(
+            tmp_path / "projection-bearer",
+            "identity-projection-secret",
+        ),
+        identity_projector_password_file=_secret(
+            tmp_path / "projector-password",
+            "projector-password-value",
+        ),
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_IDENTITY_RESOLUTION_KILL_SWITCH": "false",
+            "GBOS_IDENTITY_PROJECTION_KILL_SWITCH": "false",
+        },
+        connector=connector,
+        components_factory=components_factory,
+        transport_factory=lambda _socket: _Transport([]),
+        identity_projection_transport_factory=lambda: _Transport([]),  # type: ignore[arg-type]
+        daemon_runner=daemon_runner,
+    )
+
+    assert result == 0
+    assert len(connections) == 2
+    assert all(connection.closed for connection in connections)
+    assert "identity_projection_worker" in captured
 
 
 def test_repr_errors_and_logs_never_render_identity_target_or_credentials(caplog: Any) -> None:

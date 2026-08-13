@@ -37,6 +37,7 @@ from services.email_gateway.evidence import (
     ObserverEvidenceRevealClient,
     PostgresEvidenceBindingAuthority,
 )
+from services.email_gateway.identity_projection import IdentityProjectionService
 from services.email_gateway.intake import GatewayIntakeService
 from services.email_gateway.mailboxes import MailboxRegistry
 from services.email_gateway.operations import InboxOperations
@@ -384,6 +385,22 @@ def main(
         )
         cipher = GatewayDataCipher(data_key.reveal())
         gateway_manifest = cast(Mapping[str, object], manifest["email_gateway"])
+        identity_projection_enabled = (
+            gateway_manifest.get("identity_projection_kill_switch") is False
+            and environment.get("GBOS_IDENTITY_PROJECTION_KILL_SWITCH", "true") == "false"
+        )
+        identity_projection_bearer: str | None = None
+        if identity_projection_enabled:
+            mounted_identity_bearer = active_secret_provider.read_text("identity_projection_bearer")
+            if mounted_identity_bearer is None:
+                raise EmailGatewayConfigError("identity projection credential unavailable")
+            identity_projection_bearer = mounted_identity_bearer.reveal()
+            if (
+                not identity_projection_bearer
+                or identity_projection_bearer != identity_projection_bearer.strip()
+                or len(identity_projection_bearer) > 4096
+            ):
+                raise EmailGatewayConfigError("identity projection credential rejected")
         command_ingest_enabled = gateway_manifest.get("command_publication_kill_switch") is False
         command_bearer = None
         frappe_authority_client = None
@@ -455,6 +472,9 @@ def main(
         mailbox_registry = MailboxRegistry(mailboxes)
         intake_service = GatewayIntakeService(intake, mailbox_registry)  # type: ignore[arg-type]
         identity_repository = PostgresIdentityProjectionRepository(cast(Any, connection))
+        identity_projection_service = (
+            IdentityProjectionService(identity_repository) if identity_projection_enabled else None
+        )
         email_send_authority = EmailSendAuthority(
             mailboxes=mailbox_registry,
             workflow=workflow,
@@ -534,6 +554,11 @@ def main(
             command_ingest_service=command_ingest_service,
             command_ingest_bearer_token=command_ingest_bearer_token,
             command_ingest_auth_ref=command_ingest_auth_ref,
+            identity_projection_service=identity_projection_service,
+            identity_projection_bearer_token=(identity_projection_bearer),
+            identity_projection_auth_ref=(
+                config.auth.identity_projection_auth_ref if identity_projection_enabled else None
+            ),
         )
         active_runner = server_runner or run_server
         active_runner(
@@ -598,6 +623,9 @@ def _build_application(factory: ApplicationFactory, **kwargs: object) -> FastAPI
         "command_ingest_service",
         "command_ingest_bearer_token",
         "command_ingest_auth_ref",
+        "identity_projection_service",
+        "identity_projection_bearer_token",
+        "identity_projection_auth_ref",
     }
     if current.issubset(parameters):
         selected = {name: value for name, value in kwargs.items() if name in parameters}
@@ -633,6 +661,13 @@ def _secret_provider() -> MountedFileSecretProvider:
             SecretSpec(
                 "mailbox_projection_bearer",
                 "mailbox_projection_bearer",
+                "text",
+                16,
+                4096,
+            ),
+            SecretSpec(
+                "identity_projection_bearer",
+                "identity_projection_bearer",
                 "text",
                 16,
                 4096,

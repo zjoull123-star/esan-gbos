@@ -251,7 +251,11 @@ class PostgresIdentityResolutionRepository:
             row = cursor.fetchone()
             if row is None:
                 raise IdentityResolutionConflict("identity resolution write rejected")
-            return _resolution_from_row(row)
+            recorded = _resolution_from_row(row)
+            from .identity_projection_outbox import enqueue_resolution_projections
+
+            enqueue_resolution_projections(cursor, recorded)
+            return recorded
 
     def latest(
         self,

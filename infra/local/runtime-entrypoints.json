@@ -122,7 +122,11 @@
       "path": "services/local_pilot_runtime/identity_resolution_worker.py",
       "status": "executable",
       "network": "internal_only",
-      "required_when_enabled": true
+      "required_when_enabled": true,
+      "database_roles": [
+        "gbos_observer_app",
+        "gbos_observer_identity_projector"
+      ]
     },
     "model-projection-worker": {
       "path": "services/local_pilot_runtime/model_projection_worker.py",
