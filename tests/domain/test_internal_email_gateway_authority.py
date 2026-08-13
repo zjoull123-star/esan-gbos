@@ -261,6 +261,12 @@ def _payload(**overrides: Any) -> dict[str, Any]:
     return value
 
 
+def _initial_route_payload(**overrides: Any) -> dict[str, Any]:
+    value = {key: item for key, item in _payload().items() if key in _PROJECT_REQUEST_KEYS}
+    value.update(overrides)
+    return value
+
+
 def _command_payload(**overrides: Any) -> dict[str, Any]:
     command = {
         "schema_version": "2.0",
@@ -762,6 +768,197 @@ def test_projection_fails_closed_for_invalid_target_shape_without_leakage(
     )
 
     assert response == {"error": {"code": "mapping_not_resolved"}}
+    assert OWNER not in repr(response)
+
+
+def test_initial_route_derives_assigned_authority_from_locked_current_state(
+    authority_api: tuple[Any, _Frappe],
+) -> None:
+    api, fake = authority_api
+    fake.db.route_rows = [_route_row()]
+
+    response = api.resolve_initial_route(_initial_route_payload())
+
+    assert response == {
+        "route_authority": {
+            "route_status": "assigned",
+            "party_ref": PARTY,
+            "party_revision": 2,
+            "team_ref": TEAM,
+            "team_revision": 3,
+            "owner_user_ref": OWNER,
+            "owner_eligibility_revision": OWNER_REVISION,
+            "resolved_at": "2026-08-13T00:00:00Z",
+        }
+    }
+    assert len(fake.db.queries) == 1
+    assert "for update" in fake.db.queries[0].casefold()
+    assert fake.local.response["headers"]["Cache-Control"] == "no-store"
+    for forbidden in (
+        "raw-address",
+        "contact-must-not-escape",
+        "forbidden-doc-owner",
+        "forbidden-contact",
+        "forbidden-cc",
+        "forbidden-prior",
+        "forbidden-deal",
+    ):
+        assert forbidden not in repr(response)
+
+
+@pytest.mark.parametrize(
+    "derived_pin",
+    (
+        "party_ref",
+        "party_revision",
+        "team_ref",
+        "team_revision",
+        "owner_user_ref",
+        "owner_eligibility_revision",
+        "expected_party_revision",
+        "expected_team_revision",
+        "expected_owner_eligibility_revision",
+    ),
+)
+def test_initial_route_rejects_caller_injected_derived_pins_before_db_reads(
+    authority_api: tuple[Any, _Frappe],
+    derived_pin: str,
+) -> None:
+    api, fake = authority_api
+
+    response = api.resolve_initial_route(_initial_route_payload(**{derived_pin: 1}))
+
+    assert response == {"error": {"code": "invalid_authority_request"}}
+    assert fake.local.response["http_status_code"] == 422
+    assert fake.db.queries == []
+
+
+def test_initial_route_rejects_any_other_extra_field_before_db_reads(
+    authority_api: tuple[Any, _Frappe],
+) -> None:
+    api, fake = authority_api
+
+    response = api.resolve_initial_route(_initial_route_payload(raw_address="must-not-enter"))
+
+    assert response == {"error": {"code": "invalid_authority_request"}}
+    assert fake.local.response["http_status_code"] == 422
+    assert fake.db.queries == []
+
+
+@pytest.mark.parametrize(
+    "override",
+    (
+        {"site_id": "other.localhost"},
+        {"processing_purpose": "customer_service"},
+        {"auth_ref": "email-gateway-authority-v2"},
+    ),
+)
+def test_initial_route_rejects_site_purpose_or_auth_drift_before_db_reads(
+    authority_api: tuple[Any, _Frappe],
+    override: dict[str, Any],
+) -> None:
+    api, fake = authority_api
+
+    response = api.resolve_initial_route(_initial_route_payload(**override))
+
+    assert response == {"error": {"code": "identity_scope_mismatch"}}
+    assert fake.local.response["http_status_code"] == 403
+    assert fake.db.queries == []
+
+
+@pytest.mark.parametrize(
+    "override",
+    (
+        {"expected_mapping_revision": 3},
+        {"expected_team_ref": "TEM-CROSS"},
+    ),
+)
+def test_initial_route_stale_mapping_or_team_pin_is_unassigned_without_owner_leakage(
+    authority_api: tuple[Any, _Frappe],
+    override: dict[str, Any],
+) -> None:
+    api, fake = authority_api
+    fake.db.route_rows = [_route_row()]
+
+    response = api.resolve_initial_route(_initial_route_payload(**override))
+
+    assert response["route_authority"]["route_status"] == "unassigned"
+    assert response["route_authority"]["safe_reason_code"] == "owner_unavailable"
+    assert OWNER not in repr(response)
+
+
+@pytest.mark.parametrize("rows", ([], [_route_row(), _route_row()]))
+def test_initial_route_missing_or_duplicate_current_rows_are_unassigned(
+    authority_api: tuple[Any, _Frappe],
+    rows: list[dict[str, Any]],
+) -> None:
+    api, fake = authority_api
+    fake.db.route_rows = rows
+
+    response = api.resolve_initial_route(_initial_route_payload())
+
+    assert response["route_authority"]["route_status"] == "unassigned"
+    assert response["route_authority"]["safe_reason_code"] == "owner_unavailable"
+    assert OWNER not in repr(response)
+
+
+@pytest.mark.parametrize(
+    "row",
+    (
+        _route_row(mapping_ref="bad ref"),
+        _route_row(mapping_revision=0),
+        _route_row(party_ref="bad ref"),
+        _route_row(party_revision=0),
+        _route_row(team_revision=False),
+        _route_row(owner_user_ref="bad ref"),
+        _route_row(membership_ref="bad ref"),
+        _route_row(membership_modified="not-a-timestamp"),
+        _route_row(resolved_at="not-a-timestamp"),
+    ),
+)
+def test_initial_route_invalid_current_refs_revisions_or_timestamp_are_unassigned(
+    authority_api: tuple[Any, _Frappe],
+    row: dict[str, Any],
+) -> None:
+    api, fake = authority_api
+    fake.db.route_rows = [row]
+
+    response = api.resolve_initial_route(_initial_route_payload())
+
+    assert response["route_authority"]["route_status"] == "unassigned"
+    assert response["route_authority"]["safe_reason_code"] == "owner_unavailable"
+    assert OWNER not in repr(response)
+
+
+@pytest.mark.parametrize(
+    "row",
+    (
+        _route_row(review_status="Pending"),
+        _route_row(business_status="Revoked"),
+        _route_row(target_type="User", party_ref=None, user_ref=OWNER),
+        _route_row(target_eligible=0),
+        _route_row(party_status="Inactive"),
+        _route_row(party_review_status="Pending"),
+        _route_row(team_status="Inactive"),
+        _route_row(team_review_status="Pending"),
+        _route_row(owner_enabled=0),
+        _route_row(owner_user_type="Website User"),
+        _route_row(membership_enabled=0),
+        _route_row(membership_parent="TEM-CROSS"),
+        _route_row(membership_user="other@example.invalid"),
+    ),
+)
+def test_initial_route_ineligible_mapping_party_team_owner_or_membership_is_unassigned(
+    authority_api: tuple[Any, _Frappe],
+    row: dict[str, Any],
+) -> None:
+    api, fake = authority_api
+    fake.db.route_rows = [row]
+
+    response = api.resolve_initial_route(_initial_route_payload())
+
+    assert response["route_authority"]["route_status"] == "unassigned"
+    assert response["route_authority"]["safe_reason_code"] == "owner_unavailable"
     assert OWNER not in repr(response)
 
 

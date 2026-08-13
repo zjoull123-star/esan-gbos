@@ -160,6 +160,18 @@ def resolve_route(payload: dict[str, Any]) -> dict[str, Any]:
 
 @frappe.whitelist(methods=["POST"])  # type: ignore[untyped-decorator]
 @_endpoint
+def resolve_initial_route(payload: dict[str, Any]) -> dict[str, Any]:
+    request = _validated_request(payload, _PROJECT_FIELDS)
+    with email_gateway_authority_permission_scope(
+        request_id=request["request_id"], auth_ref=request["auth_ref"]
+    ):
+        rows = _route_rows(request["mapping_ref"], for_update=True)
+        decision = _initial_route_decision(rows, request)
+    return {"route_authority": decision}
+
+
+@frappe.whitelist(methods=["POST"])  # type: ignore[untyped-decorator]
+@_endpoint
 def resolve_email_send_command(payload: dict[str, Any]) -> dict[str, Any]:
     request = _validated_request(payload, _COMMAND_FIELDS)
     with email_gateway_authority_permission_scope(
@@ -727,16 +739,77 @@ def _review_case_payload(case: Any) -> dict[str, Any]:
     return payload
 
 
-def _route_decision(
-    rows: list[dict[str, Any]],
-    request: Mapping[str, Any],
-) -> dict[str, Any]:
+def _unavailable_route() -> dict[str, Any]:
     resolved_at = datetime.now().astimezone().isoformat(timespec="seconds")
-    unavailable = {
+    return {
         "route_status": "unassigned",
         "safe_reason_code": "owner_unavailable",
         "resolved_at": resolved_at,
     }
+
+
+def _initial_route_decision(
+    rows: list[dict[str, Any]],
+    request: Mapping[str, Any],
+) -> dict[str, Any]:
+    unavailable = _unavailable_route()
+    if len(rows) != 1:
+        return unavailable
+    row = rows[0]
+    try:
+        projection = build_external_identity_projection(row)
+        mapping_ref = _row_ref(projection["mapping_ref"])
+        party_ref = _row_ref(row.get("party_ref"))
+        party_revision = _row_positive_integer(row.get("party_revision"))
+        team_ref = _row_ref(projection["team_ref"])
+        team_revision = _row_positive_integer(row.get("team_revision"))
+        owner = _row_ref(row.get("owner_user_ref"))
+        _row_ref(row.get("membership_ref"))
+        _row_ref(row.get("membership_parent"))
+        _row_ref(row.get("membership_user"))
+        _timestamp(row.get("membership_modified"))
+        owner_revision = owner_eligibility_revision(
+            {
+                "name": party_ref,
+                "revision": party_revision,
+                "team": team_ref,
+                "owner_user": owner,
+            },
+            {
+                "owner_enabled": row.get("owner_enabled"),
+                "owner_user_type": row.get("owner_user_type"),
+                "membership_ref": row.get("membership_ref"),
+                "membership_parent": row.get("membership_parent"),
+                "membership_user": row.get("membership_user"),
+                "membership_enabled": row.get("membership_enabled"),
+                "membership_modified": row.get("membership_modified"),
+                "team_revision": team_revision,
+            },
+        )
+        if not _DIGEST.fullmatch(owner_revision):
+            raise ValueError
+    except ExternalIdentityProjectionError, KeyError, ValueError, TypeError:
+        return unavailable
+    if (
+        mapping_ref != request["mapping_ref"]
+        or row.get("team_status") != "Active"
+        or row.get("team_review_status") != "Approved"
+    ):
+        return unavailable
+    derived_request = {
+        **request,
+        "expected_party_revision": party_revision,
+        "expected_team_revision": team_revision,
+        "expected_owner_eligibility_revision": owner_revision,
+    }
+    return _route_decision(rows, derived_request)
+
+
+def _route_decision(
+    rows: list[dict[str, Any]],
+    request: Mapping[str, Any],
+) -> dict[str, Any]:
+    unavailable = _unavailable_route()
     if len(rows) != 1:
         return unavailable
     row = rows[0]
@@ -1040,5 +1113,6 @@ __all__ = [
     "derive_inbox_command_authority",
     "project",
     "resolve_email_send_command",
+    "resolve_initial_route",
     "resolve_route",
 ]
