@@ -143,8 +143,9 @@ class _FilteredBatchPollingScheduler(DurablePollingScheduler):
         cursor: str | None,
         version: int,
         limit: int,
-        now: datetime,
+        lease_generation: int,
     ) -> PollRunResult:
+        now = self._now()
         try:
             batch = self._poll(cursor, limit)
         except Exception:
@@ -161,7 +162,14 @@ class _FilteredBatchPollingScheduler(DurablePollingScheduler):
         accepted = 0
         try:
             for delivery in batch.deliveries:
-                self._state.accept_delivery(self._scope, self._key, delivery)
+                self._state.accept_delivery(
+                    self._scope,
+                    self._key,
+                    delivery,
+                    owner=self._worker_id,
+                    lease_generation=lease_generation,
+                    now=self._now(),
+                )
                 accepted += 1
         except Exception:
             return self._record_failure(now, "durable_accept_failed", paused=False)
@@ -174,7 +182,9 @@ class _FilteredBatchPollingScheduler(DurablePollingScheduler):
                     self._key,
                     expected_version=version,
                     cursor=batch.candidate_cursor,
-                    now=now,
+                    owner=self._worker_id,
+                    lease_generation=lease_generation,
+                    now=self._now(),
                 )
             except Exception:
                 return self._record_failure(now, "checkpoint_conflict", paused=False)
@@ -497,7 +507,6 @@ def main(
         )
         _ensure_initial_checkpoint(
             state=state,
-            storage=storage,
             scope=scope,
             key=key,
             initial_checkpoint=credential.initial_checkpoint,
@@ -566,7 +575,6 @@ def main(
 def _ensure_initial_checkpoint(
     *,
     state: PostgresPollingState,
-    storage: LocalPilotStorage,
     scope: TenantScope,
     key: ConnectorKey,
     initial_checkpoint: str | None,
@@ -574,14 +582,32 @@ def _ensure_initial_checkpoint(
 ) -> None:
     cursor, version, _status = state.load_checkpoint(scope, key)
     if cursor is None and initial_checkpoint is not None:
-        storage.compare_and_swap_checkpoint(
+        owner = "checkpoint-initializer"
+        lease_generation = state.acquire(
             scope,
             key,
-            expected_version=version,
-            cursor=initial_checkpoint,
-            next_version=version + 1,
+            owner=owner,
             now=now,
+            lease_seconds=60,
         )
+        try:
+            state.advance_checkpoint(
+                scope,
+                key,
+                expected_version=version,
+                cursor=initial_checkpoint,
+                owner=owner,
+                lease_generation=lease_generation,
+                now=now,
+            )
+        finally:
+            state.release(
+                scope,
+                key,
+                owner=owner,
+                lease_generation=lease_generation,
+                now=now,
+            )
     elif initial_checkpoint is not None and cursor != initial_checkpoint:
         raise ChannelConfigError("persisted checkpoint conflicts with configured initial value")
 

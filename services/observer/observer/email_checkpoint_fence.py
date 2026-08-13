@@ -34,6 +34,7 @@ class EmailPollBatchFence:
     expected_cursor: str | None
     candidate_cursor: str | None
     expected_version: int
+    lease_generation: int
     members: tuple[EmailPollBatchMember, ...]
     created_at: datetime
     finalized_at: datetime | None = None
@@ -57,6 +58,7 @@ class InMemoryEmailCheckpointFence:
         expected_cursor: str | None,
         candidate_cursor: str | None,
         expected_version: int,
+        lease_generation: int,
         delivery_ids: tuple[str, ...],
         now: datetime,
     ) -> EmailPollBatchFence:
@@ -65,6 +67,8 @@ class InMemoryEmailCheckpointFence:
         _require_aware(now, "now")
         if isinstance(expected_version, bool) or expected_version < 0:
             raise ValueError("invalid expected checkpoint version")
+        if isinstance(lease_generation, bool) or lease_generation < 1:
+            raise ValueError("invalid connector lease generation")
         if not delivery_ids or len(delivery_ids) > 1_000:
             raise ValueError("email poll batch requires bounded deliveries")
         if len(delivery_ids) != len(set(delivery_ids)):
@@ -88,6 +92,7 @@ class InMemoryEmailCheckpointFence:
             expected_cursor=expected_cursor,
             candidate_cursor=candidate_cursor,
             expected_version=expected_version,
+            lease_generation=lease_generation,
             members=tuple(EmailPollBatchMember(value) for value in delivery_ids),
             created_at=now,
         )
@@ -102,6 +107,11 @@ class InMemoryEmailCheckpointFence:
             or tuple(value.delivery_id for value in existing.members) != delivery_ids
         ):
             raise EmailCheckpointFenceConflict("poll_batch_replay_drift")
+        if lease_generation < existing.lease_generation:
+            raise EmailCheckpointFenceConflict("poll_batch_lease_generation_stale")
+        if lease_generation > existing.lease_generation:
+            existing = replace(existing, lease_generation=lease_generation)
+            self._batches[storage_key] = existing
         return existing
 
     def mark_publication_terminal(
@@ -112,6 +122,7 @@ class InMemoryEmailCheckpointFence:
         batch_id: str,
         delivery_id: str,
         terminal_ref: str,
+        lease_generation: int,
         now: datetime,
     ) -> EmailPollBatchFence:
         return self._mark_terminal(
@@ -120,6 +131,7 @@ class InMemoryEmailCheckpointFence:
             batch_id=batch_id,
             delivery_id=delivery_id,
             terminal_ref=terminal_ref,
+            lease_generation=lease_generation,
             now=now,
             terminal_kind="published",
         )
@@ -132,6 +144,7 @@ class InMemoryEmailCheckpointFence:
         batch_id: str,
         delivery_id: str,
         terminal_ref: str,
+        lease_generation: int,
         now: datetime,
     ) -> EmailPollBatchFence:
         return self._mark_terminal(
@@ -140,6 +153,7 @@ class InMemoryEmailCheckpointFence:
             batch_id=batch_id,
             delivery_id=delivery_id,
             terminal_ref=terminal_ref,
+            lease_generation=lease_generation,
             now=now,
             terminal_kind="quarantined",
         )
@@ -152,6 +166,7 @@ class InMemoryEmailCheckpointFence:
         batch_id: str,
         delivery_id: str,
         terminal_ref: str,
+        lease_generation: int,
         now: datetime,
         terminal_kind: str,
     ) -> EmailPollBatchFence:
@@ -160,6 +175,8 @@ class InMemoryEmailCheckpointFence:
         batch = self._batches.get(storage_key)
         if batch is None:
             raise EmailCheckpointFenceConflict("poll_batch_missing")
+        if batch.lease_generation != lease_generation:
+            raise EmailCheckpointFenceConflict("poll_batch_lease_generation_stale")
         members = list(batch.members)
         for index, member in enumerate(members):
             if member.delivery_id != delivery_id:
@@ -186,6 +203,7 @@ class InMemoryEmailCheckpointFence:
         *,
         batch_id: str,
         expected_version: int,
+        lease_generation: int,
         now: datetime,
     ) -> bool:
         _require_aware(now, "now")
@@ -193,6 +211,8 @@ class InMemoryEmailCheckpointFence:
         batch = self._batches.get(storage_key)
         if batch is None or batch.finalized_at is not None:
             return batch is not None and batch.finalized_at is not None
+        if batch.lease_generation != lease_generation:
+            return False
         if batch.expected_version != expected_version:
             return False
         if any(member.terminal_kind is None for member in batch.members):

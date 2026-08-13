@@ -115,7 +115,7 @@ class FakePollingState:
         cursor: str | None,
         fail_on_accept: int | None = None,
         expected_now: datetime = NOW,
-    ) -> None:
+    ) -> int:
         self.cursor = cursor
         self.version = 3
         self.fail_on_accept = fail_on_accept
@@ -133,9 +133,10 @@ class FakePollingState:
         owner: str,
         now: datetime,
         lease_seconds: int,
-    ) -> None:
+    ) -> int:
         assert scope == SCOPE and now == self.expected_now and lease_seconds == 60
         self.leases.append(f"acquire:{key.connector}:{owner}")
+        return 1
 
     def release(
         self,
@@ -143,9 +144,10 @@ class FakePollingState:
         key: ConnectorKey,
         *,
         owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> None:
-        assert scope == SCOPE and now == self.expected_now
+        assert scope == SCOPE and now == self.expected_now and lease_generation == 1
         self.leases.append(f"release:{key.connector}:{owner}")
 
     def load_checkpoint(
@@ -161,8 +163,14 @@ class FakePollingState:
         scope: TenantScope,
         key: ConnectorKey,
         delivery: RawDelivery,
+        *,
+        owner: str,
+        lease_generation: int,
+        now: datetime,
     ) -> None:
         assert scope == SCOPE
+        assert owner.endswith("-poller") and lease_generation == 1
+        assert now == self.expected_now
         call_number = len(self.accepted) + 1
         if self.fail_on_accept == call_number:
             raise RuntimeError("durable store unavailable")
@@ -175,9 +183,12 @@ class FakePollingState:
         *,
         expected_version: int,
         cursor: str | None,
+        owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> None:
         assert scope == SCOPE and now == self.expected_now
+        assert owner.endswith("-poller") and lease_generation == 1
         self.advanced.append((expected_version, cursor))
 
     def update_health(
@@ -453,7 +464,7 @@ class FakeInbox:
 def test_postgres_state_composition_routes_delivery_to_durable_inbox_without_credentials() -> None:
     inbox = FakeInbox()
     state = compose_postgres_polling_state(
-        connection=object(),
+        connection=_EntryConnection(),
         storage=object(),
         inbox=inbox,
     )
@@ -468,6 +479,9 @@ def test_postgres_state_composition_routes_delivery_to_durable_inbox_without_cre
         SCOPE,
         ConnectorKey("email", "pilot-primary"),
         delivery,
+        owner="email-poller",
+        lease_generation=1,
+        now=NOW,
     )
 
     assert inbox.calls[0][:3] == (
@@ -716,6 +730,15 @@ class _EntryStorage:
         self.account_user_refs.append(kwargs.get("account_user_ref"))
 
     def compare_and_swap_checkpoint(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def acquire_connector_lease(self, *args: object, **kwargs: object) -> object:
+        class _Lease:
+            lease_generation = 1
+
+        return _Lease()
+
+    def release_connector_lease(self, *args: object, **kwargs: object) -> None:
         return None
 
 

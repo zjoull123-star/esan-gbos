@@ -174,7 +174,7 @@ def _identity_ref(provider: str, label: str) -> str:
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 18
+    assert _migration_ledger_count() == 19
     result = _container_sql(
         """
         SELECT count(*)
@@ -542,6 +542,7 @@ def _migration_ledger_count() -> int:
               'observer/014_email_gateway_publication.sql',
               'observer/015_email_gateway_connector_config.sql',
               'observer/016_email_gateway_participant_authority.sql',
+              'observer/017_email_connector_lease_generation_fence.sql',
               'context/001_gate3_context.sql'
         )
         """

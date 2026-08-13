@@ -60,7 +60,7 @@ class PollingState(Protocol):
         owner: str,
         now: datetime,
         lease_seconds: int,
-    ) -> None: ...
+    ) -> int: ...
 
     def release(
         self,
@@ -68,6 +68,7 @@ class PollingState(Protocol):
         key: ConnectorKey,
         *,
         owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> None: ...
 
@@ -84,6 +85,9 @@ class PollingState(Protocol):
         delivery: RawDelivery,
         *,
         batch_id: str | None = None,
+        owner: str,
+        lease_generation: int,
+        now: datetime,
     ) -> None: ...
 
     def register_poll_batch(
@@ -93,6 +97,8 @@ class PollingState(Protocol):
         batch: PollBatch,
         *,
         expected_version: int,
+        owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> EmailPollBatchFence: ...
 
@@ -103,6 +109,8 @@ class PollingState(Protocol):
         *,
         batch_id: str,
         expected_version: int,
+        owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> bool: ...
 
@@ -113,6 +121,8 @@ class PollingState(Protocol):
         *,
         expected_version: int,
         cursor: str | None,
+        owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> None: ...
 
@@ -162,14 +172,15 @@ class PostgresPollingState:
         owner: str,
         now: datetime,
         lease_seconds: int,
-    ) -> None:
-        self._storage.acquire_connector_lease(
+    ) -> int:
+        checkpoint = self._storage.acquire_connector_lease(
             scope,
             key,
             owner=owner,
             now=now,
             lease_seconds=lease_seconds,
         )
+        return checkpoint.lease_generation
 
     def release(
         self,
@@ -177,12 +188,14 @@ class PostgresPollingState:
         key: ConnectorKey,
         *,
         owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> None:
         self._storage.release_connector_lease(
             scope,
             key,
             owner=owner,
+            expected_lease_generation=lease_generation,
             now=now,
         )
 
@@ -232,9 +245,40 @@ class PostgresPollingState:
         delivery: RawDelivery,
         *,
         batch_id: str | None = None,
+        owner: str,
+        lease_generation: int,
+        now: datetime,
     ) -> None:
         del batch_id
-        self._durable_accept(scope, key, delivery)
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('app.site_id', %s, true)",
+                (scope.site_id,),
+            )
+            cursor.execute(
+                """
+                SELECT lease_generation
+                FROM observer.connector_checkpoints
+                WHERE site_id = %s
+                  AND connector = %s
+                  AND connector_instance_id = %s
+                  AND lease_owner = %s
+                  AND lease_generation = %s
+                  AND lease_expires_at > %s
+                FOR SHARE
+                """,
+                (
+                    scope.site_id,
+                    key.connector,
+                    key.instance_id,
+                    owner,
+                    lease_generation,
+                    now,
+                ),
+            )
+            if cursor.fetchone() is None:
+                raise RuntimeError("connector lease generation is stale")
+            self._durable_accept(scope, key, delivery)
 
     def register_poll_batch(
         self,
@@ -243,6 +287,8 @@ class PostgresPollingState:
         batch: PollBatch,
         *,
         expected_version: int,
+        owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> EmailPollBatchFence:
         return self._storage.register_email_poll_batch(
@@ -251,6 +297,8 @@ class PostgresPollingState:
             expected_cursor=batch.expected_cursor,
             candidate_cursor=batch.candidate_cursor,
             expected_version=expected_version,
+            owner=owner,
+            expected_lease_generation=lease_generation,
             delivery_ids=tuple(dict.fromkeys(value.delivery_id for value in batch.deliveries)),
             delivery_received_at=tuple(
                 {value.delivery_id: value.received_at for value in batch.deliveries}.values()
@@ -265,6 +313,8 @@ class PostgresPollingState:
         *,
         batch_id: str,
         expected_version: int,
+        owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> bool:
         return self._storage.finalize_email_poll_batch(
@@ -272,6 +322,8 @@ class PostgresPollingState:
             key,
             batch_id=batch_id,
             expected_version=expected_version,
+            owner=owner,
+            expected_lease_generation=lease_generation,
             now=now,
         )
 
@@ -282,6 +334,8 @@ class PostgresPollingState:
         *,
         expected_version: int,
         cursor: str | None,
+        owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> None:
         self._storage.compare_and_swap_checkpoint(
@@ -290,6 +344,8 @@ class PostgresPollingState:
             expected_version=expected_version,
             cursor=cursor,
             next_version=expected_version + 1,
+            owner=owner,
+            expected_lease_generation=lease_generation,
             now=now,
         )
 
@@ -369,7 +425,7 @@ class DurablePollingScheduler:
             )
         now = self._now()
         try:
-            self._state.acquire(
+            lease_generation = self._state.acquire(
                 self._scope,
                 self._key,
                 owner=self._worker_id,
@@ -395,14 +451,27 @@ class DurablePollingScheduler:
                     leased_cursor,
                     leased_version,
                     limit,
-                    now,
+                    lease_generation,
                 )
         finally:
-            self._state.release(
-                self._scope,
-                self._key,
-                owner=self._worker_id,
-                now=now,
+            try:
+                self._state.release(
+                    self._scope,
+                    self._key,
+                    owner=self._worker_id,
+                    lease_generation=lease_generation,
+                    now=self._now(),
+                )
+            except Exception:
+                release_failed = True
+            else:
+                release_failed = False
+        if release_failed and not result.checkpoint_advanced:
+            return PollRunResult(
+                status="retry",
+                accepted_count=result.accepted_count,
+                checkpoint_advanced=False,
+                safe_error_code="connector_lease_lost",
             )
         return result
 
@@ -411,8 +480,9 @@ class DurablePollingScheduler:
         cursor: str | None,
         version: int,
         limit: int,
-        now: datetime,
+        lease_generation: int,
     ) -> PollRunResult:
+        now = self._now()
         try:
             batch = self._poll(cursor, limit)
         except Exception:
@@ -434,6 +504,8 @@ class DurablePollingScheduler:
                     self._key,
                     batch,
                     expected_version=version,
+                    owner=self._worker_id,
+                    lease_generation=lease_generation,
                     now=now,
                 )
                 batch_id = registered.batch_id
@@ -442,13 +514,23 @@ class DurablePollingScheduler:
         try:
             for delivery in batch.deliveries:
                 if batch_id is None:
-                    self._state.accept_delivery(self._scope, self._key, delivery)
+                    self._state.accept_delivery(
+                        self._scope,
+                        self._key,
+                        delivery,
+                        owner=self._worker_id,
+                        lease_generation=lease_generation,
+                        now=self._now(),
+                    )
                 else:
                     self._state.accept_delivery(
                         self._scope,
                         self._key,
                         delivery,
                         batch_id=batch_id,
+                        owner=self._worker_id,
+                        lease_generation=lease_generation,
+                        now=self._now(),
                     )
                 accepted += 1
         except Exception:
@@ -462,7 +544,9 @@ class DurablePollingScheduler:
                     self._key,
                     batch_id=batch_id,
                     expected_version=version,
-                    now=now,
+                    owner=self._worker_id,
+                    lease_generation=lease_generation,
+                    now=self._now(),
                 )
             except Exception:
                 return self._record_failure(now, "checkpoint_conflict", paused=False)
@@ -487,7 +571,9 @@ class DurablePollingScheduler:
                     self._key,
                     expected_version=version,
                     cursor=batch.candidate_cursor,
-                    now=now,
+                    owner=self._worker_id,
+                    lease_generation=lease_generation,
+                    now=self._now(),
                 )
                 advanced = True
             except Exception:

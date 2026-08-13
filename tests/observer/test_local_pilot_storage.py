@@ -210,6 +210,7 @@ def _checkpoint_row(
     cursor_value: str | None = None,
     lease_owner: str | None = None,
     lease_expires_at: datetime | None = None,
+    lease_generation: int = 0,
 ) -> tuple[Any, ...]:
     return (
         SCOPE.site_id,
@@ -221,6 +222,7 @@ def _checkpoint_row(
         60,
         lease_owner,
         lease_expires_at,
+        lease_generation,
         None,
         None,
         "healthy",
@@ -1840,6 +1842,8 @@ def test_checkpoint_cas_rejects_stale_versions_and_never_uses_occurred_at_as_cur
         expected_version=0,
         cursor="opaque:next",
         next_version=1,
+        owner="worker-a",
+        expected_lease_generation=1,
         now=NOW,
     )
     assert checkpoint.checkpoint_version == 1
@@ -1857,6 +1861,8 @@ def test_checkpoint_cas_rejects_stale_versions_and_never_uses_occurred_at_as_cur
             expected_version=0,
             cursor="opaque:next",
             next_version=1,
+            owner="worker-a",
+            expected_lease_generation=1,
             now=NOW,
         )
 
@@ -1864,7 +1870,13 @@ def test_checkpoint_cas_rejects_stale_versions_and_never_uses_occurred_at_as_cur
 def test_connector_lease_enforces_owner_expiry_renewal_and_release() -> None:
     lease_expires = NOW + timedelta(seconds=30)
     acquire = FakeConnection(
-        [_checkpoint_row(lease_owner="worker-a", lease_expires_at=lease_expires)]
+        [
+            _checkpoint_row(
+                lease_owner="worker-a",
+                lease_expires_at=lease_expires,
+                lease_generation=1,
+            )
+        ]
     )
     repository = PostgresLocalPilotStorage(acquire)
     checkpoint = repository.acquire_connector_lease(
@@ -1875,13 +1887,16 @@ def test_connector_lease_enforces_owner_expiry_renewal_and_release() -> None:
         lease_seconds=30,
     )
     assert checkpoint.lease_owner == "worker-a"
+    assert checkpoint.lease_generation == 1
     assert "lease_expires_at <= %s" in acquire.executed[-1][0]
+    assert "lease_generation = lease_generation + 1" in acquire.executed[-1][0]
 
     renew = FakeConnection(
         [
             _checkpoint_row(
                 lease_owner="worker-a",
                 lease_expires_at=lease_expires + timedelta(seconds=30),
+                lease_generation=1,
             )
         ]
     )
@@ -1900,6 +1915,7 @@ def test_connector_lease_enforces_owner_expiry_renewal_and_release() -> None:
         SCOPE,
         KEY,
         owner="worker-a",
+        expected_lease_generation=1,
         now=NOW,
     )
     assert "lease_owner = NULL" in release.executed[-1][0]
@@ -1913,6 +1929,42 @@ def test_connector_lease_enforces_owner_expiry_renewal_and_release() -> None:
             now=NOW,
             lease_seconds=30,
         )
+
+
+def test_email_poll_batch_takeover_revokes_stale_processing_job_lease() -> None:
+    email_key = ConnectorKey("email", "sales-mailbox")
+    material = "\x1f".join((SCOPE.site_id, email_key.instance_id, "10", "11", "4", "delivery-001"))
+    digest = hashlib.sha256(material.encode()).hexdigest()
+    connection = FakeConnection(
+        [
+            (2,),
+            ("MBX-01KZQEC7B9A41Q2ZCDPFGQ7V5K", 1, NOW - timedelta(days=1)),
+            (2,),
+            (4, "10", "11", digest, 2, NOW, None),
+            [("delivery-001", None, None, None)],
+        ]
+    )
+
+    batch = PostgresLocalPilotStorage(connection).register_email_poll_batch(
+        SCOPE,
+        email_key,
+        expected_cursor="10",
+        candidate_cursor="11",
+        expected_version=4,
+        owner="poller-b",
+        expected_lease_generation=2,
+        delivery_ids=("delivery-001",),
+        delivery_received_at=(NOW,),
+        now=NOW,
+    )
+
+    assert batch.lease_generation == 2
+    revoke_sql = next(
+        sql for sql, _params in connection.executed if "connector_lease_replaced" in sql
+    )
+    assert "status = 'retry_wait'" in revoke_sql
+    assert "lease_owner = NULL" in revoke_sql
+    assert "email_poll_batch_deliveries" in revoke_sql
 
 
 def test_nonce_is_hashed_consumed_once_and_requires_future_expiry() -> None:
@@ -2095,6 +2147,8 @@ def test_health_query_returns_sanitized_site_scoped_status_only() -> None:
                 expected_version=2,
                 cursor="opaque",
                 next_version=2,
+                owner="worker-a",
+                expected_lease_generation=1,
                 now=NOW,
             ),
             "next_version",

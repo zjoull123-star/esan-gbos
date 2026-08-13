@@ -22,10 +22,16 @@ DELIVERY = RawDelivery(
 
 
 class FakePollingState:
-    def __init__(self, *, fail_accept: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_accept: bool = False,
+        fail_release: bool = False,
+    ) -> None:
         self.cursor: str | None = "10"
         self.version = 3
         self.fail_accept = fail_accept
+        self.fail_release = fail_release
         self.advanced: list[tuple[int, str | None]] = []
         self.health: list[tuple[str, str | None]] = []
         self.leases: list[str] = []
@@ -38,9 +44,10 @@ class FakePollingState:
         owner: str,
         now: datetime,
         lease_seconds: int,
-    ) -> None:
+    ) -> int:
         assert scope == SCOPE and key == KEY and now == NOW and lease_seconds == 60
         self.leases.append(f"acquire:{owner}")
+        return 7
 
     def release(
         self,
@@ -48,10 +55,13 @@ class FakePollingState:
         key: ConnectorKey,
         *,
         owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> None:
-        assert scope == SCOPE and key == KEY and now == NOW
+        assert scope == SCOPE and key == KEY and now == NOW and lease_generation == 7
         self.leases.append(f"release:{owner}")
+        if self.fail_release:
+            raise RuntimeError("lease generation replaced")
 
     def load_checkpoint(
         self,
@@ -66,8 +76,13 @@ class FakePollingState:
         scope: TenantScope,
         key: ConnectorKey,
         delivery: RawDelivery,
+        *,
+        owner: str,
+        lease_generation: int,
+        now: datetime,
     ) -> None:
         assert scope == SCOPE and key == KEY and delivery == DELIVERY
+        assert owner == "poller-1" and lease_generation == 7 and now == NOW
         if self.fail_accept:
             raise RuntimeError("disk unavailable")
 
@@ -78,9 +93,11 @@ class FakePollingState:
         *,
         expected_version: int,
         cursor: str | None,
+        owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> None:
-        assert now == NOW
+        assert now == NOW and owner == "poller-1" and lease_generation == 7
         self.advanced.append((expected_version, cursor))
 
     def update_health(
@@ -153,3 +170,26 @@ def test_postgres_polling_state_is_composed_from_storage_and_acceptor() -> None:
 
     assert "connection=<redacted>" in repr(state)
     assert "storage=<redacted>" in repr(state)
+
+
+def test_takeover_during_release_is_retryable_not_an_uncaught_worker_crash() -> None:
+    state = FakePollingState(fail_release=True)
+    scheduler = DurablePollingScheduler(
+        state=state,
+        poll=lambda cursor, limit: PollBatch(
+            disposition=PollDisposition.OK,
+            expected_cursor=cursor,
+            candidate_cursor=cursor,
+            deliveries=(),
+        ),
+        scope=SCOPE,
+        key=KEY,
+        clock=lambda: NOW,
+        worker_id="poller-1",
+    )
+
+    result = scheduler.run_once(limit=10)
+
+    assert result.status == "retry"
+    assert result.safe_error_code == "connector_lease_lost"
+    assert result.checkpoint_advanced is False

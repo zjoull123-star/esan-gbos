@@ -190,9 +190,11 @@ class _OfflineObserverState:
         self.accepted_refs: dict[str, str] = {}
         self.quarantined: dict[str, str] = {}
         self.health: list[tuple[str, str | None]] = []
+        self.lease_generation = 0
 
-    def acquire(self, *_: object, **__: object) -> None:
-        return None
+    def acquire(self, *_: object, **__: object) -> int:
+        self.lease_generation += 1
+        return self.lease_generation
 
     def release(self, *_: object, **__: object) -> None:
         return None
@@ -207,14 +209,19 @@ class _OfflineObserverState:
         batch: PollBatch,
         *,
         expected_version: int,
+        owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> EmailPollBatchFence:
+        assert owner == "offline-email-poller"
+        assert lease_generation == self.lease_generation
         return self.fence.register(
             scope,
             key,
             expected_cursor=batch.expected_cursor,
             candidate_cursor=batch.candidate_cursor,
             expected_version=expected_version,
+            lease_generation=lease_generation,
             delivery_ids=tuple(item.delivery_id for item in batch.deliveries),
             now=now,
         )
@@ -226,8 +233,14 @@ class _OfflineObserverState:
         delivery: RawDelivery,
         *,
         batch_id: str | None = None,
+        owner: str,
+        lease_generation: int,
+        now: datetime,
     ) -> None:
         assert batch_id is not None
+        assert owner == "offline-email-poller"
+        assert lease_generation == self.lease_generation
+        assert now == NOW
         stored = self.cas.put(scope, delivery.exact_bytes, media_type=delivery.media_type)
         self.accepted_refs[delivery.delivery_id] = stored.object_ref
         if self.crash_once:
@@ -266,6 +279,7 @@ class _OfflineObserverState:
                 batch_id=batch_id,
                 delivery_id=delivery.delivery_id,
                 terminal_ref=quarantine_ref,
+                lease_generation=lease_generation,
                 now=NOW,
             )
             return
@@ -275,6 +289,7 @@ class _OfflineObserverState:
             batch_id=batch_id,
             delivery_id=delivery.delivery_id,
             terminal_ref=publication.publication_id,
+            lease_generation=lease_generation,
             now=NOW,
         )
 
@@ -285,13 +300,18 @@ class _OfflineObserverState:
         *,
         batch_id: str,
         expected_version: int,
+        owner: str,
+        lease_generation: int,
         now: datetime,
     ) -> bool:
+        assert owner == "offline-email-poller"
+        assert lease_generation == self.lease_generation
         finalized = self.fence.finalize(
             scope,
             key,
             batch_id=batch_id,
             expected_version=expected_version,
+            lease_generation=lease_generation,
             now=now,
         )
         if finalized:

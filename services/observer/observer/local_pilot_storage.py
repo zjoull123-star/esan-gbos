@@ -55,7 +55,7 @@ _DELIVERY_COLUMNS = """
 _CHECKPOINT_COLUMNS = """
     site_id, connector, connector_instance_id, checkpoint_id, cursor_value,
     checkpoint_version, replay_window_seconds, lease_owner, lease_expires_at,
-    last_success_at, last_error_code, status, updated_at
+    lease_generation, last_success_at, last_error_code, status, updated_at
 """
 _OUTBOX_COLUMNS = """
     site_id, outbox_id, observation_event_id, idempotency_key, payload_digest,
@@ -161,6 +161,7 @@ class ConnectorCheckpointMetadata:
     replay_window_seconds: int
     lease_owner: str | None
     lease_expires_at: datetime | None
+    lease_generation: int
     last_success_at: datetime | None
     last_error_code: str | None
     status: str
@@ -497,6 +498,7 @@ class LocalPilotStorage(Protocol):
         key: ConnectorKey,
         *,
         owner: str,
+        expected_lease_generation: int,
         now: datetime,
     ) -> ConnectorCheckpointMetadata: ...
 
@@ -508,6 +510,8 @@ class LocalPilotStorage(Protocol):
         expected_version: int,
         cursor: str | None,
         next_version: int,
+        owner: str,
+        expected_lease_generation: int,
         now: datetime,
     ) -> ConnectorCheckpointMetadata: ...
 
@@ -519,6 +523,8 @@ class LocalPilotStorage(Protocol):
         expected_cursor: str | None,
         candidate_cursor: str | None,
         expected_version: int,
+        owner: str,
+        expected_lease_generation: int,
         delivery_ids: tuple[str, ...],
         delivery_received_at: tuple[datetime, ...],
         now: datetime,
@@ -531,6 +537,8 @@ class LocalPilotStorage(Protocol):
         *,
         batch_id: str,
         expected_version: int,
+        owner: str,
+        expected_lease_generation: int,
         now: datetime,
     ) -> bool: ...
 
@@ -1192,18 +1200,27 @@ class PostgresLocalPilotStorage:
                     JOIN observer.email_poll_batch_deliveries AS member
                       ON member.site_id = batch.site_id
                      AND member.batch_id = batch.batch_id
+                    JOIN observer.connector_checkpoints AS checkpoint
+                      ON checkpoint.site_id = batch.site_id
+                     AND checkpoint.connector = batch.connector
+                     AND checkpoint.connector_instance_id =
+                         batch.connector_instance_id
                     WHERE batch.site_id = %s
                       AND batch.connector = 'email'
                       AND batch.connector_instance_id = %s
                       AND member.delivery_id = %s
-                    ORDER BY batch.created_at, batch.batch_id
+                      AND batch.connector_lease_generation =
+                          checkpoint.lease_generation
+                    ORDER BY batch.created_at DESC, batch.batch_id DESC
                     LIMIT 1
+                    FOR SHARE OF batch, checkpoint
                     """,
                     (scope.site_id, key.instance_id, delivery.delivery_id),
                 )
                 projection_row = cursor.fetchone()
-                if projection_row is not None:
-                    email_projection = (str(projection_row[0]), int(projection_row[1]))
+                if projection_row is None:
+                    raise NormalizedBatchConflict("email_poll_batch_lease_stale")
+                email_projection = (str(projection_row[0]), int(projection_row[1]))
 
             provider_event_ids = tuple(item.provider_event_id for item in items)
             normalized_lock_keys = [
@@ -1542,6 +1559,21 @@ class PostgresLocalPilotStorage:
                           AND connector_instance_id = %s
                           AND delivery_id = %s
                           AND terminal_kind IS NULL
+                          AND EXISTS (
+                              SELECT 1
+                              FROM observer.email_poll_batches AS batch
+                              JOIN observer.connector_checkpoints AS checkpoint
+                                ON checkpoint.site_id = batch.site_id
+                               AND checkpoint.connector = batch.connector
+                               AND checkpoint.connector_instance_id =
+                                   batch.connector_instance_id
+                              WHERE batch.site_id =
+                                    email_poll_batch_deliveries.site_id
+                                AND batch.batch_id =
+                                    email_poll_batch_deliveries.batch_id
+                                AND batch.connector_lease_generation =
+                                    checkpoint.lease_generation
+                          )
                         """,
                         (
                             hashlib.sha256(publication.publication_id.encode()).hexdigest(),
@@ -1945,20 +1977,42 @@ class PostgresLocalPilotStorage:
             self._set_site(cursor, scope)
             cursor.execute(
                 f"""
-                UPDATE observer.processing_jobs
+                UPDATE observer.processing_jobs AS job
                 SET status = 'quarantined',
                     lease_owner = NULL,
                     lease_expires_at = NULL,
                     next_retry_at = NULL,
                     last_error_code = %s,
                     updated_at = %s
-                WHERE site_id = %s
-                  AND job_id = %s
-                  AND status = 'processing'
-                  AND lease_owner = %s
-                  AND attempt_count = %s
-                  AND lease_generation = %s
-                  AND lease_expires_at > %s
+                WHERE job.site_id = %s
+                  AND job.job_id = %s
+                  AND job.status = 'processing'
+                  AND job.lease_owner = %s
+                  AND job.attempt_count = %s
+                  AND job.lease_generation = %s
+                  AND job.lease_expires_at > %s
+                  AND (
+                      job.connector <> 'email'
+                      OR EXISTS (
+                          SELECT 1
+                          FROM observer.email_poll_batch_deliveries AS member
+                          JOIN observer.email_poll_batches AS batch
+                            ON batch.site_id = member.site_id
+                           AND batch.batch_id = member.batch_id
+                          JOIN observer.connector_checkpoints AS checkpoint
+                            ON checkpoint.site_id = batch.site_id
+                           AND checkpoint.connector = batch.connector
+                           AND checkpoint.connector_instance_id =
+                               batch.connector_instance_id
+                          WHERE member.site_id = job.site_id
+                            AND member.connector_instance_id =
+                                job.connector_instance_id
+                            AND member.delivery_id = job.delivery_id
+                            AND batch.connector_lease_generation =
+                                checkpoint.lease_generation
+                          FOR SHARE OF batch, checkpoint
+                      )
+                  )
                 RETURNING {_JOB_COLUMNS}
                 """,
                 (
@@ -2012,6 +2066,21 @@ class PostgresLocalPilotStorage:
                       AND connector_instance_id = %s
                       AND delivery_id = %s
                       AND terminal_kind IS NULL
+                      AND EXISTS (
+                          SELECT 1
+                          FROM observer.email_poll_batches AS batch
+                          JOIN observer.connector_checkpoints AS checkpoint
+                            ON checkpoint.site_id = batch.site_id
+                           AND checkpoint.connector = batch.connector
+                           AND checkpoint.connector_instance_id =
+                               batch.connector_instance_id
+                          WHERE batch.site_id =
+                                email_poll_batch_deliveries.site_id
+                            AND batch.batch_id =
+                                email_poll_batch_deliveries.batch_id
+                            AND batch.connector_lease_generation =
+                                checkpoint.lease_generation
+                      )
                     """,
                     (
                         hashlib.sha256(quarantine_id.encode()).hexdigest(),
@@ -2308,10 +2377,15 @@ class PostgresLocalPilotStorage:
         key: ConnectorKey,
         *,
         owner: str,
+        expected_lease_generation: int,
         now: datetime,
     ) -> ConnectorCheckpointMetadata:
         _validate_scope_key(scope, key)
         _require_identifier(owner, "owner")
+        _require_positive_generation(
+            expected_lease_generation,
+            "expected_lease_generation",
+        )
         _require_aware(now, "now")
         with self._connection.transaction(), self._connection.cursor() as cursor:
             self._set_site(cursor, scope)
@@ -2323,9 +2397,19 @@ class PostgresLocalPilotStorage:
                   AND connector = %s
                   AND connector_instance_id = %s
                   AND lease_owner = %s
+                  AND lease_generation = %s
+                  AND lease_expires_at > %s
                 RETURNING {_CHECKPOINT_COLUMNS}
                 """,
-                (now, scope.site_id, key.connector, key.instance_id, owner),
+                (
+                    now,
+                    scope.site_id,
+                    key.connector,
+                    key.instance_id,
+                    owner,
+                    expected_lease_generation,
+                    now,
+                ),
             )
             row = cursor.fetchone()
             if row is None:
@@ -2340,6 +2424,8 @@ class PostgresLocalPilotStorage:
         expected_version: int,
         cursor: str | None,
         next_version: int,
+        owner: str,
+        expected_lease_generation: int,
         now: datetime,
     ) -> ConnectorCheckpointMetadata:
         _validate_scope_key(scope, key)
@@ -2349,6 +2435,11 @@ class PostgresLocalPilotStorage:
             raise ValueError("next_version must increment expected_version by one")
         if cursor is not None and (not isinstance(cursor, str) or len(cursor) > 4096):
             raise ValueError("cursor must be an opaque string up to 4096 characters")
+        _require_identifier(owner, "owner")
+        _require_positive_generation(
+            expected_lease_generation,
+            "expected_lease_generation",
+        )
         _require_aware(now, "now")
         with self._connection.transaction(), self._connection.cursor() as db_cursor:
             self._set_site(db_cursor, scope)
@@ -2360,6 +2451,9 @@ class PostgresLocalPilotStorage:
                   AND connector = %s
                   AND connector_instance_id = %s
                   AND checkpoint_version = %s
+                  AND lease_owner = %s
+                  AND lease_generation = %s
+                  AND lease_expires_at > %s
                 RETURNING {_CHECKPOINT_COLUMNS}
                 """,
                 (
@@ -2370,6 +2464,9 @@ class PostgresLocalPilotStorage:
                     key.connector,
                     key.instance_id,
                     expected_version,
+                    owner,
+                    expected_lease_generation,
+                    now,
                 ),
             )
             row = db_cursor.fetchone()
@@ -2385,6 +2482,8 @@ class PostgresLocalPilotStorage:
         expected_cursor: str | None,
         candidate_cursor: str | None,
         expected_version: int,
+        owner: str,
+        expected_lease_generation: int,
         delivery_ids: tuple[str, ...],
         delivery_received_at: tuple[datetime, ...],
         now: datetime,
@@ -2395,6 +2494,11 @@ class PostgresLocalPilotStorage:
         _require_aware(now, "now")
         if isinstance(expected_version, bool) or expected_version < 0:
             raise ValueError("invalid expected checkpoint version")
+        _require_identifier(owner, "owner")
+        _require_positive_generation(
+            expected_lease_generation,
+            "expected_lease_generation",
+        )
         if not delivery_ids or len(delivery_ids) > 1_000:
             raise ValueError("email poll batch requires bounded deliveries")
         if len(delivery_ids) != len(set(delivery_ids)):
@@ -2421,6 +2525,28 @@ class PostgresLocalPilotStorage:
             self._set_site(cursor, scope)
             cursor.execute(
                 """
+                SELECT lease_generation
+                FROM observer.connector_checkpoints
+                WHERE site_id = %s
+                  AND connector = 'email'
+                  AND connector_instance_id = %s
+                  AND lease_owner = %s
+                  AND lease_generation = %s
+                  AND lease_expires_at > %s
+                FOR UPDATE
+                """,
+                (
+                    scope.site_id,
+                    key.instance_id,
+                    owner,
+                    expected_lease_generation,
+                    now,
+                ),
+            )
+            if cursor.fetchone() is None:
+                raise LeaseConflict("email poll batch connector lease is stale")
+            cursor.execute(
+                """
                 SELECT mailbox_id, mailbox_config_revision, activation_not_before
                 FROM observer.email_connector_config_projections
                 WHERE site_id = %s
@@ -2443,10 +2569,10 @@ class PostgresLocalPilotStorage:
                     site_id, batch_id, connector, connector_instance_id,
                     mailbox_id, mailbox_config_revision,
                     expected_checkpoint_version, expected_cursor, candidate_cursor,
-                    batch_digest, status, created_at
+                    batch_digest, connector_lease_generation, status, created_at
                 ) VALUES (
                     %s, %s, 'email', %s, %s, %s,
-                    %s, %s, %s, %s, 'open', %s
+                    %s, %s, %s, %s, %s, 'open', %s
                 )
                 ON CONFLICT (site_id, batch_id) DO NOTHING
                 """,
@@ -2460,6 +2586,7 @@ class PostgresLocalPilotStorage:
                     expected_cursor,
                     candidate_cursor,
                     batch_digest,
+                    expected_lease_generation,
                     now,
                 ),
             )
@@ -2476,15 +2603,68 @@ class PostgresLocalPilotStorage:
                 )
             cursor.execute(
                 """
+                UPDATE observer.email_poll_batches
+                SET connector_lease_generation = %s
+                WHERE site_id = %s
+                  AND batch_id = %s
+                  AND status = 'open'
+                  AND connector_lease_generation < %s
+                RETURNING connector_lease_generation
+                """,
+                (
+                    expected_lease_generation,
+                    scope.site_id,
+                    batch_id,
+                    expected_lease_generation,
+                ),
+            )
+            if cursor.fetchone() is not None:
+                cursor.execute(
+                    """
+                    UPDATE observer.processing_jobs AS job
+                    SET status = 'retry_wait',
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
+                        next_retry_at = %s,
+                        last_error_code = 'connector_lease_replaced',
+                        updated_at = %s
+                    WHERE job.site_id = %s
+                      AND job.connector = 'email'
+                      AND job.connector_instance_id = %s
+                      AND job.status = 'processing'
+                      AND EXISTS (
+                          SELECT 1
+                          FROM observer.email_poll_batch_deliveries AS member
+                          WHERE member.site_id = job.site_id
+                            AND member.batch_id = %s
+                            AND member.connector_instance_id =
+                                job.connector_instance_id
+                            AND member.delivery_id = job.delivery_id
+                      )
+                    """,
+                    (
+                        now,
+                        now,
+                        scope.site_id,
+                        key.instance_id,
+                        batch_id,
+                    ),
+                )
+            cursor.execute(
+                """
                 SELECT expected_checkpoint_version, expected_cursor, candidate_cursor,
-                       batch_digest, created_at, finalized_at
+                       batch_digest, connector_lease_generation, created_at, finalized_at
                 FROM observer.email_poll_batches
                 WHERE site_id = %s AND batch_id = %s
                 """,
                 (scope.site_id, batch_id),
             )
             row = cursor.fetchone()
-            if row is None or str(row[3]) != batch_digest:
+            if (
+                row is None
+                or str(row[3]) != batch_digest
+                or int(row[4]) != expected_lease_generation
+            ):
                 raise EmailCheckpointFenceConflict("poll_batch_replay_drift")
             cursor.execute(
                 """
@@ -2513,9 +2693,10 @@ class PostgresLocalPilotStorage:
             expected_cursor=None if row[1] is None else str(row[1]),
             candidate_cursor=None if row[2] is None else str(row[2]),
             expected_version=int(row[0]),
+            lease_generation=int(row[4]),
             members=members,
-            created_at=row[4],
-            finalized_at=row[5],
+            created_at=row[5],
+            finalized_at=row[6],
         )
 
     def finalize_email_poll_batch(
@@ -2525,16 +2706,46 @@ class PostgresLocalPilotStorage:
         *,
         batch_id: str,
         expected_version: int,
+        owner: str,
+        expected_lease_generation: int,
         now: datetime,
     ) -> bool:
         _validate_scope_key(scope, key)
         _require_identifier(batch_id, "batch_id", maximum=80)
+        _require_identifier(owner, "owner")
+        _require_positive_generation(
+            expected_lease_generation,
+            "expected_lease_generation",
+        )
         _require_aware(now, "now")
         with self._connection.transaction(), self._connection.cursor() as cursor:
             self._set_site(cursor, scope)
             cursor.execute(
                 """
-                SELECT candidate_cursor, expected_checkpoint_version, status
+                SELECT lease_generation
+                FROM observer.connector_checkpoints
+                WHERE site_id = %s
+                  AND connector = 'email'
+                  AND connector_instance_id = %s
+                  AND lease_owner = %s
+                  AND lease_generation = %s
+                  AND lease_expires_at > %s
+                FOR UPDATE
+                """,
+                (
+                    scope.site_id,
+                    key.instance_id,
+                    owner,
+                    expected_lease_generation,
+                    now,
+                ),
+            )
+            if cursor.fetchone() is None:
+                return False
+            cursor.execute(
+                """
+                SELECT candidate_cursor, expected_checkpoint_version, status,
+                       connector_lease_generation
                 FROM observer.email_poll_batches
                 WHERE site_id = %s AND batch_id = %s
                   AND connector = 'email' AND connector_instance_id = %s
@@ -2543,7 +2754,11 @@ class PostgresLocalPilotStorage:
                 (scope.site_id, batch_id, key.instance_id),
             )
             batch = cursor.fetchone()
-            if batch is None or int(batch[1]) != expected_version:
+            if (
+                batch is None
+                or int(batch[1]) != expected_version
+                or int(batch[3]) != expected_lease_generation
+            ):
                 return False
             if str(batch[2]) == "finalized":
                 return True
@@ -2567,9 +2782,21 @@ class PostgresLocalPilotStorage:
                 WHERE site_id = %s AND connector = 'email'
                   AND connector_instance_id = %s
                   AND checkpoint_version = %s
+                  AND lease_owner = %s
+                  AND lease_generation = %s
+                  AND lease_expires_at > %s
                 RETURNING checkpoint_version
                 """,
-                (batch[0], now, scope.site_id, key.instance_id, expected_version),
+                (
+                    batch[0],
+                    now,
+                    scope.site_id,
+                    key.instance_id,
+                    expected_version,
+                    owner,
+                    expected_lease_generation,
+                    now,
+                ),
             )
             if cursor.fetchone() is None:
                 return False
@@ -3225,9 +3452,11 @@ class PostgresLocalPilotStorage:
         if operation == "acquire":
             lease_predicate = "(lease_owner IS NULL OR lease_expires_at <= %s OR lease_owner = %s)"
             predicate_params: tuple[object, ...] = (now, owner)
+            generation_assignment = "lease_generation = lease_generation + 1,"
         elif operation == "renew":
             lease_predicate = "lease_owner = %s AND lease_expires_at > %s"
             predicate_params = (owner, now)
+            generation_assignment = ""
         else:
             raise RuntimeError("unknown lease operation")
         with self._connection.transaction(), self._connection.cursor() as cursor:
@@ -3235,7 +3464,10 @@ class PostgresLocalPilotStorage:
             cursor.execute(
                 f"""
                 UPDATE observer.connector_checkpoints
-                SET lease_owner = %s, lease_expires_at = %s, updated_at = %s
+                SET lease_owner = %s,
+                    lease_expires_at = %s,
+                    {generation_assignment}
+                    updated_at = %s
                 WHERE site_id = %s
                   AND connector = %s
                   AND connector_instance_id = %s
@@ -3371,10 +3603,11 @@ def _checkpoint_from_row(row: tuple[object, ...]) -> ConnectorCheckpointMetadata
         replay_window_seconds=_as_int(row[6], "replay_window_seconds"),
         lease_owner=None if row[7] is None else str(row[7]),
         lease_expires_at=row[8],  # type: ignore[arg-type]
-        last_success_at=row[9],  # type: ignore[arg-type]
-        last_error_code=None if row[10] is None else str(row[10]),
-        status=str(row[11]),
-        updated_at=row[12],  # type: ignore[arg-type]
+        lease_generation=_as_int(row[9], "lease_generation"),
+        last_success_at=row[10],  # type: ignore[arg-type]
+        last_error_code=None if row[11] is None else str(row[11]),
+        status=str(row[12]),
+        updated_at=row[13],  # type: ignore[arg-type]
     )
 
 
@@ -3714,6 +3947,11 @@ def _require_identifier(value: str | None, field_name: str, *, maximum: int = 25
 def _require_lease_seconds(lease_seconds: int) -> None:
     if not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= _MAX_LEASE_SECONDS:
         raise ValueError("lease_seconds must be a positive bounded integer")
+
+
+def _require_positive_generation(value: int, field_name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{field_name} must be a positive integer")
 
 
 def _require_attempts(max_attempts: int) -> None:
