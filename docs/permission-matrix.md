@@ -38,7 +38,7 @@ Legend: **允许** = 仅在列出的条件下；**审批** = 可提交申请但�
 | Privacy/Audit | 只读审计、分类、同意、保留与删除回执 | 按审计目的只读最小证据 | 只读 | 所有业务写拒绝；只读连接审计 | 可生成受控审计报告，不修改业务 |
 | CEO | 通过封闭自动角色包读取本 site 全局汇总及业务对象 | 默认拒绝原始证据 | 按 `Reviewer` / `GBOS Admin` 的受控规则处理审核，不能绕过 pinned case、revision 或审计 | Gate 5 正式指标只经 Metrics API；Kingdee 拒绝写 | 通过 `Integration Admin` 管理连接状态、开关与健康；不能从 UI 读取秘钥；受控汇总导出 |
 | Sales Manager | 所管理团队的客户、Deal、样品和工作项 | 仅关联业务所需最小字段 | 可创建草稿、退回团队草稿 | Deal 阶段等仍走人工命令；Kingdee 拒绝写 | 无连接配置；团队范围导出需审批 |
-| Sales User | 自己或所属团队的客户、Deal、样品和工作项 | 仅关联业务所需最小字段，不得批量导出 | 可创建/修改 AI Draft，不得批准 | 不能自动改 Deal 阶段、Won/Lost、报价或外发；Kingdee 拒绝写 | 拒绝配置；按审批导出 |
+| Sales User | 自己或所属团队的客户、Deal、样品和工作项 | 仅关联业务所需最小字段，不得批量导出 | 可创建/修改 AI Draft；仅可在 `email_send_owner_v1` 专用 Review Case 中行使 delegated current-owner approval；no general approval authority | 不能直接写 Send Outbox，不能自动改 Deal 阶段、Won/Lost、报价或外发；Kingdee 拒绝写 | 拒绝配置；按审批导出 |
 | Purchase Manager | 采购协同及获授权的客户需求摘要；所管理采购团队 | 默认拒绝客户原始通信 | 可退回采购草稿或处理被分配审核 | 最终供应商选择须人工命令；Kingdee 拒绝写 | 拒绝连接配置；采购范围导出需审批 |
 | Buyer | 采购协同及获授权需求摘要 | 默认拒绝客户原始通信 | 可录入候选供应商和创建草稿，不得最终批准 | 不能发布订单或写 Kingdee | 拒绝配置；按审批导出 |
 | Product/R&D | Product Brief、样品迭代、寄样和反馈摘要 | 只读与样品直接关联的最小证据 | 可创建/修改样品草稿，不得越权批准 | 不能承诺价格、交期或外发；Kingdee 拒绝写 | 拒绝配置；按审批导出 |
@@ -63,6 +63,9 @@ checked-in manifest、真实渠道、真实模型、Kingdee、cloud 与 producti
 | `gbos-bff-service` | 4 | 在委托用户、Review Case、revision、幂等键和 Action Guard 均有效时执行白名单 GBOS 内部命令 | 不浏览 Restricted 原文；不代理任意 DocType/SQL；无 Kingdee 写工具 |
 | `metrics-service` | 5 | 读取已治理 workflow/read projection 并返回带 definition、lineage、freshness、coverage、reconciliation 的指标 | 不读取未确认 Fact/AI Draft，不执行任意 SQL，不把模型估算作为正式 KPI |
 | `kingdee-adapter` | 5 | 使用独立受限身份和 `kingdee-read` scope 查询 metadata 与白名单只读投影 | 无 Kingdee 写工具；不接受 raw Form/字段/SQL/URL，不共享用户或模型 token |
+| `Email Command Publication Consumer` | 4 | 仅通过闭合 Frappe publication API claim/heartbeat/ack/release，并通过专用 Gateway command-ingest API 传递已冻结命令 | no System Manager or broad DocPerm；无数据库、provider secret、草稿读取、审批或发送能力 |
+| `email-command-executor` | 4 | 在 specialized Action Guard 与 live authority recheck 通过后消费命令；only command-executor may insert Send Outbox | 无 provider secret，不发送、不签发批准、不接受 PWA/BFF 直写 |
+| `email-send-worker` | 4 | 仅领取已存在的 Send Outbox，追加 attempt/receipt，并在允许时调用固定 provider adapter | send worker cannot approve or create Send Outbox；无 Frappe/Review Case 写权限，不继承 System Manager |
 
 当前 Frappe 服务身份使用固定用户和单一服务角色，均为 `desk_access=0`，凭据只从
 repository-external `0600` 文件装载：`gbos-identity-resolver@localhost.invalid`
@@ -73,6 +76,12 @@ repository-external `0600` 文件装载：`gbos-identity-resolver@localhost.inva
 任何服务身份新增 scope、跨 site 访问或外部出站目标，均需要重新更新本矩阵、
 威胁模型、负向测试和变更审批。服务身份不能审批自己的提案，也不能将
 `controlled_by_disabled_capability` 解释为运行时安全已经通过。
+
+邮件外发的 PWA、BFF、通用 Gateway API 和普通数据库角色均无 Send Outbox
+INSERT/UPDATE 权限；批准、命令发布、命令执行和 provider attempt 使用分离身份。
+任一 revision/authority/digest 漂移、审批过期、不确定 provider 结果或 emergency stop
+都 fail closed；未知结果必须对账，禁止盲重试。checked-in manifest 的 external send
+继续为 false。
 
 ## 不可绕过的限制
 

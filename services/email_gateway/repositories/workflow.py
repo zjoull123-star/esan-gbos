@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from threading import RLock
 from typing import Any
 
@@ -22,7 +23,11 @@ from .audit import PostgresAuditRepository
 
 
 class InMemoryWorkflowRepository:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        transaction_failure_injector: Callable[[str], None] | None = None,
+    ) -> None:
         self._inbox: dict[tuple[str, str], InboxItem] = {}
         self._suggestions: dict[tuple[str, str], ThreadSuggestion] = {}
         self._conversations: dict[tuple[str, str], Conversation] = {}
@@ -30,6 +35,7 @@ class InMemoryWorkflowRepository:
         self._drafts: dict[tuple[str, str], Draft] = {}
         self._audit: list[AuditEvent] = []
         self._idempotency: dict[tuple[str, str], tuple[str, object]] = {}
+        self._transaction_failure_injector = transaction_failure_injector
         self._lock = RLock()
 
     def save_inbox(self, scope: TenantScope, inbox: InboxItem) -> InboxItem:
@@ -40,6 +46,46 @@ class InMemoryWorkflowRepository:
 
     def get_inbox(self, scope: TenantScope, inbox_ref: str) -> InboxItem | None:
         return self._inbox.get((scope.site_id, inbox_ref))
+
+    def apply_inbox_operation(
+        self,
+        scope: TenantScope,
+        *,
+        before: InboxItem,
+        revised: InboxItem,
+        audit_event: AuditEvent,
+        idempotency_key: str,
+        payload_digest: str,
+    ) -> InboxItem:
+        require_scope(scope, site_id=before.site_id)
+        require_scope(scope, site_id=revised.site_id)
+        require_scope(scope, site_id=audit_event.site_id)
+        replay_key = (scope.site_id, idempotency_key)
+        inbox_key = (scope.site_id, before.inbox_item_ref)
+        with self._lock:
+            replay = self._idempotency.get(replay_key)
+            if replay is not None:
+                prior_digest, result = replay
+                if prior_digest != payload_digest or not isinstance(result, InboxItem):
+                    raise IdempotencyConflict("workflow idempotency drift")
+                return result
+            current = self._inbox.get(inbox_key)
+            if current != before or revised.revision != before.revision + 1:
+                raise RevisionConflict("inbox revision conflict")
+            audit_length = len(self._audit)
+            try:
+                self._inbox[inbox_key] = revised
+                self._fail("after_inbox_write")
+                self._audit.append(audit_event)
+                self._fail("after_audit_write")
+                self._idempotency[replay_key] = (payload_digest, revised)
+                self._fail("after_idempotency_write")
+            except Exception:
+                self._inbox[inbox_key] = before
+                del self._audit[audit_length:]
+                self._idempotency.pop(replay_key, None)
+                raise
+            return revised
 
     def save_suggestion(self, scope: TenantScope, suggestion: ThreadSuggestion) -> ThreadSuggestion:
         require_scope(scope, site_id=suggestion.site_id)
@@ -53,6 +99,10 @@ class InMemoryWorkflowRepository:
     def save_conversation(self, scope: TenantScope, conversation: Conversation) -> Conversation:
         require_scope(scope, site_id=conversation.site_id)
         with self._lock:
+            for inbox_ref in conversation.inbox_item_refs:
+                owner = self._conversation_by_inbox.get((scope.site_id, inbox_ref))
+                if owner is not None and owner != conversation.conversation_ref:
+                    raise RevisionConflict("conversation member already owned")
             self._conversations[(scope.site_id, conversation.conversation_ref)] = conversation
             for inbox_ref in conversation.inbox_item_refs:
                 self._conversation_by_inbox[(scope.site_id, inbox_ref)] = (
@@ -65,6 +115,96 @@ class InMemoryWorkflowRepository:
         if conversation_ref is None:
             return None
         return self._conversations[(scope.site_id, conversation_ref)]
+
+    def get_conversation(self, scope: TenantScope, conversation_ref: str) -> Conversation | None:
+        return self._conversations.get((scope.site_id, conversation_ref))
+
+    def split_conversation(
+        self,
+        scope: TenantScope,
+        *,
+        source_before: Conversation,
+        source_revised: Conversation,
+        split: Conversation,
+        audit_event: AuditEvent,
+        idempotency_key: str,
+        payload_digest: str,
+    ) -> Conversation:
+        for item in (source_before, source_revised, split):
+            require_scope(scope, site_id=item.site_id)
+        require_scope(scope, site_id=audit_event.site_id)
+        replay_key = (scope.site_id, idempotency_key)
+        source_key = (scope.site_id, source_before.conversation_ref)
+        split_key = (scope.site_id, split.conversation_ref)
+        with self._lock:
+            replay = self._idempotency.get(replay_key)
+            if replay is not None:
+                prior_digest, result = replay
+                if prior_digest != payload_digest or not isinstance(result, Conversation):
+                    raise IdempotencyConflict("workflow idempotency drift")
+                return result
+            current = self._conversations.get(source_key)
+            self._validate_split(current, source_before, source_revised, split)
+            prior_map = {
+                (scope.site_id, inbox_ref): self._conversation_by_inbox.get(
+                    (scope.site_id, inbox_ref)
+                )
+                for inbox_ref in source_before.inbox_item_refs
+            }
+            audit_length = len(self._audit)
+            try:
+                self._conversations[source_key] = source_revised
+                self._fail("after_split_source_write")
+                self._conversations[split_key] = split
+                for inbox_ref in source_revised.inbox_item_refs:
+                    self._conversation_by_inbox[(scope.site_id, inbox_ref)] = (
+                        source_revised.conversation_ref
+                    )
+                for inbox_ref in split.inbox_item_refs:
+                    self._conversation_by_inbox[(scope.site_id, inbox_ref)] = split.conversation_ref
+                self._fail("after_split_new_write")
+                self._audit.append(audit_event)
+                self._idempotency[replay_key] = (payload_digest, split)
+                self._fail("after_split_receipt_write")
+            except Exception:
+                self._conversations[source_key] = source_before
+                self._conversations.pop(split_key, None)
+                for key, owner in prior_map.items():
+                    if owner is None:
+                        self._conversation_by_inbox.pop(key, None)
+                    else:
+                        self._conversation_by_inbox[key] = owner
+                del self._audit[audit_length:]
+                self._idempotency.pop(replay_key, None)
+                raise
+            return split
+
+    @staticmethod
+    def _validate_split(
+        current: Conversation | None,
+        source_before: Conversation,
+        source_revised: Conversation,
+        split: Conversation,
+    ) -> None:
+        if current != source_before:
+            raise RevisionConflict("conversation revision conflict")
+        before_members = set(source_before.inbox_item_refs)
+        source_members = set(source_revised.inbox_item_refs)
+        split_members = set(split.inbox_item_refs)
+        if (
+            source_revised.conversation_ref != source_before.conversation_ref
+            or source_revised.revision != source_before.revision + 1
+            or split.revision != 1
+            or not source_members
+            or not split_members
+            or source_members & split_members
+            or source_members | split_members != before_members
+        ):
+            raise RevisionConflict("invalid conversation split revision")
+
+    def _fail(self, phase: str) -> None:
+        if self._transaction_failure_injector is not None:
+            self._transaction_failure_injector(phase)
 
     def save_draft(
         self,
@@ -193,6 +333,50 @@ class PostgresWorkflowRepository:
         with redacted_database_errors(), site_transaction(self.connection, scope) as cursor:
             return self._load_inbox(cursor, scope, inbox_ref)
 
+    def apply_inbox_operation(
+        self,
+        scope: TenantScope,
+        *,
+        before: InboxItem,
+        revised: InboxItem,
+        audit_event: AuditEvent,
+        idempotency_key: str,
+        payload_digest: str,
+    ) -> InboxItem:
+        require_scope(scope, site_id=before.site_id)
+        require_scope(scope, site_id=revised.site_id)
+        require_scope(scope, site_id=audit_event.site_id)
+        with redacted_database_errors(), site_transaction(self.connection, scope) as cursor:
+            _lock_workflow_ref(cursor, scope, "inbox-operation", idempotency_key)
+            replay_ref = _workflow_replay_ref(
+                cursor,
+                scope,
+                idempotency_key=idempotency_key,
+                payload_digest=payload_digest,
+                result_type="inbox",
+            )
+            if replay_ref is not None:
+                replay = self._load_inbox(cursor, scope, replay_ref)
+                if replay is None:
+                    raise IdempotencyConflict("workflow replay result missing")
+                return replay
+            _require_mailbox_scope(cursor, scope, before.mailbox_ref)
+            current = self._load_inbox(cursor, scope, before.inbox_item_ref, lock=True)
+            if current != before or revised.revision != before.revision + 1:
+                raise RevisionConflict("inbox revision conflict")
+            _update_inbox(cursor, before, revised)
+            _insert_audit_event(cursor, audit_event)
+            _insert_workflow_receipt(
+                cursor,
+                scope,
+                idempotency_key=idempotency_key,
+                payload_digest=payload_digest,
+                result_type="inbox",
+                result_ref=revised.inbox_item_ref,
+                occurred_at=revised.updated_at,
+            )
+            return revised
+
     def save_suggestion(self, scope: TenantScope, suggestion: ThreadSuggestion) -> ThreadSuggestion:
         require_scope(scope, site_id=suggestion.site_id)
         with redacted_database_errors(), site_transaction(self.connection, scope) as cursor:
@@ -274,6 +458,18 @@ class PostgresWorkflowRepository:
                 scoped_inbox = self._load_inbox(cursor, scope, inbox_ref)
                 if scoped_inbox is None or scoped_inbox.message_ref != message_ref:
                     raise ScopeViolation("conversation member purpose mismatch")
+                cursor.execute(
+                    """
+                    SELECT conversation_ref
+                      FROM email_gateway.conversation_messages
+                     WHERE site_id = %s AND inbox_item_ref = %s
+                       AND conversation_ref <> %s
+                     LIMIT 1
+                    """,
+                    (scope.site_id, inbox_ref, conversation.conversation_ref),
+                )
+                if cursor.fetchone() is not None:
+                    raise RevisionConflict("conversation member already owned")
             _lock_workflow_ref(cursor, scope, "conversation", conversation.conversation_ref)
             current = self._load_conversation(
                 cursor, scope, conversation.conversation_ref, lock=True
@@ -385,6 +581,153 @@ class PostgresWorkflowRepository:
             if row is None:
                 return None
             return self._load_conversation(cursor, scope, str(row[0]))
+
+    def get_conversation(self, scope: TenantScope, conversation_ref: str) -> Conversation | None:
+        with redacted_database_errors(), site_transaction(self.connection, scope) as cursor:
+            return self._load_conversation(cursor, scope, conversation_ref)
+
+    def split_conversation(
+        self,
+        scope: TenantScope,
+        *,
+        source_before: Conversation,
+        source_revised: Conversation,
+        split: Conversation,
+        audit_event: AuditEvent,
+        idempotency_key: str,
+        payload_digest: str,
+    ) -> Conversation:
+        for item in (source_before, source_revised, split):
+            require_scope(scope, site_id=item.site_id)
+        require_scope(scope, site_id=audit_event.site_id)
+        with redacted_database_errors(), site_transaction(self.connection, scope) as cursor:
+            _lock_workflow_ref(cursor, scope, "conversation-split", idempotency_key)
+            replay_ref = _workflow_replay_ref(
+                cursor,
+                scope,
+                idempotency_key=idempotency_key,
+                payload_digest=payload_digest,
+                result_type="conversation",
+            )
+            if replay_ref is not None:
+                replay = self._load_conversation(cursor, scope, replay_ref)
+                if replay is None:
+                    raise IdempotencyConflict("workflow replay result missing")
+                return replay
+            _lock_workflow_ref(
+                cursor,
+                scope,
+                "conversation",
+                source_before.conversation_ref,
+            )
+            current = self._load_conversation(
+                cursor,
+                scope,
+                source_before.conversation_ref,
+                lock=True,
+            )
+            _validate_conversation_split(current, source_before, source_revised, split)
+            for message_ref, inbox_ref in zip(
+                source_before.message_refs,
+                source_before.inbox_item_refs,
+                strict=True,
+            ):
+                inbox = self._load_inbox(cursor, scope, inbox_ref, lock=True)
+                if (
+                    inbox is None
+                    or inbox.message_ref != message_ref
+                    or inbox.team_ref != source_before.team_ref
+                ):
+                    raise ScopeViolation("conversation split member scope mismatch")
+                cursor.execute(
+                    """
+                    SELECT conversation_ref
+                      FROM email_gateway.conversation_messages
+                     WHERE site_id = %s AND inbox_item_ref = %s
+                       AND conversation_ref <> %s
+                     LIMIT 1
+                    """,
+                    (scope.site_id, inbox_ref, source_before.conversation_ref),
+                )
+                if cursor.fetchone() is not None:
+                    raise RevisionConflict("conversation member already owned")
+            cursor.execute(
+                """
+                UPDATE email_gateway.conversations
+                   SET team_ref = %s, party_ref = %s, contact_ref = %s,
+                       owner_user_ref = %s, lifecycle_state = %s,
+                       first_message_at = %s, last_message_at = %s,
+                       revision = %s, updated_at = now()
+                 WHERE site_id = %s AND conversation_ref = %s AND revision = %s
+                RETURNING conversation_ref
+                """,
+                (
+                    source_revised.team_ref,
+                    source_revised.party_ref,
+                    source_revised.contact_ref,
+                    source_revised.owner_user_ref,
+                    source_revised.lifecycle_state,
+                    source_revised.first_message_at,
+                    source_revised.last_message_at,
+                    source_revised.revision,
+                    scope.site_id,
+                    source_before.conversation_ref,
+                    source_before.revision,
+                ),
+            )
+            if cursor.fetchone() is None:
+                raise RevisionConflict("conversation revision conflict")
+            cursor.execute(
+                """
+                SELECT email_gateway.clear_conversation_members_for_split(
+                    %s, %s, %s, %s, %s
+                )
+                """,
+                (
+                    scope.site_id,
+                    scope.processing_purpose,
+                    source_before.conversation_ref,
+                    source_revised.revision,
+                    len(source_before.inbox_item_refs),
+                ),
+            )
+            cleared = cursor.fetchone()
+            if cleared is None or int(cleared[0]) != len(source_before.inbox_item_refs):
+                raise RevisionConflict("conversation split membership conflict")
+            _insert_conversation_members(cursor, scope, source_revised)
+            cursor.execute(
+                """
+                INSERT INTO email_gateway.conversations (
+                    site_id, conversation_ref, team_ref, party_ref, contact_ref,
+                    owner_user_ref, lifecycle_state, first_message_at,
+                    last_message_at, revision
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    split.site_id,
+                    split.conversation_ref,
+                    split.team_ref,
+                    split.party_ref,
+                    split.contact_ref,
+                    split.owner_user_ref,
+                    split.lifecycle_state,
+                    split.first_message_at,
+                    split.last_message_at,
+                    split.revision,
+                ),
+            )
+            _insert_conversation_members(cursor, scope, split)
+            _insert_audit_event(cursor, audit_event)
+            _insert_workflow_receipt(
+                cursor,
+                scope,
+                idempotency_key=idempotency_key,
+                payload_digest=payload_digest,
+                result_type="conversation",
+                result_ref=split.conversation_ref,
+                occurred_at=split.last_message_at,
+            )
+            return split
 
     def save_draft(
         self,
@@ -862,6 +1205,194 @@ def _require_mailbox_scope(
     )
     if cursor.fetchone() is None:  # type: ignore[attr-defined]
         raise ScopeViolation("mailbox processing purpose mismatch")
+
+
+def _update_inbox(cursor: object, before: InboxItem, revised: InboxItem) -> None:
+    cursor.execute(  # type: ignore[attr-defined]
+        """
+        UPDATE email_gateway.inbox_items
+           SET mailbox_ref = %s, message_ref = %s, team_ref = %s,
+               assignee_user_ref = %s, priority = %s, sla_due_at = %s,
+               state = %s, conversation_ref = %s, business_links = %s,
+               revision = %s, received_at = %s, updated_at = %s
+         WHERE site_id = %s AND inbox_item_ref = %s AND revision = %s
+        RETURNING inbox_item_ref
+        """,
+        (
+            revised.mailbox_ref,
+            revised.message_ref,
+            revised.team_ref,
+            revised.assignee_user_ref,
+            revised.priority,
+            revised.sla_due_at,
+            revised.state,
+            revised.conversation_ref,
+            list(revised.business_links),
+            revised.revision,
+            revised.received_at,
+            revised.updated_at,
+            before.site_id,
+            before.inbox_item_ref,
+            before.revision,
+        ),
+    )
+    if cursor.fetchone() is None:  # type: ignore[attr-defined]
+        raise RevisionConflict("inbox revision conflict")
+
+
+def _workflow_replay_ref(
+    cursor: object,
+    scope: TenantScope,
+    *,
+    idempotency_key: str,
+    payload_digest: str,
+    result_type: str,
+) -> str | None:
+    marker_key = _workflow_key(scope.site_id, scope.processing_purpose, idempotency_key)
+    cursor.execute(  # type: ignore[attr-defined]
+        """
+        SELECT event_type, subject_ref, payload_digest
+          FROM email_gateway.audit_events
+         WHERE site_id = %s AND idempotency_key = %s
+        """,
+        (scope.site_id, marker_key),
+    )
+    row = cursor.fetchone()  # type: ignore[attr-defined]
+    if row is None:
+        return None
+    if str(row[0]) != f"workflow_idempotency_{result_type}" or str(row[2]) != payload_digest:
+        raise IdempotencyConflict("workflow idempotency drift")
+    return str(row[1])
+
+
+def _insert_audit_event(cursor: object, event: AuditEvent) -> None:
+    cursor.execute(  # type: ignore[attr-defined]
+        """
+        SELECT audit_ref, site_id, actor_ref, event_type, subject_ref,
+               request_id, idempotency_key, payload_digest, occurred_at
+          FROM email_gateway.audit_events
+         WHERE site_id = %s
+           AND (idempotency_key = %s OR audit_ref = %s)
+         ORDER BY CASE WHEN idempotency_key = %s THEN 0 ELSE 1 END
+         LIMIT 1
+        """,
+        (event.site_id, event.idempotency_key, event.audit_ref, event.idempotency_key),
+    )
+    row = cursor.fetchone()  # type: ignore[attr-defined]
+    if row is not None:
+        if _audit_from_row(row) != event:
+            raise IdempotencyConflict("audit idempotency drift")
+        return
+    cursor.execute(  # type: ignore[attr-defined]
+        """
+        INSERT INTO email_gateway.audit_events (
+            site_id, audit_ref, actor_ref, event_type, subject_ref,
+            request_id, idempotency_key, payload_digest, occurred_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            event.site_id,
+            event.audit_ref,
+            event.actor_ref,
+            event.event_type,
+            event.subject_ref,
+            event.request_id,
+            event.idempotency_key,
+            event.payload_digest,
+            event.occurred_at,
+        ),
+    )
+
+
+def _insert_workflow_receipt(
+    cursor: object,
+    scope: TenantScope,
+    *,
+    idempotency_key: str,
+    payload_digest: str,
+    result_type: str,
+    result_ref: str,
+    occurred_at: Any,
+) -> None:
+    marker_key = _workflow_key(scope.site_id, scope.processing_purpose, idempotency_key)
+    _insert_audit_event(
+        cursor,
+        AuditEvent(
+            audit_ref=stable_ref("AUD", scope.site_id, marker_key),
+            site_id=scope.site_id,
+            actor_ref="email-gateway-workflow",
+            event_type=f"workflow_idempotency_{result_type}",
+            subject_ref=result_ref,
+            request_id=marker_key,
+            idempotency_key=marker_key,
+            payload_digest=payload_digest,
+            occurred_at=occurred_at,
+        ),
+    )
+
+
+def _audit_from_row(row: tuple[Any, ...]) -> AuditEvent:
+    return AuditEvent(
+        audit_ref=str(row[0]),
+        site_id=str(row[1]),
+        actor_ref=str(row[2]),
+        event_type=str(row[3]),
+        subject_ref=str(row[4]),
+        request_id=str(row[5]),
+        idempotency_key=str(row[6]),
+        payload_digest=str(row[7]),
+        occurred_at=row[8],
+    )
+
+
+def _validate_conversation_split(
+    current: Conversation | None,
+    source_before: Conversation,
+    source_revised: Conversation,
+    split: Conversation,
+) -> None:
+    if current != source_before:
+        raise RevisionConflict("conversation revision conflict")
+    before_members = set(source_before.inbox_item_refs)
+    source_members = set(source_revised.inbox_item_refs)
+    split_members = set(split.inbox_item_refs)
+    if (
+        source_revised.conversation_ref != source_before.conversation_ref
+        or source_revised.revision != source_before.revision + 1
+        or split.revision != 1
+        or source_revised.team_ref != source_before.team_ref
+        or split.team_ref != source_before.team_ref
+        or not source_members
+        or not split_members
+        or source_members & split_members
+        or source_members | split_members != before_members
+    ):
+        raise RevisionConflict("invalid conversation split revision")
+
+
+def _insert_conversation_members(
+    cursor: object,
+    scope: TenantScope,
+    conversation: Conversation,
+) -> None:
+    for ordinal, (message_ref, inbox_ref) in enumerate(
+        zip(conversation.message_refs, conversation.inbox_item_refs, strict=True),
+        start=1,
+    ):
+        cursor.execute(  # type: ignore[attr-defined]
+            """
+            INSERT INTO email_gateway.conversation_messages (
+                site_id, conversation_ref, message_ref, inbox_item_ref, ordinal
+            ) VALUES (%s, %s, %s, %s, %s)
+            """,
+            (
+                scope.site_id,
+                conversation.conversation_ref,
+                message_ref,
+                inbox_ref,
+                ordinal,
+            ),
+        )
 
 
 __all__ = ["InMemoryWorkflowRepository", "PostgresWorkflowRepository"]

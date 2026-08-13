@@ -82,6 +82,18 @@ between Observer, the independent Email Gateway, and Frappe authority:
 - `EmailAddressMatchAttestation v1.0` records only an opaque address ref,
   opaque candidate target, EvidenceRef, frozen normalization version, boolean
   match, bounded timestamps, and digest. Neither compared address is returned.
+- `EmailSendApprovedCommand v2.0` is the closed, purpose-specific external-send
+  authorization envelope. It pins the delegated current owner, Review Case,
+  policy/expiry, all mailbox/workflow/identity/Party/team/owner revisions, the
+  opaque role-tagged envelope, final MIME EvidenceRef/digest, request and
+  idempotency identities, and the canonical payload hash. JSON Schema validation
+  is not authorization: the specialized Action Guard must compare every pin to
+  authenticated and live authority state and must reject expiry or drift.
+
+The frozen generic `ApprovedCommand v1.0` remains unchanged and compatible.
+Generic command paths must not accept `EmailSendApprovedCommand v2.0` without an
+explicit, versioned adapter; the email command cannot be silently down-converted
+to v1.
 
 Named synthetic valid and intentionally invalid cases for all five schemas are
 in [`email_gateway/examples/provider-neutral-v1.json`](./email_gateway/examples/provider-neutral-v1.json).
@@ -89,7 +101,8 @@ At each internal API boundary, the consumer must additionally bind the schema's
 site, team, and processing-purpose fields to the authenticated request scope;
 wire-shape validation alone is not cross-request authorization.
 These contracts do not enable a provider adapter, connect to Frappe, prove a
-live mailbox, send email, or claim end-to-end integration.
+live mailbox, send email, or claim end-to-end integration. Checked-in external
+send switches remain false.
 
 ### Gate 2 aggregate contracts
 

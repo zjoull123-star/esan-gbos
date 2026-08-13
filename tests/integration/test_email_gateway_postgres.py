@@ -15,8 +15,11 @@ _RLS_TABLES = {
     "conversations",
     "identity_projection_receipts",
     "inbox_items",
+    "inbox_operation_requests",
+    "inbox_sla_clocks",
     "mailbox_config_outbox",
     "mailboxes",
+    "mailbox_sla_policies",
     "message_participants",
     "publication_receipts",
     "reply_drafts",
@@ -45,7 +48,7 @@ def _gateway_enabled() -> str:
 def _apply_gateway_migrations(connection) -> None:
     root = Path(__file__).resolve().parents[2]
     migrations = sorted((root / "services" / "email_gateway" / "migrations").glob("*.sql"))
-    assert len(migrations) == 4
+    assert len(migrations) == 5
     for path in migrations:
         connection.execute(path.read_text())
 
@@ -57,7 +60,7 @@ def test_email_gateway_migrations_run_twice_with_forced_rls_and_no_forbidden_tab
 
     root = Path(__file__).resolve().parents[2]
     migrations = sorted((root / "services" / "email_gateway" / "migrations").glob("*.sql"))
-    assert len(migrations) == 4
+    assert len(migrations) == 5
     with psycopg.connect(dsn, autocommit=True) as connection:
         for _ in range(2):
             for path in migrations:
@@ -165,11 +168,13 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
     dsn = _gateway_enabled()
     import psycopg
 
+    from services.email_gateway.conversations import ConversationService
     from services.email_gateway.models import (
         AuditEvent,
         Conversation,
         Draft,
         EmailMessagePublication,
+        GatewayActorScope,
         IdempotencyConflict,
         IdentityProjection,
         Mailbox,
@@ -180,6 +185,7 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
         ValidationError,
         canonical_digest,
     )
+    from services.email_gateway.operations import InboxOperations
     from services.email_gateway.repositories.audit import PostgresAuditRepository
     from services.email_gateway.repositories.identity import (
         PostgresIdentityProjectionRepository,
@@ -368,6 +374,20 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
         assert accepted_second.inbox_item.inbox_item_ref != accepted.inbox_item.inbox_item_ref
         assert accepted_second.receipt.inbox_item_ref == accepted_second.inbox_item.inbox_item_ref
 
+        third_publication = replace(
+            publication,
+            publication_ref="repo-publication-alpha-3",
+            observer_delivery_ref="repo-delivery-alpha-3",
+            message_id_digest="sha256:" + "d" * 64,
+            idempotency_key="publication-alpha-3",
+        )
+        third_publication = replace(
+            third_publication,
+            payload_digest=canonical_digest(third_publication.to_wire()),
+        )
+        accepted_third = intake.accept(alpha, third_publication, mailbox)
+        assert accepted_third.message.message_ref != accepted.message.message_ref
+
         too_many_participants = (
             PublicationParticipant(role="from", identity_ref=unresolved_from),
             *(
@@ -440,6 +460,62 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
 
         assert workflow.save_inbox(alpha, accepted.inbox_item) == accepted.inbox_item
         assert workflow.get_inbox(alpha, accepted.inbox_item.inbox_item_ref) == accepted.inbox_item
+        claimable = replace(
+            accepted_second.inbox_item,
+            state="unassigned",
+            revision=accepted_second.inbox_item.revision + 1,
+            updated_at=now + timedelta(seconds=1),
+        )
+        assert workflow.save_inbox(alpha, claimable) == claimable
+        actor = GatewayActorScope(
+            site_id=alpha.site_id,
+            actor_ref="sales-alpha",
+            team_refs=(mailbox.default_team_ref,),
+            roles=("Sales User",),
+        )
+        poison = AuditEvent(
+            audit_ref="audit-poison-inbox-operation",
+            site_id=alpha.site_id,
+            actor_ref="test-injector",
+            event_type="injected_conflict",
+            subject_ref=claimable.inbox_item_ref,
+            request_id="request-poison-inbox-operation",
+            idempotency_key="audit:claim-pg-rollback",
+            payload_digest=digest_a,
+            occurred_at=now + timedelta(seconds=2),
+        )
+        workflow.append_audit(alpha, poison)
+        operations = InboxOperations(workflow)
+        rollback_audit_count = workflow.audit_count(alpha)
+        with pytest.raises(IdempotencyConflict, match="audit"):
+            operations.claim(
+                alpha,
+                actor=actor,
+                actor_enabled=True,
+                inbox_item_ref=claimable.inbox_item_ref,
+                expected_revision=claimable.revision,
+                request_id="REQ-CLAIM-PG-ROLLBACK",
+                idempotency_key="claim-pg-rollback",
+                now=now + timedelta(seconds=3),
+            )
+        assert workflow.get_inbox(alpha, claimable.inbox_item_ref) == claimable
+        assert workflow.audit_count(alpha) == rollback_audit_count
+        assert workflow.replay(alpha, "claim-pg-rollback", digest_a) is None
+
+        claim_command = dict(
+            actor=actor,
+            actor_enabled=True,
+            inbox_item_ref=claimable.inbox_item_ref,
+            expected_revision=claimable.revision,
+            request_id="REQ-CLAIM-PG-LOSS",
+            idempotency_key="claim-pg-loss",
+            now=now + timedelta(seconds=4),
+        )
+        claimed = operations.claim(alpha, **claim_command)
+        replayed_claim = operations.claim(alpha, **claim_command)
+        assert replayed_claim == claimed
+        assert claimed.revision == claimable.revision + 1
+        assert workflow.audit_count(alpha) == rollback_audit_count + 1
         suggestion = ThreadSuggestion(
             suggestion_ref="suggestion-alpha",
             site_id=alpha.site_id,
@@ -466,8 +542,11 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
             lifecycle_state="open",
             first_message_at=now,
             last_message_at=now,
-            message_refs=(accepted.message.message_ref,),
-            inbox_item_refs=(accepted.inbox_item.inbox_item_ref,),
+            message_refs=(accepted.message.message_ref, accepted_third.message.message_ref),
+            inbox_item_refs=(
+                accepted.inbox_item.inbox_item_ref,
+                accepted_third.inbox_item.inbox_item_ref,
+            ),
             revision=1,
         )
         assert workflow.save_conversation(alpha, conversation) == conversation
@@ -478,6 +557,48 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
         assert workflow.replay(alpha, "workflow-conversation", digest_a) == conversation
         with pytest.raises(IdempotencyConflict):
             workflow.replay(alpha, "workflow-conversation", digest_b)
+        split = ConversationService(workflow).split(
+            alpha,
+            actor=GatewayActorScope(
+                site_id=alpha.site_id,
+                actor_ref="manager-alpha",
+                team_refs=(mailbox.default_team_ref,),
+                roles=("Sales Manager",),
+            ),
+            conversation=conversation,
+            moved_inbox_refs=(accepted_third.inbox_item.inbox_item_ref,),
+            expected_revision=conversation.revision,
+            request_id="REQ-SPLIT-PG",
+            idempotency_key="split-pg",
+            now=now + timedelta(seconds=5),
+        )
+        replayed_split = ConversationService(workflow).split(
+            alpha,
+            actor=GatewayActorScope(
+                site_id=alpha.site_id,
+                actor_ref="manager-alpha",
+                team_refs=(mailbox.default_team_ref,),
+                roles=("Sales Manager",),
+            ),
+            conversation=conversation,
+            moved_inbox_refs=(accepted_third.inbox_item.inbox_item_ref,),
+            expected_revision=conversation.revision,
+            request_id="REQ-SPLIT-PG",
+            idempotency_key="split-pg",
+            now=now + timedelta(seconds=5),
+        )
+        assert replayed_split == split
+        source_revised = workflow.get_conversation(alpha, conversation.conversation_ref)
+        assert source_revised is not None
+        assert source_revised.inbox_item_refs == (accepted.inbox_item.inbox_item_ref,)
+        assert source_revised.revision == conversation.revision + 1
+        assert (
+            workflow.get_conversation_for(alpha, accepted.inbox_item.inbox_item_ref)
+            == source_revised
+        )
+        assert (
+            workflow.get_conversation_for(alpha, accepted_third.inbox_item.inbox_item_ref) == split
+        )
 
         draft = Draft(
             draft_ref="draft-alpha",
@@ -517,6 +638,7 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
                 payload_digest=digest_b,
             )
 
+        audit_count_before_manual = workflow.audit_count(alpha)
         event = AuditEvent(
             audit_ref="audit-alpha",
             site_id=alpha.site_id,
@@ -540,7 +662,7 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
         )
         with pytest.raises(IdempotencyConflict):
             audits.append(alpha, replace(event, payload_digest=digest_b))
-        assert workflow.audit_count(alpha) == 2
+        assert workflow.audit_count(alpha) == audit_count_before_manual + 2
 
         connection.execute("RESET ROLE")
         connection.execute("SET ROLE gbos_email_gateway_worker")
@@ -668,4 +790,4 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
             "(SELECT count(*) FROM email_gateway.inbox_items WHERE site_id = %s)",
             (alpha.site_id, alpha.site_id, alpha.site_id),
         ).fetchone()
-        assert counts == (2, 1, 2)
+        assert counts == (3, 2, 3)

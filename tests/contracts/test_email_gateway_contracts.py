@@ -22,6 +22,11 @@ SCHEMAS = {
     "email-address-match-attestation-v1.0.schema.json",
 }
 
+STANDALONE_SCHEMAS = {
+    "mailbox-sla-policy-v1.0.schema.json",
+    "email-send-approved-command-v2.0.schema.json",
+}
+
 EXPECTED_CASES = {
     "email-message-publication-v1.0.schema.json": {
         "valid": {"subject_projection", "subject_digest"},
@@ -150,7 +155,7 @@ def _scoped_validator(
 
 def test_email_gateway_contract_set_is_exact_and_valid_2020_12() -> None:
     actual = {path.name for path in EMAIL_GATEWAY.glob("*.schema.json")}
-    assert actual == SCHEMAS
+    assert actual == SCHEMAS | STANDALONE_SCHEMAS
 
     for filename in sorted(actual):
         schema = _schema(filename)

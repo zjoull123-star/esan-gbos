@@ -13,6 +13,7 @@ def _all_sql() -> str:
         "002_email_gateway_inbox.sql",
         "003_email_gateway_workflow_outboxes.sql",
         "004_email_gateway_retention.sql",
+        "005_email_gateway_human_operations.sql",
     ]
     return "\n".join(path.read_text() for path in files).lower()
 
@@ -38,6 +39,9 @@ def test_migrations_create_exact_gateway_inventory() -> None:
         "email_gateway.audit_events",
         "email_gateway.retention_runs",
         "email_gateway.content_expiration_receipts",
+        "email_gateway.mailbox_sla_policies",
+        "email_gateway.inbox_sla_clocks",
+        "email_gateway.inbox_operation_requests",
     }
     for relation in required:
         assert f"table if not exists {relation}" in sql
@@ -78,6 +82,9 @@ def test_every_business_table_forces_rls_and_public_has_no_grants() -> None:
         "audit_events",
         "retention_runs",
         "content_expiration_receipts",
+        "mailbox_sla_policies",
+        "inbox_sla_clocks",
+        "inbox_operation_requests",
     ]
     for table in tables:
         relation = f"email_gateway.{table}"

@@ -1,0 +1,394 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/email-gateway/v2.0/email-send-approved-command.schema.json",
+  "title": "EmailSendApprovedCommand v2.0",
+  "description": "Closed, purpose-specific command for one revision-pinned email send approved by the delegated current owner. Schema validity alone never authorizes execution; the specialized Action Guard must bind every field to authenticated and live authority state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "command_id",
+    "command_type",
+    "site_id",
+    "processing_purpose",
+    "team_ref",
+    "actor_user_ref",
+    "delegated_approver_user_ref",
+    "review_case_ref",
+    "review_case_revision",
+    "review_policy_version",
+    "approval_expires_at",
+    "mailbox_ref",
+    "mailbox_config_revision",
+    "inbox_item_ref",
+    "inbox_item_revision",
+    "conversation_ref",
+    "conversation_revision",
+    "reply_draft_ref",
+    "reply_draft_revision",
+    "reply_draft_digest",
+    "participants",
+    "party_ref",
+    "party_revision",
+    "team_revision",
+    "owner_user_ref",
+    "owner_eligibility_revision",
+    "final_mime_evidence_ref",
+    "final_mime_digest",
+    "evidence_refs",
+    "request_id",
+    "idempotency_key",
+    "stable_client_request_id",
+    "payload_sha256",
+    "issued_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 3,
+      "const": "2.0"
+    },
+    "command_id": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^CMD-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "command_type": {
+      "type": "string",
+      "minLength": 19,
+      "maxLength": 19,
+      "const": "email.send.approved"
+    },
+    "site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+    },
+    "processing_purpose": {
+      "type": "string",
+      "minLength": 11,
+      "maxLength": 25,
+      "enum": [
+        "business_operations",
+        "customer_service",
+        "sales_follow_up",
+        "procurement_coordination",
+        "product_sample_management"
+      ]
+    },
+    "team_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^TEM-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "actor_user_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^USR-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "delegated_approver_user_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^USR-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "review_case_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^RVC-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "review_case_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "review_policy_version": {
+      "type": "string",
+      "minLength": 19,
+      "maxLength": 19,
+      "const": "email_send_owner_v1"
+    },
+    "approval_expires_at": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 35,
+      "format": "date-time"
+    },
+    "mailbox_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^MBX-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "mailbox_config_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "inbox_item_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^INB-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "inbox_item_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "conversation_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^CNV-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "conversation_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "reply_draft_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^DRF-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "reply_draft_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "reply_draft_digest": {
+      "type": "string",
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "participants": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "address_role",
+          "opaque_address_ref"
+        ],
+        "properties": {
+          "address_role": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 6,
+            "enum": [
+              "sender",
+              "to",
+              "cc",
+              "bcc"
+            ]
+          },
+          "opaque_address_ref": {
+            "type": "string",
+            "minLength": 58,
+            "maxLength": 58,
+            "pattern": "^extid:v1:email:[A-Za-z0-9_-]{43}$"
+          },
+          "identity_mapping_ref": {
+            "type": "string",
+            "minLength": 30,
+            "maxLength": 30,
+            "pattern": "^EID-[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "identity_mapping_revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "address_role": {
+                  "const": "sender"
+                }
+              },
+              "required": [
+                "address_role"
+              ]
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "identity_mapping_ref"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "identity_mapping_revision"
+                    ]
+                  }
+                ]
+              }
+            },
+            "else": {
+              "required": [
+                "identity_mapping_ref",
+                "identity_mapping_revision"
+              ]
+            }
+          }
+        ]
+      },
+      "allOf": [
+        {
+          "contains": {
+            "properties": {
+              "address_role": {
+                "const": "sender"
+              }
+            },
+            "required": [
+              "address_role"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "address_role": {
+                "enum": [
+                  "to",
+                  "cc",
+                  "bcc"
+                ]
+              }
+            },
+            "required": [
+              "address_role"
+            ]
+          },
+          "minContains": 1
+        }
+      ]
+    },
+    "party_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^PTY-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "party_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "team_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "owner_user_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^USR-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "owner_eligibility_revision": {
+      "type": "string",
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "final_mime_evidence_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^EVR-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "final_mime_digest": {
+      "type": "string",
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 30,
+        "maxLength": 30,
+        "pattern": "^EVR-[0-9A-HJKMNP-TV-Z]{26}$"
+      }
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^REQ-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 72,
+      "maxLength": 72,
+      "pattern": "^idem:v2:[a-f0-9]{64}$"
+    },
+    "stable_client_request_id": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^CLI-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "payload_sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "issued_at": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 35,
+      "format": "date-time"
+    }
+  },
+  "x-gbos-payload-hash": {
+    "algorithm": "sha256",
+    "canonicalization": "RFC 8785 JSON Canonicalization Scheme",
+    "excluded_fields": [
+      "payload_sha256"
+    ]
+  },
+  "x-gbos-action-guard": {
+    "live_recheck_required": true,
+    "reject_if": [
+      "authenticated_actor_mismatch",
+      "delegated_approver_not_current_owner",
+      "approval_expired",
+      "site_team_or_purpose_mismatch",
+      "review_case_or_policy_mismatch",
+      "mailbox_inbox_conversation_or_draft_revision_drift",
+      "recipient_mapping_revision_or_envelope_drift",
+      "party_team_or_owner_authority_drift",
+      "final_mime_evidence_or_digest_drift",
+      "evidence_missing_or_duplicate",
+      "request_id_idempotency_or_payload_hash_drift",
+      "emergency_stop_active",
+      "external_send_disabled"
+    ]
+  }
+}

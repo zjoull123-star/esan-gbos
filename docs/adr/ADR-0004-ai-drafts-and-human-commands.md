@@ -38,6 +38,39 @@ purchase orders, outbound messages, or other formal state transitions.
    recorded in an Agent timeline. All proposed actions pass through the common
    Action Guard before review or execution.
 
+## Gate 4 email send extension (default closed)
+
+The only first-version email approval is `email_send_owner_v1`: a dedicated
+Review Case may grant delegated current-owner approval for one immutable draft.
+A Sales User has no general approval authority, and the delegation is valid
+only while that actor is still the live Party owner and eligible team member.
+The PWA and BFF cannot write Send Outbox. AI and background services cannot approve or send.
+
+Publication crosses two durable transactions, with no cross-database ACID:
+
+1. The Frappe durable transaction commits the human decision + ApprovedCommand + command publication together.
+2. An idempotent consumer delivers the closed command. After a specialized
+   Action Guard and live authority recheck, the Gateway durable transaction
+   commits command receipt + Send Outbox together.
+
+The required pre-execution control is the specialized Action Guard with a
+live authority recheck; neither phrase describes a generic human-review flag.
+
+The guard must recheck authenticated actor/delegation, Review Case policy and
+expiry, site/team/purpose, every pinned mailbox/Inbox/Conversation/draft,
+recipient-mapping/Party/team/owner revision, the opaque participant envelope,
+final MIME EvidenceRef/digest, evidence uniqueness, payload hash, idempotency,
+and emergency stop immediately before execution. Schema validity or a past
+approval is not current authority.
+
+Provider work uses an append-only attempt ledger. Terminal or safety states
+include `provider_accepted`, `provider_rejected`, and
+`reconciliation_required`. A lost response or uncertain provider result enters
+reconciliation and permits no blind retry. The executor, publication consumer,
+and email send worker use separate least-privilege identities; none inherits
+System Manager or broad DocPerm, and the send worker cannot approve or create a
+Send Outbox.
+
 ## Consequences
 
 - “AI completed” means a draft was produced, never that a business state
@@ -51,4 +84,4 @@ purchase orders, outbound messages, or other formal state transitions.
 
 Tests must reject missing evidence, forbidden patch paths, wrong review status,
 stale revisions, replayed idempotency keys, and unauthorized approvers. A
-passing test suite does not enable real model traffic.
+passing test suite does not enable real model traffic or external email send.

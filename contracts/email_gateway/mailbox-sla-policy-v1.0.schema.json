@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.esan.example/gbos/email-gateway/v1.0/mailbox-sla-policy.schema.json",
+  "title": "MailboxSlaPolicy v1.0",
+  "description": "Closed revision-pinned first-response policy. Version 1 has one continuous clock and no suspension mechanism.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "policy_ref",
+    "revision",
+    "first_response_duration_seconds",
+    "effective_at"
+  ],
+  "properties": {
+    "policy_ref": {
+      "type": "string",
+      "minLength": 30,
+      "maxLength": 30,
+      "pattern": "^SLA-[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "first_response_duration_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 604800
+    },
+    "effective_at": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 35,
+      "format": "date-time"
+    }
+  }
+}

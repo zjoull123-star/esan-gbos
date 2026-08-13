@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from datetime import timedelta
 
 import pytest
@@ -93,6 +94,9 @@ def test_postgres_repository_surface_is_complete() -> None:
             "replay",
             "remember",
             "audit_count",
+            "apply_inbox_operation",
+            "get_conversation",
+            "split_conversation",
         },
         audit: {"append"},
         config_outbox: {"claim", "heartbeat", "mark_delivered", "mark_failed"},
@@ -107,3 +111,11 @@ def test_config_claim_projection_wire_builder_is_exposed() -> None:
     from services.email_gateway.repositories.mailboxes import MailboxConfigOutboxClaim
 
     assert callable(getattr(MailboxConfigOutboxClaim, "to_connector_projection_wire", None))
+
+
+def test_postgres_conversation_split_calls_narrow_database_command_not_table_delete() -> None:
+    from services.email_gateway.repositories.workflow import PostgresWorkflowRepository
+
+    source = inspect.getsource(PostgresWorkflowRepository.split_conversation)
+    assert "clear_conversation_members_for_split" in source
+    assert "DELETE FROM email_gateway.conversation_messages" not in source

@@ -33,6 +33,16 @@
       "rationale": "The frozen v1 command remains the human-authorized internal execution boundary."
     },
     {
+      "concept": "Approved Email Send Command",
+      "contract": "EmailSendApprovedCommand v2.0",
+      "strategy": "new",
+      "semantically_distinct_from": [
+        "ApprovedCommand v1.0"
+      ],
+      "adapter_required_for_generic_command_paths": true,
+      "rationale": "A purpose-specific closed command freezes delegated owner approval, every email authority revision, the opaque participant envelope, and final MIME evidence."
+    },
+    {
       "concept": "Connector Checkpoint",
       "contract": "ConnectorCheckpoint",
       "strategy": "reuse",

@@ -161,3 +161,59 @@ def test_authority_wire_is_exact_closed_contract() -> None:
         assert result.to_wire() == cases[name]
     with pytest.raises(ValidationError, match="unknown"):
         AuthorityRoute.from_wire({**cases["assigned"], "contact_email": "raw@example.invalid"})
+
+
+def test_authorized_inbox_list_sql_scopes_site_team_actor_before_limit() -> None:
+    from services.email_gateway.routing import AUTHORIZED_INBOX_LIST_SQL
+
+    normalized = " ".join(AUTHORIZED_INBOX_LIST_SQL.lower().split())
+    where = normalized.index(" where ")
+    limit = normalized.index(" limit ")
+    scoped = normalized[where:limit]
+    assert "site_id" in scoped
+    assert "team_ref" in scoped
+    assert "assignee_user_ref" in scoped
+    assert "%s" in scoped
+    assert " limit " not in scoped
+
+
+def test_routing_application_rejects_disabled_or_cross_team_assignee(scope, mailbox) -> None:
+    from services.email_gateway.models import AuthorityRoute, InboxItem, ValidationError
+    from services.email_gateway.routing import RoutingService
+
+    inbox = InboxItem.new(
+        site_id=SITE,
+        mailbox_ref=mailbox.mailbox_ref,
+        message_ref="MSG-01",
+        team_ref=mailbox.default_team_ref,
+        received_at=NOW,
+    )
+    decision = RoutingService(
+        FakeAuthority(
+            AuthorityRoute.assigned(
+                party_ref="PTY-01",
+                party_revision=2,
+                team_ref="TEM-01",
+                team_revision=3,
+                owner_user_ref="owner@example.invalid",
+                owner_eligibility_revision=DIGEST_A,
+                resolved_at=NOW,
+            )
+        )
+    ).route(scope=scope, inbox=inbox, mailbox=mailbox, projection=_projection(), rules=())
+    with pytest.raises(ValidationError, match="eligible"):
+        RoutingService.apply_decision(
+            inbox=inbox,
+            decision=decision,
+            assignee_team_ref="TEM-01",
+            assignee_enabled=False,
+            now=NOW,
+        )
+    with pytest.raises(ValidationError, match="team"):
+        RoutingService.apply_decision(
+            inbox=inbox,
+            decision=decision,
+            assignee_team_ref="TEM-OTHER",
+            assignee_enabled=True,
+            now=NOW,
+        )

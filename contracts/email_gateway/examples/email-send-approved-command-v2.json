@@ -1,0 +1,57 @@
+{
+  "schema_version": "2.0",
+  "command_id": "CMD-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "command_type": "email.send.approved",
+  "site_id": "gbos.localhost",
+  "processing_purpose": "customer_service",
+  "team_ref": "TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "actor_user_ref": "USR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "delegated_approver_user_ref": "USR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "review_case_ref": "RVC-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "review_case_revision": 3,
+  "review_policy_version": "email_send_owner_v1",
+  "approval_expires_at": "2026-08-13T13:15:00Z",
+  "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "mailbox_config_revision": 7,
+  "inbox_item_ref": "INB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "inbox_item_revision": 11,
+  "conversation_ref": "CNV-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "conversation_revision": 5,
+  "reply_draft_ref": "DRF-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "reply_draft_revision": 4,
+  "reply_draft_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "participants": [
+    {
+      "address_role": "sender",
+      "opaque_address_ref": "extid:v1:email:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "address_role": "to",
+      "opaque_address_ref": "extid:v1:email:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      "identity_mapping_ref": "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "identity_mapping_revision": 9
+    },
+    {
+      "address_role": "cc",
+      "opaque_address_ref": "extid:v1:email:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+      "identity_mapping_ref": "EID-01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "identity_mapping_revision": 2
+    }
+  ],
+  "party_ref": "PTY-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "party_revision": 8,
+  "team_revision": 6,
+  "owner_user_ref": "USR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "owner_eligibility_revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "final_mime_evidence_ref": "EVR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "final_mime_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "evidence_refs": [
+    "EVR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "EVR-01ARZ3NDEKTSV4RRFFQ69G5FAW"
+  ],
+  "request_id": "REQ-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "idempotency_key": "idem:v2:4444444444444444444444444444444444444444444444444444444444444444",
+  "stable_client_request_id": "CLI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "payload_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "issued_at": "2026-08-13T13:00:00Z"
+}

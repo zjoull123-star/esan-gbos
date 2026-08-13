@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from .models import (
@@ -9,9 +10,20 @@ from .models import (
     RouteDecision,
     RoutingRule,
     TenantScope,
+    ValidationError,
     stable_ref,
 )
 from .protocols import FrappeRouteAuthority
+
+AUTHORIZED_INBOX_LIST_SQL = """
+    SELECT inbox_item_ref, revision
+      FROM email_gateway.inbox_items
+     WHERE site_id = %s
+       AND team_ref = ANY(%s)
+       AND (assignee_user_ref IS NULL OR assignee_user_ref = %s)
+     ORDER BY received_at DESC, inbox_item_ref
+     LIMIT %s
+"""
 
 
 class RoutingService:
@@ -94,6 +106,45 @@ class RoutingService:
             mailbox,
             authority.safe_reason_code or "owner_unavailable",
             authority.resolved_at,
+        )
+
+    @staticmethod
+    def apply_decision(
+        *,
+        inbox: InboxItem,
+        decision: RouteDecision,
+        assignee_team_ref: str | None,
+        assignee_enabled: bool,
+        now: datetime,
+    ) -> InboxItem:
+        if inbox.state != "identity_pending":
+            raise ValidationError("routing applies only to identity_pending")
+        if decision.site_id != inbox.site_id or decision.inbox_item_ref != inbox.inbox_item_ref:
+            raise ValidationError("routing decision inbox mismatch")
+        if decision.team_ref != inbox.team_ref:
+            raise ValidationError("routing decision team mismatch")
+        if now < inbox.updated_at:
+            raise ValidationError("routing clock regression")
+        if decision.route_status == "assigned":
+            if assignee_team_ref != inbox.team_ref:
+                raise ValidationError("routing assignee team mismatch")
+            if not assignee_enabled:
+                raise ValidationError("routing assignee is not eligible")
+            return replace(
+                inbox,
+                assignee_user_ref=decision.owner_user_ref,
+                state="assigned",
+                revision=inbox.revision + 1,
+                updated_at=now,
+            )
+        if decision.route_status != "unassigned" or decision.owner_user_ref is not None:
+            raise ValidationError("invalid routing decision")
+        return replace(
+            inbox,
+            assignee_user_ref=None,
+            state="unassigned",
+            revision=inbox.revision + 1,
+            updated_at=now,
         )
 
     @staticmethod
