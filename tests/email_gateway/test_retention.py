@@ -18,9 +18,7 @@ def test_retention_scheduler_requires_an_explicit_observer_verifier() -> None:
 
     from services.email_gateway.retention import RetentionScheduler
 
-    parameter = inspect.signature(RetentionScheduler).parameters[
-        "observer_tombstone_verifier"
-    ]
+    parameter = inspect.signature(RetentionScheduler).parameters["observer_tombstone_verifier"]
     assert parameter.default is inspect.Parameter.empty
 
 

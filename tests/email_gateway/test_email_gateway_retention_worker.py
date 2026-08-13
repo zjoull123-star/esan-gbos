@@ -10,14 +10,17 @@ def test_cycle_is_default_closed_and_execute_requires_both_opt_ins() -> None:
 
     assert execution_enabled({}) is False
     assert execution_enabled({"GBOS_EMAIL_GATEWAY_RETENTION_ENABLED": "true"}) is False
-    assert execution_enabled(
-        {
-            "GBOS_EMAIL_GATEWAY_RETENTION_ENABLED": "true",
-            "GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED": "true",
-            "GBOS_EMAIL_GATEWAY_KILL_SWITCH": "false",
-            "GBOS_GLOBAL_KILL_SWITCH": "false",
-        }
-    ) is True
+    assert (
+        execution_enabled(
+            {
+                "GBOS_EMAIL_GATEWAY_RETENTION_ENABLED": "true",
+                "GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED": "true",
+                "GBOS_EMAIL_GATEWAY_KILL_SWITCH": "false",
+                "GBOS_GLOBAL_KILL_SWITCH": "false",
+            }
+        )
+        is True
+    )
 
 
 def test_loop_rechecks_kill_switches_and_recovers_on_next_cycle() -> None:
@@ -99,6 +102,7 @@ def test_http_observer_verifier_accepts_only_exact_bound_receipt() -> None:
         auth_ref="observer-retention-verifier-v1",
         transport=lambda **_kwargs: (200, {"verified": True}),
     )
-    assert wrong.verify_tombstone(
-        TenantScope("site.local", "sales_follow_up"), projection, now=NOW
-    ) is False
+    assert (
+        wrong.verify_tombstone(TenantScope("site.local", "sales_follow_up"), projection, now=NOW)
+        is False
+    )
