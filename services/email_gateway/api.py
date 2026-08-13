@@ -7,28 +7,47 @@ import hmac
 import json
 import re
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol, cast
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from .conversations import ConversationService
+from .drafts import DraftService
+from .evidence import EvidenceBindingAuthority, ObserverEvidenceRevealClient
 from .mailboxes import MailboxRegistry
 from .models import (
     AuthorizationError,
+    Conversation,
+    Draft,
     EmailMessagePublication,
     GatewayActorScope,
     IdempotencyConflict,
+    InboxItem,
     IntakeResult,
     Mailbox,
     RevisionConflict,
+    RoutingRule,
     ScopeViolation,
     TenantScope,
     ValidationError,
+    canonical_digest,
     stable_ref,
 )
-from .phase1_read import Phase1Mailbox
+from .operations import InboxOperations
+from .phase1_read import Phase1Mailbox, decode_cursor, encode_cursor
+from .postgres import (
+    Connection,
+    RestrictedTextDecryptor,
+    decrypt_restricted_text,
+    redacted_database_errors,
+    site_transaction,
+)
+from .repositories.workflow import InMemoryWorkflowRepository, PostgresWorkflowRepository
 from .repository import ConnectorHealthReader, Phase1ReadRepository
+from .security import GatewayAuthorizationIssuer
 
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 _AUTH_REF = "observer-email-publication-v1"
@@ -36,14 +55,418 @@ _PURPOSE = "observation_processing"
 _BFF_AUTH_REF = "email-gateway-bff-v1"
 _ADMIN_ROLES = frozenset({"Integration Admin", "GBOS Admin"})
 _INBOX_ROLES = frozenset({"CEO", "Sales Manager", "Sales User", "Reviewer", "GBOS Admin"})
+_COMMAND_ROLES = frozenset({"Sales Manager", "Sales User", "Reviewer", "GBOS Admin"})
+_REVEAL_ROLES = frozenset({"Sales Manager", "Sales User", "Reviewer", "GBOS Admin"})
 _WILDCARD_ROLES = frozenset({"CEO", "GBOS Admin"})
 _ACTOR_FIELDS = frozenset({"actor_ref", "actor_roles", "allowed_team_refs"})
 _MAX_REQUEST_BYTES = 262_144
 _MAX_CURSOR_LENGTH = 512
+_INBOX_STATES = frozenset(
+    {
+        "identity_pending",
+        "unassigned",
+        "assigned",
+        "draft",
+        "waiting_internal",
+        "waiting_customer",
+        "converted",
+        "closed",
+        "quarantined",
+        "send_queued",
+        "send_uncertain",
+    }
+)
+_INBOX_SORTS = frozenset({"received_at_desc", "sla_due_at_asc"})
 
 
 class EmailPublicationIntake(Protocol):
     def accept(self, scope: TenantScope, publication: EmailMessagePublication) -> IntakeResult: ...
+
+
+class GovernedInboxRead(Protocol):
+    def list_inbox_closed(
+        self,
+        actor: GatewayActorScope,
+        *,
+        state: str | None,
+        mailbox_ref: str | None,
+        sort: str,
+        page_size: int,
+        cursor: str | None,
+    ) -> tuple[tuple[dict[str, object], ...], str | None]: ...
+
+    def get_inbox_closed(
+        self, actor: GatewayActorScope, inbox_item_ref: str
+    ) -> dict[str, object] | None: ...
+
+
+class GatewayAdminRepository(Protocol):
+    def list_rules(self, site_id: str) -> tuple[RoutingRule, ...]: ...
+
+    def upsert_rule(
+        self,
+        scope: TenantScope,
+        rule: RoutingRule,
+        *,
+        expected_revision: int,
+        request_id: str,
+        idempotency_key: str,
+    ) -> RoutingRule: ...
+
+
+class WorkflowAuthority(Protocol):
+    def authorize_inbox(
+        self, actor: GatewayActorScope, inbox_item_ref: str
+    ) -> tuple[TenantScope, str]: ...
+
+    def authorize_conversation(
+        self, actor: GatewayActorScope, conversation_ref: str
+    ) -> TenantScope: ...
+
+
+class _EmptyAdminRepository:
+    def list_rules(self, _site_id: str) -> tuple[RoutingRule, ...]:
+        return ()
+
+    def upsert_rule(self, *_args: object, **_kwargs: object) -> RoutingRule:
+        raise _BFFError("runtime_unavailable", 503)
+
+
+class _FallbackWorkflowAuthority:
+    def __init__(self, repository: Any) -> None:
+        self._repository = repository
+
+    def authorize_inbox(
+        self, actor: GatewayActorScope, inbox_item_ref: str
+    ) -> tuple[TenantScope, str]:
+        scope = TenantScope(actor.site_id, "business_operations")
+        inbox = self._repository.get_inbox(scope, inbox_item_ref)
+        if inbox is None or (actor.team_refs != ("*",) and inbox.team_ref not in actor.team_refs):
+            raise _BFFError("scope_mismatch", 403)
+        return scope, inbox.team_ref
+
+    def authorize_conversation(
+        self, actor: GatewayActorScope, conversation_ref: str
+    ) -> TenantScope:
+        scope = TenantScope(actor.site_id, "business_operations")
+        conversation = self._repository.get_conversation(scope, conversation_ref)
+        if conversation is None or (
+            actor.team_refs != ("*",) and conversation.team_ref not in actor.team_refs
+        ):
+            raise _BFFError("scope_mismatch", 403)
+        return scope
+
+
+class PostgresWorkflowAuthority:
+    """Resolves one Gateway business purpose after applying actor team scope in SQL."""
+
+    def __init__(self, connection: Connection) -> None:
+        self._connection = connection
+
+    def authorize_inbox(
+        self, actor: GatewayActorScope, inbox_item_ref: str
+    ) -> tuple[TenantScope, str]:
+        wildcard = actor.team_refs == ("*",) and bool(_WILDCARD_ROLES & set(actor.roles))
+        scope = TenantScope(actor.site_id, "business_operations")
+        with redacted_database_errors(), site_transaction(self._connection, scope) as db:
+            db.execute(
+                """
+                SELECT mailbox.business_purpose, inbox.team_ref
+                  FROM email_gateway.inbox_items AS inbox
+                  JOIN email_gateway.mailboxes AS mailbox
+                    ON mailbox.site_id = inbox.site_id
+                   AND mailbox.mailbox_ref = inbox.mailbox_ref
+                 WHERE inbox.site_id = %s
+                   AND inbox.inbox_item_ref = %s
+                   AND (%s OR inbox.team_ref = ANY(%s))
+                 LIMIT 1
+                """,
+                (actor.site_id, inbox_item_ref, wildcard, list(actor.team_refs)),
+            )
+            row = db.fetchone()
+        if row is None:
+            raise AuthorizationError("inbox is outside actor scope")
+        return TenantScope(actor.site_id, str(row[0])), str(row[1])
+
+    def authorize_conversation(
+        self, actor: GatewayActorScope, conversation_ref: str
+    ) -> TenantScope:
+        wildcard = actor.team_refs == ("*",) and bool(_WILDCARD_ROLES & set(actor.roles))
+        scope = TenantScope(actor.site_id, "business_operations")
+        with redacted_database_errors(), site_transaction(self._connection, scope) as db:
+            db.execute(
+                """
+                SELECT min(mailbox.business_purpose), count(DISTINCT mailbox.business_purpose)
+                  FROM email_gateway.conversations AS conversation
+                  JOIN email_gateway.conversation_messages AS member
+                    ON member.site_id = conversation.site_id
+                   AND member.conversation_ref = conversation.conversation_ref
+                  JOIN email_gateway.inbox_items AS inbox
+                    ON inbox.site_id = member.site_id
+                   AND inbox.inbox_item_ref = member.inbox_item_ref
+                  JOIN email_gateway.mailboxes AS mailbox
+                    ON mailbox.site_id = inbox.site_id
+                   AND mailbox.mailbox_ref = inbox.mailbox_ref
+                 WHERE conversation.site_id = %s
+                   AND conversation.conversation_ref = %s
+                   AND (%s OR conversation.team_ref = ANY(%s))
+                """,
+                (actor.site_id, conversation_ref, wildcard, list(actor.team_refs)),
+            )
+            row = db.fetchone()
+        if row is None or row[0] is None or int(row[1]) != 1:
+            raise AuthorizationError("conversation is outside actor scope")
+        return TenantScope(actor.site_id, str(row[0]))
+
+
+class PostgresGovernedInboxRead:
+    """Full queue projection with actor authorization in WHERE before LIMIT."""
+
+    def __init__(
+        self, connection: Connection, *, decrypt_restricted_text: RestrictedTextDecryptor
+    ) -> None:
+        self._connection = connection
+        self._decrypt = decrypt_restricted_text
+
+    def list_inbox_closed(
+        self,
+        actor: GatewayActorScope,
+        *,
+        state: str | None,
+        mailbox_ref: str | None,
+        sort: str,
+        page_size: int,
+        cursor: str | None,
+    ) -> tuple[tuple[dict[str, object], ...], str | None]:
+        wildcard = actor.team_refs == ("*",) and bool(_WILDCARD_ROLES & set(actor.roles))
+        anchor = None if cursor is None else decode_cursor(cursor, f"inbox-{sort}", 2)
+        scope = TenantScope(actor.site_id, "business_operations")
+        where = [
+            "inbox.site_id = %s",
+            "(%s OR inbox.team_ref = ANY(%s))",
+        ]
+        params: list[object] = [actor.site_id, wildcard, list(actor.team_refs)]
+        if state is not None:
+            where.append("inbox.state = %s")
+            params.append(state)
+        if mailbox_ref is not None:
+            where.append("inbox.mailbox_ref = %s")
+            params.append(mailbox_ref)
+        if anchor is not None:
+            column = (
+                "inbox.received_at"
+                if sort == "received_at_desc"
+                else "COALESCE(inbox.sla_due_at, 'infinity'::timestamptz)"
+            )
+            operator = "<" if sort == "received_at_desc" else ">"
+            where.append(f"({column}, inbox.inbox_item_ref) {operator} (%s::timestamptz, %s)")
+            params.extend(anchor)
+        order = (
+            "inbox.received_at DESC, inbox.inbox_item_ref DESC"
+            if sort == "received_at_desc"
+            else "inbox.sla_due_at ASC NULLS LAST, inbox.inbox_item_ref ASC"
+        )
+        query = f"""
+            SELECT inbox.inbox_item_ref, mailbox.address_display_ciphertext,
+                   mailbox.entry_role, inbox.received_at, inbox.state,
+                   message.subject_projection_ciphertext, inbox.team_ref,
+                   inbox.assignee_user_ref, inbox.revision, inbox.sla_due_at,
+                   COALESCE((
+                       SELECT (array_agg(projection.status ORDER BY
+                               projection.external_identity_revision DESC))[1]
+                         FROM email_gateway.message_participants AS participant
+                         JOIN email_gateway.identity_projection_receipts AS projection
+                           ON projection.site_id = participant.site_id
+                          AND projection.opaque_address_ref = participant.identity_ref
+                        WHERE participant.site_id = inbox.site_id
+                          AND participant.message_ref = inbox.message_ref
+                          AND participant.role = 'from'
+                   ), 'unknown')
+              FROM email_gateway.inbox_items AS inbox
+              JOIN email_gateway.mailboxes AS mailbox
+                ON mailbox.site_id = inbox.site_id
+               AND mailbox.mailbox_ref = inbox.mailbox_ref
+              JOIN email_gateway.channel_messages AS message
+                ON message.site_id = inbox.site_id
+               AND message.message_ref = inbox.message_ref
+             WHERE {" AND ".join(where)}
+             ORDER BY {order}
+             LIMIT %s
+        """
+        with redacted_database_errors(), site_transaction(self._connection, scope) as db:
+            db.execute(query, (*params, page_size + 1))
+            rows = db.fetchall()
+        items = tuple(self._wire(actor.site_id, row, detail=False) for row in rows[:page_size])
+        next_cursor = None
+        if len(rows) > page_size and rows[:page_size]:
+            last = rows[page_size - 1]
+            value = last[3] if sort == "received_at_desc" else last[9]
+            encoded_value = "infinity" if value is None else value.isoformat()
+            next_cursor = encode_cursor(f"inbox-{sort}", encoded_value, str(last[0]))
+        return items, next_cursor
+
+    def get_inbox_closed(
+        self, actor: GatewayActorScope, inbox_item_ref: str
+    ) -> dict[str, object] | None:
+        wildcard = actor.team_refs == ("*",) and bool(_WILDCARD_ROLES & set(actor.roles))
+        scope = TenantScope(actor.site_id, "business_operations")
+        with redacted_database_errors(), site_transaction(self._connection, scope) as db:
+            db.execute(
+                """
+                SELECT inbox.inbox_item_ref, mailbox.address_display_ciphertext,
+                       mailbox.entry_role, inbox.received_at, inbox.state,
+                       message.subject_projection_ciphertext, inbox.team_ref,
+                       inbox.assignee_user_ref, inbox.revision, inbox.sla_due_at,
+                       COALESCE((SELECT (array_agg(projection.status ORDER BY
+                           projection.external_identity_revision DESC))[1]
+                           FROM email_gateway.message_participants AS participant
+                           JOIN email_gateway.identity_projection_receipts AS projection
+                             ON projection.site_id = participant.site_id
+                            AND projection.opaque_address_ref = participant.identity_ref
+                          WHERE participant.site_id = inbox.site_id
+                            AND participant.message_ref = inbox.message_ref
+                            AND participant.role = 'from'), 'unknown')
+                  FROM email_gateway.inbox_items AS inbox
+                  JOIN email_gateway.mailboxes AS mailbox
+                    ON mailbox.site_id = inbox.site_id
+                   AND mailbox.mailbox_ref = inbox.mailbox_ref
+                  JOIN email_gateway.channel_messages AS message
+                    ON message.site_id = inbox.site_id
+                   AND message.message_ref = inbox.message_ref
+                 WHERE inbox.site_id = %s
+                   AND inbox.inbox_item_ref = %s
+                   AND (%s OR inbox.team_ref = ANY(%s))
+                """,
+                (actor.site_id, inbox_item_ref, wildcard, list(actor.team_refs)),
+            )
+            row = db.fetchone()
+        return None if row is None else self._wire(actor.site_id, row, detail=True)
+
+    def _wire(self, site_id: str, row: tuple[Any, ...], *, detail: bool) -> dict[str, object]:
+        label = decrypt_restricted_text(self._decrypt, row[1])
+        summary = "No subject"
+        if row[5] is not None:
+            summary = decrypt_restricted_text(self._decrypt, row[5])
+        value: dict[str, object] = {
+            "inbox_item_ref": str(row[0]),
+            "mailbox_label": label,
+            "mailbox_role": str(row[2]),
+            "received_at": row[3].isoformat(),
+            "state": str(row[4]),
+            "safe_summary": summary,
+            "team_ref": str(row[6]),
+            "revision": int(row[8]),
+        }
+        if detail:
+            value.update({"assignee_user_ref": row[7], "identity_state": str(row[10])})
+        return value
+
+
+class PostgresGatewayAdminRepository:
+    def __init__(self, connection: Connection) -> None:
+        self._connection = connection
+
+    def list_rules(self, site_id: str) -> tuple[RoutingRule, ...]:
+        scope = TenantScope(site_id, "business_operations")
+        with redacted_database_errors(), site_transaction(self._connection, scope) as db:
+            db.execute(
+                """
+                SELECT rule_ref, site_id, team_ref, mailbox_ref, owner_user_ref,
+                       priority, revision, enabled
+                  FROM email_gateway.routing_rules
+                 WHERE site_id = %s
+                 ORDER BY priority DESC, rule_ref
+                 LIMIT 1001
+                """,
+                (site_id,),
+            )
+            rows = db.fetchall()
+        return tuple(RoutingRule(*row) for row in rows)
+
+    def upsert_rule(
+        self,
+        scope: TenantScope,
+        rule: RoutingRule,
+        *,
+        expected_revision: int,
+        request_id: str,
+        idempotency_key: str,
+    ) -> RoutingRule:
+        digest = canonical_digest(_rule_wire(rule))
+        with redacted_database_errors(), site_transaction(self._connection, scope) as db:
+            db.execute(
+                """
+                SELECT rule_ref, payload_digest
+                  FROM email_gateway.routing_rules
+                 WHERE site_id = %s AND idempotency_key = %s
+                """,
+                (scope.site_id, idempotency_key),
+            )
+            replay = db.fetchone()
+            if replay is not None:
+                if str(replay[0]) != rule.rule_ref or str(replay[1]) != digest:
+                    raise IdempotencyConflict("routing rule replay conflict")
+                return rule
+            db.execute(
+                """
+                SELECT revision FROM email_gateway.routing_rules
+                 WHERE site_id = %s AND rule_ref = %s FOR UPDATE
+                """,
+                (scope.site_id, rule.rule_ref),
+            )
+            current = db.fetchone()
+            actual = 0 if current is None else int(current[0])
+            if actual != expected_revision:
+                raise RevisionConflict("routing rule revision conflict")
+            if current is None:
+                db.execute(
+                    """
+                    INSERT INTO email_gateway.routing_rules (
+                        site_id, rule_ref, team_ref, mailbox_ref, owner_user_ref,
+                        priority, revision, enabled, request_id, idempotency_key,
+                        payload_digest
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        rule.site_id,
+                        rule.rule_ref,
+                        rule.team_ref,
+                        rule.mailbox_ref,
+                        rule.owner_user_ref,
+                        rule.priority,
+                        rule.revision,
+                        rule.enabled,
+                        request_id,
+                        idempotency_key,
+                        digest,
+                    ),
+                )
+            else:
+                db.execute(
+                    """
+                    UPDATE email_gateway.routing_rules
+                       SET team_ref = %s, mailbox_ref = %s, owner_user_ref = %s,
+                           priority = %s, revision = %s, enabled = %s,
+                           request_id = %s, idempotency_key = %s,
+                           payload_digest = %s, updated_at = now()
+                     WHERE site_id = %s AND rule_ref = %s AND revision = %s
+                    """,
+                    (
+                        rule.team_ref,
+                        rule.mailbox_ref,
+                        rule.owner_user_ref,
+                        rule.priority,
+                        rule.revision,
+                        rule.enabled,
+                        request_id,
+                        idempotency_key,
+                        digest,
+                        scope.site_id,
+                        rule.rule_ref,
+                        expected_revision,
+                    ),
+                )
+        return rule
 
 
 def build_email_publication_api(
@@ -76,6 +499,16 @@ def create_email_gateway_app(
     mailbox_registry: MailboxRegistry | None = None,
     read_repository: Phase1ReadRepository | None = None,
     connector_health_reader: ConnectorHealthReader | None = None,
+    governed_inbox_read: GovernedInboxRead | None = None,
+    workflow_repository: InMemoryWorkflowRepository | PostgresWorkflowRepository | None = None,
+    inbox_operations: InboxOperations | None = None,
+    conversation_service: ConversationService | None = None,
+    draft_service: DraftService | None = None,
+    admin_repository: GatewayAdminRepository | None = None,
+    workflow_authority: WorkflowAuthority | None = None,
+    evidence_authority: EvidenceBindingAuthority | None = None,
+    evidence_client: ObserverEvidenceRevealClient | None = None,
+    clock: Any | None = None,
 ) -> FastAPI:
     if (
         not publication_bearer_token
@@ -182,6 +615,14 @@ def create_email_gateway_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    @application.exception_handler(PermissionError)
+    async def permission_error(_request: Request, _error: PermissionError) -> JSONResponse:
+        return JSONResponse(
+            status_code=403,
+            content={"error": {"code": "scope_mismatch"}},
+            headers={"Cache-Control": "no-store"},
+        )
+
     @application.get("/health")
     def health() -> dict[str, object]:
         return {
@@ -256,8 +697,55 @@ def create_email_gateway_app(
         assert mailbox_registry is not None
         assert read_repository is not None
         assert connector_health_reader is not None
+        active_clock = clock or (lambda: datetime.now(UTC))
+        active_workflow = workflow_repository or InMemoryWorkflowRepository()
+        active_operations = inbox_operations or InboxOperations(active_workflow)
+        active_conversations = conversation_service or ConversationService(
+            cast(Any, active_workflow)
+        )
+        active_drafts = draft_service or DraftService(cast(Any, active_workflow))
+        active_admin = admin_repository or _EmptyAdminRepository()
+        active_authority = workflow_authority or _FallbackWorkflowAuthority(active_workflow)
+        authorization_issuer = GatewayAuthorizationIssuer(clock=active_clock)
 
-        @application.post("/internal/v1/bff/mailboxes/list")
+        def command_context(
+            *,
+            payload: object,
+            authorization: str | None,
+            request_auth_ref: str | None,
+            site_id: str | None,
+            purpose: str | None,
+            request_id: str | None,
+            content_type: str | None,
+            header_idempotency_key: str | None,
+            operation_fields: set[str],
+            optional_fields: set[str] | None = None,
+            inbox_field: str = "inbox_item_ref",
+        ) -> tuple[GatewayActorScope, dict[str, object], TenantScope, str]:
+            _authorize_bff_headers(
+                authorization=authorization,
+                auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                bearer_token=bff_bearer_token,
+                expected_purpose="email_inbox_command",
+            )
+            actor, values = _actor_payload(
+                payload,
+                site_id=cast(str, site_id),
+                operation_fields=operation_fields,
+                optional_fields=optional_fields,
+            )
+            _require_command(actor)
+            key = _bounded_text(values["idempotency_key"], "idempotency key", 256)
+            _require_idempotency_header(header_idempotency_key, key)
+            inbox_ref = _bounded_text(values[inbox_field], "inbox item ref", 140)
+            scope, team_ref = active_authority.authorize_inbox(actor, inbox_ref)
+            return actor, values, scope, team_ref
+
+        @application.post("/internal/v1/bff/email-admin/mailboxes/list")
         def list_mailboxes(
             payload: Annotated[Any, Body()],
             authorization: str | None = Header(default=None),
@@ -295,7 +783,7 @@ def create_email_gateway_app(
                 },
             )
 
-        @application.post("/internal/v1/bff/mailboxes/get")
+        @application.post("/internal/v1/bff/email-admin/mailboxes/get")
         def get_mailbox(
             payload: Annotated[Any, Body()],
             authorization: str | None = Header(default=None),
@@ -327,7 +815,7 @@ def create_email_gateway_app(
                 raise _BFFError("not_found", 404)
             return _success(actor.site_id, {"mailbox": mailbox.to_wire()})
 
-        @application.post("/internal/v1/bff/mailboxes/upsert")
+        @application.post("/internal/v1/bff/email-admin/mailboxes/upsert")
         def upsert_mailbox(
             payload: Annotated[Any, Body()],
             authorization: str | None = Header(default=None),
@@ -431,7 +919,7 @@ def create_email_gateway_app(
             )
             return _success(actor.site_id, {"mailbox": _mailbox_wire(receipt.mailbox)})
 
-        @application.post("/internal/v1/bff/mailboxes/status")
+        @application.post("/internal/v1/bff/email-admin/mailboxes/status")
         def set_mailbox_status(
             payload: Annotated[Any, Body()],
             authorization: str | None = Header(default=None),
@@ -498,7 +986,7 @@ def create_email_gateway_app(
             )
             return _success(actor.site_id, {"mailbox": _mailbox_wire(receipt.mailbox)})
 
-        @application.post("/internal/v1/bff/inbox/list")
+        @application.post("/internal/v1/bff/email-inbox/list")
         def list_inbox(
             payload: Annotated[Any, Body()],
             authorization: str | None = Header(default=None),
@@ -522,27 +1010,48 @@ def create_email_gateway_app(
                 payload,
                 site_id=cast(str, site_id),
                 operation_fields={"page_size"},
-                optional_fields={"state", "cursor"},
+                optional_fields={"state", "mailbox_ref", "sort", "cursor"},
             )
             _require_inbox(actor)
             state = values.get("state")
             if state is not None:
-                state = _choice(state, "state", {"identity_pending", "unassigned"})
-            page = read_repository.list_inbox(
-                actor,
-                state=state,
-                page_size=_page_size(values["page_size"]),
-                cursor=_cursor(values.get("cursor")),
-            )
+                state = _choice(state, "state", set(_INBOX_STATES))
+            mailbox_ref = values.get("mailbox_ref")
+            if mailbox_ref is not None:
+                mailbox_ref = _bounded_text(mailbox_ref, "mailbox ref", 140)
+            sort = _choice(values.get("sort", "received_at_desc"), "sort", set(_INBOX_SORTS))
+            page_size = _page_size(values["page_size"])
+            cursor = _cursor(values.get("cursor"))
+            if governed_inbox_read is not None:
+                items, next_cursor = governed_inbox_read.list_inbox_closed(
+                    actor,
+                    state=state,
+                    mailbox_ref=mailbox_ref,
+                    sort=sort,
+                    page_size=page_size,
+                    cursor=cursor,
+                )
+                item_wires = list(items)
+            else:
+                if state not in {None, "identity_pending", "unassigned"} or mailbox_ref is not None:
+                    raise _BFFError("runtime_unavailable", 503)
+                page = read_repository.list_inbox(
+                    actor,
+                    state=state,
+                    page_size=page_size,
+                    cursor=cursor,
+                )
+                item_wires = [item.to_wire() for item in page.items]
+                next_cursor = page.next_cursor
             return _success(
                 actor.site_id,
                 {
-                    "inbox_items": [item.to_wire() for item in page.items],
-                    "next_cursor": page.next_cursor,
+                    "inbox_items": item_wires,
+                    "next_cursor": next_cursor,
                 },
             )
 
-        @application.post("/internal/v1/bff/inbox/get")
+        @application.post("/internal/v1/bff/email-inbox/get")
         def get_inbox(
             payload: Annotated[Any, Body()],
             authorization: str | None = Header(default=None),
@@ -568,15 +1077,595 @@ def create_email_gateway_app(
                 operation_fields={"inbox_item_ref"},
             )
             _require_inbox(actor)
-            item = read_repository.get_inbox(
-                actor,
-                _bounded_text(values["inbox_item_ref"], "inbox item ref", 140),
-            )
-            if item is None:
+            inbox_ref = _bounded_text(values["inbox_item_ref"], "inbox item ref", 140)
+            if governed_inbox_read is not None:
+                item_wire = governed_inbox_read.get_inbox_closed(actor, inbox_ref)
+            else:
+                phase1_item = read_repository.get_inbox(actor, inbox_ref)
+                item_wire = None if phase1_item is None else phase1_item.to_wire()
+            if item_wire is None:
                 raise _BFFError("not_found", 404)
-            return _success(actor.site_id, {"inbox_item": item.to_wire()})
+            return _success(actor.site_id, {"inbox_item": item_wire})
 
-        @application.post("/internal/v1/bff/email-connectors/health")
+        @application.post("/internal/v1/bff/email-inbox/claim")
+        def claim_inbox(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+            header_idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, object]:
+            actor, values, scope, _team = command_context(
+                payload=payload,
+                authorization=authorization,
+                request_auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                header_idempotency_key=header_idempotency_key,
+                operation_fields={"inbox_item_ref", "expected_revision", "idempotency_key"},
+            )
+            result = active_operations.claim(
+                scope,
+                actor=actor,
+                actor_enabled=True,
+                inbox_item_ref=_bounded_text(values["inbox_item_ref"], "inbox item ref", 140),
+                expected_revision=_nonnegative_integer(
+                    values["expected_revision"], "expected revision"
+                ),
+                request_id=cast(str, request_id),
+                idempotency_key=_bounded_text(values["idempotency_key"], "idempotency key", 256),
+                now=active_clock(),
+            )
+            return _success(actor.site_id, {"inbox_item": _workflow_inbox_wire(result)})
+
+        @application.post("/internal/v1/bff/email-inbox/reassign")
+        def reassign_inbox(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+            header_idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, object]:
+            actor, values, scope, _team = command_context(
+                payload=payload,
+                authorization=authorization,
+                request_auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                header_idempotency_key=header_idempotency_key,
+                operation_fields={
+                    "inbox_item_ref",
+                    "assignee_team_ref",
+                    "assignee_enabled",
+                    "expected_revision",
+                    "idempotency_key",
+                },
+                optional_fields={"assignee_user_ref"},
+            )
+            assignee = values.get("assignee_user_ref")
+            if assignee is not None:
+                assignee = _bounded_text(assignee, "assignee user ref", 140)
+            result = active_operations.reassign(
+                scope,
+                actor=actor,
+                actor_enabled=True,
+                inbox_item_ref=_bounded_text(values["inbox_item_ref"], "inbox item ref", 140),
+                assignee_user_ref=assignee,
+                assignee_team_ref=_bounded_text(
+                    values["assignee_team_ref"], "assignee team ref", 140
+                ),
+                assignee_enabled=_boolean(values["assignee_enabled"], "assignee enabled"),
+                expected_revision=_nonnegative_integer(
+                    values["expected_revision"], "expected revision"
+                ),
+                request_id=cast(str, request_id),
+                idempotency_key=_bounded_text(values["idempotency_key"], "idempotency key", 256),
+                now=active_clock(),
+            )
+            return _success(actor.site_id, {"inbox_item": _workflow_inbox_wire(result)})
+
+        @application.post("/internal/v1/bff/email-inbox/transition")
+        def transition_inbox(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+            header_idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, object]:
+            actor, values, scope, _team = command_context(
+                payload=payload,
+                authorization=authorization,
+                request_auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                header_idempotency_key=header_idempotency_key,
+                operation_fields={
+                    "inbox_item_ref",
+                    "target_state",
+                    "expected_revision",
+                    "idempotency_key",
+                },
+            )
+            result = active_operations.transition(
+                scope,
+                actor=actor,
+                actor_enabled=True,
+                inbox_item_ref=_bounded_text(values["inbox_item_ref"], "inbox item ref", 140),
+                target_state=_choice(values["target_state"], "target state", set(_INBOX_STATES)),
+                expected_revision=_nonnegative_integer(
+                    values["expected_revision"], "expected revision"
+                ),
+                request_id=cast(str, request_id),
+                idempotency_key=_bounded_text(values["idempotency_key"], "idempotency key", 256),
+                now=active_clock(),
+            )
+            return _success(actor.site_id, {"inbox_item": _workflow_inbox_wire(result)})
+
+        @application.post("/internal/v1/bff/email-inbox/merge")
+        def merge_inbox(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+            header_idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, object]:
+            _authorize_bff_headers(
+                authorization=authorization,
+                auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                bearer_token=bff_bearer_token,
+                expected_purpose="email_inbox_command",
+            )
+            actor, values = _actor_payload(
+                payload,
+                site_id=cast(str, site_id),
+                operation_fields={
+                    "suggestion_ref",
+                    "left_inbox_item_ref",
+                    "expected_suggestion_revision",
+                    "expected_left_revision",
+                    "expected_right_revision",
+                    "idempotency_key",
+                },
+            )
+            _require_command(actor)
+            key = _bounded_text(values["idempotency_key"], "idempotency key", 256)
+            _require_idempotency_header(header_idempotency_key, key)
+            scope, _team = active_authority.authorize_inbox(
+                actor,
+                _bounded_text(values["left_inbox_item_ref"], "left inbox item ref", 140),
+            )
+            result = active_conversations.accept(
+                scope,
+                actor=actor,
+                suggestion_ref=_bounded_text(values["suggestion_ref"], "suggestion ref", 140),
+                expected_suggestion_revision=_nonnegative_integer(
+                    values["expected_suggestion_revision"], "suggestion revision"
+                ),
+                expected_left_revision=_nonnegative_integer(
+                    values["expected_left_revision"], "left revision"
+                ),
+                expected_right_revision=_nonnegative_integer(
+                    values["expected_right_revision"], "right revision"
+                ),
+                request_id=cast(str, request_id),
+                idempotency_key=key,
+                now=active_clock(),
+            )
+            return _success(actor.site_id, {"conversation": _conversation_wire(result)})
+
+        @application.post("/internal/v1/bff/email-inbox/split")
+        def split_inbox(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+            header_idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, object]:
+            _authorize_bff_headers(
+                authorization=authorization,
+                auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                bearer_token=bff_bearer_token,
+                expected_purpose="email_inbox_command",
+            )
+            actor, values = _actor_payload(
+                payload,
+                site_id=cast(str, site_id),
+                operation_fields={
+                    "conversation_ref",
+                    "moved_inbox_item_refs",
+                    "expected_revision",
+                    "idempotency_key",
+                },
+            )
+            _require_command(actor)
+            key = _bounded_text(values["idempotency_key"], "idempotency key", 256)
+            _require_idempotency_header(header_idempotency_key, key)
+            conversation_ref = _bounded_text(values["conversation_ref"], "conversation ref", 140)
+            scope = active_authority.authorize_conversation(actor, conversation_ref)
+            conversation = active_workflow.get_conversation(scope, conversation_ref)
+            if conversation is None:
+                raise _BFFError("not_found", 404)
+            moved = _bounded_text_list(
+                values["moved_inbox_item_refs"], "moved inbox item refs", 100, 140
+            )
+            result = active_conversations.split(
+                scope,
+                actor=actor,
+                conversation=conversation,
+                moved_inbox_refs=moved,
+                expected_revision=_nonnegative_integer(
+                    values["expected_revision"], "expected revision"
+                ),
+                request_id=cast(str, request_id),
+                idempotency_key=key,
+                now=active_clock(),
+            )
+            return _success(actor.site_id, {"conversation": _conversation_wire(result)})
+
+        @application.post("/internal/v1/bff/email-inbox/link-business")
+        def link_business(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+            header_idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, object]:
+            actor, values, scope, _team = command_context(
+                payload=payload,
+                authorization=authorization,
+                request_auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                header_idempotency_key=header_idempotency_key,
+                operation_fields={
+                    "inbox_item_ref",
+                    "business_ref",
+                    "authority_valid",
+                    "authority_team_ref",
+                    "expected_revision",
+                    "idempotency_key",
+                },
+            )
+            result = active_operations.link_business(
+                scope,
+                actor=actor,
+                actor_enabled=True,
+                inbox_item_ref=_bounded_text(values["inbox_item_ref"], "inbox item ref", 140),
+                business_ref=_bounded_text(values["business_ref"], "business ref", 140),
+                authority_valid=_boolean(values["authority_valid"], "authority valid"),
+                authority_team_ref=_bounded_text(
+                    values["authority_team_ref"], "authority team ref", 140
+                ),
+                expected_revision=_nonnegative_integer(
+                    values["expected_revision"], "expected revision"
+                ),
+                request_id=cast(str, request_id),
+                idempotency_key=_bounded_text(values["idempotency_key"], "idempotency key", 256),
+                now=active_clock(),
+            )
+            return _success(actor.site_id, {"inbox_item": _workflow_inbox_wire(result)})
+
+        @application.post("/internal/v1/bff/email-inbox/save-draft")
+        def save_draft(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+            header_idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, object]:
+            _authorize_bff_headers(
+                authorization=authorization,
+                auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                bearer_token=bff_bearer_token,
+                expected_purpose="email_inbox_command",
+            )
+            if not isinstance(payload, dict) or payload.get("phase") not in {
+                "authorize",
+                "commit",
+            }:
+                raise _BFFError("invalid_query", 400)
+            phase = cast(str, payload["phase"])
+            common = {
+                "phase",
+                "actor_ref",
+                "actor_roles",
+                "allowed_team_refs",
+                "inbox_item_ref",
+                "draft_ref",
+                "expected_revision",
+                "content_digest",
+                "idempotency_key",
+            }
+            phase_fields = (
+                set()
+                if phase == "authorize"
+                else {
+                    "draft_authorization",
+                    "evidence_ref",
+                    "evidence_digest",
+                    "evidence_revision",
+                }
+            )
+            if set(payload) != common | phase_fields:
+                raise _BFFError("invalid_query", 400)
+            actor, values = _actor_payload(
+                payload,
+                site_id=cast(str, site_id),
+                operation_fields=common - _ACTOR_FIELDS,
+                optional_fields=phase_fields,
+            )
+            _require_command(actor)
+            key = _bounded_text(values["idempotency_key"], "idempotency key", 256)
+            _require_idempotency_header(header_idempotency_key, key)
+            inbox_ref = _bounded_text(values["inbox_item_ref"], "inbox item ref", 140)
+            scope, team_ref = active_authority.authorize_inbox(actor, inbox_ref)
+            inbox = active_workflow.get_inbox(scope, inbox_ref)
+            if inbox is None:
+                raise _BFFError("not_found", 404)
+            if "Sales User" in actor.roles and inbox.assignee_user_ref != actor.actor_ref:
+                raise _BFFError("scope_mismatch", 403)
+            draft_ref = _bounded_text(values["draft_ref"], "draft ref", 140)
+            expected_revision = _nonnegative_integer(
+                values["expected_revision"], "expected revision"
+            )
+            content_digest = _bounded_digest(values["content_digest"])
+            if phase == "authorize":
+                receipt = authorization_issuer.issue_draft(
+                    site_id=actor.site_id,
+                    actor_ref=actor.actor_ref,
+                    team_ref=team_ref,
+                    inbox_item_ref=inbox_ref,
+                    draft_ref=draft_ref,
+                    draft_revision=expected_revision + 1,
+                    request_digest=content_digest,
+                )
+                return _success(actor.site_id, {"draft_authorization": receipt})
+            receipt = _validate_draft_authorization(
+                values["draft_authorization"],
+                site_id=actor.site_id,
+                actor_ref=actor.actor_ref,
+                team_ref=team_ref,
+                inbox_item_ref=inbox_ref,
+                draft_ref=draft_ref,
+                draft_revision=expected_revision + 1,
+                content_digest=content_digest,
+                now=active_clock(),
+            )
+            evidence_ref = _bounded_text(values["evidence_ref"], "evidence ref", 512)
+            evidence_digest = _bounded_digest(values["evidence_digest"])
+            evidence_revision = _nonnegative_integer(
+                values["evidence_revision"], "evidence revision"
+            )
+            if evidence_digest != content_digest or evidence_revision != receipt["draft_revision"]:
+                raise _BFFError("invalid_query", 400)
+            worker = GatewayActorScope(
+                site_id=actor.site_id,
+                actor_ref="email-gateway-bff-draft",
+                team_refs=(team_ref,),
+                roles=("Email Gateway Worker",),
+            )
+            if expected_revision == 0:
+                draft = active_drafts.create(
+                    scope,
+                    actor=worker,
+                    inbox_item_ref=inbox_ref,
+                    conversation_ref=inbox.conversation_ref,
+                    content_evidence_ref=evidence_ref,
+                    content_digest=evidence_digest,
+                    request_id=cast(str, request_id),
+                    idempotency_key=key,
+                    now=active_clock(),
+                )
+            else:
+                draft = active_drafts.update(
+                    scope,
+                    actor=worker,
+                    draft_ref=draft_ref,
+                    expected_revision=expected_revision,
+                    content_evidence_ref=evidence_ref,
+                    content_digest=evidence_digest,
+                    request_id=cast(str, request_id),
+                    idempotency_key=key,
+                    now=active_clock(),
+                )
+            return _success(actor.site_id, {"draft": _draft_wire(draft)})
+
+        @application.post("/internal/v1/bff/email-inbox/reveal")
+        def reveal_evidence(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+        ) -> dict[str, object]:
+            _authorize_bff_headers(
+                authorization=authorization,
+                auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                bearer_token=bff_bearer_token,
+                expected_purpose="email_evidence_reveal",
+            )
+            actor, values = _actor_payload(
+                payload,
+                site_id=cast(str, site_id),
+                operation_fields={"inbox_item_ref", "evidence_ref"},
+            )
+            _require_reveal(actor)
+            if evidence_authority is None or evidence_client is None:
+                raise _BFFError("runtime_unavailable", 503)
+            inbox_ref = _bounded_text(values["inbox_item_ref"], "inbox item ref", 140)
+            scope, _team = active_authority.authorize_inbox(actor, inbox_ref)
+            evidence_ref = _bounded_text(values["evidence_ref"], "evidence ref", 512)
+            team_ref = evidence_authority.authorize(
+                scope,
+                actor,
+                inbox_item_ref=inbox_ref,
+                evidence_ref=evidence_ref,
+            )
+            receipt = authorization_issuer.issue_evidence(
+                site_id=actor.site_id,
+                actor_ref=actor.actor_ref,
+                team_ref=team_ref,
+                inbox_item_ref=inbox_ref,
+                evidence_ref=evidence_ref,
+            )
+            try:
+                revealed = evidence_client.reveal(
+                    site_id=actor.site_id,
+                    request_id=cast(str, request_id),
+                    authorization=receipt,
+                )
+            except (OSError, ValueError) as error:
+                raise _BFFError("runtime_unavailable", 503) from error
+            return _success(actor.site_id, {"revealed": revealed})
+
+        @application.post("/internal/v1/bff/email-admin/rules/list")
+        def list_rules(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+        ) -> dict[str, object]:
+            _authorize_bff_headers(
+                authorization=authorization,
+                auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                bearer_token=bff_bearer_token,
+                expected_purpose="email_mailbox_read",
+            )
+            actor, values = _actor_payload(
+                payload,
+                site_id=cast(str, site_id),
+                operation_fields={"page_size"},
+            )
+            _require_admin(actor)
+            page_size = _page_size(values["page_size"])
+            rows = active_admin.list_rules(actor.site_id)
+            if len(rows) > 1000:
+                raise _BFFError("invalid_query", 400)
+            return _success(
+                actor.site_id,
+                {"rules": [_rule_wire(item) for item in rows[:page_size]], "next_cursor": None},
+            )
+
+        @application.post("/internal/v1/bff/email-admin/rules/upsert")
+        def upsert_rule(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+            header_idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, object]:
+            _authorize_bff_headers(
+                authorization=authorization,
+                auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                bearer_token=bff_bearer_token,
+                expected_purpose="email_mailbox_admin",
+            )
+            actor, values = _actor_payload(
+                payload,
+                site_id=cast(str, site_id),
+                operation_fields={
+                    "team_ref",
+                    "mailbox_ref",
+                    "owner_user_ref",
+                    "priority",
+                    "enabled",
+                    "expected_revision",
+                    "idempotency_key",
+                },
+                optional_fields={"rule_ref"},
+            )
+            _require_admin(actor)
+            idempotency_key = _bounded_text(values["idempotency_key"], "idempotency key", 256)
+            _require_idempotency_header(header_idempotency_key, idempotency_key)
+            expected_revision = _nonnegative_integer(
+                values["expected_revision"], "expected revision"
+            )
+            reference = (
+                stable_ref("RUL", actor.site_id, idempotency_key)
+                if values.get("rule_ref") is None
+                else _bounded_text(values["rule_ref"], "rule ref", 140)
+            )
+            rule = RoutingRule(
+                rule_ref=reference,
+                site_id=actor.site_id,
+                team_ref=_bounded_text(values["team_ref"], "team ref", 140),
+                mailbox_ref=_bounded_text(values["mailbox_ref"], "mailbox ref", 140),
+                owner_user_ref=_bounded_text(values["owner_user_ref"], "owner user ref", 140),
+                priority=_bounded_integer(values["priority"], "priority", 0, 1000),
+                revision=expected_revision + 1,
+                enabled=_boolean(values["enabled"], "enabled"),
+            )
+            result = active_admin.upsert_rule(
+                TenantScope(actor.site_id, "business_operations"),
+                rule,
+                expected_revision=expected_revision,
+                request_id=cast(str, request_id),
+                idempotency_key=idempotency_key,
+            )
+            return _success(actor.site_id, {"rule": _rule_wire(result)})
+
+        @application.post("/internal/v1/bff/email-admin/connector-health/get")
         def connector_health(
             payload: Annotated[Any, Body()],
             authorization: str | None = Header(default=None),
@@ -698,6 +1787,28 @@ def _require_inbox(actor: GatewayActorScope) -> None:
         raise _BFFError("scope_mismatch", 403)
 
 
+def _require_command(actor: GatewayActorScope) -> None:
+    if not _COMMAND_ROLES.intersection(actor.roles) or "CEO" in actor.roles:
+        raise _BFFError("scope_mismatch", 403)
+    if actor.team_refs == ("*",):
+        if "GBOS Admin" not in actor.roles:
+            raise _BFFError("scope_mismatch", 403)
+        return
+    if not actor.team_refs or "*" in actor.team_refs:
+        raise _BFFError("scope_mismatch", 403)
+
+
+def _require_reveal(actor: GatewayActorScope) -> None:
+    if not _REVEAL_ROLES.intersection(actor.roles) or "CEO" in actor.roles:
+        raise _BFFError("scope_mismatch", 403)
+    if actor.team_refs == ("*",):
+        if "GBOS Admin" not in actor.roles:
+            raise _BFFError("scope_mismatch", 403)
+        return
+    if not actor.team_refs or "*" in actor.team_refs:
+        raise _BFFError("scope_mismatch", 403)
+
+
 def _success(site_id: str, data: dict[str, object]) -> dict[str, object]:
     return {"site_id": site_id, "data": data}
 
@@ -756,6 +1867,129 @@ def _cursor(value: object) -> str | None:
 def _require_idempotency_header(header: str | None, payload: str) -> None:
     if header is None or not hmac.compare_digest(header, payload):
         raise _BFFError("idempotency_conflict", 409)
+
+
+def _bounded_text_list(
+    value: object, name: str, maximum_items: int, maximum_text: int
+) -> tuple[str, ...]:
+    if (
+        not isinstance(value, list)
+        or not value
+        or len(value) > maximum_items
+        or len(value) != len(set(value))
+    ):
+        raise _BFFError("invalid_query", 400)
+    return tuple(_bounded_text(item, name, maximum_text) for item in value)
+
+
+def _bounded_digest(value: object) -> str:
+    if not isinstance(value, str) or _DIGEST.fullmatch(value) is None:
+        raise _BFFError("invalid_query", 400)
+    return value
+
+
+def _workflow_inbox_wire(inbox: InboxItem) -> dict[str, object]:
+    return {
+        "inbox_item_ref": inbox.inbox_item_ref,
+        "state": inbox.state,
+        "team_ref": inbox.team_ref,
+        "assignee_user_ref": inbox.assignee_user_ref,
+        "conversation_ref": inbox.conversation_ref,
+        "business_links": list(inbox.business_links),
+        "revision": inbox.revision,
+    }
+
+
+def _conversation_wire(conversation: Conversation) -> dict[str, object]:
+    return {
+        "conversation_ref": conversation.conversation_ref,
+        "team_ref": conversation.team_ref,
+        "lifecycle_state": conversation.lifecycle_state,
+        "inbox_item_refs": list(conversation.inbox_item_refs),
+        "revision": conversation.revision,
+    }
+
+
+def _draft_wire(draft: Draft) -> dict[str, object]:
+    return {"draft_ref": draft.draft_ref, "revision": draft.revision, "state": draft.state}
+
+
+def _rule_wire(rule: RoutingRule) -> dict[str, object]:
+    return {
+        "rule_ref": rule.rule_ref,
+        "team_ref": rule.team_ref,
+        "mailbox_ref": rule.mailbox_ref,
+        "owner_user_ref": rule.owner_user_ref,
+        "priority": rule.priority,
+        "revision": rule.revision,
+        "enabled": rule.enabled,
+    }
+
+
+def _validate_draft_authorization(
+    value: object,
+    *,
+    site_id: str,
+    actor_ref: str,
+    team_ref: str,
+    inbox_item_ref: str,
+    draft_ref: str,
+    draft_revision: int,
+    content_digest: str,
+    now: datetime,
+) -> dict[str, object]:
+    fields = {
+        "receipt_ref",
+        "site_id",
+        "purpose",
+        "inbox_item_ref",
+        "draft_ref",
+        "draft_revision",
+        "actor_ref",
+        "team_ref",
+        "request_digest",
+        "issued_at",
+        "expires_at",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise _BFFError("scope_mismatch", 403)
+    expected = {
+        "site_id": site_id,
+        "purpose": "email_draft_material",
+        "inbox_item_ref": inbox_item_ref,
+        "draft_ref": draft_ref,
+        "draft_revision": draft_revision,
+        "actor_ref": actor_ref,
+        "team_ref": team_ref,
+        "request_digest": content_digest,
+    }
+    if any(value.get(field) != expected_value for field, expected_value in expected.items()):
+        raise _BFFError("scope_mismatch", 403)
+    issued_at = _parse_wire_time(value.get("issued_at"))
+    expires_at = _parse_wire_time(value.get("expires_at"))
+    if now.tzinfo is None:
+        raise _BFFError("runtime_unavailable", 503)
+    normalized = now.astimezone(UTC)
+    if (
+        expires_at <= issued_at
+        or (expires_at - issued_at).total_seconds() > 300
+        or not issued_at <= normalized <= expires_at
+    ):
+        raise _BFFError("scope_mismatch", 403)
+    _bounded_text(value.get("receipt_ref"), "receipt ref", 140)
+    return dict(value)
+
+
+def _parse_wire_time(value: object) -> datetime:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise _BFFError("scope_mismatch", 403)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise _BFFError("scope_mismatch", 403) from None
+    if parsed.tzinfo is None:
+        raise _BFFError("scope_mismatch", 403)
+    return parsed.astimezone(UTC)
 
 
 def _mailbox_wire(mailbox: Mailbox) -> dict[str, object]:

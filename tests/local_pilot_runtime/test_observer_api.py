@@ -156,6 +156,31 @@ def test_observer_runtime_composes_real_health_without_model_projection() -> Non
         runtime.outbox._publisher(object(), "event-1", "idem-1")
 
 
+def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_auth(
+    tmp_path: Path,
+) -> None:
+    runtime = observer_api.build_postgres_runtime(
+        connection=_Connection(),
+        bearer_token=SecretValue("observer-token"),
+        auth_ref="observer-auth-v1",
+        cursor_secret=SecretValue("c" * 32),
+        mailbox_projection_bearer_token=SecretValue("mailbox-projection-token"),
+        mailbox_projection_auth_ref="gateway-mailbox-projection-v1",
+        draft_material_bearer_token=SecretValue("draft-material-token"),
+        draft_material_auth_ref="observer-email-draft-material-v1",
+        evidence_cas_root=tmp_path / "cas",
+        bind_host="0.0.0.0",
+        network_mode="internal_network",
+    )
+
+    paths = {route.path for route in runtime.app.routes}
+    assert "/internal/v1/bff/evidence/reveal" in paths
+    assert "/internal/v1/bff/email-draft-material/save" in paths
+    assert "/internal/v1/bff/email-draft-material/finalize" in paths
+    assert runtime.evidence_reveal is not None
+    assert runtime.email_draft_material is not None
+
+
 def test_observer_main_starts_injected_server_and_closes_connection(tmp_path: Path) -> None:
     manifest_path, config_path, observer_secret, cursor_secret = _files(tmp_path)
     connection = _Connection()

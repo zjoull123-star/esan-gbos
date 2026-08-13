@@ -13,6 +13,8 @@ from observer.read_service import (
     CommunicationNotFound,
     CommunicationPage,
     CommunicationSummary,
+    EvidenceRevealAuthorization,
+    EvidenceRevealService,
     InvalidCursor,
     LocalPilotReadService,
     PostgresCommunicationRepository,
@@ -763,3 +765,71 @@ def test_postgres_detail_projects_closed_identity_and_separate_connector_owner()
         SCOPE.site_id,
         "event-001",
     )
+
+
+def test_restricted_evidence_reveal_requires_fresh_inbox_bound_authorization() -> None:
+    calls: list[tuple[TenantScope, str]] = []
+    service = EvidenceRevealService(
+        binding_resolver=lambda scope, evidence_ref: (
+            calls.append((scope, evidence_ref))
+            or {
+                "inbox_item_ref": "INB-01",
+                "team_ref": "team-sales",
+                "classification": "Restricted",
+                "object_ref": "obs:v1:" + "0" * 32 + ":sha256:" + "a" * 64,
+            }
+        ),
+        content_loader=lambda _scope, _object_ref: b"restricted body",
+        clock=lambda: NOW,
+    )
+    authorization = EvidenceRevealAuthorization.from_wire(
+        {
+            "receipt_ref": "EAR-01",
+            "site_id": SCOPE.site_id,
+            "purpose": "email_evidence_reveal",
+            "inbox_item_ref": "INB-01",
+            "evidence_ref": "EVR-01",
+            "actor_ref": "reviewer-01",
+            "team_ref": "team-sales",
+            "issued_at": "2026-08-08T08:59:00Z",
+            "expires_at": "2026-08-08T09:01:00Z",
+        }
+    )
+
+    result = service.reveal(SCOPE, authorization=authorization)
+
+    assert result == {"content": "restricted body", "media_type": "text/plain; charset=utf-8"}
+    assert calls == [(SCOPE, "EVR-01")]
+    assert "restricted body" not in repr((authorization, service))
+
+
+def test_restricted_evidence_reveal_rejects_cross_inbox_binding_before_loading() -> None:
+    loaded: list[str] = []
+    service = EvidenceRevealService(
+        binding_resolver=lambda _scope, _evidence_ref: {
+            "inbox_item_ref": "INB-OTHER",
+            "team_ref": "team-sales",
+            "classification": "Restricted",
+            "object_ref": "obs:v1:" + "0" * 32 + ":sha256:" + "a" * 64,
+        },
+        content_loader=lambda _scope, object_ref: loaded.append(object_ref) or b"secret",
+        clock=lambda: NOW,
+    )
+    authorization = EvidenceRevealAuthorization.from_wire(
+        {
+            "receipt_ref": "EAR-01",
+            "site_id": SCOPE.site_id,
+            "purpose": "email_evidence_reveal",
+            "inbox_item_ref": "INB-01",
+            "evidence_ref": "EVR-01",
+            "actor_ref": "reviewer-01",
+            "team_ref": "team-sales",
+            "issued_at": "2026-08-08T08:59:00Z",
+            "expires_at": "2026-08-08T09:01:00Z",
+        }
+    )
+
+    with pytest.raises(ScopeMismatch):
+        service.reveal(SCOPE, authorization=authorization)
+
+    assert loaded == []

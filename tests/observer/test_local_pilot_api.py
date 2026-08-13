@@ -141,6 +141,32 @@ class FakeIdentityAuthorityDenials:
         )
 
 
+class FakeEvidenceReveal:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def reveal(self, scope: TenantScope, **values: Any) -> dict[str, object]:
+        self.calls.append({"scope": scope, **values})
+        return {"content": "restricted body", "media_type": "text/plain; charset=utf-8"}
+
+
+class FakeEmailDraftMaterial:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def save(self, scope: TenantScope, **values: Any) -> dict[str, object]:
+        self.calls.append(("save", {"scope": scope, **values}))
+        return {"evidence_ref": "EVR-DRAFT-01", "digest": values["content_digest"], "revision": 1}
+
+    def finalize(self, scope: TenantScope, **values: Any) -> dict[str, object]:
+        self.calls.append(("finalize", {"scope": scope, **values}))
+        return {
+            "evidence_ref": "EVR-MIME-01",
+            "digest": "sha256:" + "b" * 64,
+            "role_binding": "sha256:" + "c" * 64,
+        }
+
+
 def _metrics_snapshot(
     *,
     ready: bool = True,
@@ -183,6 +209,8 @@ def _config(
         auth_ref="observer-token-v1",
         mailbox_projection_bearer_token="mailbox-projection-token",
         mailbox_projection_auth_ref="gateway-mailbox-projection-v1",
+        draft_material_bearer_token="observer-draft-material-token",
+        draft_material_auth_ref="observer-email-draft-material-v1",
         max_request_bytes=max_request_bytes,
     )
 
@@ -212,6 +240,8 @@ def _app(
     enabled: bool = True,
     denials: FakeIdentityAuthorityDenials | None = None,
     connector_configs: InMemoryEmailConnectorConfigRepository | None = None,
+    evidence_reveal: FakeEvidenceReveal | None = None,
+    draft_material: FakeEmailDraftMaterial | None = None,
 ) -> tuple[FastAPI, FakeControlService, FakeReadService]:
     control = FakeControlService()
     reader = FakeReadService()
@@ -224,6 +254,8 @@ def _app(
         identity_resolution_metrics=metrics,
         identity_authority_denials=denials,
         email_connector_configs=connector_configs,
+        evidence_reveal=evidence_reveal,
+        email_draft_material=draft_material,
     )
     return app, control, reader
 
@@ -783,3 +815,103 @@ def test_bind_mode_is_explicit_for_loopback_internal_network_or_unix_socket() ->
 
     assert internal.network_mode == "internal_network"
     assert unix.network_mode == "unix_socket"
+
+
+def test_evidence_reveal_is_a_second_authorized_no_store_observer_call() -> None:
+    reveal = FakeEvidenceReveal()
+    app, _control, _reader = _app(evidence_reveal=reveal)
+    response = TestClient(app).post(
+        "/internal/v1/bff/evidence/reveal",
+        headers={
+            **_headers(purpose="email_evidence_reveal"),
+            "Authorization": "Bearer mailbox-projection-token",
+            "X-GBOS-Local-Auth-Ref": "gateway-mailbox-projection-v1",
+        },
+        json={
+            "authorization": {
+                "receipt_ref": "EAR-01",
+                "site_id": "alpha.example",
+                "purpose": "email_evidence_reveal",
+                "inbox_item_ref": "INB-01",
+                "evidence_ref": "EVR-01",
+                "actor_ref": "reviewer-01",
+                "team_ref": "team-sales",
+                "issued_at": "2026-08-08T08:59:00Z",
+                "expires_at": "2026-08-08T09:01:00Z",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["data"] == {
+        "content": "restricted body",
+        "media_type": "text/plain; charset=utf-8",
+    }
+    assert len(reveal.calls) == 1
+
+
+def test_email_draft_material_uses_separate_bearer_and_closed_save_finalize_shapes() -> None:
+    material = FakeEmailDraftMaterial()
+    app, _control, _reader = _app(draft_material=material)
+    client = TestClient(app)
+    headers = {
+        **_headers(purpose="email_draft_material"),
+        "Authorization": "Bearer observer-draft-material-token",
+        "X-GBOS-Local-Auth-Ref": "observer-email-draft-material-v1",
+        "Idempotency-Key": "draft-save-01",
+    }
+    authorization = {
+        "receipt_ref": "DAR-01",
+        "site_id": "alpha.example",
+        "purpose": "email_draft_material",
+        "inbox_item_ref": "INB-01",
+        "draft_ref": "DRF-01",
+        "draft_revision": 1,
+        "actor_ref": "sales-01",
+        "team_ref": "team-sales",
+        "request_digest": "sha256:" + "a" * 64,
+        "issued_at": "2026-08-08T08:59:00Z",
+        "expires_at": "2026-08-08T09:01:00Z",
+    }
+    saved = client.post(
+        "/internal/v1/bff/email-draft-material/save",
+        headers=headers,
+        json={
+            "authorization": authorization,
+            "content": "bounded draft",
+            "content_digest": "sha256:" + "a" * 64,
+            "idempotency_key": "draft-save-01",
+        },
+    )
+    finalized = client.post(
+        "/internal/v1/bff/email-draft-material/finalize",
+        headers={**headers, "Idempotency-Key": "draft-finalize-01"},
+        json={
+            "authorization": authorization,
+            "draft_evidence_ref": "EVR-DRAFT-01",
+            "draft_digest": "sha256:" + "a" * 64,
+            "draft_revision": 1,
+            "participant_roles": {
+                "sender": "mailbox_owner",
+                "recipients": ["original_sender"],
+            },
+            "idempotency_key": "draft-finalize-01",
+        },
+    )
+    raw_address = client.post(
+        "/internal/v1/bff/email-draft-material/finalize",
+        headers={**headers, "Idempotency-Key": "draft-finalize-02"},
+        json={
+            "authorization": authorization,
+            "draft_evidence_ref": "EVR-DRAFT-01",
+            "draft_digest": "sha256:" + "a" * 64,
+            "draft_revision": 1,
+            "participant_roles": {"from": "sales@example.invalid"},
+            "idempotency_key": "draft-finalize-02",
+        },
+    )
+
+    assert saved.status_code == finalized.status_code == 200
+    assert raw_address.status_code == 422
+    assert [name for name, _call in material.calls] == ["save", "finalize"]

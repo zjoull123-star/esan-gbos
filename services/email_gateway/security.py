@@ -1,0 +1,131 @@
+"""Short-lived, content-free authorization receipts for BFF follow-up calls."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+
+from .models import stable_ref
+
+_DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
+_TTL = timedelta(minutes=5)
+
+
+class GatewayAuthorizationIssuer:
+    """Issues bounded receipts; transport authentication remains a separate concern."""
+
+    def __init__(self, *, clock: Callable[[], datetime]) -> None:
+        if not callable(clock):
+            raise TypeError("clock must be callable")
+        self._clock = clock
+
+    def __repr__(self) -> str:
+        return "GatewayAuthorizationIssuer(clock=<redacted>)"
+
+    def issue_draft(
+        self,
+        *,
+        site_id: str,
+        actor_ref: str,
+        team_ref: str,
+        inbox_item_ref: str,
+        draft_ref: str,
+        draft_revision: int,
+        request_digest: str,
+    ) -> dict[str, object]:
+        issued_at = _now(self._clock)
+        for value, field in (
+            (site_id, "site_id"),
+            (actor_ref, "actor_ref"),
+            (team_ref, "team_ref"),
+            (inbox_item_ref, "inbox_item_ref"),
+            (draft_ref, "draft_ref"),
+        ):
+            _bounded(value, field)
+        if (
+            isinstance(draft_revision, bool)
+            or not isinstance(draft_revision, int)
+            or draft_revision < 1
+            or _DIGEST.fullmatch(request_digest) is None
+        ):
+            raise ValueError("invalid draft authorization binding")
+        return {
+            "receipt_ref": stable_ref(
+                "DAR",
+                site_id,
+                inbox_item_ref,
+                draft_ref,
+                str(draft_revision),
+                request_digest,
+                issued_at.isoformat(),
+            ),
+            "site_id": site_id,
+            "purpose": "email_draft_material",
+            "inbox_item_ref": inbox_item_ref,
+            "draft_ref": draft_ref,
+            "draft_revision": draft_revision,
+            "actor_ref": actor_ref,
+            "team_ref": team_ref,
+            "request_digest": request_digest,
+            "issued_at": _wire_time(issued_at),
+            "expires_at": _wire_time(issued_at + _TTL),
+        }
+
+    def issue_evidence(
+        self,
+        *,
+        site_id: str,
+        actor_ref: str,
+        team_ref: str,
+        inbox_item_ref: str,
+        evidence_ref: str,
+    ) -> dict[str, object]:
+        issued_at = _now(self._clock)
+        for value, field in (
+            (site_id, "site_id"),
+            (actor_ref, "actor_ref"),
+            (team_ref, "team_ref"),
+            (inbox_item_ref, "inbox_item_ref"),
+            (evidence_ref, "evidence_ref"),
+        ):
+            _bounded(value, field)
+        return {
+            "receipt_ref": stable_ref(
+                "EAR", site_id, inbox_item_ref, evidence_ref, actor_ref, issued_at.isoformat()
+            ),
+            "site_id": site_id,
+            "purpose": "email_evidence_reveal",
+            "inbox_item_ref": inbox_item_ref,
+            "evidence_ref": evidence_ref,
+            "actor_ref": actor_ref,
+            "team_ref": team_ref,
+            "issued_at": _wire_time(issued_at),
+            "expires_at": _wire_time(issued_at + _TTL),
+        }
+
+
+def _now(clock: Callable[[], datetime]) -> datetime:
+    value = clock()
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise ValueError("authorization clock must be timezone-aware")
+    return value.astimezone(UTC)
+
+
+def _wire_time(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _bounded(value: object, field: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value) > 256
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ValueError(f"invalid {field}")
+    return value
+
+
+__all__ = ["GatewayAuthorizationIssuer"]

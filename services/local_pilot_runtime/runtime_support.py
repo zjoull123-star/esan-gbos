@@ -82,6 +82,7 @@ _DEPLOYMENT_TEXT_SECRET_FILENAMES = {
     "email_publication_bearer": "email_publication_bearer",
     "email_gateway_bff_bearer": "email_gateway_bff_bearer",
     "mailbox_projection_bearer": "mailbox_projection_bearer",
+    "observer_email_draft_material_bearer": "observer_email_draft_material_bearer",
     "email_gateway_data_key": "email_gateway_data_key",
 }
 _POSTGRES_SECRET_NAMES = {

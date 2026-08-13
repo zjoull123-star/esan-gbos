@@ -55,7 +55,12 @@
     },
     "observer-api": {
       "path": "services/local_pilot_runtime/observer_api.py",
-      "status": "executable"
+      "status": "executable",
+      "email_draft_material": {
+        "auth_ref": "observer-email-draft-material-v1",
+        "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
+        "network": "local-internal-only"
+      }
     },
     "email-gateway-api": {
       "path": "services/local_pilot_runtime/email_gateway_api.py",

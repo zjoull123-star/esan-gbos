@@ -26,6 +26,11 @@ def gateway_module() -> tuple[Any, SimpleNamespace]:
             "gbos_email_gateway_url": "http://email-gateway-api:8004",
             "gbos_email_gateway_token_file": "/run/secrets/email_gateway_bff_bearer",
             "gbos_email_gateway_auth_ref": "email-gateway-bff-v1",
+            "gbos_observer_email_material_url": "http://observer-api:8003",
+            "gbos_observer_email_material_token_file": (
+                "/run/secrets/observer_email_draft_material_bearer"
+            ),
+            "gbos_observer_email_material_auth_ref": ("observer-email-draft-material-v1"),
         },
         local=SimpleNamespace(site="gbos.localhost"),
     )
@@ -66,7 +71,7 @@ def test_gateway_client_is_pinned_to_exact_internal_url_and_mounted_bearer(
     client._transport = transport
     client.request(
         method="POST",
-        path="/internal/v1/bff/mailboxes/list",
+        path="/internal/v1/bff/email-admin/mailboxes/list",
         site_id="gbos.localhost",
         purpose="email_mailbox_read",
         request_id="REQ-v5-runtime",
@@ -74,7 +79,9 @@ def test_gateway_client_is_pinned_to_exact_internal_url_and_mounted_bearer(
     )
 
     call = transport.calls[0]
-    assert call["url"] == "http://email-gateway-api:8004/internal/v1/bff/mailboxes/list"
+    assert call["url"] == (
+        "http://email-gateway-api:8004/internal/v1/bff/email-admin/mailboxes/list"
+    )
     assert call["headers"]["Authorization"] == "Bearer mounted-bearer"
     assert call["headers"]["X-GBOS-Local-Auth-Ref"] == "email-gateway-bff-v1"
     assert "mounted-bearer" not in repr(client)
@@ -115,3 +122,32 @@ def test_gateway_client_rejects_group_readable_bearer(
 
     with pytest.raises(gateway.BFFError, match="configuration is invalid"):
         gateway.configured_gateway_client()
+
+
+def test_observer_email_material_client_uses_exact_separate_mounted_bearer(
+    gateway_module: tuple[Any, SimpleNamespace], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway, fake = gateway_module
+    secrets = tmp_path / "run" / "secrets"
+    secrets.mkdir(parents=True)
+    path = token_file(secrets / "observer_email_draft_material_bearer")
+    monkeypatch.setattr(gateway, "_OBSERVER_MATERIAL_BEARER_FILE", path)
+    fake.conf["gbos_observer_email_material_token_file"] = str(path)
+
+    client = gateway.configured_observer_email_material_client()
+    transport = RecordingTransport()
+    client._transport = transport
+    client.request(
+        method="POST",
+        path="/internal/v1/bff/email-draft-material/save",
+        site_id="gbos.localhost",
+        purpose="email_draft_material",
+        request_id="REQ-v5-draft-material",
+        payload={},
+    )
+
+    call = transport.calls[0]
+    assert call["url"] == ("http://observer-api:8003/internal/v1/bff/email-draft-material/save")
+    assert call["headers"]["Authorization"] == "Bearer mounted-bearer"
+    assert call["headers"]["X-GBOS-Local-Auth-Ref"] == ("observer-email-draft-material-v1")
+    assert "mounted-bearer" not in repr(client)

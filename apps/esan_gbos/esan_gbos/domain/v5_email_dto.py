@@ -13,7 +13,21 @@ _PROVIDER_KINDS = frozenset({"fake", "imap_smtp", "wecom_app_mail"})
 _BUSINESS_MODES = frozenset({"primary", "selective_archive", "migration"})
 _MAILBOX_STATES = frozenset({"draft", "active", "paused", "revoked", "error"})
 _MAILBOX_ACTIONS = frozenset({"enable", "pause", "revoke"})
-_INBOX_STATES = frozenset({"identity_pending", "unassigned"})
+_INBOX_STATES = frozenset(
+    {
+        "identity_pending",
+        "unassigned",
+        "assigned",
+        "draft",
+        "waiting_internal",
+        "waiting_customer",
+        "converted",
+        "closed",
+        "quarantined",
+        "send_queued",
+        "send_uncertain",
+    }
+)
 _IDENTITY_STATES = frozenset({"unknown", "confirmed", "revoked"})
 _HEALTH_STATES = frozenset({"healthy", "degraded", "paused", "revoked", "unknown"})
 _FRESHNESS_STATES = frozenset({"fresh", "stale", "unknown"})

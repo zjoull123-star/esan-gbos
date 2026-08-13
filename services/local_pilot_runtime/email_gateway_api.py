@@ -10,7 +10,7 @@ import secrets
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, TypeGuard
+from typing import Any, Protocol, TypeGuard, cast
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
@@ -22,13 +22,26 @@ from services.agent_runtime.local_entrypoint import (
     load_local_manifest,
     require_component_enabled,
 )
-from services.email_gateway.api import create_email_gateway_app
+from services.email_gateway.api import (
+    PostgresGatewayAdminRepository,
+    PostgresGovernedInboxRead,
+    PostgresWorkflowAuthority,
+    create_email_gateway_app,
+)
+from services.email_gateway.conversations import ConversationService
+from services.email_gateway.drafts import DraftService
+from services.email_gateway.evidence import (
+    ObserverEvidenceRevealClient,
+    PostgresEvidenceBindingAuthority,
+)
 from services.email_gateway.intake import GatewayIntakeService
 from services.email_gateway.mailboxes import MailboxRegistry
+from services.email_gateway.operations import InboxOperations
 from services.email_gateway.phase1_read import ConnectorHealth, Phase1Mailbox
 from services.email_gateway.repositories.intake import PostgresIntakeRepository
 from services.email_gateway.repositories.mailboxes import PostgresMailboxRepository
 from services.email_gateway.repositories.phase1_read import PostgresPhase1ReadRepository
+from services.email_gateway.repositories.workflow import PostgresWorkflowRepository
 
 from .email_gateway_config import (
     EmailGatewayConfigError,
@@ -371,6 +384,8 @@ def main(
             connection,  # type: ignore[arg-type]
             decrypt_restricted_text=cipher.decrypt,
         )
+        workflow = PostgresWorkflowRepository(connection)  # type: ignore[arg-type]
+        workflow_authority = PostgresWorkflowAuthority(connection)  # type: ignore[arg-type]
         connector_health = ObserverConnectorHealthReader(
             ObserverConnectorHealthClient(
                 bearer_token=mailbox_projection_bearer.reveal(),
@@ -388,6 +403,21 @@ def main(
             mailbox_registry=MailboxRegistry(mailboxes),
             read_repository=phase1_read,
             connector_health_reader=connector_health,
+            governed_inbox_read=PostgresGovernedInboxRead(
+                cast(Any, connection),
+                decrypt_restricted_text=cipher.decrypt,
+            ),
+            workflow_repository=workflow,
+            inbox_operations=InboxOperations(workflow),
+            conversation_service=ConversationService(workflow),  # type: ignore[arg-type]
+            draft_service=DraftService(workflow),  # type: ignore[arg-type]
+            admin_repository=PostgresGatewayAdminRepository(cast(Any, connection)),
+            workflow_authority=workflow_authority,
+            evidence_authority=PostgresEvidenceBindingAuthority(cast(Any, connection)),
+            evidence_client=ObserverEvidenceRevealClient(
+                bearer_token=mailbox_projection_bearer.reveal(),
+                auth_ref=config.auth.mailbox_projection_auth_ref,
+            ),
         )
         active_runner = server_runner or run_server
         active_runner(
@@ -436,6 +466,15 @@ def _build_application(factory: ApplicationFactory, **kwargs: object) -> FastAPI
         "mailbox_registry",
         "read_repository",
         "connector_health_reader",
+        "governed_inbox_read",
+        "workflow_repository",
+        "inbox_operations",
+        "conversation_service",
+        "draft_service",
+        "admin_repository",
+        "workflow_authority",
+        "evidence_authority",
+        "evidence_client",
     }
     if current.issubset(parameters):
         selected = {name: value for name, value in kwargs.items() if name in parameters}

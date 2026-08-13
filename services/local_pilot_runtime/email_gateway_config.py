@@ -16,6 +16,7 @@ OBSERVER_CONFIG_API_URL = "http://observer-api:8003"
 EMAIL_PUBLICATION_AUTH_REF = "observer-email-publication-v1"
 EMAIL_GATEWAY_BFF_AUTH_REF = "email-gateway-bff-v1"
 MAILBOX_PROJECTION_AUTH_REF = "gateway-mailbox-projection-v1"
+OBSERVER_EMAIL_DRAFT_MATERIAL_AUTH_REF = "observer-email-draft-material-v1"
 
 _TOP_FIELDS = frozenset(
     {
@@ -44,6 +45,8 @@ _AUTH_FIELDS = frozenset(
         "email_gateway_bff_auth_ref",
         "mailbox_projection_bearer_file",
         "mailbox_projection_auth_ref",
+        "observer_email_draft_material_bearer_file",
+        "observer_email_draft_material_auth_ref",
     }
 )
 _LISTEN_FIELDS = frozenset({"host", "port"})
@@ -94,6 +97,8 @@ class EmailGatewayAuth:
     email_gateway_bff_auth_ref: str
     mailbox_projection_bearer_file: Path
     mailbox_projection_auth_ref: str
+    observer_email_draft_material_bearer_file: Path
+    observer_email_draft_material_auth_ref: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +247,10 @@ def _auth(value: Mapping[str, Any]) -> EmailGatewayAuth:
         or value.get("email_publication_auth_ref") != EMAIL_PUBLICATION_AUTH_REF
         or value.get("email_gateway_bff_auth_ref") != EMAIL_GATEWAY_BFF_AUTH_REF
         or value.get("mailbox_projection_auth_ref") != MAILBOX_PROJECTION_AUTH_REF
+        or value.get("observer_email_draft_material_bearer_file")
+        != "/run/secrets/observer_email_draft_material_bearer"
+        or value.get("observer_email_draft_material_auth_ref")
+        != OBSERVER_EMAIL_DRAFT_MATERIAL_AUTH_REF
     ):
         raise EmailGatewayConfigError("gateway auth reference is invalid")
     return EmailGatewayAuth(
@@ -252,6 +261,10 @@ def _auth(value: Mapping[str, Any]) -> EmailGatewayAuth:
         email_gateway_bff_auth_ref=EMAIL_GATEWAY_BFF_AUTH_REF,
         mailbox_projection_bearer_file=Path("/run/secrets/mailbox_projection_bearer"),
         mailbox_projection_auth_ref=MAILBOX_PROJECTION_AUTH_REF,
+        observer_email_draft_material_bearer_file=Path(
+            "/run/secrets/observer_email_draft_material_bearer"
+        ),
+        observer_email_draft_material_auth_ref=OBSERVER_EMAIL_DRAFT_MATERIAL_AUTH_REF,
     )
 
 

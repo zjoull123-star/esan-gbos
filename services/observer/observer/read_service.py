@@ -6,7 +6,7 @@ import hmac
 import json
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -39,6 +39,174 @@ class RawAccessDenied(PermissionError):
 
 class CommunicationNotFound(LookupError):
     """The site-local observation does not exist."""
+
+
+_EVIDENCE_AUTH_FIELDS = frozenset(
+    {
+        "receipt_ref",
+        "site_id",
+        "purpose",
+        "inbox_item_ref",
+        "evidence_ref",
+        "actor_ref",
+        "team_ref",
+        "issued_at",
+        "expires_at",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class EvidenceRevealAuthorization:
+    receipt_ref: str
+    site_id: str
+    purpose: str
+    inbox_item_ref: str
+    evidence_ref: str
+    actor_ref: str
+    team_ref: str
+    issued_at: datetime
+    expires_at: datetime
+
+    @classmethod
+    def from_wire(cls, value: object) -> EvidenceRevealAuthorization:
+        if not isinstance(value, Mapping) or set(value) != _EVIDENCE_AUTH_FIELDS:
+            raise ValueError("invalid evidence authorization receipt")
+        strings = {
+            field: _authorization_text(value.get(field), field)
+            for field in (
+                "receipt_ref",
+                "site_id",
+                "purpose",
+                "inbox_item_ref",
+                "evidence_ref",
+                "actor_ref",
+                "team_ref",
+            )
+        }
+        if strings["purpose"] != "email_evidence_reveal":
+            raise PermissionError("evidence authorization purpose mismatch")
+        issued_at = _authorization_time(value.get("issued_at"), "issued_at")
+        expires_at = _authorization_time(value.get("expires_at"), "expires_at")
+        if expires_at <= issued_at or (expires_at - issued_at).total_seconds() > 300:
+            raise ValueError("invalid evidence authorization lifetime")
+        return cls(**strings, issued_at=issued_at, expires_at=expires_at)
+
+    def __repr__(self) -> str:
+        return (
+            "EvidenceRevealAuthorization("
+            f"receipt_ref={self.receipt_ref!r}, site_id={self.site_id!r}, "
+            f"purpose={self.purpose!r}, inbox_item_ref={self.inbox_item_ref!r}, "
+            "evidence_ref=<redacted>, actor_ref=<redacted>, team_ref=<redacted>, "
+            f"issued_at={self.issued_at!r}, expires_at={self.expires_at!r})"
+        )
+
+
+class EvidenceRevealService:
+    """Second-checks a short-lived receipt and loads one already-bound CAS object."""
+
+    def __init__(
+        self,
+        *,
+        binding_resolver: Callable[[TenantScope, str], Mapping[str, object] | None],
+        content_loader: Callable[[TenantScope, str], bytes],
+        clock: Callable[[], datetime],
+    ) -> None:
+        if not all(callable(value) for value in (binding_resolver, content_loader, clock)):
+            raise TypeError("evidence reveal dependencies must be callable")
+        self._binding_resolver = binding_resolver
+        self._content_loader = content_loader
+        self._clock = clock
+
+    def __repr__(self) -> str:
+        return "EvidenceRevealService(binding=<redacted>, loader=<redacted>)"
+
+    def reveal(
+        self,
+        scope: TenantScope,
+        *,
+        authorization: EvidenceRevealAuthorization,
+    ) -> dict[str, object]:
+        now = self._clock()
+        _require_aware(now, "evidence reveal clock")
+        if authorization.site_id != scope.site_id:
+            raise ScopeMismatch("evidence authorization site mismatch")
+        normalized = now.astimezone(UTC)
+        if not authorization.issued_at <= normalized <= authorization.expires_at:
+            raise RawAccessDenied("evidence authorization is stale")
+        binding = self._binding_resolver(scope, authorization.evidence_ref)
+        if not isinstance(binding, Mapping):
+            raise CommunicationNotFound("evidence is unavailable")
+        allowed = {"inbox_item_ref", "team_ref", "classification", "object_ref", "media_type"}
+        if not set(binding).issubset(allowed) or not {
+            "team_ref",
+            "classification",
+            "object_ref",
+        } <= set(binding):
+            raise RawAccessDenied("evidence binding is invalid")
+        if (
+            binding.get("team_ref") != authorization.team_ref
+            or binding.get("classification") != "Restricted"
+            or (
+                binding.get("inbox_item_ref") is not None
+                and binding.get("inbox_item_ref") != authorization.inbox_item_ref
+            )
+        ):
+            raise ScopeMismatch("evidence binding mismatch")
+        object_ref = _authorization_text(binding.get("object_ref"), "object_ref", maximum=512)
+        content = self._content_loader(scope, object_ref)
+        if not isinstance(content, bytes) or not content or len(content) > 262_144:
+            raise RawAccessDenied("revealed evidence is outside the size budget")
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            raise RawAccessDenied("revealed evidence is not UTF-8") from None
+        media_type = binding.get("media_type", "text/plain; charset=utf-8")
+        if media_type != "text/plain; charset=utf-8":
+            raise RawAccessDenied("revealed evidence media type is not allowed")
+        return {"content": text, "media_type": media_type}
+
+
+class PostgresEvidenceBindingResolver:
+    def __init__(self, connection: Connection) -> None:
+        self._connection = connection
+
+    def __repr__(self) -> str:
+        return "PostgresEvidenceBindingResolver(connection=<redacted>)"
+
+    def resolve(self, scope: TenantScope, evidence_ref: str) -> Mapping[str, object] | None:
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            _set_site(cursor, scope)
+            cursor.execute(
+                """
+                SELECT event.team_ref, event.data_classification,
+                       evidence.content_object_ref
+                  FROM observer.evidence_refs AS evidence
+                  JOIN observer.event_evidence AS edge
+                    ON edge.site_id = evidence.site_id
+                   AND edge.evidence_id = evidence.evidence_id
+                  JOIN observer.observation_events AS event
+                    ON event.site_id = edge.site_id
+                   AND event.event_id = edge.event_id
+                 WHERE evidence.site_id = %s
+                   AND evidence.evidence_id = %s
+                   AND event.processing_purpose = %s
+                   AND (event.retention_until IS NULL
+                        OR event.retention_until > current_timestamp)
+                 ORDER BY event.occurred_at DESC
+                 LIMIT 1
+                """,
+                (scope.site_id, evidence_ref, scope.processing_purpose),
+            )
+            row = cursor.fetchone()
+        if row is None or row[2] is None:
+            return None
+        return {
+            "team_ref": str(row[0]),
+            "classification": str(row[1]),
+            "object_ref": str(row[2]),
+            "media_type": "text/plain; charset=utf-8",
+        }
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -1234,6 +1402,29 @@ def _confirmed_access_params(access: CommunicationAccess) -> list[Any]:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _authorization_text(value: object, field: str, *, maximum: int = 256) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value) > maximum
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ValueError(f"invalid {field}")
+    return value
+
+
+def _authorization_time(value: object, field: str) -> datetime:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ValueError(f"invalid {field}")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(f"invalid {field}") from None
+    _require_aware(parsed, field)
+    return parsed.astimezone(UTC)
 
 
 def _parse_external_subject_ref(value: str) -> tuple[str, str] | None:

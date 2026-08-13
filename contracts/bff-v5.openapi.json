@@ -1,109 +1,622 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "ESAN GBOS Phase 1 Email BFF",
+    "title": "ESAN GBOS Governed Email BFF",
     "version": "5.0.0"
   },
   "paths": {
-    "/api/method/esan_gbos.api.v5.email_admin.list": {
+    "/api/method/esan_gbos.api.v5.email_admin.list_mailboxes": {
       "get": {
         "operationId": "listEmailMailboxes",
         "x-gbos-cache": "no-store",
-        "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
-        "security": [{"FrappeSession": []}],
-        "parameters": [
-          {"name": "cursor", "in": "query", "schema": {"type": "string", "maxLength": 512}},
-          {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50}}
+        "x-gbos-roles": [
+          "Integration Admin",
+          "GBOS Admin"
         ],
-        "responses": {"200": {"description": "Closed mailbox list"}}
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Closed governed projection"
+          }
+        }
       }
     },
-    "/api/method/esan_gbos.api.v5.email_admin.get": {
+    "/api/method/esan_gbos.api.v5.email_admin.get_mailbox": {
       "get": {
         "operationId": "getEmailMailbox",
         "x-gbos-cache": "no-store",
-        "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
-        "security": [{"FrappeSession": []}],
-        "parameters": [
-          {"name": "mailbox_ref", "in": "query", "required": true, "schema": {"type": "string", "maxLength": 140}}
+        "x-gbos-roles": [
+          "Integration Admin",
+          "GBOS Admin"
         ],
-        "responses": {"200": {"description": "Closed mailbox detail"}}
-      }
-    },
-    "/api/method/esan_gbos.api.v5.email_admin.upsert": {
-      "post": {
-        "operationId": "upsertEmailMailbox",
-        "x-gbos-cache": "no-store",
-        "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
-        "security": [{"FrappeSession": [], "FrappeCsrf": []}],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {"$ref": "#/components/schemas/MailboxUpsertCommand"}
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "mailbox_ref",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 140
             }
           }
-        },
-        "responses": {"200": {"description": "Revisioned mailbox projection"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Closed governed projection"
+          }
+        }
       }
     },
-    "/api/method/esan_gbos.api.v5.email_admin.set_status": {
-      "post": {
-        "operationId": "setEmailMailboxStatus",
+    "/api/method/esan_gbos.api.v5.email_admin.list_rules": {
+      "get": {
+        "operationId": "listEmailRoutingRules",
         "x-gbos-cache": "no-store",
-        "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
-        "security": [{"FrappeSession": [], "FrappeCsrf": []}],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {"$ref": "#/components/schemas/MailboxStatusCommand"}
+        "x-gbos-roles": [
+          "Integration Admin",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
             }
           }
-        },
-        "responses": {"200": {"description": "Revisioned mailbox projection"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Closed governed projection"
+          }
+        }
       }
     },
-    "/api/method/esan_gbos.api.v5.email_admin.get_connector_health": {
+    "/api/method/esan_gbos.api.v5.email_admin.connector_health": {
       "get": {
         "operationId": "getEmailConnectorHealth",
         "x-gbos-cache": "no-store",
-        "x-gbos-roles": ["Integration Admin", "GBOS Admin"],
-        "security": [{"FrappeSession": []}],
-        "responses": {"200": {"description": "Live safe connector health"}}
+        "x-gbos-roles": [
+          "Integration Admin",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Closed governed projection"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_admin.upsert_mailbox": {
+      "post": {
+        "operationId": "upsertEmailMailbox",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Integration Admin",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/MailboxUpsertCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_admin.set_mailbox_status": {
+      "post": {
+        "operationId": "setEmailMailboxStatus",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Integration Admin",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/MailboxStatusCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_admin.upsert_rule": {
+      "post": {
+        "operationId": "upsertEmailRoutingRule",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Integration Admin",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleUpsertCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        }
       }
     },
     "/api/method/esan_gbos.api.v5.email_inbox.list": {
       "get": {
         "operationId": "listEmailInbox",
         "x-gbos-cache": "no-store",
-        "x-gbos-roles": ["CEO", "Sales Manager", "Sales User", "Reviewer", "GBOS Admin"],
-        "security": [{"FrappeSession": []}],
-        "parameters": [
-          {"name": "state", "in": "query", "schema": {"type": "string", "enum": ["identity_pending", "unassigned"]}},
-          {"name": "cursor", "in": "query", "schema": {"type": "string", "maxLength": 512}},
-          {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50}}
+        "x-gbos-roles": [
+          "CEO",
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
         ],
-        "responses": {"200": {"description": "Closed safe Inbox list"}}
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "identity_pending",
+                "unassigned",
+                "assigned",
+                "draft",
+                "waiting_internal",
+                "waiting_customer",
+                "converted",
+                "closed",
+                "quarantined",
+                "send_queued",
+                "send_uncertain"
+              ]
+            }
+          },
+          {
+            "name": "mailbox_ref",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 140
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "received_at_desc",
+                "sla_due_at_asc"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Closed governed projection"
+          }
+        }
       }
     },
     "/api/method/esan_gbos.api.v5.email_inbox.get": {
       "get": {
         "operationId": "getEmailInboxItem",
         "x-gbos-cache": "no-store",
-        "x-gbos-roles": ["CEO", "Sales Manager", "Sales User", "Reviewer", "GBOS Admin"],
-        "security": [{"FrappeSession": []}],
-        "parameters": [
-          {"name": "inbox_item_ref", "in": "query", "required": true, "schema": {"type": "string", "maxLength": 140}}
+        "x-gbos-roles": [
+          "CEO",
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
         ],
-        "responses": {"200": {"description": "Closed safe Inbox detail"}}
+        "security": [
+          {
+            "FrappeSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "inbox_item_ref",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 140
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Closed governed projection"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_inbox.claim": {
+      "post": {
+        "operationId": "claimEmailInbox",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_inbox.reassign": {
+      "post": {
+        "operationId": "reassignEmailInbox",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ReassignCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_inbox.transition": {
+      "post": {
+        "operationId": "transitionEmailInbox",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/TransitionCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_inbox.merge": {
+      "post": {
+        "operationId": "mergeEmailInbox",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_inbox.split": {
+      "post": {
+        "operationId": "splitEmailInbox",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_inbox.link_business": {
+      "post": {
+        "operationId": "link_businessEmailInbox",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkBusinessCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        }
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_inbox.save_draft": {
+      "post": {
+        "operationId": "saveEmailDraft",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        },
+        "x-gbos-provider-send": false
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_inbox.reveal": {
+      "post": {
+        "operationId": "revealEmailEvidence",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
+        ],
+        "x-gbos-restricted-reveal": true,
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/RevealCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ephemeral restricted content"
+          }
+        }
       }
     }
   },
   "components": {
     "securitySchemes": {
-      "FrappeSession": {"type": "apiKey", "in": "cookie", "name": "sid"},
-      "FrappeCsrf": {"type": "apiKey", "in": "header", "name": "X-Frappe-CSRF-Token"}
+      "FrappeSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "sid"
+      },
+      "FrappeCsrf": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Frappe-CSRF-Token"
+      }
     },
     "schemas": {
       "Mailbox": {
@@ -123,17 +636,263 @@
           "config_revision"
         ],
         "properties": {
-          "mailbox_ref": {"type": "string", "maxLength": 140},
-          "display_label": {"type": "string", "maxLength": 240},
-          "provider_kind": {"type": "string", "enum": ["fake", "imap_smtp", "wecom_app_mail"]},
-          "business_mode": {"type": "string", "enum": ["primary", "selective_archive", "migration"]},
-          "business_purpose": {"type": "string", "maxLength": 80},
-          "default_team_label": {"type": ["string", "null"], "maxLength": 240},
-          "account_owner_label": {"type": ["string", "null"], "maxLength": 240},
-          "inbound_enabled": {"type": "boolean"},
-          "outbound_enabled": {"type": "boolean", "const": false},
-          "status": {"type": "string", "enum": ["draft", "active", "paused", "revoked", "error"]},
-          "config_revision": {"type": "integer", "minimum": 0}
+          "mailbox_ref": {
+            "type": "string",
+            "maxLength": 140
+          },
+          "display_label": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "provider_kind": {
+            "type": "string",
+            "enum": [
+              "fake",
+              "imap_smtp",
+              "wecom_app_mail"
+            ]
+          },
+          "business_mode": {
+            "type": "string",
+            "enum": [
+              "primary",
+              "selective_archive",
+              "migration"
+            ]
+          },
+          "business_purpose": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "default_team_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 240
+          },
+          "account_owner_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 240
+          },
+          "inbound_enabled": {
+            "type": "boolean"
+          },
+          "outbound_enabled": {
+            "type": "boolean",
+            "const": false
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "active",
+              "paused",
+              "revoked",
+              "error"
+            ]
+          },
+          "config_revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "InboxItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "inbox_item_ref",
+          "mailbox_label",
+          "mailbox_role",
+          "received_at",
+          "state",
+          "safe_summary",
+          "team_label",
+          "revision"
+        ],
+        "properties": {
+          "inbox_item_ref": {
+            "type": "string",
+            "maxLength": 140
+          },
+          "mailbox_label": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "mailbox_role": {
+            "type": "string",
+            "enum": [
+              "primary",
+              "selective_archive",
+              "migration"
+            ]
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "identity_pending",
+              "unassigned",
+              "assigned",
+              "draft",
+              "waiting_internal",
+              "waiting_customer",
+              "converted",
+              "closed",
+              "quarantined",
+              "send_queued",
+              "send_uncertain"
+            ]
+          },
+          "safe_summary": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "team_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 240
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "InboxDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "inbox_item_ref",
+          "mailbox_label",
+          "mailbox_role",
+          "received_at",
+          "state",
+          "safe_summary",
+          "team_label",
+          "revision",
+          "assignee_label",
+          "identity_state"
+        ],
+        "properties": {
+          "inbox_item_ref": {
+            "type": "string"
+          },
+          "mailbox_label": {
+            "type": "string"
+          },
+          "mailbox_role": {
+            "type": "string"
+          },
+          "received_at": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "identity_pending",
+              "unassigned",
+              "assigned",
+              "draft",
+              "waiting_internal",
+              "waiting_customer",
+              "converted",
+              "closed",
+              "quarantined",
+              "send_queued",
+              "send_uncertain"
+            ]
+          },
+          "safe_summary": {
+            "type": "string"
+          },
+          "team_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "assignee_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "identity_state": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "confirmed",
+              "revoked"
+            ]
+          }
+        }
+      },
+      "ConnectorHealth": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mailbox_ref",
+          "mailbox_label",
+          "status",
+          "freshness",
+          "backlog",
+          "last_success_at",
+          "safe_error_code"
+        ],
+        "properties": {
+          "mailbox_ref": {
+            "type": "string"
+          },
+          "mailbox_label": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "degraded",
+              "paused",
+              "revoked",
+              "unknown"
+            ]
+          },
+          "freshness": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "stale",
+              "unknown"
+            ]
+          },
+          "backlog": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_success_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "safe_error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
         }
       },
       "MailboxUpsertCommand": {
@@ -156,10 +915,32 @@
           "idempotency_key"
         ],
         "properties": {
-          "mailbox_ref": {"type": "string", "maxLength": 140},
-          "display_label": {"type": "string", "maxLength": 240},
-          "provider_kind": {"type": "string", "enum": ["fake", "imap_smtp", "wecom_app_mail"]},
-          "business_mode": {"type": "string", "enum": ["primary", "selective_archive", "migration"]},
+          "mailbox_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "display_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "provider_kind": {
+            "type": "string",
+            "enum": [
+              "fake",
+              "imap_smtp",
+              "wecom_app_mail"
+            ]
+          },
+          "business_mode": {
+            "type": "string",
+            "enum": [
+              "primary",
+              "selective_archive",
+              "migration"
+            ]
+          },
           "business_purpose": {
             "type": "string",
             "enum": [
@@ -175,111 +956,424 @@
               "audit_compliance"
             ]
           },
-          "provider_account_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+          "provider_account_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
           "observer_connector_instance_ref": {
             "type": "string",
-            "pattern": "^OCI-[0-9A-HJKMNP-TV-Z]{26}$"
+            "minLength": 1,
+            "maxLength": 140
           },
           "default_team_ref": {
             "type": "string",
-            "pattern": "^TEM-[0-9A-HJKMNP-TV-Z]{26}$"
+            "minLength": 1,
+            "maxLength": 140
           },
-          "account_owner_user_ref": {"type": "string", "minLength": 1, "maxLength": 140},
-          "priority": {"type": "integer", "minimum": 0, "maximum": 1000},
+          "account_owner_user_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
           "credential_ref": {
             "type": "string",
-            "pattern": "^secretref:v1/[A-Za-z0-9][A-Za-z0-9._/-]*$",
+            "minLength": 1,
             "maxLength": 128
           },
-          "inbound_enabled": {"type": "boolean"},
-          "outbound_enabled": {"type": "boolean", "const": false},
-          "expected_revision": {"type": "integer", "minimum": 0},
-          "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 256}
+          "inbound_enabled": {
+            "type": "boolean"
+          },
+          "outbound_enabled": {
+            "type": "boolean",
+            "const": false
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
         }
       },
       "MailboxStatusCommand": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["mailbox_ref", "action", "expected_revision", "idempotency_key"],
-        "properties": {
-          "mailbox_ref": {"type": "string", "maxLength": 140},
-          "action": {"type": "string", "enum": ["enable", "pause", "revoke"]},
-          "expected_revision": {"type": "integer", "minimum": 0},
-          "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 256}
-        }
-      },
-      "InboxItem": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "inbox_item_ref",
-          "mailbox_label",
-          "mailbox_role",
-          "received_at",
-          "state",
-          "safe_summary",
-          "team_label",
-          "revision"
-        ],
-        "properties": {
-          "inbox_item_ref": {"type": "string", "maxLength": 140},
-          "mailbox_label": {"type": "string", "maxLength": 240},
-          "mailbox_role": {"type": "string", "enum": ["primary", "selective_archive", "migration"]},
-          "received_at": {"type": "string", "format": "date-time"},
-          "state": {"type": "string", "enum": ["identity_pending", "unassigned"]},
-          "safe_summary": {"type": "string", "maxLength": 500},
-          "team_label": {"type": ["string", "null"], "maxLength": 240},
-          "revision": {"type": "integer", "minimum": 0}
-        }
-      },
-      "InboxDetail": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "inbox_item_ref",
-          "mailbox_label",
-          "mailbox_role",
-          "received_at",
-          "state",
-          "safe_summary",
-          "team_label",
-          "revision",
-          "assignee_label",
-          "identity_state"
-        ],
-        "properties": {
-          "inbox_item_ref": {"type": "string", "maxLength": 140},
-          "mailbox_label": {"type": "string", "maxLength": 240},
-          "mailbox_role": {"type": "string", "enum": ["primary", "selective_archive", "migration"]},
-          "received_at": {"type": "string", "format": "date-time"},
-          "state": {"type": "string", "enum": ["identity_pending", "unassigned"]},
-          "safe_summary": {"type": "string", "maxLength": 500},
-          "team_label": {"type": ["string", "null"], "maxLength": 240},
-          "revision": {"type": "integer", "minimum": 0},
-          "assignee_label": {"type": ["string", "null"], "maxLength": 240},
-          "identity_state": {"type": "string", "enum": ["unknown", "confirmed", "revoked"]}
-        }
-      },
-      "ConnectorHealth": {
-        "type": "object",
-        "additionalProperties": false,
         "required": [
           "mailbox_ref",
-          "mailbox_label",
-          "status",
-          "freshness",
-          "backlog",
-          "last_success_at",
-          "safe_error_code"
+          "action",
+          "expected_revision",
+          "idempotency_key"
         ],
         "properties": {
-          "mailbox_ref": {"type": "string", "maxLength": 140},
-          "mailbox_label": {"type": "string", "maxLength": 240},
-          "status": {"type": "string", "enum": ["healthy", "degraded", "paused", "revoked", "unknown"]},
-          "freshness": {"type": "string", "enum": ["fresh", "stale", "unknown"]},
-          "backlog": {"type": "integer", "minimum": 0},
-          "last_success_at": {"type": ["string", "null"], "format": "date-time"},
-          "safe_error_code": {"type": ["string", "null"], "maxLength": 80}
+          "mailbox_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "enable",
+              "pause",
+              "revoke"
+            ]
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "RuleUpsertCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "team_ref",
+          "mailbox_ref",
+          "owner_user_ref",
+          "priority",
+          "enabled",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "rule_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "team_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "mailbox_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "owner_user_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "DraftCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "inbox_item_ref",
+          "draft_ref",
+          "content",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "inbox_item_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "draft_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 131072
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "RevealCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "inbox_item_ref",
+          "evidence_ref"
+        ],
+        "properties": {
+          "inbox_item_ref": {
+            "type": "string",
+            "maxLength": 140
+          },
+          "evidence_ref": {
+            "type": "string",
+            "maxLength": 512
+          }
+        }
+      },
+      "ClaimCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "inbox_item_ref",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "inbox_item_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "ReassignCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "inbox_item_ref",
+          "assignee_team_ref",
+          "assignee_enabled",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "inbox_item_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "assignee_team_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "assignee_user_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "assignee_enabled": {
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "TransitionCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "inbox_item_ref",
+          "target_state",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "inbox_item_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "target_state": {
+            "type": "string",
+            "enum": [
+              "identity_pending",
+              "unassigned",
+              "assigned",
+              "draft",
+              "waiting_internal",
+              "waiting_customer",
+              "converted",
+              "closed",
+              "quarantined",
+              "send_queued",
+              "send_uncertain"
+            ]
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "MergeCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "suggestion_ref",
+          "left_inbox_item_ref",
+          "expected_suggestion_revision",
+          "expected_left_revision",
+          "expected_right_revision",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "suggestion_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "left_inbox_item_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "expected_suggestion_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expected_left_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expected_right_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "SplitCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "conversation_ref",
+          "moved_inbox_item_refs",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "conversation_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "moved_inbox_item_refs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 140
+            }
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "LinkBusinessCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "inbox_item_ref",
+          "business_ref",
+          "authority_valid",
+          "authority_team_ref",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "inbox_item_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "business_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "authority_valid": {
+            "type": "boolean"
+          },
+          "authority_team_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
         }
       }
     }

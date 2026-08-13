@@ -116,7 +116,7 @@ def _require_mailbox_authority(team_ref: str, owner_ref: str) -> None:
 
 @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # type: ignore[untyped-decorator]
 @bff_endpoint("GET")
-def list(cursor: str | None = None, page_size: int | str = 25) -> dict[str, Any]:
+def list_mailboxes(cursor: str | None = None, page_size: int | str = 25) -> dict[str, Any]:
     require_roles(EMAIL_ADMIN_ROLES)
     payload = {
         **scope_payload(),
@@ -126,7 +126,7 @@ def list(cursor: str | None = None, page_size: int | str = 25) -> dict[str, Any]
         payload["cursor"] = value
     data = call_gateway(
         method="POST",
-        path="/internal/v1/bff/mailboxes/list",
+        path="/internal/v1/bff/email-admin/mailboxes/list",
         purpose="email_mailbox_read",
         payload=payload,
     )
@@ -150,14 +150,14 @@ def list(cursor: str | None = None, page_size: int | str = 25) -> dict[str, Any]
 
 @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # type: ignore[untyped-decorator]
 @bff_endpoint("GET")
-def get(mailbox_ref: str) -> dict[str, Any]:
+def get_mailbox(mailbox_ref: str) -> dict[str, Any]:
     require_roles(EMAIL_ADMIN_ROLES)
     reference = _optional(mailbox_ref)
     if reference is None:
         raise BFFError("invalid_query", "mailbox_ref is required")
     data = call_gateway(
         method="POST",
-        path="/internal/v1/bff/mailboxes/get",
+        path="/internal/v1/bff/email-admin/mailboxes/get",
         purpose="email_mailbox_read",
         payload={**scope_payload(), "mailbox_ref": reference},
     )
@@ -166,7 +166,7 @@ def get(mailbox_ref: str) -> dict[str, Any]:
 
 @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # type: ignore[untyped-decorator]
 @bff_endpoint("POST")
-def upsert(
+def upsert_mailbox(
     display_label: str,
     provider_kind: str,
     business_mode: str,
@@ -215,7 +215,7 @@ def upsert(
 
 @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # type: ignore[untyped-decorator]
 @bff_endpoint("POST")
-def set_status(
+def set_mailbox_status(
     mailbox_ref: str,
     action: str,
     expected_revision: int | str,
@@ -242,7 +242,7 @@ def _mailbox_command(action: str, command: dict[str, Any]) -> dict[str, Any]:
     def execute() -> dict[str, Any]:
         data = call_gateway(
             method="POST",
-            path=f"/internal/v1/bff/mailboxes/{action}",
+            path=f"/internal/v1/bff/email-admin/mailboxes/{action}",
             purpose="email_mailbox_admin",
             payload=payload,
             idempotency_key=command["idempotency_key"],
@@ -273,11 +273,11 @@ def _form_boolean(value: bool | int | str, field: str) -> bool:
 
 @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # type: ignore[untyped-decorator]
 @bff_endpoint("GET")
-def get_connector_health() -> dict[str, Any]:
+def connector_health() -> dict[str, Any]:
     require_roles(EMAIL_ADMIN_ROLES)
     data = call_gateway(
         method="POST",
-        path="/internal/v1/bff/email-connectors/health",
+        path="/internal/v1/bff/email-admin/connector-health/get",
         purpose="email_connector_health_read",
         payload=scope_payload(),
     )
@@ -291,3 +291,96 @@ def get_connector_health() -> dict[str, Any]:
             "internal_error", "Connector health response is invalid", status=503
         ) from error
     return v5_success({"connector_health": health})
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # type: ignore[untyped-decorator]
+@bff_endpoint("GET")
+def list_rules(page_size: int | str = 25) -> dict[str, Any]:
+    require_roles(EMAIL_ADMIN_ROLES)
+    data = call_gateway(
+        method="POST",
+        path="/internal/v1/bff/email-admin/rules/list",
+        purpose="email_mailbox_read",
+        payload={
+            **scope_payload(),
+            "page_size": _integer(page_size, "page_size", maximum=50),
+        },
+    )
+    rows = data.get("rules")
+    if not isinstance(rows, builtins.list):
+        raise BFFError("internal_error", "Routing rule response is invalid", status=503)
+    return v5_success({"rules": [_public_rule(row) for row in rows]})
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # type: ignore[untyped-decorator]
+@bff_endpoint("POST")
+def upsert_rule(
+    team_ref: str,
+    mailbox_ref: str,
+    owner_user_ref: str,
+    priority: int | str,
+    enabled: bool | int | str,
+    expected_revision: int | str,
+    idempotency_key: str,
+    rule_ref: str | None = None,
+) -> dict[str, Any]:
+    require_roles(EMAIL_ADMIN_ROLES)
+    _require_mailbox_authority(team_ref, owner_user_ref)
+    command: dict[str, Any] = {
+        "team_ref": team_ref,
+        "mailbox_ref": mailbox_ref,
+        "owner_user_ref": owner_user_ref,
+        "priority": _integer(priority, "priority", maximum=1000),
+        "enabled": _form_boolean(enabled, "enabled"),
+        "expected_revision": _integer(expected_revision, "expected_revision"),
+        "idempotency_key": idempotency_key,
+    }
+    if reference := _optional(rule_ref):
+        command["rule_ref"] = reference
+    payload = {**scope_payload(), **command}
+
+    def execute() -> dict[str, Any]:
+        data = call_gateway(
+            method="POST",
+            path="/internal/v1/bff/email-admin/rules/upsert",
+            purpose="email_mailbox_admin",
+            payload=payload,
+            idempotency_key=idempotency_key,
+        )
+        return _public_rule(data.get("rule"))
+
+    result, replayed, original_request_id = run_idempotent(
+        "email_admin.upsert_rule",
+        idempotency_key,
+        payload,
+        execute,
+        api_version="v5",
+    )
+    return v5_success(
+        {"rule": result},
+        replayed=replayed,
+        original_request_id=original_request_id,
+    )
+
+
+def _public_rule(value: object) -> dict[str, Any]:
+    fields = {
+        "rule_ref",
+        "team_ref",
+        "mailbox_ref",
+        "owner_user_ref",
+        "priority",
+        "revision",
+        "enabled",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise BFFError("internal_error", "Routing rule response is invalid", status=503)
+    return {
+        "rule_ref": value["rule_ref"],
+        "mailbox_ref": value["mailbox_ref"],
+        "team_label": _label("GBOS Team", value["team_ref"], "team_name"),
+        "owner_label": _label("User", value["owner_user_ref"], "full_name"),
+        "priority": value["priority"],
+        "revision": value["revision"],
+        "enabled": value["enabled"],
+    }

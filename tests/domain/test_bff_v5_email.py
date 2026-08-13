@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import sys
 from types import ModuleType, SimpleNamespace
@@ -146,13 +147,13 @@ def test_mailbox_reads_delegate_exact_actor_role_and_team_scope(
 
     monkeypatch.setattr(admin, "call_gateway", call_gateway)
 
-    response = admin.list(cursor="CUR-01", page_size="20")
+    response = admin.list_mailboxes(cursor="CUR-01", page_size="20")
 
     assert response["data"]["mailboxes"] == [mailbox_payload()]
     assert calls == [
         {
             "method": "POST",
-            "path": "/internal/v1/bff/mailboxes/list",
+            "path": "/internal/v1/bff/email-admin/mailboxes/list",
             "purpose": "email_mailbox_read",
             "payload": {
                 "actor_ref": "sales@example.invalid",
@@ -177,7 +178,7 @@ def test_mailbox_admin_is_role_gated_and_writes_forward_revision_and_idempotency
         lambda **kwargs: calls.append(kwargs) or {"mailbox": gateway_mailbox_payload()},
     )
 
-    result = admin.set_status(
+    result = admin.set_mailbox_status(
         mailbox_ref="MBX-01",
         action="pause",
         expected_revision="3",
@@ -185,7 +186,7 @@ def test_mailbox_admin_is_role_gated_and_writes_forward_revision_and_idempotency
     )
 
     assert result["data"]["mailbox"]["status"] == "active"
-    assert calls[0]["path"] == "/internal/v1/bff/mailboxes/status"
+    assert calls[0]["path"] == "/internal/v1/bff/email-admin/mailboxes/status"
     assert calls[0]["payload"] == {
         "actor_ref": "sales@example.invalid",
         "actor_roles": ["Integration Admin"],
@@ -212,7 +213,7 @@ def test_multiple_primary_mailboxes_are_preserved_without_local_uniqueness_filte
     }
     monkeypatch.setattr(admin, "call_gateway", lambda **_kwargs: {"mailboxes": [first, second]})
 
-    response = admin.list()
+    response = admin.list_mailboxes()
 
     assert [item["business_mode"] for item in response["data"]["mailboxes"]] == [
         "primary",
@@ -232,7 +233,7 @@ def test_mailbox_upsert_is_domain_complete_and_authority_checked(
         lambda **kwargs: calls.append(kwargs) or {"mailbox": gateway_mailbox_payload()},
     )
 
-    admin.upsert(
+    admin.upsert_mailbox(
         display_label="海湾销售主入口",
         provider_kind="fake",
         business_mode="primary",
@@ -327,7 +328,19 @@ def test_inbox_is_read_only_safe_projection_and_delegates_scope(
     assert calls[0]["payload"]["actor_ref"] == "sales@example.invalid"
     assert calls[0]["payload"]["allowed_team_refs"] == [TEAM_ONE, TEAM_TWO]
     assert calls[0]["payload"]["page_size"] == 25
-    assert not any(name in vars(inbox) for name in ("claim", "merge", "draft", "send"))
+    assert {
+        "list",
+        "get",
+        "claim",
+        "reassign",
+        "transition",
+        "merge",
+        "split",
+        "link_business",
+        "save_draft",
+        "reveal",
+    } <= set(vars(inbox))
+    assert "send" not in vars(inbox)
 
 
 def test_standalone_integration_admin_cannot_read_business_inbox(
@@ -393,8 +406,169 @@ def test_connector_health_is_live_safe_read_for_admin_only(
         lambda **kwargs: calls.append(kwargs) or {"connector_health": [health]},
     )
 
-    response = admin.get_connector_health()
+    response = admin.connector_health()
 
     assert response["data"] == {"connector_health": [health]}
-    assert calls[0]["path"] == "/internal/v1/bff/email-connectors/health"
+    assert calls[0]["path"] == "/internal/v1/bff/email-admin/connector-health/get"
     assert calls[0]["purpose"] == "email_connector_health_read"
+
+
+def test_inbox_claim_delegates_exact_current_actor_scope_revision_and_idempotency(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, _admin, inbox, _fake = v5_modules
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        inbox,
+        "call_gateway",
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or {
+                "inbox_item": {
+                    "inbox_item_ref": "INB-01",
+                    "state": "assigned",
+                    "revision": 2,
+                }
+            }
+        ),
+    )
+
+    result = inbox.claim("INB-01", expected_revision="1", idempotency_key="claim-0001")
+
+    assert result["data"]["inbox_item"]["revision"] == 2
+    assert calls == [
+        {
+            "method": "POST",
+            "path": "/internal/v1/bff/email-inbox/claim",
+            "purpose": "email_inbox_command",
+            "payload": {
+                "actor_ref": "sales@example.invalid",
+                "actor_roles": ["Sales User"],
+                "allowed_team_refs": [TEAM_ONE, TEAM_TWO],
+                "inbox_item_ref": "INB-01",
+                "expected_revision": 1,
+                "idempotency_key": "claim-0001",
+            },
+            "idempotency_key": "claim-0001",
+        }
+    ]
+
+
+def test_inbox_command_projection_replaces_raw_actor_and_team_refs_with_labels(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, _admin, inbox, _fake = v5_modules
+    monkeypatch.setattr(
+        inbox,
+        "call_gateway",
+        lambda **_kwargs: {
+            "inbox_item": {
+                "inbox_item_ref": "INB-01",
+                "state": "assigned",
+                "team_ref": TEAM_ONE,
+                "assignee_user_ref": "sales@example.invalid",
+                "conversation_ref": "CNV-01",
+                "business_links": ["CRM-LEAD-01"],
+                "revision": 2,
+            }
+        },
+    )
+
+    result = inbox.claim("INB-01", expected_revision="1", idempotency_key="claim-0001")
+
+    projection = result["data"]["inbox_item"]
+    assert projection["team_label"] == "海湾销售组"
+    assert projection["assignee_label"] == "销售员"
+    assert "team_ref" not in projection
+    assert "assignee_user_ref" not in projection
+
+
+def test_save_draft_gets_fresh_gateway_receipt_then_observer_cas_then_commits_projection(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, _admin, inbox, _fake = v5_modules
+    gateway_calls: list[dict[str, Any]] = []
+    observer_calls: list[dict[str, Any]] = []
+    receipt = {
+        "receipt_ref": "DAR-01",
+        "site_id": "gbos.localhost",
+        "purpose": "email_draft_material",
+        "inbox_item_ref": "INB-01",
+        "draft_ref": "DRF-01",
+        "draft_revision": 1,
+        "actor_ref": "sales@example.invalid",
+        "team_ref": TEAM_ONE,
+        "request_digest": "sha256:" + hashlib.sha256(b"Hello customer").hexdigest(),
+        "issued_at": "2026-08-13T08:00:00Z",
+        "expires_at": "2026-08-13T08:05:00Z",
+    }
+
+    def gateway_call(**kwargs: Any) -> dict[str, Any]:
+        gateway_calls.append(kwargs)
+        if kwargs["payload"]["phase"] == "authorize":
+            return {"draft_authorization": receipt}
+        return {"draft": {"draft_ref": "DRF-01", "revision": 1, "state": "editable"}}
+
+    monkeypatch.setattr(inbox, "call_gateway", gateway_call)
+    monkeypatch.setattr(
+        inbox,
+        "call_observer",
+        lambda **kwargs: (
+            observer_calls.append(kwargs)
+            or {
+                "evidence_ref": "EVR-DRAFT-01",
+                "digest": receipt["request_digest"],
+                "revision": 1,
+            }
+        ),
+    )
+
+    result = inbox.save_draft(
+        "INB-01",
+        draft_ref="DRF-01",
+        expected_revision="0",
+        content="Hello customer",
+        idempotency_key="draft-save-01",
+    )
+
+    assert result["data"]["draft"] == {
+        "draft_ref": "DRF-01",
+        "revision": 1,
+        "state": "editable",
+    }
+    assert [call["payload"]["phase"] for call in gateway_calls] == ["authorize", "commit"]
+    assert observer_calls[0]["path"] == "/internal/v1/bff/email-draft-material/save"
+    assert observer_calls[0]["payload"]["content"] == "Hello customer"
+    assert observer_calls[0]["payload"]["content_digest"] == receipt["request_digest"]
+    assert observer_calls[0]["payload"]["idempotency_key"] == "draft-save-01"
+    assert gateway_calls[1]["payload"]["evidence_ref"] == "EVR-DRAFT-01"
+    assert "content" not in gateway_calls[1]["payload"]
+
+
+def test_reveal_delegates_once_to_gateway_which_owns_the_second_observer_call(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, _admin, inbox, fake = v5_modules
+    fake._roles = {"Reviewer"}
+    calls: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        inbox,
+        "call_gateway",
+        lambda **kwargs: (
+            calls.append(("gateway", kwargs))
+            or {
+                "revealed": {
+                    "content": "restricted body",
+                    "media_type": "text/plain; charset=utf-8",
+                }
+            }
+        ),
+    )
+
+    result = inbox.reveal("INB-01", "EVR-01")
+
+    assert result["data"]["content"] == "restricted body"
+    assert [name for name, _call in calls] == ["gateway"]
+    assert calls[0][1]["path"] == "/internal/v1/bff/email-inbox/reveal"
+    assert "?" not in calls[0][1]["path"]
+    assert calls[0][1]["purpose"] == "email_evidence_reveal"

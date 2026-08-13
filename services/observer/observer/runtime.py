@@ -133,6 +133,8 @@ class PostgresLocalPilotRuntime:
     projection_publisher: Any | None
     identity_resolution_metrics: IdentityResolutionMetrics
     email_connector_config_repository: Any
+    evidence_reveal: Any | None
+    email_draft_material: Any | None
     app: Any
     connection: Any
     storage: Any
@@ -170,6 +172,8 @@ def compose_postgres_local_pilot_runtime(
     restricted_model_policy: Literal["deny", "local_tokenized"] = "deny",
     identity_resolution_metrics: IdentityResolutionMetrics | None = None,
     email_connector_configs: Any | None = None,
+    evidence_reveal: Any | None = None,
+    email_draft_material: Any | None = None,
 ) -> PostgresLocalPilotRuntime:
     """Wire the PostgreSQL repositories, worker and authenticated internal app."""
 
@@ -252,6 +256,8 @@ def compose_postgres_local_pilot_runtime(
         clock=clock,
         identity_resolution_metrics=active_identity_resolution_metrics,
         email_connector_configs=active_email_connector_configs,
+        evidence_reveal=evidence_reveal,
+        email_draft_material=email_draft_material,
     )
     return PostgresLocalPilotRuntime(
         guard=guard,
@@ -264,6 +270,8 @@ def compose_postgres_local_pilot_runtime(
         projection_publisher=projection_publisher,
         identity_resolution_metrics=active_identity_resolution_metrics,
         email_connector_config_repository=active_email_connector_configs,
+        evidence_reveal=evidence_reveal,
+        email_draft_material=email_draft_material,
         app=app,
         connection=connection,
         storage=storage,

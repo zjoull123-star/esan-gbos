@@ -12,8 +12,11 @@ from esan_gbos.api.v4.client import LocalServiceClient, LocalServiceError
 
 _GATEWAY_URL = "http://email-gateway-api:8004"
 _BEARER_FILE = Path("/run/secrets/email_gateway_bff_bearer")
+_OBSERVER_MATERIAL_URL = "http://observer-api:8003"
+_OBSERVER_MATERIAL_BEARER_FILE = Path("/run/secrets/observer_email_draft_material_bearer")
 _MAX_BEARER_BYTES = 4096
 _AUTH_REF = "email-gateway-bff-v1"
+_OBSERVER_MATERIAL_AUTH_REF = "observer-email-draft-material-v1"
 _EMAIL_ROLES = frozenset(
     {"CEO", "Sales Manager", "Sales User", "Reviewer", "Integration Admin", "GBOS Admin"}
 )
@@ -81,6 +84,40 @@ def configured_gateway_client() -> LocalServiceClient:
         raise BFFError(
             "internal_error",
             "Email Gateway service configuration is invalid",
+            status=503,
+        ) from error
+
+
+def configured_observer_email_material_client() -> LocalServiceClient:
+    configured_url = str(frappe.conf.get("gbos_observer_email_material_url") or "").strip()
+    configured_file = str(frappe.conf.get("gbos_observer_email_material_token_file") or "").strip()
+    inline = str(frappe.conf.get("gbos_observer_email_material_token") or "").strip()
+    auth_ref = str(frappe.conf.get("gbos_observer_email_material_auth_ref") or "").strip()
+    if (
+        configured_url != _OBSERVER_MATERIAL_URL
+        or configured_file != str(_OBSERVER_MATERIAL_BEARER_FILE)
+        or inline
+        or auth_ref != _OBSERVER_MATERIAL_AUTH_REF
+    ):
+        raise BFFError(
+            "internal_error",
+            "Observer email material service configuration is invalid",
+            status=503,
+        )
+    try:
+        bearer = _read_bearer(_OBSERVER_MATERIAL_BEARER_FILE)
+        return LocalServiceClient(
+            service_name="Observer Email Material",
+            base_url=_OBSERVER_MATERIAL_URL,
+            token=bearer,
+            auth_ref=auth_ref,
+            timeout_seconds=3.0,
+            allowed_internal_urls=frozenset({_OBSERVER_MATERIAL_URL}),
+        )
+    except LocalServiceError as error:
+        raise BFFError(
+            "internal_error",
+            "Observer email material service configuration is invalid",
             status=503,
         ) from error
 
@@ -168,4 +205,46 @@ def call_gateway(
     data = response.get("data")
     if not isinstance(data, dict):
         raise BFFError("internal_error", "Email Gateway returned an invalid response", status=503)
+    return data
+
+
+def call_observer(
+    *,
+    path: str,
+    purpose: str,
+    payload: dict[str, Any],
+    idempotency_key: str,
+) -> dict[str, Any]:
+    if path not in {
+        "/internal/v1/bff/email-draft-material/save",
+        "/internal/v1/bff/email-draft-material/finalize",
+    }:
+        raise BFFError("invalid_query", "Observer email material path is invalid")
+    try:
+        response = configured_observer_email_material_client().request(
+            method="POST",
+            path=path,
+            site_id=active_site(),
+            purpose=purpose,
+            request_id=request_id(),
+            payload=payload,
+            idempotency_key=idempotency_key,
+        )
+    except LocalServiceError as error:
+        if error.error_code in {
+            "idempotency_conflict",
+            "revision_conflict",
+            "scope_mismatch",
+        }:
+            raise BFFError(
+                error.error_code,
+                "Observer rejected the governed email material request",
+                status=409,
+            ) from error
+        raise BFFError(
+            "internal_error", "Observer email material service is unavailable", status=503
+        ) from error
+    data = response.get("data")
+    if not isinstance(data, dict):
+        raise BFFError("internal_error", "Observer returned an invalid response", status=503)
     return data

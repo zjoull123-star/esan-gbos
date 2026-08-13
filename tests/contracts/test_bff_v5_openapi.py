@@ -7,13 +7,23 @@ ROOT = Path(__file__).parents[2]
 CONTRACT = ROOT / "contracts" / "bff-v5.openapi.json"
 
 OPERATIONS = {
-    "/api/method/esan_gbos.api.v5.email_admin.list": "get",
-    "/api/method/esan_gbos.api.v5.email_admin.get": "get",
-    "/api/method/esan_gbos.api.v5.email_admin.upsert": "post",
-    "/api/method/esan_gbos.api.v5.email_admin.set_status": "post",
-    "/api/method/esan_gbos.api.v5.email_admin.get_connector_health": "get",
+    "/api/method/esan_gbos.api.v5.email_admin.list_mailboxes": "get",
+    "/api/method/esan_gbos.api.v5.email_admin.get_mailbox": "get",
+    "/api/method/esan_gbos.api.v5.email_admin.list_rules": "get",
+    "/api/method/esan_gbos.api.v5.email_admin.connector_health": "get",
+    "/api/method/esan_gbos.api.v5.email_admin.upsert_mailbox": "post",
+    "/api/method/esan_gbos.api.v5.email_admin.set_mailbox_status": "post",
+    "/api/method/esan_gbos.api.v5.email_admin.upsert_rule": "post",
     "/api/method/esan_gbos.api.v5.email_inbox.list": "get",
     "/api/method/esan_gbos.api.v5.email_inbox.get": "get",
+    "/api/method/esan_gbos.api.v5.email_inbox.claim": "post",
+    "/api/method/esan_gbos.api.v5.email_inbox.reassign": "post",
+    "/api/method/esan_gbos.api.v5.email_inbox.transition": "post",
+    "/api/method/esan_gbos.api.v5.email_inbox.merge": "post",
+    "/api/method/esan_gbos.api.v5.email_inbox.split": "post",
+    "/api/method/esan_gbos.api.v5.email_inbox.link_business": "post",
+    "/api/method/esan_gbos.api.v5.email_inbox.save_draft": "post",
+    "/api/method/esan_gbos.api.v5.email_inbox.reveal": "post",
 }
 
 
@@ -29,7 +39,7 @@ def resolve_schema(value: dict[str, object], schema: dict[str, object]) -> dict[
     return value["components"]["schemas"][reference.rsplit("/", maxsplit=1)[-1]]
 
 
-def test_v5_surface_is_exactly_the_phase_one_email_api_and_never_cached() -> None:
+def test_v5_surface_is_exactly_the_seventeen_email_operations_and_never_cached() -> None:
     value = contract()
 
     assert value["openapi"] == "3.1.0"
@@ -48,6 +58,13 @@ def test_v5_freezes_config_only_and_business_inbox_role_boundaries() -> None:
         roles = value["paths"][path][method]["x-gbos-roles"]
         if ".email_admin." in path:
             assert roles == ["Integration Admin", "GBOS Admin"]
+        elif method == "post":
+            assert roles == [
+                "Sales Manager",
+                "Sales User",
+                "Reviewer",
+                "GBOS Admin",
+            ]
         else:
             assert roles == [
                 "CEO",
@@ -71,7 +88,7 @@ def test_v5_reads_require_session_and_writes_require_csrf_revision_and_idempoten
     for path, method in OPERATIONS.items():
         operation = value["paths"][path][method]
         assert any("FrappeSession" in entry for entry in operation["security"])
-        if method == "post":
+        if method == "post" and not path.endswith(".reveal"):
             assert any(
                 {"FrappeSession", "FrappeCsrf"} <= set(entry) for entry in operation["security"]
             )
@@ -131,7 +148,19 @@ def test_v5_closed_shapes_expose_only_safe_mailbox_inbox_and_health_projections(
 
     inbox = schemas["InboxItem"]
     assert inbox["additionalProperties"] is False
-    assert inbox["properties"]["state"]["enum"] == ["identity_pending", "unassigned"]
+    assert inbox["properties"]["state"]["enum"] == [
+        "identity_pending",
+        "unassigned",
+        "assigned",
+        "draft",
+        "waiting_internal",
+        "waiting_customer",
+        "converted",
+        "closed",
+        "quarantined",
+        "send_queued",
+        "send_uncertain",
+    ]
     detail = schemas["InboxDetail"]
     assert detail["additionalProperties"] is False
     health = schemas["ConnectorHealth"]
@@ -145,14 +174,11 @@ def test_v5_closed_shapes_expose_only_safe_mailbox_inbox_and_health_projections(
     ]
 
 
-def test_v5_has_no_phase_two_operations_or_sensitive_fields() -> None:
+def test_v5_has_no_send_operation_or_sensitive_fields() -> None:
     text = CONTRACT.read_text(encoding="utf-8").lower()
 
     for forbidden in (
-        "claim",
-        "merge",
-        "draft_reply",
-        "send",
+        "sendoutbox",
         "raw_body",
         "body_html",
         "participant_address",
@@ -161,7 +187,18 @@ def test_v5_has_no_phase_two_operations_or_sensitive_fields() -> None:
         "api_secret",
         "credential_value",
         "access_token",
-        "mapping_ref",
-        "evidence_ref",
+        "participant_address",
     ):
         assert forbidden not in text
+    assert all(".send" not in path for path in contract()["paths"])
+
+
+def test_v5_reveal_and_save_draft_are_closed_no_store_non_send_operations() -> None:
+    value = contract()
+    reveal = value["paths"]["/api/method/esan_gbos.api.v5.email_inbox.reveal"]["post"]
+    save = value["paths"]["/api/method/esan_gbos.api.v5.email_inbox.save_draft"]["post"]
+
+    assert reveal["x-gbos-cache"] == save["x-gbos-cache"] == "no-store"
+    assert reveal["x-gbos-restricted-reveal"] is True
+    assert save["x-gbos-provider-send"] is False
+    assert "SendOutbox" not in value["components"]["schemas"]

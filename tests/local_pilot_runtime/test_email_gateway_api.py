@@ -198,6 +198,10 @@ def _enabled_runtime(tmp_path: Path) -> tuple[Path, Path, Path]:
             "email_gateway_bff_auth_ref": "email-gateway-bff-v1",
             "mailbox_projection_bearer_file": "/run/secrets/mailbox_projection_bearer",
             "mailbox_projection_auth_ref": "gateway-mailbox-projection-v1",
+            "observer_email_draft_material_bearer_file": (
+                "/run/secrets/observer_email_draft_material_bearer"
+            ),
+            "observer_email_draft_material_auth_ref": ("observer-email-draft-material-v1"),
         },
         "listen": {"host": "0.0.0.0", "port": 8004},
         "components": {
@@ -309,6 +313,12 @@ def test_main_supplies_distinct_publication_and_bff_credentials_to_application_f
     assert captured["bff_auth_ref"] == "email-gateway-bff-v1"
     assert "mailbox_registry" in captured
     assert "read_repository" in captured
+    assert "workflow_repository" in captured
+    assert "inbox_operations" in captured
+    assert "conversation_service" in captured
+    assert "draft_service" in captured
+    assert "evidence_authority" in captured
+    assert "evidence_client" in captured
     assert isinstance(
         captured["connector_health_reader"],
         email_gateway_api.ObserverConnectorHealthReader,

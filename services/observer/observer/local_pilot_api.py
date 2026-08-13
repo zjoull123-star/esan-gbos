@@ -25,6 +25,7 @@ from .email_connector_config import (
     EmailConnectorConfigReceipt,
     EmailConnectorConfigUnavailable,
 )
+from .email_draft_material import DraftAuthorizationReceipt
 from .identity_resolution_work import (
     IdentityAuthorityDenial,
     IdentityAuthorityDenialConflict,
@@ -35,6 +36,7 @@ from .read_service import (
     CommunicationAccess,
     CommunicationDetail,
     CommunicationPage,
+    EvidenceRevealAuthorization,
     InvalidCursor,
 )
 from .runtime import KillSwitchEngaged, LocalPilotRuntimeGuard
@@ -63,6 +65,8 @@ class LocalPilotAPIConfig:
     auth_ref: str = field(repr=False)
     mailbox_projection_bearer_token: str | None = field(default=None, repr=False)
     mailbox_projection_auth_ref: str | None = field(default=None, repr=False)
+    draft_material_bearer_token: str | None = field(default=None, repr=False)
+    draft_material_auth_ref: str | None = field(default=None, repr=False)
     max_request_bytes: int = 262_144
 
     def __post_init__(self) -> None:
@@ -83,6 +87,12 @@ class LocalPilotAPIConfig:
                 self.mailbox_projection_auth_ref,
                 "mailbox_projection_auth_ref",
             )
+        if (self.draft_material_bearer_token is None) != (self.draft_material_auth_ref is None):
+            raise ValueError("draft material authentication is incomplete")
+        if self.draft_material_bearer_token is not None:
+            if self.draft_material_auth_ref != "observer-email-draft-material-v1":
+                raise ValueError("draft material authentication reference is invalid")
+            _safe_secret(self.draft_material_bearer_token, "draft_material_bearer_token")
         if not 1 <= self.max_request_bytes <= 1_048_576:
             raise ValueError("max_request_bytes is outside the local API budget")
         if self.network_mode == "loopback":
@@ -205,6 +215,36 @@ class EmailConnectorConfigs(Protocol):
     ) -> EmailConnectorConfigReceipt: ...
 
 
+class EvidenceReveal(Protocol):
+    def reveal(
+        self, scope: TenantScope, *, authorization: EvidenceRevealAuthorization
+    ) -> dict[str, object]: ...
+
+
+class EmailDraftMaterial(Protocol):
+    def save(
+        self,
+        scope: TenantScope,
+        *,
+        authorization: DraftAuthorizationReceipt,
+        content: str,
+        content_digest: str,
+        idempotency_key: str,
+    ) -> dict[str, object]: ...
+
+    def finalize(
+        self,
+        scope: TenantScope,
+        *,
+        authorization: DraftAuthorizationReceipt,
+        draft_evidence_ref: str,
+        draft_digest: str,
+        draft_revision: int,
+        participant_roles: dict[str, object],
+        idempotency_key: str,
+    ) -> dict[str, object]: ...
+
+
 class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -325,6 +365,62 @@ class EmailConnectorConfigRequest(_ClosedModel):
         }
 
 
+class EvidenceRevealAuthorizationRequest(_ClosedModel):
+    receipt_ref: str = Field(min_length=1, max_length=256)
+    site_id: str = Field(min_length=1, max_length=140)
+    purpose: Literal["email_evidence_reveal"]
+    inbox_item_ref: str = Field(min_length=1, max_length=256)
+    evidence_ref: str = Field(min_length=1, max_length=512)
+    actor_ref: str = Field(min_length=1, max_length=256)
+    team_ref: str = Field(min_length=1, max_length=256)
+    issued_at: str = Field(min_length=20, max_length=35)
+    expires_at: str = Field(min_length=20, max_length=35)
+
+
+class EvidenceRevealRequest(_ClosedModel):
+    authorization: EvidenceRevealAuthorizationRequest
+
+
+class DraftAuthorizationRequest(_ClosedModel):
+    receipt_ref: str = Field(min_length=1, max_length=256)
+    site_id: str = Field(min_length=1, max_length=140)
+    purpose: Literal["email_draft_material"]
+    inbox_item_ref: str = Field(min_length=1, max_length=256)
+    draft_ref: str = Field(min_length=1, max_length=256)
+    draft_revision: int = Field(ge=1, le=2_147_483_647)
+    actor_ref: str = Field(min_length=1, max_length=256)
+    team_ref: str = Field(min_length=1, max_length=256)
+    request_digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    issued_at: str = Field(min_length=20, max_length=35)
+    expires_at: str = Field(min_length=20, max_length=35)
+
+
+class EmailDraftSaveRequest(_ClosedModel):
+    authorization: DraftAuthorizationRequest
+    content: str = Field(min_length=1, max_length=131_072)
+    content_digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    idempotency_key: str = Field(min_length=8, max_length=256)
+
+
+OpaqueRole = Literal[
+    "mailbox_owner", "original_sender", "original_to", "original_cc", "assigned_owner"
+]
+
+
+class ParticipantRolesRequest(_ClosedModel):
+    sender: OpaqueRole
+    recipients: list[OpaqueRole] = Field(min_length=1, max_length=20)
+
+
+class EmailDraftFinalizeRequest(_ClosedModel):
+    authorization: DraftAuthorizationRequest
+    draft_evidence_ref: str = Field(min_length=1, max_length=512)
+    draft_digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    draft_revision: int = Field(ge=1, le=2_147_483_647)
+    participant_roles: ParticipantRolesRequest
+    idempotency_key: str = Field(min_length=8, max_length=256)
+
+
 def create_local_pilot_app(
     *,
     config: LocalPilotAPIConfig,
@@ -335,6 +431,8 @@ def create_local_pilot_app(
     identity_resolution_metrics: IdentityResolutionMetrics | None = None,
     identity_authority_denials: IdentityAuthorityDenials | None = None,
     email_connector_configs: EmailConnectorConfigs | None = None,
+    evidence_reveal: EvidenceReveal | None = None,
+    email_draft_material: EmailDraftMaterial | None = None,
 ) -> FastAPI:
     """Create the authenticated Frappe v4 downstream surface without starting I/O."""
 
@@ -671,6 +769,68 @@ def create_local_pilot_app(
             request_id=request_id,
         )
 
+    @application.post("/internal/v1/bff/evidence/reveal")
+    def bff_evidence_reveal(
+        request: Request,
+        payload: Annotated[EvidenceRevealRequest, Body()],
+    ) -> dict[str, object]:
+        guard.require_running()
+        scope, request_id = _governed_scope(
+            request,
+            expected_purpose="email_evidence_reveal",
+        )
+        if evidence_reveal is None:
+            raise KillSwitchEngaged("evidence reveal is unavailable")
+        authorization = EvidenceRevealAuthorization.from_wire(payload.authorization.model_dump())
+        result = evidence_reveal.reveal(scope, authorization=authorization)
+        return _bff_envelope(result, site_id=scope.site_id, request_id=request_id)
+
+    @application.post("/internal/v1/bff/email-draft-material/save")
+    def bff_email_draft_save(
+        request: Request,
+        payload: Annotated[EmailDraftSaveRequest, Body()],
+    ) -> dict[str, object]:
+        guard.require_running()
+        scope, request_id = _governed_scope(
+            request,
+            expected_purpose="email_draft_material",
+        )
+        _matching_idempotency(request, payload.idempotency_key)
+        if email_draft_material is None:
+            raise KillSwitchEngaged("email draft material is unavailable")
+        result = email_draft_material.save(
+            scope,
+            authorization=DraftAuthorizationReceipt.from_wire(payload.authorization.model_dump()),
+            content=payload.content,
+            content_digest=payload.content_digest,
+            idempotency_key=payload.idempotency_key,
+        )
+        return _bff_envelope(result, site_id=scope.site_id, request_id=request_id)
+
+    @application.post("/internal/v1/bff/email-draft-material/finalize")
+    def bff_email_draft_finalize(
+        request: Request,
+        payload: Annotated[EmailDraftFinalizeRequest, Body()],
+    ) -> dict[str, object]:
+        guard.require_running()
+        scope, request_id = _governed_scope(
+            request,
+            expected_purpose="email_draft_material",
+        )
+        _matching_idempotency(request, payload.idempotency_key)
+        if email_draft_material is None:
+            raise KillSwitchEngaged("email draft material is unavailable")
+        result = email_draft_material.finalize(
+            scope,
+            authorization=DraftAuthorizationReceipt.from_wire(payload.authorization.model_dump()),
+            draft_evidence_ref=payload.draft_evidence_ref,
+            draft_digest=payload.draft_digest,
+            draft_revision=payload.draft_revision,
+            participant_roles=payload.participant_roles.model_dump(),
+            idempotency_key=payload.idempotency_key,
+        )
+        return _bff_envelope(result, site_id=scope.site_id, request_id=request_id)
+
     @application.post("/internal/v1/identity-authority/deny")
     def deny_identity_authority(
         request: Request,
@@ -725,9 +885,16 @@ async def _validate_internal_request(
     if request.url.path in {
         "/internal/v1/email-connectors/apply-config",
         "/internal/v1/email-connectors/health",
+        "/internal/v1/bff/evidence/reveal",
     }:
         bearer_token = config.mailbox_projection_bearer_token
         expected_auth_ref = config.mailbox_projection_auth_ref
+    elif request.url.path in {
+        "/internal/v1/bff/email-draft-material/save",
+        "/internal/v1/bff/email-draft-material/finalize",
+    }:
+        bearer_token = config.draft_material_bearer_token
+        expected_auth_ref = config.draft_material_auth_ref
     else:
         bearer_token = config.bearer_token
         expected_auth_ref = config.auth_ref
@@ -783,6 +950,12 @@ def _governed_scope(
     except ValueError as exc:
         raise ValueError("invalid site scope") from exc
     return scope, request.headers["x-request-id"]
+
+
+def _matching_idempotency(request: Request, payload_key: str) -> None:
+    header = request.headers.get("idempotency-key")
+    if header is None or not hmac.compare_digest(header, payload_key):
+        raise IdempotencyConflict("header and body idempotency keys differ")
 
 
 def _communication_access(

@@ -271,6 +271,9 @@ services:
       - cursor_hmac_key
       - context_client_bearer
       - mailbox_projection_bearer
+      - source: observer_email_draft_material_bearer
+        target: observer_email_draft_material_bearer
+        mode: 0600
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
       - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-observer.json:/config/local-pilot-runtime.json:ro
@@ -856,6 +859,12 @@ services:
           gbos_email_gateway_auth_ref email-gateway-bff-v1;
         bench --site "$$site" set-config \
           gbos_email_gateway_token_file /run/secrets/email_gateway_bff_bearer;
+        bench --site "$$site" set-config \
+          gbos_observer_email_material_url http://observer-api:8003;
+        bench --site "$$site" set-config \
+          gbos_observer_email_material_auth_ref observer-email-draft-material-v1;
+        bench --site "$$site" set-config \
+          gbos_observer_email_material_token_file /run/secrets/observer_email_draft_material_bearer;
         materializer_identities="$$(printf \
           '{"agent-materializer-v1":{"user":"gbos-materializer@localhost.invalid","site_id":"%s","processing_purposes":["observation_processing","sales_follow_up","procurement_coordination","product_sample_management","metric_reporting"]}}' \
           "$$site")";
@@ -873,6 +882,9 @@ services:
       - frappe_admin_password
       - source: email_gateway_bff_bearer
         target: email_gateway_bff_bearer
+        mode: 0600
+      - source: observer_email_draft_material_bearer
+        target: observer_email_draft_material_bearer
         mode: 0600
     volumes:
       - local-pilot-frappe-sites:/home/frappe/frappe-bench/sites
@@ -986,6 +998,9 @@ services:
         mode: 0600
       - source: email_gateway_bff_bearer
         target: email_gateway_bff_bearer
+        mode: 0600
+      - source: observer_email_draft_material_bearer
+        target: observer_email_draft_material_bearer
         mode: 0600
     volumes:
       - local-pilot-frappe-sites:/home/frappe/frappe-bench/sites
@@ -1209,6 +1224,8 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_publication_bearer
   email_gateway_bff_bearer:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_gateway_bff_bearer
+  observer_email_draft_material_bearer:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/observer_email_draft_material_bearer
   mailbox_projection_bearer:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/mailbox_projection_bearer
   email_gateway_data_key:

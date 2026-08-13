@@ -16,6 +16,7 @@ from services.email_gateway.phase1_read import (
 )
 from services.email_gateway.repositories.mailboxes import InMemoryMailboxRepository
 from services.email_gateway.repositories.phase1_read import InMemoryPhase1ReadRepository
+from services.email_gateway.security import GatewayAuthorizationIssuer
 
 SITE = "alpha.example"
 BFF_TOKEN = "bff-secret"
@@ -137,20 +138,30 @@ def _scope_payload(*, roles: list[str], teams: list[str]) -> dict[str, object]:
     }
 
 
-def test_phase1_bff_route_set_is_exactly_the_frozen_seven_operations() -> None:
+def test_bff_route_set_is_exactly_the_frozen_seventeen_operations() -> None:
     client, _, _ = _app()
     paths = {
         route.path for route in client.app.routes if route.path.startswith("/internal/v1/bff/")
     }
 
     assert paths == {
-        "/internal/v1/bff/mailboxes/list",
-        "/internal/v1/bff/mailboxes/get",
-        "/internal/v1/bff/mailboxes/upsert",
-        "/internal/v1/bff/mailboxes/status",
-        "/internal/v1/bff/inbox/list",
-        "/internal/v1/bff/inbox/get",
-        "/internal/v1/bff/email-connectors/health",
+        "/internal/v1/bff/email-admin/mailboxes/list",
+        "/internal/v1/bff/email-admin/mailboxes/get",
+        "/internal/v1/bff/email-admin/rules/list",
+        "/internal/v1/bff/email-admin/connector-health/get",
+        "/internal/v1/bff/email-admin/mailboxes/upsert",
+        "/internal/v1/bff/email-admin/mailboxes/status",
+        "/internal/v1/bff/email-admin/rules/upsert",
+        "/internal/v1/bff/email-inbox/list",
+        "/internal/v1/bff/email-inbox/get",
+        "/internal/v1/bff/email-inbox/claim",
+        "/internal/v1/bff/email-inbox/reassign",
+        "/internal/v1/bff/email-inbox/transition",
+        "/internal/v1/bff/email-inbox/merge",
+        "/internal/v1/bff/email-inbox/split",
+        "/internal/v1/bff/email-inbox/link-business",
+        "/internal/v1/bff/email-inbox/save-draft",
+        "/internal/v1/bff/email-inbox/reveal",
     }
 
 
@@ -166,7 +177,7 @@ def test_mailbox_list_is_bff_shaped_no_store_and_keeps_multiple_primary() -> Non
     )
     client, _, _ = _app(read_repository=read)
     response = client.post(
-        "/internal/v1/bff/mailboxes/list",
+        "/internal/v1/bff/email-admin/mailboxes/list",
         headers=ADMIN_HEADERS,
         json={
             **_scope_payload(roles=["Integration Admin"], teams=[]),
@@ -194,12 +205,12 @@ def test_wrong_valid_auth_ref_and_wrong_role_fail_before_repository_access() -> 
     read = _RecordingRead(mailboxes=(_mailbox_projection(),))
     client, _, _ = _app(read_repository=read)
     wrong_ref = client.post(
-        "/internal/v1/bff/mailboxes/list",
+        "/internal/v1/bff/email-admin/mailboxes/list",
         headers={**ADMIN_HEADERS, "X-GBOS-Local-Auth-Ref": "other-valid-auth-v1"},
         json={**_scope_payload(roles=["Integration Admin"], teams=[]), "page_size": 25},
     )
     wrong_role = client.post(
-        "/internal/v1/bff/mailboxes/list",
+        "/internal/v1/bff/email-admin/mailboxes/list",
         headers=ADMIN_HEADERS,
         json={**_scope_payload(roles=["Sales User"], teams=["TEM-01"]), "page_size": 25},
     )
@@ -219,7 +230,7 @@ def test_inbox_denies_standalone_integration_admin_and_cross_team_before_limit()
     client, _, _ = _app(read_repository=read)
     headers = {**ADMIN_HEADERS, "X-Processing-Purpose": "email_inbox_read"}
     denied = client.post(
-        "/internal/v1/bff/inbox/list",
+        "/internal/v1/bff/email-inbox/list",
         headers=headers,
         json={
             **_scope_payload(roles=["Integration Admin"], teams=["TEM-01"]),
@@ -227,7 +238,7 @@ def test_inbox_denies_standalone_integration_admin_and_cross_team_before_limit()
         },
     )
     allowed = client.post(
-        "/internal/v1/bff/inbox/list",
+        "/internal/v1/bff/email-inbox/list",
         headers=headers,
         json={
             **_scope_payload(roles=["Sales User"], teams=["TEM-01"]),
@@ -243,7 +254,7 @@ def test_inbox_denies_standalone_integration_admin_and_cross_team_before_limit()
 def test_mailbox_and_inbox_get_return_closed_safe_rows() -> None:
     client, _, _ = _app()
     mailbox = client.post(
-        "/internal/v1/bff/mailboxes/get",
+        "/internal/v1/bff/email-admin/mailboxes/get",
         headers=ADMIN_HEADERS,
         json={
             **_scope_payload(roles=["Integration Admin"], teams=[]),
@@ -251,7 +262,7 @@ def test_mailbox_and_inbox_get_return_closed_safe_rows() -> None:
         },
     )
     inbox = client.post(
-        "/internal/v1/bff/inbox/get",
+        "/internal/v1/bff/email-inbox/get",
         headers={**ADMIN_HEADERS, "X-Processing-Purpose": "email_inbox_read"},
         json={
             **_scope_payload(roles=["Sales User"], teams=["TEM-01"]),
@@ -287,12 +298,12 @@ def test_ceo_wildcard_reads_all_teams_but_sales_user_wildcard_is_rejected() -> N
     client, _, _ = _app(read_repository=read)
     headers = {**ADMIN_HEADERS, "X-Processing-Purpose": "email_inbox_read"}
     ceo = client.post(
-        "/internal/v1/bff/inbox/list",
+        "/internal/v1/bff/email-inbox/list",
         headers=headers,
         json={**_scope_payload(roles=["CEO"], teams=["*"]), "page_size": 25},
     )
     sales = client.post(
-        "/internal/v1/bff/inbox/list",
+        "/internal/v1/bff/email-inbox/list",
         headers=headers,
         json={**_scope_payload(roles=["Sales User"], teams=["*"]), "page_size": 25},
     )
@@ -328,8 +339,12 @@ def test_upsert_is_closed_domain_complete_and_creates_revisioned_mailbox() -> No
         "Idempotency-Key": "create-mailbox-01",
     }
 
-    first = client.post("/internal/v1/bff/mailboxes/upsert", headers=headers, json=payload)
-    second = client.post("/internal/v1/bff/mailboxes/upsert", headers=headers, json=payload)
+    first = client.post(
+        "/internal/v1/bff/email-admin/mailboxes/upsert", headers=headers, json=payload
+    )
+    second = client.post(
+        "/internal/v1/bff/email-admin/mailboxes/upsert", headers=headers, json=payload
+    )
 
     assert first.status_code == 200
     assert second.json() == first.json()
@@ -387,7 +402,7 @@ def test_status_preserves_domain_fields_and_forces_outbound_false() -> None:
     read = InMemoryPhase1ReadRepository(mailboxes=(_mailbox_projection(),))
     client, _, _ = _app(read_repository=read, mailbox_repository=repository)
     response = client.post(
-        "/internal/v1/bff/mailboxes/status",
+        "/internal/v1/bff/email-admin/mailboxes/status",
         headers={
             **ADMIN_HEADERS,
             "X-Processing-Purpose": "email_mailbox_admin",
@@ -402,7 +417,7 @@ def test_status_preserves_domain_fields_and_forces_outbound_false() -> None:
         },
     )
     replay = client.post(
-        "/internal/v1/bff/mailboxes/status",
+        "/internal/v1/bff/email-admin/mailboxes/status",
         headers={
             **ADMIN_HEADERS,
             "X-Processing-Purpose": "email_mailbox_admin",
@@ -485,8 +500,12 @@ def test_existing_mailbox_upsert_replays_with_original_expected_revision() -> No
         "Idempotency-Key": "update-mailbox-01",
     }
 
-    first = client.post("/internal/v1/bff/mailboxes/upsert", headers=headers, json=payload)
-    replay = client.post("/internal/v1/bff/mailboxes/upsert", headers=headers, json=payload)
+    first = client.post(
+        "/internal/v1/bff/email-admin/mailboxes/upsert", headers=headers, json=payload
+    )
+    replay = client.post(
+        "/internal/v1/bff/email-admin/mailboxes/upsert", headers=headers, json=payload
+    )
 
     assert first.status_code == 200
     assert replay.json() == first.json()
@@ -497,7 +516,7 @@ def test_bounds_closed_body_and_health_injection() -> None:
     health = _Health()
     client, _, _ = _app(health=health)
     too_large = client.post(
-        "/internal/v1/bff/mailboxes/list",
+        "/internal/v1/bff/email-admin/mailboxes/list",
         headers=ADMIN_HEADERS,
         json={
             **_scope_payload(roles=["Integration Admin"], teams=[]),
@@ -505,7 +524,7 @@ def test_bounds_closed_body_and_health_injection() -> None:
         },
     )
     extra = client.post(
-        "/internal/v1/bff/mailboxes/list",
+        "/internal/v1/bff/email-admin/mailboxes/list",
         headers=ADMIN_HEADERS,
         json={
             **_scope_payload(roles=["Integration Admin"], teams=[]),
@@ -514,7 +533,7 @@ def test_bounds_closed_body_and_health_injection() -> None:
         },
     )
     health_response = client.post(
-        "/internal/v1/bff/email-connectors/health",
+        "/internal/v1/bff/email-admin/connector-health/get",
         headers={**ADMIN_HEADERS, "X-Processing-Purpose": "email_connector_health_read"},
         json=_scope_payload(roles=["Integration Admin"], teams=[]),
     )
@@ -525,3 +544,53 @@ def test_bounds_closed_body_and_health_injection() -> None:
     assert health.calls and health.calls[0][0] == SITE
     assert health.calls[0][1][0].observer_connector_instance_ref.startswith("OCI-")
     assert health_response.json()["data"]["connector_health"][0]["mailbox_label"] == "Gulf Sales"
+
+
+def test_gateway_issues_fresh_closed_draft_and_evidence_receipts_without_sensitive_repr() -> None:
+    now = datetime(2026, 8, 13, 10, tzinfo=UTC)
+    issuer = GatewayAuthorizationIssuer(clock=lambda: now)
+    actor = _scope_payload(roles=["Reviewer"], teams=["TEM-01"])
+
+    draft = issuer.issue_draft(
+        site_id=SITE,
+        actor_ref=str(actor["actor_ref"]),
+        team_ref="TEM-01",
+        inbox_item_ref="INB-01",
+        draft_ref="DRF-01",
+        draft_revision=1,
+        request_digest="sha256:" + "a" * 64,
+    )
+    reveal = issuer.issue_evidence(
+        site_id=SITE,
+        actor_ref=str(actor["actor_ref"]),
+        team_ref="TEM-01",
+        inbox_item_ref="INB-01",
+        evidence_ref="EVR-01",
+    )
+
+    assert set(draft) == {
+        "receipt_ref",
+        "site_id",
+        "purpose",
+        "inbox_item_ref",
+        "draft_ref",
+        "draft_revision",
+        "actor_ref",
+        "team_ref",
+        "request_digest",
+        "issued_at",
+        "expires_at",
+    }
+    assert set(reveal) == {
+        "receipt_ref",
+        "site_id",
+        "purpose",
+        "inbox_item_ref",
+        "evidence_ref",
+        "actor_ref",
+        "team_ref",
+        "issued_at",
+        "expires_at",
+    }
+    assert draft["expires_at"] == "2026-08-13T10:05:00Z"
+    assert "@" not in repr(issuer)

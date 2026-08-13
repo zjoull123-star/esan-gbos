@@ -311,6 +311,12 @@ def _email_gateway_runtime_config(
             "email_gateway_bff_auth_ref": "email-gateway-bff-v1",
             "mailbox_projection_bearer_file": "/run/secrets/mailbox_projection_bearer",
             "mailbox_projection_auth_ref": "gateway-mailbox-projection-v1",
+            "observer_email_draft_material_bearer_file": (
+                "/run/secrets/observer_email_draft_material_bearer"
+            ),
+            "observer_email_draft_material_auth_ref": (
+                "observer-email-draft-material-v1"
+            ),
         },
         "listen": {"host": "0.0.0.0", "port": 8004},
         "components": components,

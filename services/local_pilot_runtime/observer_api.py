@@ -6,7 +6,7 @@ import os
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI
 
@@ -15,11 +15,17 @@ from services.agent_runtime.local_entrypoint import (
     load_local_manifest,
     require_component_enabled,
 )
+from services.observer.observer.email_draft_material import EmailDraftMaterialService
+from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
 from services.observer.observer.identity_resolution_work import (
     PostgresIdentityResolutionWorkRepository,
 )
 from services.observer.observer.local_pilot_api import LocalPilotAPIConfig
 from services.observer.observer.local_pilot_storage import PostgresLocalPilotStorage
+from services.observer.observer.read_service import (
+    EvidenceRevealService,
+    PostgresEvidenceBindingResolver,
+)
 from services.observer.observer.runtime import (
     LocalPilotRuntimeGuard,
     PostgresLocalPilotRuntime,
@@ -43,6 +49,8 @@ DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
 DEFAULT_CURSOR_SECRET = Path("/run/secrets/cursor_hmac_key")
 DEFAULT_MAILBOX_PROJECTION_BEARER = Path("/run/secrets/mailbox_projection_bearer")
+DEFAULT_DRAFT_MATERIAL_BEARER = Path("/run/secrets/observer_email_draft_material_bearer")
+DEFAULT_EVIDENCE_CAS_ROOT = Path("/var/lib/gbos/evidence")
 DEFAULT_OBSERVER_PORT = 8003
 ServerRunner = Callable[..., None]
 
@@ -55,6 +63,9 @@ def build_postgres_runtime(
     cursor_secret: SecretValue,
     mailbox_projection_bearer_token: SecretValue | None = None,
     mailbox_projection_auth_ref: str | None = None,
+    draft_material_bearer_token: SecretValue | None = None,
+    draft_material_auth_ref: str | None = None,
+    evidence_cas_root: Path = DEFAULT_EVIDENCE_CAS_ROOT,
     bind_host: str,
     network_mode: str,
     enabled: bool = True,
@@ -74,21 +85,45 @@ def build_postgres_runtime(
             else None
         ),
         mailbox_projection_auth_ref=mailbox_projection_auth_ref,
+        draft_material_bearer_token=(
+            draft_material_bearer_token.reveal()
+            if draft_material_bearer_token is not None
+            else None
+        ),
+        draft_material_auth_ref=draft_material_auth_ref,
     )
     storage = PostgresLocalPilotStorage(connection)  # type: ignore[arg-type]
+    active_clock = clock or _utc_now
+    evidence_reveal = None
+    email_draft_material = None
+    if mailbox_projection_bearer_token is not None:
+        evidence_store = ContentAddressedEvidenceStore(evidence_cas_root)
+        evidence_reveal = EvidenceRevealService(
+            binding_resolver=PostgresEvidenceBindingResolver(cast(Any, connection)).resolve,
+            content_loader=evidence_store.read,
+            clock=active_clock,
+        )
+        if draft_material_bearer_token is not None:
+            email_draft_material = EmailDraftMaterialService(
+                store=evidence_store,
+                participant_resolver=_reject_participant_resolution,
+                clock=active_clock,
+            )
     return compose_postgres_local_pilot_runtime(
         connection=connection,
         storage=storage,
         api_config=api_config,
         cursor_secret=cursor_secret.reveal().encode("utf-8"),
         publisher=_reject_outbox_publication,
-        clock=clock or _utc_now,
+        clock=active_clock,
         outbox_worker_id="observer-api-outbox-disabled",
         enabled=enabled,
         kill_switch=kill_switch,
         identity_resolution_metrics=PostgresIdentityResolutionWorkRepository(
             connection  # type: ignore[arg-type]
         ),
+        evidence_reveal=evidence_reveal,
+        email_draft_material=email_draft_material,
     )
 
 
@@ -101,6 +136,7 @@ def main(
     observer_auth_ref: str | None = None,
     cursor_secret_file: Path = DEFAULT_CURSOR_SECRET,
     mailbox_projection_bearer_file: Path = DEFAULT_MAILBOX_PROJECTION_BEARER,
+    draft_material_bearer_file: Path = DEFAULT_DRAFT_MATERIAL_BEARER,
     observer_port: int = DEFAULT_OBSERVER_PORT,
     internal_network: bool = False,
     connector: Callable[..., object] | None = None,
@@ -143,9 +179,13 @@ def main(
         gateway = manifest.get("email_gateway")
         mailbox_projection_bearer = None
         mailbox_projection_auth_ref = None
+        draft_material_bearer = None
+        draft_material_auth_ref = None
         if isinstance(gateway, Mapping) and gateway.get("kill_switch") is False:
             mailbox_projection_bearer = load_secret_file(mailbox_projection_bearer_file)
             mailbox_projection_auth_ref = MAILBOX_PROJECTION_AUTH_REF
+            draft_material_bearer = load_secret_file(draft_material_bearer_file)
+            draft_material_auth_ref = "observer-email-draft-material-v1"
         connection = connect_postgres(config.postgres, connector=connector)
         runtime = build_postgres_runtime(
             connection=connection,
@@ -154,6 +194,8 @@ def main(
             cursor_secret=cursor_secret,
             mailbox_projection_bearer_token=mailbox_projection_bearer,
             mailbox_projection_auth_ref=mailbox_projection_auth_ref,
+            draft_material_bearer_token=draft_material_bearer,
+            draft_material_auth_ref=draft_material_auth_ref,
             bind_host=bind_host,
             network_mode=network_mode,
             clock=clock,
@@ -177,6 +219,12 @@ def main(
 def _reject_outbox_publication(event: Any, event_id: str, idempotency_key: str) -> None:
     del event, event_id, idempotency_key
     raise RuntimeError("Observer API outbox publication is disabled")
+
+
+def _reject_participant_resolution(*_args: object, **_kwargs: object) -> Mapping[str, object]:
+    """Fail closed until an authorized Observer evidence participant set is supplied."""
+
+    raise PermissionError("participant authority is unavailable")
 
 
 def _utc_now() -> datetime:
