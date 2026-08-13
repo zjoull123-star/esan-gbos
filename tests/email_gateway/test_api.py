@@ -6,9 +6,15 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from services.email_gateway.api import create_email_gateway_app
+from services.email_gateway.api import MailboxSlaPolicy, create_email_gateway_app
 from services.email_gateway.mailboxes import MailboxRegistry
-from services.email_gateway.models import InboxItem, Mailbox, TenantScope, canonical_digest
+from services.email_gateway.models import (
+    InboxItem,
+    Mailbox,
+    TenantScope,
+    canonical_digest,
+    stable_ref,
+)
 from services.email_gateway.phase1_read import (
     ConnectorHealth,
     Phase1InboxItem,
@@ -126,6 +132,7 @@ def _app(
     health: _Health | None = None,
     email_send_authority: object | None = None,
     workflow_authority: object | None = None,
+    admin_repository: object | None = None,
 ):
     read_repository = read_repository or InMemoryPhase1ReadRepository(
         mailboxes=(_mailbox_projection(),), inbox_items=(_inbox_projection(),)
@@ -143,6 +150,7 @@ def _app(
         connector_health_reader=health,
         email_send_authority=email_send_authority,  # type: ignore[arg-type]
         workflow_authority=workflow_authority,  # type: ignore[arg-type]
+        admin_repository=admin_repository,  # type: ignore[arg-type]
     )
     return TestClient(app), mailbox_repository, health
 
@@ -155,7 +163,7 @@ def _scope_payload(*, roles: list[str], teams: list[str]) -> dict[str, object]:
     }
 
 
-def test_bff_route_set_is_exactly_the_frozen_eighteen_internal_operations() -> None:
+def test_bff_route_set_is_exactly_the_frozen_twenty_internal_operations() -> None:
     client, _, _ = _app()
     paths = {
         route.path for route in client.app.routes if route.path.startswith("/internal/v1/bff/")
@@ -169,6 +177,8 @@ def test_bff_route_set_is_exactly_the_frozen_eighteen_internal_operations() -> N
         "/internal/v1/bff/email-admin/mailboxes/upsert",
         "/internal/v1/bff/email-admin/mailboxes/status",
         "/internal/v1/bff/email-admin/rules/upsert",
+        "/internal/v1/bff/email-admin/sla-policies/list",
+        "/internal/v1/bff/email-admin/sla-policies/upsert",
         "/internal/v1/bff/email-inbox/list",
         "/internal/v1/bff/email-inbox/get",
         "/internal/v1/bff/email-inbox/claim",
@@ -181,6 +191,237 @@ def test_bff_route_set_is_exactly_the_frozen_eighteen_internal_operations() -> N
         "/internal/v1/bff/email-inbox/reveal",
         "/internal/v1/bff/email-send/authority",
     }
+
+
+class _SlaAdminRepository:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+        self.enable_blocker: str | None = None
+        self.policy = MailboxSlaPolicy(
+            mailbox_ref="MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            policy_ref=stable_ref("SLA", SITE, "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            revision=1,
+            first_response_duration_seconds=3600,
+            effective_at=datetime(2026, 8, 14, 1, 30, tzinfo=UTC),
+        )
+
+    def list_rules(self, _site_id: str) -> tuple[object, ...]:
+        return ()
+
+    def upsert_rule(self, *_args: object, **_kwargs: object) -> object:
+        raise AssertionError("routing rules are outside this test")
+
+    def list_sla_policies(
+        self,
+        site_id: str,
+        mailbox_ref: str,
+        *,
+        page_size: int,
+        cursor: str | None,
+    ) -> tuple[tuple[MailboxSlaPolicy, ...], str | None]:
+        self.calls.append(
+            ("list", (site_id, mailbox_ref), {"page_size": page_size, "cursor": cursor})
+        )
+        return (self.policy,), "opaque-next"
+
+    def upsert_sla_policy(self, *args: object, **kwargs: object) -> MailboxSlaPolicy:
+        self.calls.append(("upsert", args, dict(kwargs)))
+        return self.policy
+
+    def mailbox_enable_blocker(
+        self, site_id: str, mailbox_ref: str, *, activation_at: datetime
+    ) -> str | None:
+        self.calls.append(("enable", (site_id, mailbox_ref), {"activation_at": activation_at}))
+        return self.enable_blocker
+
+
+def test_sla_policy_list_is_closed_scoped_bounded_and_revision_descending() -> None:
+    repository = _SlaAdminRepository()
+    client, _, _ = _app(admin_repository=repository)
+
+    response = client.post(
+        "/internal/v1/bff/email-admin/sla-policies/list",
+        headers={**ADMIN_HEADERS, "X-Processing-Purpose": "email_admin_read"},
+        json={
+            **_scope_payload(roles=["Integration Admin"], teams=[]),
+            "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "cursor": "opaque-current",
+            "page_size": 100,
+        },
+    )
+    extra = client.post(
+        "/internal/v1/bff/email-admin/sla-policies/list",
+        headers={**ADMIN_HEADERS, "X-Processing-Purpose": "email_admin_read"},
+        json={
+            **_scope_payload(roles=["Integration Admin"], teams=[]),
+            "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "page_size": 25,
+            "policy_ref": repository.policy.policy_ref,
+        },
+    )
+    denied = client.post(
+        "/internal/v1/bff/email-admin/sla-policies/list",
+        headers={**ADMIN_HEADERS, "X-Processing-Purpose": "email_admin_read"},
+        json={
+            **_scope_payload(roles=["Sales User"], teams=["TEM-01"]),
+            "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "page_size": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "site_id": SITE,
+        "data": {
+            "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "sla_policies": [
+                {
+                    "policy_ref": repository.policy.policy_ref,
+                    "revision": 1,
+                    "first_response_duration_seconds": 3600,
+                    "effective_at": "2026-08-14T01:30:00Z",
+                }
+            ],
+            "next_cursor": "opaque-next",
+        },
+    }
+    assert denied.status_code == 403
+    assert extra.status_code == 400
+    assert repository.calls == [
+        (
+            "list",
+            (SITE, "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            {"page_size": 100, "cursor": "opaque-current"},
+        )
+    ]
+
+
+def test_sla_policy_upsert_generates_stable_ref_and_passes_normalized_command() -> None:
+    repository = _SlaAdminRepository()
+    client, _, _ = _app(admin_repository=repository)
+    headers = {
+        **ADMIN_HEADERS,
+        "X-Processing-Purpose": "email_admin_command",
+        "Idempotency-Key": "sla-policy-upsert-01",
+    }
+
+    response = client.post(
+        "/internal/v1/bff/email-admin/sla-policies/upsert",
+        headers=headers,
+        json={
+            **_scope_payload(roles=["GBOS Admin"], teams=["*"]),
+            "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "first_response_duration_seconds": 3600,
+            "effective_at": "2026-08-14T01:30:00Z",
+            "expected_revision": 0,
+            "idempotency_key": "sla-policy-upsert-01",
+        },
+    )
+    caller_ref = client.post(
+        "/internal/v1/bff/email-admin/sla-policies/upsert",
+        headers=headers,
+        json={
+            **_scope_payload(roles=["GBOS Admin"], teams=["*"]),
+            "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "policy_ref": "SLA-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "first_response_duration_seconds": 3600,
+            "effective_at": "2026-08-14T01:30:00Z",
+            "expected_revision": 0,
+            "idempotency_key": "sla-policy-upsert-01",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["sla_policy"] == {
+        "mailbox_ref": repository.policy.mailbox_ref,
+        "policy_ref": repository.policy.policy_ref,
+        "revision": repository.policy.revision,
+        "first_response_duration_seconds": (repository.policy.first_response_duration_seconds),
+        "effective_at": "2026-08-14T01:30:00Z",
+    }
+    assert caller_ref.status_code == 400
+    operation, args, kwargs = repository.calls[0]
+    assert operation == "upsert"
+    assert args == (TenantScope(SITE, "business_operations"),)
+    assert kwargs == {
+        "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "policy_ref": stable_ref("SLA", SITE, "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        "first_response_duration_seconds": 3600,
+        "effective_at": datetime(2026, 8, 14, 1, 30, tzinfo=UTC),
+        "effective_at_wire": "2026-08-14T01:30:00Z",
+        "expected_revision": 0,
+        "request_id": "request-01",
+        "idempotency_key": "sla-policy-upsert-01",
+    }
+
+
+def test_mailbox_enable_fails_closed_for_missing_policy_and_legacy_sla_clocks() -> None:
+    mailbox_repository = InMemoryMailboxRepository()
+    scope = TenantScope(SITE, "sales_follow_up")
+    mailbox = Mailbox(
+        mailbox_ref="MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        site_id=SITE,
+        address_display="Gulf Sales",
+        provider="fake",
+        provider_account_ref="provider-account-01",
+        observer_connector_instance_ref="OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        entry_role="primary",
+        business_purpose="sales_follow_up",
+        default_team_ref="TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        account_owner_user_ref="owner-01",
+        priority=10,
+        inbound_enabled=False,
+        outbound_enabled=False,
+        credential_ref="secretref:v1/email/fake",
+        status="paused",
+        config_revision=1,
+        observer_config_projection_receipt=None,
+        mailbox_address_identity_ref="extid:v1:email:" + "M" * 43,
+    )
+    durable = (
+        MailboxRegistry(mailbox_repository)
+        .upsert(
+            scope,
+            mailbox,
+            expected_revision=0,
+            actor_ref="seed",
+            request_id="seed",
+            idempotency_key="seed-sla-enable",
+        )
+        .mailbox
+    )
+    admin = _SlaAdminRepository()
+    client, _, _ = _app(
+        mailbox_repository=mailbox_repository,
+        admin_repository=admin,
+        read_repository=InMemoryPhase1ReadRepository(mailboxes=(_mailbox_projection(),)),
+    )
+    payload = {
+        **_scope_payload(roles=["Integration Admin"], teams=[]),
+        "mailbox_ref": durable.mailbox_ref,
+        "action": "enable",
+        "expected_revision": 1,
+        "idempotency_key": "enable-sla-mailbox-01",
+    }
+    headers = {
+        **ADMIN_HEADERS,
+        "X-Processing-Purpose": "email_mailbox_admin",
+        "Idempotency-Key": "enable-sla-mailbox-01",
+    }
+
+    admin.enable_blocker = "sla_policy_required"
+    missing = client.post(
+        "/internal/v1/bff/email-admin/mailboxes/status", headers=headers, json=payload
+    )
+    admin.enable_blocker = "sla_backfill_required"
+    legacy = client.post(
+        "/internal/v1/bff/email-admin/mailboxes/status", headers=headers, json=payload
+    )
+
+    assert missing.status_code == legacy.status_code == 409
+    assert missing.json() == {"error": {"code": "sla_policy_required"}}
+    assert legacy.json() == {"error": {"code": "sla_backfill_required"}}
+    assert mailbox_repository.get(scope, durable.mailbox_ref) == durable
 
 
 def test_email_send_authority_route_is_server_scoped_and_closed() -> None:
@@ -879,9 +1120,34 @@ def test_draft_authorization_loads_durable_binding_only_after_actor_authorizatio
 
     assert response.status_code == 200
     receipt = response.json()["data"]["draft_authorization"]
+    canonical_draft_ref = stable_ref("DRF", SITE, inbox.inbox_item_ref)
+    assert receipt["draft_ref"] == canonical_draft_ref
     assert receipt["participant_roles_digest"] == roles_digest
     assert receipt["gateway_receipt_ref"] == authority.binding["gateway_receipt_ref"]
     assert authority.calls == [(scope, inbox.inbox_item_ref)]
+
+    committed = TestClient(app).post(
+        "/internal/v1/bff/email-inbox/save-draft",
+        headers=headers,
+        json={
+            **payload,
+            "phase": "commit",
+            "draft_authorization": receipt,
+            "evidence_ref": "EVR-DRAFT-CANONICAL-01",
+            "evidence_digest": payload["content_digest"],
+            "evidence_revision": 1,
+        },
+    )
+    assert committed.status_code == 200
+    assert committed.json()["data"]["draft"] == {
+        "draft_ref": canonical_draft_ref,
+        "revision": 1,
+        "state": "editable",
+    }
+    durable = workflow.get_draft(scope, canonical_draft_ref)
+    assert durable is not None and durable.inbox_item_ref == inbox.inbox_item_ref
+    assert workflow.get_draft(scope, "DRF-01") is None
+    assert authority.calls == [(scope, inbox.inbox_item_ref), (scope, inbox.inbox_item_ref)]
 
     rejected = TestClient(app).post(
         "/internal/v1/bff/email-inbox/save-draft",
@@ -893,7 +1159,7 @@ def test_draft_authorization_loads_durable_binding_only_after_actor_authorizatio
         },
     )
     assert rejected.status_code == 403
-    assert authority.calls == [(scope, inbox.inbox_item_ref)]
+    assert authority.calls == [(scope, inbox.inbox_item_ref), (scope, inbox.inbox_item_ref)]
 
     missing_digest = TestClient(app).post(
         "/internal/v1/bff/email-inbox/save-draft",
@@ -905,4 +1171,89 @@ def test_draft_authorization_loads_durable_binding_only_after_actor_authorizatio
         },
     )
     assert missing_digest.status_code == 400
-    assert authority.calls == [(scope, inbox.inbox_item_ref)]
+    assert authority.calls == [(scope, inbox.inbox_item_ref), (scope, inbox.inbox_item_ref)]
+
+
+def test_noncanonical_draft_update_is_rejected_before_authority_or_write() -> None:
+    now = datetime(2026, 8, 13, 10, tzinfo=UTC)
+    scope = TenantScope(SITE, "business_operations")
+    workflow = InMemoryWorkflowRepository()
+    inbox = InboxItem.new(
+        site_id=SITE,
+        mailbox_ref="MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        message_ref="MSG-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        team_ref="TEM-01",
+        received_at=now,
+    )
+    workflow.save_inbox(scope, inbox)
+
+    class ScopeAuthority:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def authorize_inbox(self, _actor: object, _inbox_item_ref: str) -> tuple[TenantScope, str]:
+            self.calls += 1
+            return scope, "TEM-01"
+
+        def authorize_conversation(self, *_args: object) -> TenantScope:
+            raise AssertionError("conversation authority is outside this test")
+
+    scope_authority = ScopeAuthority()
+    participant = _ParticipantAuthority(
+        {
+            "gateway_receipt_ref": "EGR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "publication_ref": "PUB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "inbox_item_ref": inbox.inbox_item_ref,
+            "message_ref": inbox.message_ref,
+            "mailbox_ref": inbox.mailbox_ref,
+            "mailbox_config_revision": 1,
+            "observer_delivery_ref": "DLV-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "payload_digest": "sha256:" + "b" * 64,
+            "participant_binding_digest": "sha256:" + "c" * 64,
+            "evidence_binding_digest": "sha256:" + "d" * 64,
+        }
+    )
+    app = create_email_gateway_app(
+        intake=_Intake(),  # type: ignore[arg-type]
+        participant_authority_reader=participant,
+        publication_bearer_token=PUBLICATION_TOKEN,
+        publication_auth_ref="observer-email-publication-v1",
+        bff_bearer_token=BFF_TOKEN,
+        bff_auth_ref="email-gateway-bff-v1",
+        mailbox_registry=MailboxRegistry(InMemoryMailboxRepository()),
+        read_repository=InMemoryPhase1ReadRepository(),
+        connector_health_reader=_Health(),
+        workflow_repository=workflow,
+        workflow_authority=scope_authority,  # type: ignore[arg-type]
+        clock=lambda: now,
+    )
+    payload = {
+        **_scope_payload(roles=["Reviewer"], teams=["TEM-01"]),
+        "phase": "authorize",
+        "inbox_item_ref": inbox.inbox_item_ref,
+        "draft_ref": stable_ref("DRF", SITE, "INB-CROSS-INBOX"),
+        "expected_revision": 1,
+        "content_digest": "sha256:" + "a" * 64,
+        "participant_roles_digest": canonical_digest(
+            {"sender": "mailbox_owner", "recipients": ["original_sender"]}
+        ),
+        "idempotency_key": "draft-update-noncanonical-01",
+    }
+    response = TestClient(app).post(
+        "/internal/v1/bff/email-inbox/save-draft",
+        headers={
+            "Authorization": f"Bearer {BFF_TOKEN}",
+            "X-GBOS-Local-Auth-Ref": "email-gateway-bff-v1",
+            "X-Site-ID": SITE,
+            "X-Processing-Purpose": "email_inbox_command",
+            "X-Request-ID": "draft-update-noncanonical-request-01",
+            "Idempotency-Key": "draft-update-noncanonical-01",
+        },
+        json=payload,
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"error": {"code": "scope_mismatch"}}
+    assert scope_authority.calls == 0
+    assert participant.calls == []
+    assert workflow.get_draft(scope, str(payload["draft_ref"])) is None

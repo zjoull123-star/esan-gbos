@@ -331,6 +331,36 @@ def test_finalize_resolves_addresses_from_opaque_roles_and_returns_only_cas_bind
     assert "@" not in repr(result)
 
 
+def test_finalize_rejects_provisional_ref_against_canonical_saved_binding(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path / "cas")
+    content = "Canonical draft reference"
+    digest = service.digest_text(content)
+    canonical = DraftAuthorizationReceipt.from_wire(_receipt(request_digest=digest))
+    saved = service.save(
+        SCOPE,
+        authorization=canonical,
+        content=content,
+        content_digest=digest,
+        idempotency_key="draft-save-canonical-ref-01",
+    )
+    provisional = DraftAuthorizationReceipt.from_wire(
+        _receipt(request_digest=digest, draft_ref="DRF-ui-provisional-01")
+    )
+
+    with pytest.raises(ValueError, match="draft evidence binding drift"):
+        service.finalize(
+            SCOPE,
+            authorization=provisional,
+            draft_evidence_ref=str(saved["evidence_ref"]),
+            draft_digest=digest,
+            draft_revision=1,
+            participant_roles=PARTICIPANT_ROLES,
+            idempotency_key="draft-finalize-provisional-ref-01",
+        )
+
+
 def test_finalize_exact_replay_rechecks_current_authority_and_final_cas_after_restart(
     tmp_path: Path,
 ) -> None:

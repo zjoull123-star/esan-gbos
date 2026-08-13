@@ -7,7 +7,7 @@ import hmac
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol, cast
 
@@ -93,6 +93,16 @@ _INBOX_STATES = frozenset(
     }
 )
 _INBOX_SORTS = frozenset({"received_at_desc", "sla_due_at_asc"})
+_SLA_EFFECTIVE_AT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$")
+
+
+@dataclass(frozen=True, slots=True)
+class MailboxSlaPolicy:
+    mailbox_ref: str
+    policy_ref: str
+    revision: int
+    first_response_duration_seconds: int
+    effective_at: datetime
 
 
 class EmailPublicationIntake(Protocol):
@@ -129,6 +139,37 @@ class GatewayAdminRepository(Protocol):
         idempotency_key: str,
     ) -> RoutingRule: ...
 
+    def list_sla_policies(
+        self,
+        site_id: str,
+        mailbox_ref: str,
+        *,
+        page_size: int,
+        cursor: str | None,
+    ) -> tuple[tuple[MailboxSlaPolicy, ...], str | None]: ...
+
+    def upsert_sla_policy(
+        self,
+        scope: TenantScope,
+        *,
+        mailbox_ref: str,
+        policy_ref: str,
+        first_response_duration_seconds: int,
+        effective_at: datetime,
+        effective_at_wire: str,
+        expected_revision: int,
+        request_id: str,
+        idempotency_key: str,
+    ) -> MailboxSlaPolicy: ...
+
+    def mailbox_enable_blocker(
+        self,
+        site_id: str,
+        mailbox_ref: str,
+        *,
+        activation_at: datetime,
+    ) -> str | None: ...
+
 
 class WorkflowAuthority(Protocol):
     def authorize_inbox(
@@ -146,6 +187,17 @@ class _EmptyAdminRepository:
 
     def upsert_rule(self, *_args: object, **_kwargs: object) -> RoutingRule:
         raise _BFFError("runtime_unavailable", 503)
+
+    def list_sla_policies(
+        self, *_args: object, **_kwargs: object
+    ) -> tuple[tuple[MailboxSlaPolicy, ...], str | None]:
+        raise _BFFError("runtime_unavailable", 503)
+
+    def upsert_sla_policy(self, *_args: object, **_kwargs: object) -> MailboxSlaPolicy:
+        raise _BFFError("runtime_unavailable", 503)
+
+    def mailbox_enable_blocker(self, *_args: object, **_kwargs: object) -> str | None:
+        return "sla_policy_required"
 
 
 class _FallbackWorkflowAuthority:
@@ -485,6 +537,197 @@ class PostgresGatewayAdminRepository:
                     ),
                 )
         return rule
+
+    def list_sla_policies(
+        self,
+        site_id: str,
+        mailbox_ref: str,
+        *,
+        page_size: int,
+        cursor: str | None,
+    ) -> tuple[tuple[MailboxSlaPolicy, ...], str | None]:
+        anchor_revision: int | None = None
+        if cursor is not None:
+            cursor_mailbox, cursor_revision = decode_cursor(cursor, "sla-policies", 2)
+            if cursor_mailbox != mailbox_ref or not cursor_revision.isdigit():
+                raise ValidationError("invalid SLA policy cursor")
+            anchor_revision = int(cursor_revision)
+            if anchor_revision < 1:
+                raise ValidationError("invalid SLA policy cursor")
+        where = ["site_id = %s", "mailbox_ref = %s"]
+        params: list[object] = [site_id, mailbox_ref]
+        if anchor_revision is not None:
+            where.append("revision < %s")
+            params.append(anchor_revision)
+        scope = TenantScope(site_id, "business_operations")
+        with redacted_database_errors(), site_transaction(self._connection, scope) as db:
+            db.execute(
+                f"""
+                SELECT mailbox_ref, policy_ref, revision,
+                       first_response_duration_seconds, effective_at
+                  FROM email_gateway.mailbox_sla_policies
+                 WHERE {" AND ".join(where)}
+                 ORDER BY revision DESC
+                 LIMIT %s
+                """,
+                (*params, page_size + 1),
+            )
+            rows = db.fetchall()
+        policies = tuple(_sla_policy_from_row(row) for row in rows[:page_size])
+        next_cursor = None
+        if len(rows) > page_size and policies:
+            next_cursor = encode_cursor("sla-policies", mailbox_ref, str(policies[-1].revision))
+        return policies, next_cursor
+
+    def upsert_sla_policy(
+        self,
+        scope: TenantScope,
+        *,
+        mailbox_ref: str,
+        policy_ref: str,
+        first_response_duration_seconds: int,
+        effective_at: datetime,
+        effective_at_wire: str,
+        expected_revision: int,
+        request_id: str,
+        idempotency_key: str,
+    ) -> MailboxSlaPolicy:
+        if policy_ref != stable_ref("SLA", scope.site_id, mailbox_ref):
+            raise ValidationError("invalid SLA policy reference")
+        try:
+            wire_effective_at = datetime.fromisoformat(effective_at_wire.replace("Z", "+00:00"))
+        except AttributeError, ValueError:
+            raise ValidationError("invalid SLA policy effective time") from None
+        if (
+            _SLA_EFFECTIVE_AT.fullmatch(effective_at_wire) is None
+            or effective_at.tzinfo is None
+            or effective_at.utcoffset() is None
+            or wire_effective_at.astimezone(UTC) != effective_at.astimezone(UTC)
+        ):
+            raise ValidationError("invalid SLA policy effective time")
+        digest = canonical_digest(
+            {
+                "mailbox_ref": mailbox_ref,
+                "first_response_duration_seconds": first_response_duration_seconds,
+                "effective_at": effective_at_wire,
+                "expected_revision": expected_revision,
+            }
+        )
+        with redacted_database_errors(), site_transaction(self._connection, scope) as db:
+            db.execute(
+                """
+                SELECT mailbox_ref
+                  FROM email_gateway.mailboxes
+                 WHERE site_id = %s AND mailbox_ref = %s
+                 FOR UPDATE
+                """,
+                (scope.site_id, mailbox_ref),
+            )
+            if db.fetchone() is None:
+                raise ValidationError("SLA policy mailbox is unavailable")
+            db.execute(
+                """
+                SELECT mailbox_ref, policy_ref, revision,
+                       first_response_duration_seconds, effective_at, payload_digest
+                  FROM email_gateway.mailbox_sla_policies
+                 WHERE site_id = %s AND idempotency_key = %s
+                """,
+                (scope.site_id, idempotency_key),
+            )
+            replay = db.fetchone()
+            if replay is not None:
+                if (
+                    str(replay[0]) != mailbox_ref
+                    or str(replay[1]) != policy_ref
+                    or str(replay[5]) != digest
+                ):
+                    raise IdempotencyConflict("SLA policy replay conflict")
+                return _sla_policy_from_row(replay[:5])
+            db.execute(
+                """
+                SELECT revision, effective_at
+                  FROM email_gateway.mailbox_sla_policies
+                 WHERE site_id = %s AND mailbox_ref = %s
+                 ORDER BY revision DESC
+                 LIMIT 1
+                """,
+                (scope.site_id, mailbox_ref),
+            )
+            current = db.fetchone()
+            actual_revision = 0 if current is None else int(current[0])
+            if actual_revision != expected_revision:
+                raise RevisionConflict("SLA policy revision conflict")
+            if current is not None and effective_at <= cast(datetime, current[1]):
+                raise RevisionConflict("SLA policy effective time conflict")
+            policy = MailboxSlaPolicy(
+                mailbox_ref=mailbox_ref,
+                policy_ref=policy_ref,
+                revision=actual_revision + 1,
+                first_response_duration_seconds=first_response_duration_seconds,
+                effective_at=effective_at,
+            )
+            db.execute(
+                """
+                INSERT INTO email_gateway.mailbox_sla_policies (
+                    site_id, mailbox_ref, policy_ref, revision,
+                    first_response_duration_seconds, effective_at, request_id,
+                    idempotency_key, payload_digest
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    scope.site_id,
+                    policy.mailbox_ref,
+                    policy.policy_ref,
+                    policy.revision,
+                    policy.first_response_duration_seconds,
+                    policy.effective_at,
+                    request_id,
+                    idempotency_key,
+                    digest,
+                ),
+            )
+        return policy
+
+    def mailbox_enable_blocker(
+        self,
+        site_id: str,
+        mailbox_ref: str,
+        *,
+        activation_at: datetime,
+    ) -> str | None:
+        scope = TenantScope(site_id, "business_operations")
+        with redacted_database_errors(), site_transaction(self._connection, scope) as db:
+            db.execute(
+                """
+                SELECT
+                    EXISTS (
+                        SELECT 1
+                          FROM email_gateway.mailbox_sla_policies AS policy
+                         WHERE policy.site_id = %s
+                           AND policy.mailbox_ref = %s
+                           AND policy.effective_at <= %s
+                    ),
+                    EXISTS (
+                        SELECT 1
+                          FROM email_gateway.inbox_items AS inbox
+                         WHERE inbox.site_id = %s
+                           AND inbox.mailbox_ref = %s
+                           AND NOT EXISTS (
+                               SELECT 1
+                                 FROM email_gateway.inbox_sla_clocks AS clock
+                                WHERE clock.site_id = inbox.site_id
+                                  AND clock.inbox_item_ref = inbox.inbox_item_ref
+                           )
+                    )
+                """,
+                (site_id, mailbox_ref, activation_at, site_id, mailbox_ref),
+            )
+            row = db.fetchone()
+        if row is None or not bool(row[0]):
+            return "sla_policy_required"
+        if bool(row[1]):
+            return "sla_backfill_required"
+        return None
 
 
 def build_email_publication_api(
@@ -1343,6 +1586,15 @@ def create_email_gateway_app(
                 else _bounded_text(values["mailbox_ref"], "mailbox ref", 140)
             )
             current = mailbox_registry.get(scope, reference)
+            inbound_enabled = _boolean(values["inbound_enabled"], "inbound enabled")
+            if inbound_enabled and (current is None or not current.inbound_enabled):
+                blocker = active_admin.mailbox_enable_blocker(
+                    actor.site_id,
+                    reference,
+                    activation_at=active_clock(),
+                )
+                if blocker is not None:
+                    raise _BFFError(blocker, 409)
             mailbox = Mailbox(
                 mailbox_ref=reference,
                 site_id=actor.site_id,
@@ -1371,7 +1623,7 @@ def create_email_gateway_app(
                     values["account_owner_user_ref"], "account owner user ref", 256
                 ),
                 priority=_bounded_integer(values["priority"], "priority", 0, 1000),
-                inbound_enabled=_boolean(values["inbound_enabled"], "inbound enabled"),
+                inbound_enabled=inbound_enabled,
                 outbound_enabled=_literal_false(values["outbound_enabled"], "outbound enabled"),
                 credential_ref=_bounded_text(values["credential_ref"], "credential ref", 80),
                 status="draft" if current is None else current.status,
@@ -1392,6 +1644,114 @@ def create_email_gateway_app(
                 idempotency_key=idempotency_key,
             )
             return _success(actor.site_id, {"mailbox": _mailbox_wire(receipt.mailbox)})
+
+        @application.post("/internal/v1/bff/email-admin/sla-policies/list")
+        def list_sla_policies(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+        ) -> dict[str, object]:
+            _authorize_bff_headers(
+                authorization=authorization,
+                auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                bearer_token=bff_bearer_token,
+                expected_purpose="email_admin_read",
+            )
+            actor, values = _actor_payload(
+                payload,
+                site_id=cast(str, site_id),
+                operation_fields={"mailbox_ref", "page_size"},
+                optional_fields={"cursor"},
+            )
+            _require_admin(actor)
+            mailbox_ref = _bounded_text(values["mailbox_ref"], "mailbox ref", 140)
+            page_size = _sla_page_size(values["page_size"])
+            policies, next_cursor = active_admin.list_sla_policies(
+                actor.site_id,
+                mailbox_ref,
+                page_size=page_size,
+                cursor=_cursor(values.get("cursor")),
+            )
+            if len(policies) > page_size:
+                raise _BFFError("invalid_query", 400)
+            return _success(
+                actor.site_id,
+                {
+                    "mailbox_ref": mailbox_ref,
+                    "sla_policies": [
+                        _sla_policy_wire(policy, include_mailbox=False) for policy in policies
+                    ],
+                    "next_cursor": next_cursor,
+                },
+            )
+
+        @application.post("/internal/v1/bff/email-admin/sla-policies/upsert")
+        def upsert_sla_policy(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+            header_idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, object]:
+            _authorize_bff_headers(
+                authorization=authorization,
+                auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                bearer_token=bff_bearer_token,
+                expected_purpose="email_admin_command",
+            )
+            actor, values = _actor_payload(
+                payload,
+                site_id=cast(str, site_id),
+                operation_fields={
+                    "mailbox_ref",
+                    "first_response_duration_seconds",
+                    "effective_at",
+                    "expected_revision",
+                    "idempotency_key",
+                },
+            )
+            _require_admin(actor)
+            idempotency_key = _bounded_text(values["idempotency_key"], "idempotency key", 256)
+            _require_idempotency_header(header_idempotency_key, idempotency_key)
+            mailbox_ref = _bounded_text(values["mailbox_ref"], "mailbox ref", 140)
+            effective_at, effective_at_wire = _sla_effective_time(values["effective_at"])
+            result = active_admin.upsert_sla_policy(
+                TenantScope(actor.site_id, "business_operations"),
+                mailbox_ref=mailbox_ref,
+                policy_ref=stable_ref("SLA", actor.site_id, mailbox_ref),
+                first_response_duration_seconds=_bounded_integer(
+                    values["first_response_duration_seconds"],
+                    "first response duration seconds",
+                    60,
+                    604_800,
+                ),
+                effective_at=effective_at,
+                effective_at_wire=effective_at_wire,
+                expected_revision=_nonnegative_integer(
+                    values["expected_revision"], "expected revision"
+                ),
+                request_id=cast(str, request_id),
+                idempotency_key=idempotency_key,
+            )
+            return _success(
+                actor.site_id,
+                {"sla_policy": _sla_policy_wire(result, include_mailbox=True)},
+            )
 
         @application.post("/internal/v1/bff/email-admin/mailboxes/status")
         def set_mailbox_status(
@@ -1438,6 +1798,14 @@ def create_email_gateway_app(
             action = _choice(values["action"], "action", {"enable", "pause", "revoke"})
             if action == "enable" and current.mailbox_address_identity_ref is None:
                 raise _BFFError("mailbox_identity_required", 409)
+            if action == "enable":
+                blocker = active_admin.mailbox_enable_blocker(
+                    actor.site_id,
+                    reference,
+                    activation_at=active_clock(),
+                )
+                if blocker is not None:
+                    raise _BFFError(blocker, 409)
             expected_revision = _nonnegative_integer(
                 values["expected_revision"], "expected revision"
             )
@@ -1911,16 +2279,22 @@ def create_email_gateway_app(
             key = _bounded_text(values["idempotency_key"], "idempotency key", 256)
             _require_idempotency_header(header_idempotency_key, key)
             inbox_ref = _bounded_text(values["inbox_item_ref"], "inbox item ref", 140)
+            requested_draft_ref = _bounded_text(values["draft_ref"], "draft ref", 140)
+            expected_revision = _nonnegative_integer(
+                values["expected_revision"], "expected revision"
+            )
+            canonical_draft_ref = stable_ref("DRF", actor.site_id, inbox_ref)
+            if expected_revision > 0 and not hmac.compare_digest(
+                requested_draft_ref, canonical_draft_ref
+            ):
+                raise _BFFError("scope_mismatch", 403)
+            draft_ref = canonical_draft_ref
             scope, team_ref = active_authority.authorize_inbox(actor, inbox_ref)
             inbox = active_workflow.get_inbox(scope, inbox_ref)
             if inbox is None:
                 raise _BFFError("not_found", 404)
             if "Sales User" in actor.roles and inbox.assignee_user_ref != actor.actor_ref:
                 raise _BFFError("scope_mismatch", 403)
-            draft_ref = _bounded_text(values["draft_ref"], "draft ref", 140)
-            expected_revision = _nonnegative_integer(
-                values["expected_revision"], "expected revision"
-            )
             content_digest = _bounded_digest(values["content_digest"])
             participant_roles_digest = _bounded_digest(values["participant_roles_digest"])
             if active_participant_authority_reader is None:
@@ -2348,6 +2722,10 @@ def _page_size(value: object) -> int:
     return _bounded_integer(value, "page size", 1, 50)
 
 
+def _sla_page_size(value: object) -> int:
+    return _bounded_integer(value, "page size", 1, 100)
+
+
 def _choice(value: object, name: str, choices: set[str]) -> str:
     text = _bounded_text(value, name, 80)
     if text not in choices:
@@ -2409,6 +2787,31 @@ def _conversation_wire(conversation: Conversation) -> dict[str, object]:
 
 def _draft_wire(draft: Draft) -> dict[str, object]:
     return {"draft_ref": draft.draft_ref, "revision": draft.revision, "state": draft.state}
+
+
+def _sla_policy_from_row(row: tuple[Any, ...]) -> MailboxSlaPolicy:
+    effective_at = row[4]
+    if not isinstance(effective_at, datetime) or effective_at.tzinfo is None:
+        raise ValidationError("invalid SLA policy effective time")
+    return MailboxSlaPolicy(
+        mailbox_ref=str(row[0]),
+        policy_ref=str(row[1]),
+        revision=int(row[2]),
+        first_response_duration_seconds=int(row[3]),
+        effective_at=effective_at.astimezone(UTC),
+    )
+
+
+def _sla_policy_wire(policy: MailboxSlaPolicy, *, include_mailbox: bool) -> dict[str, object]:
+    value: dict[str, object] = {
+        "policy_ref": policy.policy_ref,
+        "revision": policy.revision,
+        "first_response_duration_seconds": policy.first_response_duration_seconds,
+        "effective_at": _utc_wire_time(policy.effective_at),
+    }
+    if include_mailbox:
+        value = {"mailbox_ref": policy.mailbox_ref, **value}
+    return value
 
 
 def _rule_wire(rule: RoutingRule) -> dict[str, object]:
@@ -2493,6 +2896,24 @@ def _parse_wire_time(value: object) -> datetime:
     if parsed.tzinfo is None:
         raise _BFFError("scope_mismatch", 403)
     return parsed.astimezone(UTC)
+
+
+def _sla_effective_time(value: object) -> tuple[datetime, str]:
+    if not isinstance(value, str) or _SLA_EFFECTIVE_AT.fullmatch(value) is None:
+        raise _BFFError("invalid_query", 400)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise _BFFError("invalid_query", 400) from None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise _BFFError("invalid_query", 400)
+    return parsed.astimezone(UTC), value
+
+
+def _utc_wire_time(value: datetime) -> str:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValidationError("invalid SLA policy effective time")
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _mailbox_wire(mailbox: Mailbox) -> dict[str, object]:

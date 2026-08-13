@@ -1233,12 +1233,14 @@ def test_save_draft_gets_fresh_gateway_receipt_then_observer_cas_then_commits_pr
     _gateway, _admin, inbox, _fake = v5_modules
     gateway_calls: list[dict[str, Any]] = []
     observer_calls: list[dict[str, Any]] = []
+    provisional_draft_ref = "DRF-ui-provisional-01"
+    canonical_draft_ref = "DRF-01ARZ3NDEKTSV4RRFFQ69G5FAV"
     receipt = {
         "receipt_ref": "DAR-01",
         "site_id": "gbos.localhost",
         "purpose": "email_draft_material",
         "inbox_item_ref": "INB-01",
-        "draft_ref": "DRF-01",
+        "draft_ref": canonical_draft_ref,
         "draft_revision": 1,
         "actor_ref": "sales@example.invalid",
         "team_ref": TEAM_ONE,
@@ -1251,7 +1253,7 @@ def test_save_draft_gets_fresh_gateway_receipt_then_observer_cas_then_commits_pr
         gateway_calls.append(kwargs)
         if kwargs["payload"]["phase"] == "authorize":
             return {"draft_authorization": receipt}
-        return {"draft": {"draft_ref": "DRF-01", "revision": 1, "state": "editable"}}
+        return {"draft": {"draft_ref": canonical_draft_ref, "revision": 1, "state": "editable"}}
 
     monkeypatch.setattr(inbox, "call_gateway", gateway_call)
     monkeypatch.setattr(
@@ -1269,23 +1271,26 @@ def test_save_draft_gets_fresh_gateway_receipt_then_observer_cas_then_commits_pr
 
     result = inbox.save_draft(
         "INB-01",
-        draft_ref="DRF-01",
+        draft_ref=provisional_draft_ref,
         expected_revision="0",
         content="Hello customer",
         idempotency_key="draft-save-01",
     )
 
     assert result["data"]["draft"] == {
-        "draft_ref": "DRF-01",
+        "draft_ref": canonical_draft_ref,
         "revision": 1,
         "state": "editable",
     }
     assert [call["payload"]["phase"] for call in gateway_calls] == ["authorize", "commit"]
     assert observer_calls[0]["path"] == "/internal/v1/bff/email-draft-material/save"
     assert observer_calls[0]["payload"]["content"] == "Hello customer"
+    assert observer_calls[0]["payload"]["authorization"]["draft_ref"] == canonical_draft_ref
     assert observer_calls[0]["payload"]["content_digest"] == receipt["request_digest"]
     assert observer_calls[0]["payload"]["idempotency_key"] == "draft-save-01"
     assert gateway_calls[1]["payload"]["evidence_ref"] == "EVR-DRAFT-01"
+    assert gateway_calls[0]["payload"]["draft_ref"] == provisional_draft_ref
+    assert gateway_calls[1]["payload"]["draft_ref"] == provisional_draft_ref
     roles = {"sender": "mailbox_owner", "recipients": ["original_sender"]}
     roles_digest = (
         "sha256:"
