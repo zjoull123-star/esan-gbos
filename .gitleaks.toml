@@ -41,4 +41,34 @@ condition = "AND"
 targetRules = ["generic-api-key"]
 regexTarget = "line"
 regexes = ['''fence_token="fence-SYNTH-002"''']
-paths = ['''^tests/local_pilot_runtime/test_model_projection_worker\.py$''']
+paths = [
+  '''^tests/local_pilot_runtime/test_model_projection_worker\.py$''',
+  '''^tests/infra/test_dev_infrastructure\.py$''',
+]
+
+[[allowlists]]
+description = "Allow only fixed local retention service URLs in their closed runtime and tests"
+condition = "AND"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''(?:http://observer-api:8003/internal/v1/retention/(?:tombstones/verify|email-material/register)|assert r"http://observer-api:8003/internal/v1/retention/" in config)''']
+paths = [
+  '''^(?:scripts/local-pilot/render-config|services/local_pilot_runtime/email_gateway_retention_worker\.py|tests/(?:email_gateway/test_email_gateway_retention_worker|infra/test_email_gateway_runtime_composition|local_pilot_runtime/test_email_gateway_retention_worker)\.py)$''',
+  '''^tests/infra/test_dev_infrastructure\.py$''',
+]
+
+[[allowlists]]
+description = "Allow only the frozen SLA policy idempotency fixture"
+condition = "AND"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''sla-policy-upsert-01''']
+paths = ['''^tests/(?:domain/test_bff_v5_email|email_gateway/test_api)\.py$''']
+
+[[allowlists]]
+description = "Allow only the frozen email command fence reference fixtures"
+condition = "AND"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''(?:FNC|PUB)-01ARZ3NDEKTSV4RRFFQ69G5FAV''']
+paths = ['''^tests/(?:domain/test_internal_email_command_publication|domain/test_internal_email_gateway_authority|email_gateway/test_command_authority|email_gateway/test_outbound|email_gateway/test_worker|integration/test_email_send_command_offline_e2e|local_pilot_runtime/test_email_command_publication_worker|local_pilot_runtime/test_email_gateway_command_authority)\.py$''']

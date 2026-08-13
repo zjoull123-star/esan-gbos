@@ -566,13 +566,20 @@ def test_gitleaks_exception_is_narrow_and_keeps_default_rules() -> None:
     config = read_required(GITLEAKS_CONFIG)
 
     assert "useDefault = true" in config
-    assert config.count('targetRules = ["generic-api-key"]') == 5
-    assert config.count('condition = "AND"') == 5
-    assert config.count('regexTarget = "line"') == 5
+    assert config.count('targetRules = ["generic-api-key"]') == 8
+    assert config.count('condition = "AND"') == 8
+    assert config.count('regexTarget = "line"') == 8
     assert r"^\.github/workflows/frappe-app-smoke\.yml$" in config
     assert r"DB_ROOT_PASSWORD: SYNTHETIC-ci-db-root-[a-f0-9]{8}" in config
     assert r"^services/model_gateway/runtime\.py$" in config
     assert r"deepseek-utf8-byte-plus-1024-upper-bound-v1" in config
+    assert r"http://observer-api:8003/internal/v1/retention/" in config
+    assert r"sla-policy-upsert-01" in config
+    assert r"(?:FNC|PUB)-01ARZ3NDEKTSV4RRFFQ69G5FAV" in config
+    assert r"scripts/local-pilot/render-config" in config
+    assert r"tests/(?:domain/test_bff_v5_email|email_gateway/test_api)\.py" in config
+    assert r"tests/infra/test_dev_infrastructure" in config
+    assert config.count(r"^tests/infra/test_dev_infrastructure\.py$") == 2
     assert r"^tests/domain/test_local_pilot_service_identity\.py$" in config
     assert r"MaterializerKey_0123456789ABCDEF|MaterializerSecret_0123456789ABCDEF" in config
     assert (
