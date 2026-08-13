@@ -31,6 +31,7 @@ from services.email_gateway.api import (
 )
 from services.email_gateway.conversations import ConversationService
 from services.email_gateway.drafts import DraftService
+from services.email_gateway.email_send_authority import EmailSendAuthority
 from services.email_gateway.evidence import (
     ObserverEvidenceRevealClient,
     PostgresEvidenceBindingAuthority,
@@ -40,10 +41,12 @@ from services.email_gateway.mailboxes import MailboxRegistry
 from services.email_gateway.operations import InboxOperations
 from services.email_gateway.outbound import AuthorityResolver, CommandIngestService
 from services.email_gateway.phase1_read import ConnectorHealth, Phase1Mailbox
+from services.email_gateway.repositories.identity import PostgresIdentityProjectionRepository
 from services.email_gateway.repositories.intake import PostgresIntakeRepository
 from services.email_gateway.repositories.mailboxes import PostgresMailboxRepository
 from services.email_gateway.repositories.phase1_read import PostgresPhase1ReadRepository
 from services.email_gateway.repositories.workflow import PostgresWorkflowRepository
+from services.email_gateway.security import GatewayAuthorizationIssuer
 from services.email_gateway.send_outbox import PostgresSendOutboxRepository
 
 from .email_gateway_config import (
@@ -466,6 +469,13 @@ def main(
                 bearer_token=mailbox_projection_bearer.reveal(),
                 auth_ref=config.auth.mailbox_projection_auth_ref,
             ),
+            email_send_authority=EmailSendAuthority(
+                mailboxes=MailboxRegistry(mailboxes),
+                workflow=workflow,
+                identities=PostgresIdentityProjectionRepository(cast(Any, connection)),
+                binding_reader=intake_service,
+                authorization_issuer=GatewayAuthorizationIssuer(clock=lambda: datetime.now(UTC)),
+            ),
             command_ingest_service=command_ingest_service,
             command_ingest_bearer_token=command_ingest_bearer_token,
             command_ingest_auth_ref=command_ingest_auth_ref,
@@ -535,6 +545,7 @@ def _build_application(factory: ApplicationFactory, **kwargs: object) -> FastAPI
         "workflow_authority",
         "evidence_authority",
         "evidence_client",
+        "email_send_authority",
         "command_ingest_service",
         "command_ingest_bearer_token",
         "command_ingest_auth_ref",

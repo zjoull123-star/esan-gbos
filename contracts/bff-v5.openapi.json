@@ -603,6 +603,74 @@
           }
         }
       }
+    },
+    "/api/method/esan_gbos.api.v5.email_send.submit_for_review": {
+      "post": {
+        "operationId": "submitEmailSendForReview",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailSendSubmitForReviewCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        },
+        "x-gbos-provider-send": false
+      }
+    },
+    "/api/method/esan_gbos.api.v5.email_send.approve": {
+      "post": {
+        "operationId": "approveEmailSend",
+        "x-gbos-cache": "no-store",
+        "x-gbos-roles": [
+          "Sales Manager",
+          "Sales User",
+          "Reviewer",
+          "GBOS Admin"
+        ],
+        "security": [
+          {
+            "FrappeSession": [],
+            "FrappeCsrf": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailSendApproveCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed governed command result"
+          }
+        },
+        "x-gbos-provider-send": false
+      }
     }
   },
   "components": {
@@ -1368,6 +1436,73 @@
           "expected_revision": {
             "type": "integer",
             "minimum": 0
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "EmailSendSubmitForReviewCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "inbox_item_ref",
+          "draft_ref",
+          "expected_revision",
+          "expected_draft_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "inbox_item_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "draft_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expected_draft_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "EmailSendApproveCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "review_case_name",
+          "expected_revision",
+          "decision_note",
+          "idempotency_key"
+        ],
+        "properties": {
+          "review_case_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "decision_note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
           },
           "idempotency_key": {
             "type": "string",

@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from .conversations import ConversationService
 from .drafts import DraftService
+from .email_send_authority import EmailSendAuthority, EmailSendAuthorityConflict
 from .evidence import EvidenceBindingAuthority, ObserverEvidenceRevealClient
 from .mailboxes import MailboxRegistry
 from .models import (
@@ -618,6 +619,7 @@ def create_email_gateway_app(
     workflow_authority: WorkflowAuthority | None = None,
     evidence_authority: EvidenceBindingAuthority | None = None,
     evidence_client: ObserverEvidenceRevealClient | None = None,
+    email_send_authority: EmailSendAuthority | None = None,
     command_ingest_service: CommandIngestService | None = None,
     command_ingest_bearer_token: str | None = None,
     command_ingest_auth_ref: str | None = None,
@@ -832,6 +834,16 @@ def create_email_gateway_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    @application.exception_handler(EmailSendAuthorityConflict)
+    async def email_send_authority_error(
+        _request: Request, _error: EmailSendAuthorityConflict
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"code": "authority_conflict"}},
+            headers={"Cache-Control": "no-store"},
+        )
+
     @application.get("/health")
     def health() -> dict[str, object]:
         return {
@@ -940,6 +952,83 @@ def create_email_gateway_app(
         active_admin = admin_repository or _EmptyAdminRepository()
         active_authority = workflow_authority or _FallbackWorkflowAuthority(active_workflow)
         authorization_issuer = GatewayAuthorizationIssuer(clock=active_clock)
+
+        @application.post("/internal/v1/bff/email-send/authority")
+        def email_send_authority_boundary(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+            content_type: str | None = Header(default=None, alias="Content-Type"),
+        ) -> dict[str, object]:
+            _authorize_bff_headers(
+                authorization=authorization,
+                auth_ref=request_auth_ref,
+                site_id=site_id,
+                purpose=purpose,
+                request_id=request_id,
+                content_type=content_type,
+                bearer_token=bff_bearer_token,
+                expected_purpose="email_inbox_command",
+            )
+            if email_send_authority is None or not isinstance(payload, dict):
+                raise _BFFError("runtime_unavailable", 503)
+            phase = payload.get("phase")
+            common = {"phase", *_ACTOR_FIELDS}
+            if phase == "authorize":
+                operation_fields = {
+                    "inbox_item_ref",
+                    "draft_ref",
+                    "expected_inbox_revision",
+                    "expected_draft_revision",
+                    "participant_roles_digest",
+                }
+            elif phase == "validate":
+                operation_fields = {
+                    "expected_gateway_snapshot",
+                    "participant_projection",
+                }
+            else:
+                raise _BFFError("invalid_query", 400)
+            if set(payload) != common | operation_fields:
+                raise _BFFError("invalid_query", 400)
+            actor, values = _actor_payload(
+                payload,
+                site_id=cast(str, site_id),
+                operation_fields={"phase", *operation_fields},
+            )
+            _require_command(actor)
+            if phase == "authorize":
+                inbox_ref = _bounded_text(values["inbox_item_ref"], "inbox item ref", 140)
+                scope, _team_ref = active_authority.authorize_inbox(actor, inbox_ref)
+                result = email_send_authority.authorize(
+                    scope,
+                    actor_ref=actor.actor_ref,
+                    inbox_item_ref=inbox_ref,
+                    draft_ref=_bounded_text(values["draft_ref"], "draft ref", 140),
+                    expected_inbox_revision=_bounded_integer(
+                        values["expected_inbox_revision"], "inbox revision", 1, 2_147_483_647
+                    ),
+                    expected_draft_revision=_bounded_integer(
+                        values["expected_draft_revision"], "draft revision", 1, 2_147_483_647
+                    ),
+                    participant_roles_digest=_bounded_digest(values["participant_roles_digest"]),
+                )
+            else:
+                snapshot = values["expected_gateway_snapshot"]
+                if not isinstance(snapshot, dict):
+                    raise _BFFError("invalid_query", 400)
+                inbox_ref = _bounded_text(snapshot.get("inbox_item_ref"), "inbox item ref", 140)
+                scope, _team_ref = active_authority.authorize_inbox(actor, inbox_ref)
+                result = email_send_authority.validate(
+                    scope,
+                    actor_ref=actor.actor_ref,
+                    expected_gateway_snapshot=snapshot,
+                    participant_projection=values["participant_projection"],
+                )
+            return _success(actor.site_id, {"send_authority": result})
 
         def command_context(
             *,

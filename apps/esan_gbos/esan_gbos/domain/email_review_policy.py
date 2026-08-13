@@ -2,12 +2,28 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 EMAIL_SEND_REVIEW_POLICY = "email_send_owner_v1"
+_EMAIL_SEND_PARTICIPANT_ROLES = {
+    "sender": "mailbox_owner",
+    "recipients": ["original_sender"],
+}
+EMAIL_SEND_PARTICIPANT_ROLES_DIGEST = (
+    "sha256:"
+    + hashlib.sha256(
+        json.dumps(
+            _EMAIL_SEND_PARTICIPANT_ROLES,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+    ).hexdigest()
+)
 
 _SNAPSHOT_FIELDS = frozenset(
     {
@@ -79,6 +95,12 @@ class EmailSendOwnerApproval:
     processing_purpose: str
     policy_version: str
     expires_at: datetime
+
+
+def email_send_participant_roles() -> dict[str, object]:
+    """Return the one frozen reply role binding without exposing mutable module state."""
+
+    return copy.deepcopy(_EMAIL_SEND_PARTICIPANT_ROLES)
 
 
 def protected_user_ref(site_id: object, frappe_user_name: object) -> str:
@@ -379,9 +401,11 @@ def _aware(value: datetime, field: str) -> datetime:
 
 __all__ = [
     "EMAIL_SEND_REVIEW_POLICY",
+    "EMAIL_SEND_PARTICIPANT_ROLES_DIGEST",
     "EmailSendOwnerApproval",
     "EmailSendReviewPolicyError",
     "authorize_email_send_owner",
+    "email_send_participant_roles",
     "protect_live_email_send_snapshot",
     "protected_user_ref",
     "validate_email_send_approval_snapshot",

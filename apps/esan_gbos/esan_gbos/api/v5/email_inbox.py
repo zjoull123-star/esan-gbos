@@ -9,6 +9,7 @@ import frappe
 from esan_gbos.api.v1.audit import run_idempotent
 from esan_gbos.api.v1.common import BFFError, bff_endpoint, require_roles
 from esan_gbos.api.v5.gateway import call_gateway, call_observer, scope_payload, v5_success
+from esan_gbos.domain.email_review_policy import EMAIL_SEND_PARTICIPANT_ROLES_DIGEST
 from esan_gbos.domain.v5_email_dto import (
     V5EmailDTOValidationError,
     map_inbox_detail,
@@ -388,6 +389,7 @@ def save_draft(
         "draft_ref": draft_ref,
         "expected_revision": revision,
         "content_digest": digest,
+        "participant_roles_digest": EMAIL_SEND_PARTICIPANT_ROLES_DIGEST,
         "idempotency_key": idempotency_key,
     }
     authorized = call_gateway(

@@ -124,6 +124,8 @@ def _app(
     read_repository: InMemoryPhase1ReadRepository | None = None,
     mailbox_repository: InMemoryMailboxRepository | None = None,
     health: _Health | None = None,
+    email_send_authority: object | None = None,
+    workflow_authority: object | None = None,
 ):
     read_repository = read_repository or InMemoryPhase1ReadRepository(
         mailboxes=(_mailbox_projection(),), inbox_items=(_inbox_projection(),)
@@ -139,6 +141,8 @@ def _app(
         mailbox_registry=MailboxRegistry(mailbox_repository),
         read_repository=read_repository,
         connector_health_reader=health,
+        email_send_authority=email_send_authority,  # type: ignore[arg-type]
+        workflow_authority=workflow_authority,  # type: ignore[arg-type]
     )
     return TestClient(app), mailbox_repository, health
 
@@ -151,7 +155,7 @@ def _scope_payload(*, roles: list[str], teams: list[str]) -> dict[str, object]:
     }
 
 
-def test_bff_route_set_is_exactly_the_frozen_seventeen_operations() -> None:
+def test_bff_route_set_is_exactly_the_frozen_eighteen_internal_operations() -> None:
     client, _, _ = _app()
     paths = {
         route.path for route in client.app.routes if route.path.startswith("/internal/v1/bff/")
@@ -175,7 +179,74 @@ def test_bff_route_set_is_exactly_the_frozen_seventeen_operations() -> None:
         "/internal/v1/bff/email-inbox/link-business",
         "/internal/v1/bff/email-inbox/save-draft",
         "/internal/v1/bff/email-inbox/reveal",
+        "/internal/v1/bff/email-send/authority",
     }
+
+
+def test_email_send_authority_route_is_server_scoped_and_closed() -> None:
+    class Authority:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, TenantScope, dict[str, object]]] = []
+
+        def authorize(self, scope: TenantScope, **values: object) -> dict[str, object]:
+            self.calls.append(("authorize", scope, values))
+            return {
+                "gateway_snapshot": {"inbox_item_ref": values["inbox_item_ref"]},
+                "draft_authorization": {"receipt_ref": "DAR-opaque"},
+                "draft_evidence_ref": "obs:v1:opaque",
+            }
+
+        def validate(self, scope: TenantScope, **values: object) -> dict[str, object]:
+            self.calls.append(("validate", scope, values))
+            return {
+                "gateway_snapshot": values["expected_gateway_snapshot"],
+                "participants": values["participant_projection"],
+            }
+
+    authority = Authority()
+
+    class ScopeAuthority:
+        def authorize_inbox(self, _actor: object, _inbox_item_ref: str) -> tuple[TenantScope, str]:
+            return TenantScope(SITE, "sales_follow_up"), "TEM-01"
+
+    client, _, _ = _app(
+        email_send_authority=authority,
+        workflow_authority=ScopeAuthority(),
+    )
+    headers = {**ADMIN_HEADERS, "X-Processing-Purpose": "email_inbox_command"}
+    actor = _scope_payload(roles=["Sales User"], teams=["TEM-01"])
+    authorized = client.post(
+        "/internal/v1/bff/email-send/authority",
+        headers=headers,
+        json={
+            **actor,
+            "phase": "authorize",
+            "inbox_item_ref": "INB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "draft_ref": "DRF-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "expected_inbox_revision": 4,
+            "expected_draft_revision": 3,
+            "participant_roles_digest": "sha256:" + "a" * 64,
+        },
+    )
+    assert authorized.status_code == 200
+    snapshot = authorized.json()["data"]["send_authority"]["gateway_snapshot"]
+    validated = client.post(
+        "/internal/v1/bff/email-send/authority",
+        headers=headers,
+        json={
+            **actor,
+            "phase": "validate",
+            "expected_gateway_snapshot": snapshot,
+            "participant_projection": [
+                {"address_role": "sender", "opaque_address_ref": "extid:v1:email:" + "a" * 43},
+                {"address_role": "to", "opaque_address_ref": "extid:v1:email:" + "b" * 43},
+            ],
+        },
+    )
+    assert validated.status_code == 200
+    assert [call[0] for call in authority.calls] == ["authorize", "validate"]
+    assert authority.calls[0][1] == TenantScope(SITE, "sales_follow_up")
+    assert authorized.headers["cache-control"] == validated.headers["cache-control"] == "no-store"
 
 
 def test_mailbox_list_is_bff_shaped_no_store_and_keeps_multiple_primary() -> None:

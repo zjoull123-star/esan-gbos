@@ -191,6 +191,7 @@ def call_gateway(
             "revision_conflict",
             "invalid_transition",
             "scope_mismatch",
+            "authority_conflict",
         }:
             raise BFFError(
                 error.error_code,

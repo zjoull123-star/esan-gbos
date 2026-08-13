@@ -382,6 +382,7 @@ def test_main_supplies_distinct_publication_and_bff_credentials_to_application_f
     assert "draft_service" in captured
     assert "evidence_authority" in captured
     assert "evidence_client" in captured
+    assert "email_send_authority" in captured
     assert isinstance(
         captured["connector_health_reader"],
         email_gateway_api.ObserverConnectorHealthReader,

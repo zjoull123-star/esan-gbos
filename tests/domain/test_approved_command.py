@@ -137,6 +137,9 @@ def test_specialized_api_locks_and_atomically_issues_decision_command_and_public
         assert doctype in source
     assert "run_idempotent(" in source
     assert "frappe.db.commit" not in source
+    assert "live_authority_snapshot" not in source
+    assert 'path="/internal/v1/bff/email-send/authority"' in source
+    assert 'path="/internal/v1/bff/email-draft-material/finalize"' in source
     assert "protect_live_email_send_snapshot" in source
     assert "protected_user_ref" in source
 

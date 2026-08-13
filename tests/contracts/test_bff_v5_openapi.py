@@ -24,6 +24,8 @@ OPERATIONS = {
     "/api/method/esan_gbos.api.v5.email_inbox.link_business": "post",
     "/api/method/esan_gbos.api.v5.email_inbox.save_draft": "post",
     "/api/method/esan_gbos.api.v5.email_inbox.reveal": "post",
+    "/api/method/esan_gbos.api.v5.email_send.submit_for_review": "post",
+    "/api/method/esan_gbos.api.v5.email_send.approve": "post",
 }
 
 
@@ -39,11 +41,12 @@ def resolve_schema(value: dict[str, object], schema: dict[str, object]) -> dict[
     return value["components"]["schemas"][reference.rsplit("/", maxsplit=1)[-1]]
 
 
-def test_v5_surface_is_exactly_the_seventeen_email_operations_and_never_cached() -> None:
+def test_v5_surface_is_exactly_the_nineteen_email_operations_and_never_cached() -> None:
     value = contract()
 
     assert value["openapi"] == "3.1.0"
     assert value["info"]["version"] == "5.0.0"
+    assert len(value["paths"]) == 19
     assert set(value["paths"]) == set(OPERATIONS)
     for path, method in OPERATIONS.items():
         operations = value["paths"][path]
@@ -190,7 +193,64 @@ def test_v5_has_no_send_operation_or_sensitive_fields() -> None:
         "participant_address",
     ):
         assert forbidden not in text
-    assert all(".send" not in path for path in contract()["paths"])
+    send_paths = {path for path in contract()["paths"] if ".email_send." in path}
+    assert send_paths == {
+        "/api/method/esan_gbos.api.v5.email_send.submit_for_review",
+        "/api/method/esan_gbos.api.v5.email_send.approve",
+    }
+    assert not any(
+        path not in send_paths
+        and any(marker in path for marker in (".send", "provider", "direct", "outbox"))
+        for path in contract()["paths"]
+    )
+
+
+def test_v5_email_send_governance_requests_are_closed_and_server_authoritative() -> None:
+    value = contract()
+
+    submit = value["paths"]["/api/method/esan_gbos.api.v5.email_send.submit_for_review"]["post"]
+    approve = value["paths"]["/api/method/esan_gbos.api.v5.email_send.approve"]["post"]
+
+    assert submit["x-gbos-provider-send"] is False
+    assert approve["x-gbos-provider-send"] is False
+    submit_body = resolve_schema(
+        value,
+        submit["requestBody"]["content"]["application/x-www-form-urlencoded"]["schema"],
+    )
+    approve_body = resolve_schema(
+        value,
+        approve["requestBody"]["content"]["application/x-www-form-urlencoded"]["schema"],
+    )
+
+    assert submit_body["additionalProperties"] is False
+    assert set(submit_body["required"]) == {
+        "inbox_item_ref",
+        "draft_ref",
+        "expected_revision",
+        "expected_draft_revision",
+        "idempotency_key",
+    }
+    assert set(submit_body["properties"]) == set(submit_body["required"])
+    assert submit_body["properties"]["expected_revision"]["minimum"] == 1
+    assert submit_body["properties"]["expected_draft_revision"]["minimum"] == 1
+    assert approve_body["additionalProperties"] is False
+    assert set(approve_body["required"]) == {
+        "review_case_name",
+        "expected_revision",
+        "decision_note",
+        "idempotency_key",
+    }
+    assert set(approve_body["properties"]) == set(approve_body["required"])
+    assert approve_body["properties"]["expected_revision"]["minimum"] == 1
+    assert approve_body["properties"]["decision_note"] == {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000,
+    }
+    for body in (submit_body, approve_body):
+        assert "live_authority_snapshot" not in body["properties"]
+        assert "raw_address" not in body["properties"]
+        assert "raw_content" not in body["properties"]
 
 
 def test_v5_reveal_and_save_draft_are_closed_no_store_non_send_operations() -> None:

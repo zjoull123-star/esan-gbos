@@ -124,6 +124,17 @@ class _RecordingIntake:
         self.results.append(result)
         return result
 
+    def load_participant_authority_binding(
+        self,
+        scope: TenantScope,
+        *,
+        inbox_item_ref: str,
+    ) -> Mapping[str, object] | None:
+        return self.service.load_participant_authority_binding(
+            scope,
+            inbox_item_ref=inbox_item_ref,
+        )
+
 
 class _InProcessTransport:
     """Injected local HTTP boundary; it never opens a socket."""

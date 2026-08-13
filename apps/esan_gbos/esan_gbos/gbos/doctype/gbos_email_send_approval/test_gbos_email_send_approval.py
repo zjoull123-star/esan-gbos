@@ -120,10 +120,22 @@ class TestGBOSEmailSendApproval(IntegrationTestCase):
 
     def _submit(self, live: dict[str, object]) -> tuple[dict[str, object], object]:
         frappe.local.gbos_request_id = None
-        response = submit_for_review(
+        protected = protect_live_email_send_snapshot(
             live,
-            "email-send-submit-" + hashlib.sha256(repr(live).encode()).hexdigest(),
+            site_id=frappe.local.site,
+            authenticated_user_name=TEST_OWNER,
         )
+        with patch(
+            "esan_gbos.api.v5.email_send._derive_submission_snapshot",
+            return_value=protected,
+        ):
+            response = submit_for_review(
+                str(live["inbox_item_ref"]),
+                str(live["reply_draft_ref"]),
+                int(live["inbox_item_revision"]),
+                int(live["reply_draft_revision"]),
+                "email-send-submit-" + hashlib.sha256(repr(live).encode()).hexdigest(),
+            )
         self.assertNotIn("error", response)
         case = frappe.get_doc("GBOS Review Case", response["data"]["review_case_ref"])
         return response, case
@@ -136,21 +148,28 @@ class TestGBOSEmailSendApproval(IntegrationTestCase):
         )
         idempotency_key = "idem:v2:" + hashlib.sha256(case.name.encode()).hexdigest()
         frappe.local.gbos_request_id = None
-        first = approve(
-            case.name,
-            case.revision,
-            "Current owner approves the frozen reply.",
+        protected_live = protect_live_email_send_snapshot(
             live,
-            idempotency_key,
+            site_id=frappe.local.site,
+            authenticated_user_name=TEST_OWNER,
         )
-        frappe.local.gbos_request_id = None
-        replay = approve(
-            case.name,
-            case.revision,
-            "Current owner approves the frozen reply.",
-            live,
-            idempotency_key,
-        )
+        with patch(
+            "esan_gbos.api.v5.email_send._derive_approval_live_snapshot",
+            return_value=protected_live,
+        ):
+            first = approve(
+                case.name,
+                case.revision,
+                "Current owner approves the frozen reply.",
+                idempotency_key,
+            )
+            frappe.local.gbos_request_id = None
+            replay = approve(
+                case.name,
+                case.revision,
+                "Current owner approves the frozen reply.",
+                idempotency_key,
+            )
 
         self.assertNotIn("error", first)
         self.assertEqual(replay["data"], first["data"])
@@ -210,13 +229,16 @@ class TestGBOSEmailSendApproval(IntegrationTestCase):
                 side_effect=frappe.ValidationError("injected publication failure"),
             ),
             self.assertRaises(frappe.ValidationError),
+            patch(
+                "esan_gbos.api.v5.email_send._derive_approval_live_snapshot",
+                return_value=protected,
+            ),
         ):
             _approve_locked(
                 payload={
                     "review_case_name": case.name,
                     "expected_revision": int(case.revision),
                     "decision_note": "Approval must roll back atomically.",
-                    "live_authority": protected,
                     "idempotency_key": idempotency_key,
                 },
                 actor=TEST_OWNER,

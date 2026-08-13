@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import json
 import sys
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -100,6 +101,25 @@ def v5_modules(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any, Any, FakeFrap
     admin = importlib.import_module("esan_gbos.api.v5.email_admin")
     inbox = importlib.import_module("esan_gbos.api.v5.email_inbox")
     return gateway, admin, inbox, fake
+
+
+@pytest.fixture
+def email_send_module(
+    v5_modules: tuple[Any, Any, Any, FakeFrappe], monkeypatch: pytest.MonkeyPatch
+) -> tuple[Any, FakeFrappe]:
+    _gateway, _admin, _inbox, fake = v5_modules
+    approval_module = ModuleType(
+        "esan_gbos.gbos.doctype.gbos_email_send_approval.gbos_email_send_approval"
+    )
+    approval_module.approval_snapshot = lambda _doc: {}
+    review_case_module = ModuleType("esan_gbos.gbos.doctype.gbos_review_case.gbos_review_case")
+    review_case_module.build_case_payload = lambda _doc: {}
+    review_case_module.build_subject_snapshot = lambda _doc: {}
+    monkeypatch.setitem(sys.modules, approval_module.__name__, approval_module)
+    monkeypatch.setitem(sys.modules, review_case_module.__name__, review_case_module)
+    sys.modules.pop("esan_gbos.api.v5.email_send", None)
+    module = importlib.import_module("esan_gbos.api.v5.email_send")
+    return module, fake
 
 
 def mailbox_payload() -> dict[str, Any]:
@@ -542,7 +562,235 @@ def test_save_draft_gets_fresh_gateway_receipt_then_observer_cas_then_commits_pr
     assert observer_calls[0]["payload"]["content_digest"] == receipt["request_digest"]
     assert observer_calls[0]["payload"]["idempotency_key"] == "draft-save-01"
     assert gateway_calls[1]["payload"]["evidence_ref"] == "EVR-DRAFT-01"
+    roles = {"sender": "mailbox_owner", "recipients": ["original_sender"]}
+    roles_digest = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(roles, sort_keys=True, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+    )
+    assert gateway_calls[0]["payload"]["participant_roles_digest"] == roles_digest
+    assert gateway_calls[1]["payload"]["participant_roles_digest"] == roles_digest
     assert "content" not in gateway_calls[1]["payload"]
+
+
+def test_email_send_submission_derives_protected_snapshot_only_from_server_authorities(
+    email_send_module: tuple[Any, FakeFrappe], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    email_send, _fake = email_send_module
+    actor = "sales@example.invalid"
+    refs = {
+        "team": TEAM_ONE,
+        "mailbox": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "inbox": "INB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "conversation": "CNV-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "draft": "DRF-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "party": "PTY-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "mapping": "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "evidence": "EVR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "client": "CLI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    }
+    gateway_snapshot = {
+        "site_id": "gbos.localhost",
+        "processing_purpose": "sales_follow_up",
+        "team_ref": refs["team"],
+        "assignee_user_name": actor,
+        "mailbox_ref": refs["mailbox"],
+        "mailbox_config_revision": 3,
+        "inbox_item_ref": refs["inbox"],
+        "inbox_item_revision": 4,
+        "conversation_ref": refs["conversation"],
+        "conversation_revision": 2,
+        "party_ref": refs["party"],
+        "owner_user_name": actor,
+        "reply_draft_ref": refs["draft"],
+        "reply_draft_revision": 3,
+        "reply_draft_digest": "sha256:" + "4" * 64,
+    }
+    sender = "extid:v1:email:" + "a" * 43
+    recipient = "extid:v1:email:" + "b" * 43
+    gateway_calls: list[dict[str, Any]] = []
+    observer_calls: list[dict[str, Any]] = []
+    authorize_extra: dict[str, Any] = {}
+
+    def gateway_call(**kwargs: Any) -> dict[str, Any]:
+        gateway_calls.append(kwargs)
+        if kwargs["payload"]["phase"] == "authorize":
+            return {
+                "send_authority": {
+                    "gateway_snapshot": gateway_snapshot,
+                    "draft_authorization": {"receipt_ref": "DAR-opaque"},
+                    "draft_evidence_ref": "obs:v1:opaque-draft",
+                    **authorize_extra,
+                }
+            }
+        return {
+            "send_authority": {
+                "gateway_snapshot": gateway_snapshot,
+                "participants": [
+                    {"address_role": "sender", "opaque_address_ref": sender},
+                    {
+                        "address_role": "to",
+                        "opaque_address_ref": recipient,
+                        "identity_mapping_ref": refs["mapping"],
+                        "identity_mapping_revision": 7,
+                    },
+                ],
+            }
+        }
+
+    def observer_call(**kwargs: Any) -> dict[str, Any]:
+        observer_calls.append(kwargs)
+        return {
+            "evidence_ref": refs["evidence"],
+            "digest": "sha256:" + "9" * 64,
+            "role_binding": email_send.EMAIL_SEND_PARTICIPANT_ROLES_DIGEST,
+            "participants": [
+                {"address_role": "sender", "opaque_address_ref": sender},
+                {"address_role": "to", "opaque_address_ref": recipient},
+            ],
+        }
+
+    monkeypatch.setattr(email_send, "call_gateway", gateway_call)
+    monkeypatch.setattr(email_send, "call_observer", observer_call)
+    monkeypatch.setattr(email_send, "make_gbos_name", lambda _prefix: refs["client"])
+    monkeypatch.setattr(
+        email_send,
+        "_current_frappe_party_authority",
+        lambda **_kwargs: {
+            "party_revision": 5,
+            "team_revision": 6,
+            "owner_eligibility_revision": "sha256:" + "8" * 64,
+        },
+    )
+
+    result = email_send._derive_submission_snapshot(
+        {
+            "inbox_item_ref": refs["inbox"],
+            "draft_ref": refs["draft"],
+            "expected_revision": 4,
+            "expected_draft_revision": 3,
+            "idempotency_key": "submit-email-review-01",
+        },
+        actor=actor,
+        issued_at=email_send.datetime(2026, 8, 13, 10, tzinfo=email_send.UTC),
+    )
+
+    assert result["assignee_user_ref"] == result["owner_user_ref"]
+    assert actor not in repr(result)
+    assert result["participants"][1]["identity_mapping_revision"] == 7
+    assert result["final_mime_evidence_ref"] == refs["evidence"]
+    assert observer_calls[0]["payload"]["participant_roles"] == {
+        "sender": "mailbox_owner",
+        "recipients": ["original_sender"],
+    }
+    assert gateway_calls[0]["payload"]["expected_inbox_revision"] == 4
+    assert gateway_calls[1]["payload"]["participant_projection"][1] == {
+        "address_role": "to",
+        "opaque_address_ref": recipient,
+    }
+    serialized_calls = repr(gateway_calls) + repr(observer_calls)
+    assert "@esan" not in serialized_calls
+    assert "body" not in serialized_calls
+
+    observer_count = len(observer_calls)
+    revalidated = email_send._derive_approval_live_snapshot(
+        result,
+        actor=actor,
+        issued_at=email_send.datetime(2026, 8, 13, 10, 1, tzinfo=email_send.UTC),
+    )
+    assert revalidated == result
+    assert len(observer_calls) == observer_count
+
+    authorize_extra["unexpected"] = True
+    with pytest.raises(email_send.BFFError, match="authority response"):
+        email_send._derive_submission_snapshot(
+            {
+                "inbox_item_ref": refs["inbox"],
+                "draft_ref": refs["draft"],
+                "expected_revision": 4,
+                "expected_draft_revision": 3,
+                "idempotency_key": "submit-email-review-02",
+            },
+            actor=actor,
+            issued_at=email_send.datetime(2026, 8, 13, 10, tzinfo=email_send.UTC),
+        )
+    assert len(observer_calls) == observer_count
+
+
+def test_email_send_rechecks_current_party_team_owner_and_membership_authority(
+    email_send_module: tuple[Any, FakeFrappe], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    email_send, fake = email_send_module
+    actor = "sales@example.invalid"
+    row = {
+        "mapping_ref": "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "mapping_revision": 7,
+        "team_ref": TEAM_ONE,
+        "identity_type": "Party",
+        "party_ref": "PTY-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "review_status": "Approved",
+        "business_status": "Active",
+        "party_revision": 5,
+        "party_team_ref": TEAM_ONE,
+        "party_status": "Active",
+        "party_review_status": "Approved",
+        "owner_user_ref": actor,
+        "team_revision": 6,
+        "team_status": "Active",
+        "team_review_status": "Approved",
+        "owner_enabled": 1,
+        "owner_user_type": "System User",
+        "membership_ref": "TMM-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "membership_parent": TEAM_ONE,
+        "membership_user": actor,
+        "membership_enabled": 1,
+        "membership_modified": "2026-08-13T09:00:00Z",
+    }
+    queries: list[tuple[str, dict[str, Any]]] = []
+
+    def current_authority(
+        query: str, parameters: dict[str, Any], **_kwargs: Any
+    ) -> list[dict[str, Any]]:
+        queries.append((query, parameters))
+        return [dict(row)]
+
+    monkeypatch.setattr(fake.db, "sql", current_authority, raising=False)
+
+    current = email_send._current_frappe_party_authority(
+        mapping_ref=row["mapping_ref"],
+        expected_mapping_revision=7,
+        expected_team_ref=TEAM_ONE,
+        expected_party_ref=row["party_ref"],
+        actor=actor,
+    )
+
+    assert current["party_revision"] == 5
+    assert current["team_revision"] == 6
+    assert current["owner_eligibility_revision"].startswith("sha256:")
+    assert "limit 3 for update" in " ".join(queries[0][0].lower().split())
+    assert queries[0][1] == {"mapping_ref": row["mapping_ref"]}
+
+    row["membership_enabled"] = 0
+    with pytest.raises(email_send.BFFError, match="authority changed"):
+        email_send._current_frappe_party_authority(
+            mapping_ref=row["mapping_ref"],
+            expected_mapping_revision=7,
+            expected_team_ref=TEAM_ONE,
+            expected_party_ref=row["party_ref"],
+            actor=actor,
+        )
+
+
+def test_email_send_scalar_boundary_rejects_controls_and_overflow(
+    email_send_module: tuple[Any, FakeFrappe],
+) -> None:
+    email_send, _fake = email_send_module
+
+    with pytest.raises(email_send.BFFError, match="reference is invalid"):
+        email_send._bounded_ref("opaque\x00reference", "reference")
+    with pytest.raises(email_send.BFFError, match="positive integer"):
+        email_send._positive_integer(2_147_483_648, "revision")
 
 
 def test_reveal_delegates_once_to_gateway_which_owns_the_second_observer_call(
