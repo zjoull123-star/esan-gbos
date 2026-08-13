@@ -13,14 +13,33 @@ export type EmailBusinessPurpose =
   | "audit_compliance";
 export type EmailMailboxStatus = "draft" | "active" | "paused" | "revoked" | "error";
 export type EmailMailboxAction = "enable" | "pause" | "revoke";
-export type EmailInboxState = "identity_pending" | "unassigned";
+export type EmailInboxState =
+  | "identity_pending"
+  | "unassigned"
+  | "assigned"
+  | "draft"
+  | "waiting_internal"
+  | "waiting_customer"
+  | "converted"
+  | "closed"
+  | "quarantined"
+  | "send_queued"
+  | "send_uncertain";
+export type EmailInboxSort = "received_at_desc" | "sla_due_at_asc";
+export type EmailInboxQueue =
+  | "all"
+  | "identity_pending"
+  | "unassigned"
+  | "first_reply_due"
+  | "draft"
+  | "send_failure_uncertain"
+  | "waiting_customer"
+  | "waiting_internal"
+  | "converted"
+  | "closed"
+  | "quarantine";
 export type EmailIdentityState = "unknown" | "confirmed" | "revoked";
-export type EmailConnectorHealthState =
-  | "healthy"
-  | "degraded"
-  | "paused"
-  | "revoked"
-  | "unknown";
+export type EmailConnectorHealthState = "healthy" | "degraded" | "paused" | "revoked" | "unknown";
 export type EmailFreshnessState = "fresh" | "stale" | "unknown";
 
 export interface EmailMailbox {
@@ -42,14 +61,8 @@ export interface EmailMailboxListPayload {
   next_cursor: string | null;
 }
 
-export interface EmailMailboxPayload {
-  mailbox: EmailMailbox;
-}
-
-export interface EmailMailboxListQuery {
-  cursor?: string;
-  pageSize?: number;
-}
+export interface EmailMailboxPayload { mailbox: EmailMailbox }
+export interface EmailMailboxListQuery { cursor?: string; pageSize?: number }
 
 export interface EmailMailboxUpsertCommand {
   mailbox_ref?: string;
@@ -76,6 +89,29 @@ export interface EmailMailboxStatusCommand {
   idempotency_key: string;
 }
 
+export interface EmailRoutingRule {
+  rule_ref: string;
+  mailbox_ref: string;
+  team_label: string | null;
+  owner_label: string | null;
+  priority: number;
+  revision: number;
+  enabled: boolean;
+}
+
+export interface EmailRoutingRulePayload { rule: EmailRoutingRule }
+export interface EmailRoutingRuleListPayload { rules: EmailRoutingRule[] }
+export interface EmailRoutingRuleUpsertCommand {
+  rule_ref?: string;
+  team_ref: string;
+  mailbox_ref: string;
+  owner_user_ref: string;
+  priority: number;
+  enabled: boolean;
+  expected_revision: number;
+  idempotency_key: string;
+}
+
 export interface EmailInboxItem {
   inbox_item_ref: string;
   mailbox_label: string;
@@ -92,20 +128,74 @@ export interface EmailInboxDetail extends EmailInboxItem {
   identity_state: EmailIdentityState;
 }
 
-export interface EmailInboxListPayload {
-  inbox_items: EmailInboxItem[];
-  next_cursor: string | null;
-}
-
-export interface EmailInboxDetailPayload {
-  inbox_item: EmailInboxDetail;
-}
-
+export interface EmailInboxListPayload { inbox_items: EmailInboxItem[]; next_cursor: string | null }
+export interface EmailInboxDetailPayload { inbox_item: EmailInboxDetail }
 export interface EmailInboxListQuery {
   state?: EmailInboxState;
+  mailboxRef?: string;
+  sort?: EmailInboxSort;
   cursor?: string;
   pageSize?: number;
 }
+
+export interface RevisionCommand {
+  expected_revision: number;
+  idempotency_key: string;
+}
+export interface EmailInboxClaimCommand extends RevisionCommand { inbox_item_ref: string }
+export interface EmailInboxReassignCommand extends RevisionCommand {
+  inbox_item_ref: string;
+  assignee_team_ref: string;
+  assignee_enabled: boolean;
+  assignee_user_ref?: string;
+}
+export interface EmailInboxTransitionCommand extends RevisionCommand {
+  inbox_item_ref: string;
+  target_state: EmailInboxState;
+}
+export interface EmailInboxMergeCommand {
+  suggestion_ref: string;
+  left_inbox_item_ref: string;
+  expected_suggestion_revision: number;
+  expected_left_revision: number;
+  expected_right_revision: number;
+  idempotency_key: string;
+}
+export interface EmailInboxSplitCommand extends RevisionCommand {
+  conversation_ref: string;
+  moved_inbox_item_refs: string[];
+}
+export interface EmailBusinessLinkCommand extends RevisionCommand {
+  inbox_item_ref: string;
+  business_ref: string;
+  authority_valid: true;
+  authority_team_ref: string;
+}
+export interface EmailDraftSaveCommand extends RevisionCommand {
+  inbox_item_ref: string;
+  draft_ref: string;
+  content: string;
+}
+export interface EmailRevealCommand { inbox_item_ref: string; evidence_ref: string }
+
+export interface EmailInboxCommandResult {
+  inbox_item_ref: string;
+  state: EmailInboxState;
+  team_label?: string | null;
+  assignee_label?: string | null;
+  conversation_ref?: string | null;
+  business_links?: string[];
+  revision: number;
+}
+export interface EmailConversationResult {
+  conversation_ref: string;
+  team_label: string | null;
+  lifecycle_state: string;
+  inbox_item_refs: string[];
+  revision: number;
+}
+export interface EmailDraftResult { draft_ref: string; revision: number; state: "editable" }
+export interface EmailRevealResult { content: string; media_type: string }
 
 export interface EmailConnectorHealth {
   mailbox_ref: string;
@@ -116,10 +206,7 @@ export interface EmailConnectorHealth {
   last_success_at: string | null;
   safe_error_code: string | null;
 }
-
-export interface EmailConnectorHealthPayload {
-  connector_health: EmailConnectorHealth[];
-}
+export interface EmailConnectorHealthPayload { connector_health: EmailConnectorHealth[] }
 
 export interface V5SuccessEnvelope<T> {
   data: T;

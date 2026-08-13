@@ -8,7 +8,10 @@ import {
   createEmailGatewayClient,
   type EmailGatewayFetcher,
 } from "@/api/email-gateway";
+import { BffError } from "@/api/bff";
+import InboxQueueTabs from "@/components/email/InboxQueueTabs.vue";
 import EmailGatewayAdminView from "@/views/EmailGatewayAdminView.vue";
+import EmailInboxDetailView from "@/views/EmailInboxDetailView.vue";
 import EmailInboxView from "@/views/EmailInboxView.vue";
 
 const okV5 = (data: unknown) =>
@@ -45,15 +48,25 @@ const inboxItem = {
 };
 
 describe("Email Gateway v5 typed client", () => {
-  it("uses only the seven frozen endpoints and no-store requests", async () => {
+  it("uses exactly the frozen 17-operation surface and no-store requests", async () => {
     expect(EMAIL_GATEWAY_ENDPOINTS).toEqual({
-      mailboxList: "/api/method/esan_gbos.api.v5.email_admin.list",
-      mailboxGet: "/api/method/esan_gbos.api.v5.email_admin.get",
-      mailboxUpsert: "/api/method/esan_gbos.api.v5.email_admin.upsert",
-      mailboxSetStatus: "/api/method/esan_gbos.api.v5.email_admin.set_status",
-      connectorHealth: "/api/method/esan_gbos.api.v5.email_admin.get_connector_health",
+      mailboxList: "/api/method/esan_gbos.api.v5.email_admin.list_mailboxes",
+      mailboxGet: "/api/method/esan_gbos.api.v5.email_admin.get_mailbox",
+      ruleList: "/api/method/esan_gbos.api.v5.email_admin.list_rules",
+      connectorHealth: "/api/method/esan_gbos.api.v5.email_admin.connector_health",
+      mailboxUpsert: "/api/method/esan_gbos.api.v5.email_admin.upsert_mailbox",
+      mailboxSetStatus: "/api/method/esan_gbos.api.v5.email_admin.set_mailbox_status",
+      ruleUpsert: "/api/method/esan_gbos.api.v5.email_admin.upsert_rule",
       inboxList: "/api/method/esan_gbos.api.v5.email_inbox.list",
       inboxGet: "/api/method/esan_gbos.api.v5.email_inbox.get",
+      inboxClaim: "/api/method/esan_gbos.api.v5.email_inbox.claim",
+      inboxReassign: "/api/method/esan_gbos.api.v5.email_inbox.reassign",
+      inboxTransition: "/api/method/esan_gbos.api.v5.email_inbox.transition",
+      inboxMerge: "/api/method/esan_gbos.api.v5.email_inbox.merge",
+      inboxSplit: "/api/method/esan_gbos.api.v5.email_inbox.split",
+      inboxLinkBusiness: "/api/method/esan_gbos.api.v5.email_inbox.link_business",
+      inboxSaveDraft: "/api/method/esan_gbos.api.v5.email_inbox.save_draft",
+      inboxReveal: "/api/method/esan_gbos.api.v5.email_inbox.reveal",
     });
     const fetcher = vi.fn<EmailGatewayFetcher>().mockImplementation((input) => {
       const path = new URL(String(input), "https://gbos.invalid").pathname;
@@ -75,7 +88,9 @@ describe("Email Gateway v5 typed client", () => {
   });
 
   it("sends CSRF, expected revision and idempotency for safe status changes", async () => {
-    const fetcher = vi.fn<EmailGatewayFetcher>().mockResolvedValue(okV5({ mailbox }));
+    const fetcher = vi.fn<EmailGatewayFetcher>().mockResolvedValue(okV5({
+      mailbox: { ...mailbox, config_revision: 4 },
+    }));
     const client = createEmailGatewayClient({
       fetcher,
       isOnline: () => true,
@@ -113,6 +128,94 @@ describe("Email Gateway v5 typed client", () => {
     await expect(client.listMailboxes()).rejects.toMatchObject({ code: "invalid_response" });
   });
 
+  it("rejects raw identifiers, duplicate refs, unknown queue enums and malformed pagination", async () => {
+    const unsafeResponses = [
+      { inbox_items: [{ ...inboxItem, safe_summary: "person@example.invalid" }], next_cursor: null },
+      { inbox_items: [inboxItem, inboxItem], next_cursor: null },
+      { inbox_items: [{ ...inboxItem, state: "invented" }], next_cursor: null },
+      { inbox_items: [inboxItem], next_cursor: "x".repeat(513) },
+    ];
+    for (const data of unsafeResponses) {
+      const client = createEmailGatewayClient({
+        fetcher: vi.fn<EmailGatewayFetcher>().mockResolvedValue(okV5(data)),
+        isOnline: () => true,
+      });
+      await expect(client.listInbox()).rejects.toMatchObject({ code: "invalid_response" });
+    }
+  });
+
+  it("preserves closed v5 error codes so 403 and 409 can fail closed", async () => {
+    const errorResponse = (status: number, code: string) =>
+      new Response(
+        JSON.stringify({
+          message: {
+            error: {
+              code,
+              message: "safe error",
+              request_id: "req-error",
+              details: {},
+            },
+          },
+        }),
+        { status, headers: { "Content-Type": "application/json" } },
+      );
+    const forbidden = createEmailGatewayClient({
+      fetcher: vi.fn<EmailGatewayFetcher>().mockResolvedValue(errorResponse(403, "permission_denied")),
+      isOnline: () => true,
+    });
+    const conflict = createEmailGatewayClient({
+      fetcher: vi.fn<EmailGatewayFetcher>().mockResolvedValue(errorResponse(409, "revision_conflict")),
+      isOnline: () => true,
+    });
+
+    await expect(forbidden.getInboxItem("INB-01")).rejects.toMatchObject({
+      code: "permission_denied",
+      requestId: "req-error",
+      status: 403,
+    });
+    await expect(conflict.getInboxItem("INB-01")).rejects.toMatchObject({
+      code: "revision_conflict",
+      requestId: "req-error",
+      status: 409,
+    });
+  });
+
+  it("supports create/edit-only drafts and governed commands without a send operation", async () => {
+    const fetcher = vi.fn<EmailGatewayFetcher>().mockImplementation((input) => {
+      const path = new URL(String(input), "https://gbos.invalid").pathname;
+      if (path === EMAIL_GATEWAY_ENDPOINTS.inboxSaveDraft) {
+        return Promise.resolve(okV5({ draft: { draft_ref: "DRF-01", revision: 2, state: "editable" } }));
+      }
+      return Promise.resolve(okV5({ inbox_item: { inbox_item_ref: "INB-01", state: "assigned", revision: 2 } }));
+    });
+    const client = createEmailGatewayClient({ fetcher, isOnline: () => true, getCsrfToken: () => "csrf-v5" });
+
+    await client.claimInbox({ inbox_item_ref: "INB-01", expected_revision: 1, idempotency_key: "claim-0001" });
+    await client.saveDraft({ inbox_item_ref: "INB-01", draft_ref: "DRF-01", content: "受控草稿", expected_revision: 1, idempotency_key: "draft-0001" });
+
+    expect("send" in client).toBe(false);
+    expect(fetcher.mock.calls.map(([input]) => new URL(String(input), "https://gbos.invalid").pathname)).toEqual([
+      EMAIL_GATEWAY_ENDPOINTS.inboxClaim,
+      EMAIL_GATEWAY_ENDPOINTS.inboxSaveDraft,
+    ]);
+  });
+
+  it("rejects a command response whose revision did not advance", async () => {
+    const client = createEmailGatewayClient({
+      fetcher: vi.fn<EmailGatewayFetcher>().mockResolvedValue(okV5({
+        inbox_item: { inbox_item_ref: "INB-01", state: "assigned", revision: 1 },
+      })),
+      isOnline: () => true,
+      getCsrfToken: () => "csrf-v5",
+    });
+
+    await expect(client.claimInbox({
+      inbox_item_ref: "INB-01",
+      expected_revision: 1,
+      idempotency_key: "claim-0001",
+    })).rejects.toMatchObject({ code: "invalid_response" });
+  });
+
   it("rejects incomplete or invented mailbox authority before the network", async () => {
     const fetcher = vi.fn<EmailGatewayFetcher>();
     const client = createEmailGatewayClient({
@@ -143,19 +246,19 @@ describe("Email Gateway v5 typed client", () => {
   });
 });
 
-describe("Email inbox Phase 1 view", () => {
-  it("renders safe summaries and details without Phase 2 controls or sensitive DOM", async () => {
+describe("Email inbox operator views", () => {
+  it("renders all approved queues with tab/list semantics", () => {
+    const wrapper = mount(InboxQueueTabs, { props: { modelValue: "all" } });
+    expect(wrapper.get("[role='tablist']")).toBeTruthy();
+    expect(wrapper.findAll("[role='tab']").map((tab) => tab.text())).toEqual([
+      "全部", "身份待确认", "待分配", "首次回复将到期", "草稿", "发送失败或不确定",
+      "等待客户", "等待内部", "已转化", "已关闭", "隔离区",
+    ]);
+  });
+
+  it("renders safe list summaries and navigates to a separate detail route", async () => {
     const client = {
       listInbox: vi.fn().mockResolvedValue({ data: { inbox_items: [inboxItem], next_cursor: null } }),
-      getInboxItem: vi.fn().mockResolvedValue({
-        data: {
-          inbox_item: {
-            ...inboxItem,
-            assignee_label: null,
-            identity_state: "unknown",
-          },
-        },
-      }),
     };
     const host = document.createElement("div");
     document.body.append(host);
@@ -164,14 +267,10 @@ describe("Email inbox Phase 1 view", () => {
       global: { provide: { [EMAIL_GATEWAY_CLIENT_KEY as symbol]: client } },
     });
     await flushPromises();
-    await wrapper.get("[data-inbox-detail]").trigger("click");
-    await flushPromises();
 
     expect(wrapper.text()).toContain("新的销售咨询");
     expect(wrapper.text()).toContain("身份待确认");
-    expect(
-      wrapper.findAll("button").map((button) => button.text()),
-    ).not.toEqual(expect.arrayContaining(["认领", "合并", "新建草稿", "发送"]));
+    expect(wrapper.get("[data-inbox-detail]").attributes("href")).toBe("/gbos/email/INB-01");
     for (const sensitive of [
       "person@example.invalid",
       "provider-message-01",
@@ -182,6 +281,72 @@ describe("Email inbox Phase 1 view", () => {
     }
     expect((await axe.run(wrapper.element)).violations).toEqual([]);
     wrapper.unmount();
+  });
+
+  it("distinguishes mailbox, channel owner, identity, customer and assignee while reveal stays hidden", async () => {
+    const client = {
+      getInboxItem: vi.fn().mockResolvedValue({
+        data: { inbox_item: { ...inboxItem, assignee_label: "当前业务负责人", identity_state: "confirmed" } },
+      }),
+      claimInbox: vi.fn(),
+      reassignInbox: vi.fn(),
+      transitionInbox: vi.fn(),
+      mergeInbox: vi.fn(),
+      splitConversation: vi.fn(),
+      linkBusiness: vi.fn(),
+      saveDraft: vi.fn(),
+      revealEvidence: vi.fn(),
+    };
+    const host = document.createElement("div");
+    document.body.append(host);
+    const wrapper = mount(EmailInboxDetailView, {
+      attachTo: host,
+      props: { inboxItemRef: "INB-01" },
+      global: { provide: { [EMAIL_GATEWAY_CLIENT_KEY as symbol]: client } },
+    });
+    await flushPromises();
+    for (const label of ["接收邮箱", "渠道账户负责人", "参与者身份状态", "客户 Party / Contact", "当前业务负责人"]) {
+      expect(wrapper.text()).toContain(label);
+    }
+    expect(wrapper.text()).toContain("授权原文默认隐藏");
+    expect(wrapper.html()).not.toContain("raw message body");
+    expect(wrapper.findAll("button").map((button) => button.text())).not.toEqual(expect.arrayContaining(["批准", "发送"]));
+    expect((await axe.run(wrapper.element)).violations).toEqual([]);
+    wrapper.unmount();
+    host.remove();
+  });
+
+  it("clears protected detail on 403", async () => {
+    const getInboxItem = vi.fn()
+      .mockResolvedValueOnce({ data: { inbox_item: { ...inboxItem, safe_summary: "仅授权可见摘要", assignee_label: null, identity_state: "unknown" } } })
+      .mockRejectedValueOnce(new BffError("permission_denied", { status: 403 }));
+    const wrapper = mount(EmailInboxDetailView, {
+      props: { inboxItemRef: "INB-01" },
+      global: { provide: { [EMAIL_GATEWAY_CLIENT_KEY as symbol]: { getInboxItem } } },
+    });
+    await flushPromises();
+    expect(wrapper.text()).toContain("仅授权可见摘要");
+    await wrapper.get("[data-detail-refresh]").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).not.toContain("仅授权可见摘要");
+    expect(wrapper.text()).toContain("当前角色无权执行此操作");
+  });
+
+  it("clears stale command state and performs one bounded reload on 409", async () => {
+    const getInboxItem = vi.fn().mockResolvedValue({
+      data: { inbox_item: { ...inboxItem, state: "unassigned", assignee_label: null, identity_state: "unknown" } },
+    });
+    const claimInbox = vi.fn().mockRejectedValue(new BffError("revision_conflict", { status: 409 }));
+    const wrapper = mount(EmailInboxDetailView, {
+      props: { inboxItemRef: "INB-01" },
+      global: { provide: { [EMAIL_GATEWAY_CLIENT_KEY as symbol]: { getInboxItem, claimInbox } } },
+    });
+    await flushPromises();
+    await wrapper.get("[data-claim-inbox]").trigger("click");
+    await flushPromises();
+    expect(getInboxItem).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain("数据已被他人更新");
+    expect(wrapper.find("[data-command-pending]").exists()).toBe(false);
   });
 });
 

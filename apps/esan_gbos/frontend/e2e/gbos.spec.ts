@@ -126,6 +126,7 @@ const allRoutes = [
   { path: "/gbos/integrations", heading: "集成状态" },
   { path: "/gbos/communications", heading: "沟通观察" },
   { path: "/gbos/email", heading: "统一邮件收件箱" },
+  { path: "/gbos/email/INB-E2E-PRIMARY", heading: "邮件处理详情" },
   { path: "/gbos/email-gateway", heading: "邮件网关配置台" },
   {
     path: "/gbos/communications/OBS-E2E-1",
@@ -630,9 +631,20 @@ const harnessFixtures = new Map<string, unknown>([
       ],
     }),
   ],
+  [`GET ${EMAIL_GATEWAY_ENDPOINTS.ruleList}`, v5Envelope({ rules: [] })],
   [
     `GET ${EMAIL_GATEWAY_ENDPOINTS.inboxList}`,
     v5Envelope({ inbox_items: [syntheticEmailInboxItem], next_cursor: null }),
+  ],
+  [
+    `GET ${EMAIL_GATEWAY_ENDPOINTS.inboxGet}`,
+    v5Envelope({
+      inbox_item: {
+        ...syntheticEmailInboxItem,
+        assignee_label: "销售负责人",
+        identity_state: "unknown",
+      },
+    }),
   ],
   [`GET ${BFF_ENDPOINTS.party360}`, syntheticPartyEnvelope],
   [`GET ${BFF_ENDPOINTS.workItemList}`, syntheticWorkEnvelope],
@@ -1041,6 +1053,57 @@ test("SPA 内销售切换采购会重新读取采购数据", async ({ page }, te
   ).toBeVisible();
   await expect(page.getByText(/PURCHASE-ONLY/u)).toBeVisible();
   await expect(page.getByText(/SALES-ONLY/u)).toHaveCount(0);
+});
+
+test("邮件收件箱与独立网关遵守隐私、角色、缩放和仅草稿边界", async ({ page }, testInfo) => {
+  test.skip(!isHarness(testInfo), "邮件 PWA 合成验收仅用于前端 harness");
+  await setHarnessSession(page, ["Sales User"]);
+  await page.goto(harnessEntry);
+  await navigateHarnessRoute(page, "/gbos/email");
+  await expect(page.getByRole("heading", { level: 1, name: "统一邮件收件箱" })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "邮件处理队列" })).toBeVisible();
+  await expect(page.getByRole("tab")).toHaveCount(11);
+  await expect(page.getByRole("link", { name: "查看安全详情" })).toHaveAttribute(
+    "href",
+    "/gbos/email/INB-E2E-PRIMARY",
+  );
+  await page.getByRole("link", { name: "查看安全详情" }).click();
+  await expect(page).toHaveURL(/\/gbos\/email\/INB-E2E-PRIMARY$/u);
+  await expect(page.getByRole("heading", { level: 1, name: "邮件处理详情" })).toBeVisible();
+  await expect(page.getByText("授权原文默认隐藏", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存草稿", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "批准", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toHaveCount(0);
+  expect(await axeViolations(page)).toEqual([]);
+
+  const privacySnapshot = await page.evaluate(() => ({
+    url: window.location.href,
+    dom: document.documentElement.innerHTML,
+  }));
+  expect(privacySnapshot.url).not.toContain("?");
+  for (const forbidden of [
+    "person@example.invalid",
+    "provider-message-01",
+    "protected-ref",
+    "raw message body",
+  ]) {
+    expect(privacySnapshot.dom).not.toContain(forbidden);
+  }
+
+  for (const width of [375, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    const diagnostics = await responsiveDiagnostics(page);
+    expect(diagnostics.html).toBeLessThanOrEqual(diagnostics.viewport);
+    expect(diagnostics.body).toBeLessThanOrEqual(diagnostics.viewport);
+    expect(diagnostics.offscreenButtons).toEqual([]);
+  }
+  await page.setViewportSize({ width: 768, height: 900 });
+  await page.evaluate(() => { document.documentElement.style.zoom = "200%"; });
+  const zoomed = await responsiveDiagnostics(page);
+  expect(zoomed.html).toBeLessThanOrEqual(zoomed.viewport);
+  expect(zoomed.body).toBeLessThanOrEqual(zoomed.viewport);
+  expect(zoomed.offscreenButtons).toEqual([]);
+  await page.evaluate(() => { document.documentElement.style.zoom = ""; });
 });
 
 test("全部真实路由在 320、375、768、1024、1440 与 200% 等效视口无溢出", async ({
@@ -1479,6 +1542,8 @@ test("离线关闭且 fixture API 响应不进入持久存储", async (
     "EVID-E2E-1",
     "REVIEW-ONLY · 确认客户反馈事实",
     "DRAFT-E2E-1",
+    syntheticEmailInboxItem.safe_summary,
+    syntheticEmailInboxItem.inbox_item_ref,
   ];
   await setHarnessSession(page, ["GBOS Admin"]);
 

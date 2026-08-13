@@ -112,6 +112,16 @@ export const APP_ROUTES = [
   },
 ] as const satisfies readonly RouteRecordRaw[];
 
+export const EMAIL_INBOX_DETAIL_ROUTE = {
+  path: "/gbos/email/:inboxItemRef",
+  name: "email-inbox-detail",
+  component: () => import("./views/EmailInboxDetailView.vue"),
+  props: true,
+  meta: { roles: EMAIL_INBOX_ROLES },
+} as const satisfies RouteRecordRaw;
+
+const ROUTER_ROUTES = [...APP_ROUTES, EMAIL_INBOX_DETAIL_ROUTE] as const;
+
 const pathMatches = (pattern: string, actual: string) => {
   const escaped = pattern
     .split("/")
@@ -124,7 +134,7 @@ export const isRouteAllowed = (path: string, roles: readonly string[]) => {
   if (roles.includes("GBOS Admin")) {
     return true;
   }
-  const route = APP_ROUTES.find((candidate) => pathMatches(candidate.path, path));
+  const route = ROUTER_ROUTES.find((candidate) => pathMatches(candidate.path, path));
   if (!route) {
     return false;
   }
@@ -135,6 +145,6 @@ export const isRouteAllowed = (path: string, roles: readonly string[]) => {
 export const createAppRouter = () =>
   createRouter({
     history: createWebHistory(),
-    routes: [...APP_ROUTES],
+    routes: [...ROUTER_ROUTES],
     scrollBehavior: () => ({ top: 0 }),
   });

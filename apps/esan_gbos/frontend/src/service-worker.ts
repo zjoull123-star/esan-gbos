@@ -63,8 +63,10 @@ cleanupOutdatedCaches();
 // Only Vite's versioned static shell enters the precache manifest.
 precacheAndRoute(self.__WB_MANIFEST);
 
-// This route is registered first and must stay NetworkOnly. No API response,
-// customer record, message, recording, token, or command is available offline.
+// This route is registered first and must stay NetworkOnly. The API client also
+// sends cache=no-store plus Cache-Control/Pragma. There is intentionally no
+// cache or background-sync strategy, so failed reads and writes stay failed
+// closed and no protected response or mutation is queued for replay.
 registerRoute(
   ({ url }) => url.pathname.startsWith("/api/"),
   new NetworkOnly(),
