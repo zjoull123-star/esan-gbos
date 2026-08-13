@@ -102,5 +102,41 @@ use only the officially documented `45009` behavior.
 
 ## Outbound boundary
 
-Outbound behavior is not frozen by this note. No send/status schema or fixture is approved, and
-outbound remains unresolved and disabled.
+Status: **RED — Task 18 stopped**
+
+The current first-party outbound page does document submission of an ordinary email:
+
+- `POST /cgi-bin/exmail/app/compose_send?access_token=ACCESS_TOKEN`;
+- required `to` plus `subject` and `content`;
+- optional `cc`, `bcc`, `attachment_list`, `content_type`, and `enable_id_trans`;
+- each recipient group may contain `emails` and `userids`; at least one `to` address or User ID is
+  required;
+- attachments contain `file_name` and Base64 `content`; body plus attachments is limited to 50M,
+  with at most 200 attachments;
+- the authenticated application mailbox is the sender; the request has no arbitrary `from` or
+  sender-alias selector.
+
+The exact documented success response is only `{ "errcode": 0, "errmsg": "ok" }`. The request has
+no stable client request or idempotency field, and the response has no mail/message/receipt ID. The
+official inbox list and read-mail APIs apply to received mail only. The reviewed official catalog
+does not publish a sent-mail list, submission/delivery status, receipt lookup, or post-timeout
+reconciliation endpoint.
+
+The send page also leaves recipient-count, subject-length, arbitrary-header, decoded-versus-Base64
+size, and endpoint-specific error limits unspecified. The general first-party error contract still
+documents JSON `45009` for rate limiting; it does not specify HTTP 429 or `Retry-After`.
+
+Sources: [send ordinary email](https://developer.work.weixin.qq.com/document/path/97445),
+[mail API overview](https://developer.work.weixin.qq.com/document/path/95486),
+[query application mailbox](https://developer.work.weixin.qq.com/document/path/97991),
+[update application mailbox](https://developer.work.weixin.qq.com/document/path/97373),
+[frequency limits](https://developer.work.weixin.qq.com/document/path/90312), and
+[global error codes](https://developer.work.weixin.qq.com/document/path/90313). Reviewed
+2026-08-13 (Asia/Shanghai).
+
+An ambiguous timeout may occur after the provider accepted the email. Without an official
+idempotency key or a stable receipt plus lookup API, retry could duplicate a real customer email.
+Therefore no outbound schema/fixture, adapter, provider credential, or runtime enablement is
+approved. Task 18 can resume only after first-party proof supplies either documented idempotent
+replay semantics or a stable send receipt with post-timeout status lookup. External send remains
+disabled.
