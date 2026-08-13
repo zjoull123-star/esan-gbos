@@ -31,6 +31,7 @@ GBOS_ROLES = [
     "Finance Readonly",
     "Agent TrustedMaterializer",
     "Observer Identity Resolver",
+    "Email Gateway Authority Consumer",
 ]
 
 fixtures = [

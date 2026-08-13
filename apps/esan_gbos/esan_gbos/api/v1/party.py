@@ -54,6 +54,7 @@ def get_360(party: str) -> dict[str, Any]:
             "name": profile.name,
             "party_name": profile.party_name,
             "team": profile.team,
+            "owner_user": profile.owner_user,
             "origin": profile.origin,
             "business_status": profile.business_status,
             "review_status": profile.review_status,

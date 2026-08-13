@@ -304,6 +304,10 @@ class GBOSReviewCase(GBOSDocument):
             return
         if not self.flags.gbos_review_command:
             raise frappe.PermissionError
+        if str(self.origin_reference or "").startswith("identity-human:v1:") and not getattr(
+            self.flags, "gbos_human_identity_approval", False
+        ):
+            raise frappe.PermissionError
 
         from esan_gbos.gbos.doctype.gbos_external_identity.gbos_external_identity import (
             review_state_for_decision,

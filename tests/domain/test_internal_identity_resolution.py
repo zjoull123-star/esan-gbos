@@ -167,6 +167,24 @@ def test_internal_identity_endpoint_is_authenticated_post_only_and_has_no_bypass
     assert source.count('@frappe.whitelist(methods=["POST"])') == 1
 
 
+def test_observer_and_email_gateway_use_one_shared_external_identity_projection() -> None:
+    observer = ENDPOINT_PATH.read_text(encoding="utf-8")
+    gateway = (
+        ROOT
+        / "apps"
+        / "esan_gbos"
+        / "esan_gbos"
+        / "api"
+        / "internal"
+        / "email_gateway_authority.py"
+    ).read_text(encoding="utf-8")
+
+    assert "build_external_identity_projection(row)" in observer
+    assert "build_external_identity_projection(rows[0])" in gateway
+    assert "domain.external_identity_projection" in observer
+    assert "domain.external_identity_projection" in gateway
+
+
 def test_confirmed_resolution_returns_only_the_frozen_contract_fields(
     resolution_api: tuple[Any, _Frappe],
 ) -> None:

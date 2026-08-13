@@ -156,6 +156,31 @@ def test_observer_identity_resolver_has_no_general_doctype_permissions() -> None
             )
 
 
+def test_email_gateway_authority_consumer_has_no_general_doctype_permissions() -> None:
+    for doctype in (
+        "GBOS Team",
+        "GBOS External Identity",
+        "GBOS Party Profile",
+        "GBOS Review Case",
+    ):
+        for permission_type in (
+            "read",
+            "write",
+            "create",
+            "delete",
+            "report",
+            "export",
+            "print",
+            "email",
+            "share",
+        ):
+            assert not role_has_doctype_permission(
+                "Email Gateway Authority Consumer",
+                doctype,
+                permission_type,
+            )
+
+
 def test_buyer_is_limited_to_procurement_and_authorized_demand_summary() -> None:
     assert can_access_record(
         roles={"Buyer"},

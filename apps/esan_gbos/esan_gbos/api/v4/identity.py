@@ -785,7 +785,88 @@ def revoke(
     )
 
 
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+@bff_endpoint("POST")
+def submit_human_email_identity(
+    team: str,
+    address_ref: str,
+    target_type: str,
+    target_ref: str,
+    purpose: str,
+    evidence_ref: str,
+    expected_revision: int | str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    require_roles({"GBOS Admin", "Integration Admin", "Sales Manager", "Reviewer"})
+    from esan_gbos.domain.identity_review import submit_human_identity_for_review
+
+    try:
+        receipt = submit_human_identity_for_review(
+            {
+                "team": _text(team, "team", maximum=140),
+                "address_ref": _text(address_ref, "address_ref", maximum=160),
+                "target_type": _text(target_type, "target_type", maximum=16),
+                "target_ref": _text(target_ref, "target_ref", maximum=256),
+                "purpose": _text(purpose, "purpose", maximum=32),
+                "evidence_ref": _text(evidence_ref, "evidence_ref", maximum=256),
+                "expected_revision": _integer(expected_revision, "expected_revision", minimum=0),
+                "idempotency_key": _idempotency_key(idempotency_key),
+                "request_id": request_id(),
+            }
+        )
+    except IdentityReviewError, frappe.PermissionError:
+        raise BFFError(
+            "identity_review_forbidden",
+            "Human identity review could not be submitted",
+            status=403,
+        ) from None
+    return v4_success(receipt)
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+@bff_endpoint("POST")
+def approve_human_email_identity(
+    review_case_ref: str,
+    expected_review_case_revision: int | str,
+    expected_mapping_revision: int | str,
+    purpose: str,
+    evidence_ref: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    require_roles({"GBOS Admin", "Integration Admin", "Sales Manager", "Reviewer"})
+    from esan_gbos.domain.identity_review import approve_human_identity_review
+
+    try:
+        receipt = approve_human_identity_review(
+            {
+                "review_case_ref": _text(review_case_ref, "review_case_ref", maximum=140),
+                "expected_review_case_revision": _integer(
+                    expected_review_case_revision,
+                    "expected_review_case_revision",
+                    minimum=1,
+                ),
+                "expected_mapping_revision": _integer(
+                    expected_mapping_revision,
+                    "expected_mapping_revision",
+                    minimum=1,
+                ),
+                "purpose": _text(purpose, "purpose", maximum=32),
+                "evidence_ref": _text(evidence_ref, "evidence_ref", maximum=256),
+                "idempotency_key": _idempotency_key(idempotency_key),
+                "request_id": request_id(),
+            }
+        )
+    except IdentityReviewError, frappe.PermissionError:
+        raise BFFError(
+            "identity_review_forbidden",
+            "Human identity review could not be approved",
+            status=403,
+        ) from None
+    return v4_success(receipt)
+
+
 __all__ = [
+    "approve_human_email_identity",
     "get_pending_review",
     "get_state",
     "list_candidates",
@@ -793,4 +874,5 @@ __all__ = [
     "list_states",
     "revoke",
     "submit_for_review",
+    "submit_human_email_identity",
 ]

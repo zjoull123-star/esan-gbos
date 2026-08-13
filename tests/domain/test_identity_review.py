@@ -5,8 +5,9 @@ import importlib
 import json
 import re
 import sys
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -18,6 +19,9 @@ SUBJECT = "extid:v1:email:N6juwc4ZaH0TL-KQUdymKdFk4sSVi6FB1fQTOjPwaI8"
 SENSITIVE_SUBJECT = "extid:v1:email:LV6GAKT7pm5calE6bndCH0B5zbhyjtErgQGWWEsLveI"
 SENSITIVE_TARGET = "sensitive-target@example.invalid"
 SUGGESTION_KEY = f"suggestion:v1:{'a' * 64}"
+MAPPING_REF = "EID-01KZQEC7B9A41Q2ZCDPFGQ7V5K"
+USER_CANDIDATE_REF = "USR-01KZQEC7B9A41Q2ZCDPFGQ7V5K"
+EVIDENCE_REF = "EVR-01KZQEC7B9A41Q2ZCDPFGQ7V5K"
 
 
 class _PermissionError(Exception):
@@ -30,6 +34,49 @@ class _DuplicateEntryError(Exception):
 
 class _ResponseLost(Exception):
     pass
+
+
+class _AddressMatchClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.next_changes: dict[str, Any] = {}
+        self.fail = False
+
+    def attest(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        assert set(request) == {
+            "request_id",
+            "site_id",
+            "processing_purpose",
+            "caller_ref",
+            "evidence_ref",
+            "address_role",
+            "role_index",
+            "opaque_address_ref",
+            "candidate_target_ref",
+            "candidate_target_type",
+            "candidate_address",
+        }
+        self.calls.append(dict(request))
+        if self.fail:
+            raise RuntimeError("authority unavailable")
+        observed = datetime.now(UTC).replace(microsecond=0)
+        attestation = {
+            "opaque_address_ref": request["opaque_address_ref"],
+            "candidate_target_ref": request["candidate_target_ref"],
+            "candidate_target_type": request["candidate_target_type"],
+            "evidence_ref": request["evidence_ref"],
+            "normalization_version": "email-address-v1",
+            "matched": True,
+            "observed_at": observed.isoformat().replace("+00:00", "Z"),
+            "expires_at": (observed + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+            "digest": "sha256:" + chr(97 + len(self.calls) - 1) * 64,
+        }
+        attestation.update(self.next_changes)
+        self.next_changes = {}
+        return {
+            "attestation_ref": f"EMA-01KZQEC7B9A41Q2ZCDPFGQ7V5{len(self.calls)}",
+            "attestation": attestation,
+        }
 
 
 class _Doc:
@@ -67,12 +114,17 @@ class _Doc:
     def save(self, *, ignore_permissions: bool) -> _Doc:
         assert ignore_permissions is True
         if self.doctype == "GBOS External Identity":
-            assert getattr(self.flags, "gbos_ai_draft_command", False) or getattr(
-                self.flags, "gbos_ai_reopen_command", False
+            assert (
+                getattr(self.flags, "gbos_ai_draft_command", False)
+                or getattr(self.flags, "gbos_ai_reopen_command", False)
+                or getattr(self.flags, "gbos_human_identity_command", False)
+                or getattr(self.flags, "gbos_identity_review_decision", False)
             )
         if self.doctype == "GBOS Review Case":
             assert getattr(self.flags, "gbos_review_command", False)
-            assert getattr(self.flags, "gbos_ai_draft_command", False)
+            assert getattr(self.flags, "gbos_ai_draft_command", False) or getattr(
+                self.flags, "gbos_human_identity_command", False
+            )
         self.revision = int(self.revision) + 1
         self.runtime.docs[(self.doctype, self.name)] = self
         if self.doctype == "GBOS Review Case":
@@ -108,6 +160,12 @@ class _Database:
         del kwargs
         if (doctype, fieldname) == ("User", "enabled"):
             return int(name in self.runtime.enabled_users)
+        if (doctype, fieldname) == ("User", "user_type"):
+            return "System User" if name in self.runtime.enabled_users else None
+        if (doctype, fieldname) == ("User", "email"):
+            return name if name in self.runtime.enabled_users else None
+        if (doctype, fieldname) == ("User", "modified"):
+            return "2026-01-01T00:00:00+00:00" if name in self.runtime.enabled_users else None
         doc = self.runtime.docs.get((doctype, name))
         return None if doc is None else doc.get(fieldname)
 
@@ -118,11 +176,18 @@ class _Frappe(ModuleType):
         self.PermissionError = _PermissionError
         self.DuplicateEntryError = _DuplicateEntryError
         self.session = SimpleNamespace(user="sales@example.invalid")
+        self.address_match_client = _AddressMatchClient()
+        self.local = SimpleNamespace(
+            site="gbos.test",
+            gbos_email_address_match_authority_client=self.address_match_client,
+        )
         self.roles = {
             "sales@example.invalid": {"Sales User"},
             "reviewer@example.invalid": {"Reviewer"},
             "wrong-reviewer@example.invalid": {"Reviewer"},
             "admin@example.invalid": {"GBOS Admin"},
+            "integration@example.invalid": {"Integration Admin"},
+            "manager@example.invalid": {"Sales Manager"},
         }
         self.enabled_users = {
             "sales@example.invalid",
@@ -130,11 +195,14 @@ class _Frappe(ModuleType):
             "reviewer@example.invalid",
             "wrong-reviewer@example.invalid",
             "admin@example.invalid",
+            "integration@example.invalid",
+            "manager@example.invalid",
         }
         self.team_members = {
             ("TEM-01", "sales@example.invalid"),
             ("TEM-01", "user-target@example.invalid"),
             ("TEM-01", "reviewer@example.invalid"),
+            ("TEM-01", "manager@example.invalid"),
             ("TEM-02", "wrong-reviewer@example.invalid"),
         }
         self.docs: dict[tuple[str, str], _Doc] = {}
@@ -144,8 +212,32 @@ class _Frappe(ModuleType):
         self.case_status_history: list[tuple[str, str]] = []
         self._counters: dict[str, int] = {}
         self.db = _Database(self)
-        self._add_doc("GBOS Party Profile", "PTY-01", team="TEM-01", contact="CON-01")
-        self._add_doc("GBOS Party Profile", "PTY-02", team="TEM-02", contact="CON-02")
+        self._add_doc(
+            "GBOS Party Profile",
+            "PTY-01",
+            team="TEM-01",
+            contact="CON-01",
+            modified="2026-01-01T00:00:00+00:00",
+        )
+        self._add_doc(
+            "GBOS Party Profile",
+            "PTY-02",
+            team="TEM-02",
+            contact="CON-02",
+            modified="2026-01-01T00:00:00+00:00",
+        )
+        self._add_doc(
+            "Contact",
+            "CON-01",
+            email_id="customer@example.invalid",
+            modified="2026-01-01T00:00:00+00:00",
+        )
+        self._add_doc(
+            "Contact",
+            "CON-02",
+            email_id="cross-team@example.invalid",
+            modified="2026-01-01T00:00:00+00:00",
+        )
 
     def _add_doc(self, doctype: str, name: str, **values: Any) -> _Doc:
         doc = _Doc(self, {"doctype": doctype, "name": name, **values})
@@ -155,6 +247,8 @@ class _Frappe(ModuleType):
     def next_name(self, doctype: str) -> str:
         prefixes = {"GBOS External Identity": "EID", "GBOS Review Case": "REV"}
         self._counters[doctype] = self._counters.get(doctype, 0) + 1
+        if doctype == "GBOS External Identity" and self._counters[doctype] == 1:
+            return MAPPING_REF
         return f"{prefixes[doctype]}-{self._counters[doctype]:04d}"
 
     def get_roles(self, user: str | None = None) -> list[str]:
@@ -543,7 +637,7 @@ def test_materialization_response_loss_retry_returns_the_original_draft(
         service.materialize_association_suggestion(request)
     replay = service.materialize_association_suggestion(request)
 
-    assert replay["name"] == "EID-0001"
+    assert replay["name"] == MAPPING_REF
     assert fake.idempotent_executions["identity_review.materialize"] == 1
 
 
@@ -829,3 +923,216 @@ def test_closed_requests_and_sensitive_values_never_leak_in_errors_or_results(
     source = ROOT / "apps/esan_gbos/esan_gbos/domain/identity_review.py"
     if source.exists():
         assert "@frappe.whitelist" not in source.read_text(encoding="utf-8")
+
+
+def _human_request(**overrides: Any) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "team": "TEM-01",
+        "address_ref": SUBJECT,
+        "target_type": "User",
+        "target_ref": "user-target@example.invalid",
+        "purpose": "employee_mapping",
+        "evidence_ref": EVIDENCE_REF,
+        "expected_revision": 0,
+        "idempotency_key": "human-identity-0001",
+        "request_id": "REQ-HUMAN-0001",
+    }
+    value.update(overrides)
+    return value
+
+
+@pytest.mark.parametrize(
+    ("actor", "target_type", "target_ref", "purpose"),
+    (
+        (
+            "admin@example.invalid",
+            "User",
+            "user-target@example.invalid",
+            "employee_mapping",
+        ),
+        (
+            "integration@example.invalid",
+            "User",
+            "user-target@example.invalid",
+            "employee_mapping",
+        ),
+        ("manager@example.invalid", "Party", "PTY-01", "customer_mapping"),
+        ("reviewer@example.invalid", "Party", "PTY-01", "customer_mapping"),
+    ),
+)
+def test_authorized_human_can_submit_without_ai_suggestion(
+    identity_review: tuple[Any, _Frappe],
+    actor: str,
+    target_type: str,
+    target_ref: str,
+    purpose: str,
+) -> None:
+    service, fake = identity_review
+    fake.session.user = actor
+
+    receipt = service.submit_human_identity_for_review(
+        _human_request(target_type=target_type, target_ref=target_ref, purpose=purpose)
+    )
+
+    mapping = fake.get_doc("GBOS External Identity", receipt["mapping_ref"])
+    review_case = fake.get_doc("GBOS Review Case", receipt["review_case_ref"])
+    assert mapping.origin == "Manual"
+    assert mapping.review_status == "Pending"
+    assert review_case.assigned_reviewer == actor
+    assert review_case.origin == "Manual"
+    assert "suggestion" not in repr(mapping.values).casefold()
+    stored_evidence = json.loads(review_case.evidence_refs)
+    assert stored_evidence[0] == EVIDENCE_REF
+    assert stored_evidence[1].startswith("EMA-")
+    assert stored_evidence[2].startswith("sha256:")
+    assert "candidate_address" not in repr((mapping.values, review_case.values))
+    assert "customer@example.invalid" not in repr((mapping.values, review_case.values))
+    authority_request = fake.address_match_client.calls[0]
+    expected_prefix = "USR" if target_type == "User" else "PTY"
+    assert authority_request["candidate_target_ref"] == (
+        expected_prefix + "-" + receipt["mapping_ref"].removeprefix("EID-")
+    )
+    assert "@" not in str(authority_request["candidate_target_ref"])
+    assert set(receipt) == {
+        "mapping_ref",
+        "mapping_revision",
+        "review_case_ref",
+        "review_case_revision",
+        "request_id",
+    }
+
+
+@pytest.mark.parametrize(
+    ("actor", "overrides"),
+    (
+        ("sales@example.invalid", {}),
+        (
+            "manager@example.invalid",
+            {"target_type": "User", "purpose": "employee_mapping"},
+        ),
+        (
+            "integration@example.invalid",
+            {"target_type": "Party", "target_ref": "PTY-01", "purpose": "customer_mapping"},
+        ),
+        (
+            "wrong-reviewer@example.invalid",
+            {"target_type": "Party", "target_ref": "PTY-01", "purpose": "customer_mapping"},
+        ),
+    ),
+)
+def test_sales_user_wrong_purpose_role_or_cross_team_human_command_fails(
+    identity_review: tuple[Any, _Frappe],
+    actor: str,
+    overrides: dict[str, Any],
+) -> None:
+    service, fake = identity_review
+    fake.session.user = actor
+
+    with pytest.raises(_PermissionError):
+        service.submit_human_identity_for_review(_human_request(**overrides))
+
+    assert not any(key[0] == "GBOS External Identity" for key in fake.docs)
+
+
+@pytest.mark.parametrize("extra", ({"origin": "AI"}, {"suggestion_key": SUGGESTION_KEY}))
+def test_human_command_is_closed_to_ai_or_generic_suggestion_fields(
+    identity_review: tuple[Any, _Frappe],
+    extra: dict[str, Any],
+) -> None:
+    service, fake = identity_review
+    fake.session.user = "admin@example.invalid"
+
+    with pytest.raises(service.IdentityReviewError, match="fields"):
+        service.submit_human_identity_for_review({**_human_request(), **extra})
+
+
+def test_human_approval_requires_current_exact_bound_observer_attestation(
+    identity_review: tuple[Any, _Frappe],
+) -> None:
+    service, fake = identity_review
+    fake.session.user = "admin@example.invalid"
+    submitted = service.submit_human_identity_for_review(_human_request())
+    attestation = fake.address_match_client.calls[0]
+    assert set(attestation) == {
+        "request_id",
+        "site_id",
+        "processing_purpose",
+        "caller_ref",
+        "evidence_ref",
+        "address_role",
+        "role_index",
+        "opaque_address_ref",
+        "candidate_target_ref",
+        "candidate_target_type",
+        "candidate_address",
+    }
+    assert attestation["candidate_target_ref"] == USER_CANDIDATE_REF
+    assert attestation["candidate_target_ref"] != "user-target@example.invalid"
+    assert attestation["processing_purpose"] == "email_address_identity_confirmation"
+    assert attestation["caller_ref"] == "frappe-identity-command"
+
+    receipt = service.approve_human_identity_review(
+        {
+            "review_case_ref": submitted["review_case_ref"],
+            "expected_review_case_revision": submitted["review_case_revision"],
+            "expected_mapping_revision": submitted["mapping_revision"],
+            "purpose": "employee_mapping",
+            "evidence_ref": EVIDENCE_REF,
+            "idempotency_key": "human-approve-0001",
+            "request_id": "REQ-APPROVE-0001",
+        }
+    )
+
+    mapping = fake.get_doc("GBOS External Identity", submitted["mapping_ref"])
+    assert receipt["status"] == "approved"
+    assert mapping.review_status == "Approved"
+    assert mapping.business_status == "Active"
+    assert len(fake.address_match_client.calls) == 2
+
+
+def test_human_attestation_is_requested_only_after_mapping_ref_exists_and_failure_closes(
+    identity_review: tuple[Any, _Frappe],
+) -> None:
+    service, fake = identity_review
+    fake.session.user = "admin@example.invalid"
+    fake.address_match_client.fail = True
+
+    with pytest.raises(service.IdentityReviewError, match="authority"):
+        service.submit_human_identity_for_review(_human_request())
+
+    assert fake.address_match_client.calls[0]["candidate_target_ref"] == USER_CANDIDATE_REF
+    assert not any(doc.doctype == "GBOS Review Case" for doc in fake.docs.values())
+
+
+@pytest.mark.parametrize(
+    "attestation_overrides",
+    (
+        {"matched": False},
+        {"candidate_target_ref": "USR-01KZQEC7B9A41Q2ZCDPFGQ7V5M"},
+        {"candidate_target_type": "Party"},
+        {"evidence_ref": "EVR-01KZQEC7B9A41Q2ZCDPFGQ7V5M"},
+        {"digest": "sha256:" + "b" * 63},
+        {"expires_at": "2020-01-01T00:05:00Z"},
+    ),
+)
+def test_human_approval_rejects_evidence_target_match_or_expiry_drift(
+    identity_review: tuple[Any, _Frappe],
+    attestation_overrides: dict[str, Any],
+) -> None:
+    service, fake = identity_review
+    fake.session.user = "admin@example.invalid"
+    submitted = service.submit_human_identity_for_review(_human_request())
+    fake.address_match_client.next_changes = attestation_overrides
+
+    with pytest.raises(service.IdentityReviewError, match="attestation"):
+        service.approve_human_identity_review(
+            {
+                "review_case_ref": submitted["review_case_ref"],
+                "expected_review_case_revision": submitted["review_case_revision"],
+                "expected_mapping_revision": submitted["mapping_revision"],
+                "purpose": "employee_mapping",
+                "evidence_ref": EVIDENCE_REF,
+                "idempotency_key": "human-approve-drift",
+                "request_id": "REQ-APPROVE-DRIFT",
+            }
+        )

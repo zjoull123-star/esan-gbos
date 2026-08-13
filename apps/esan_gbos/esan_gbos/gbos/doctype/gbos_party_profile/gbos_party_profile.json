@@ -5,10 +5,11 @@
   "engine": "InnoDB",
   "track_changes": 1,
   "title_field": "party_name",
-  "field_order": ["party_name", "team", "crm_organization", "contact", "crm_lead", "crm_deal", "origin", "origin_reference", "business_status", "review_status", "revision", "last_request_id"],
+  "field_order": ["party_name", "team", "owner_user", "crm_organization", "contact", "crm_lead", "crm_deal", "origin", "origin_reference", "business_status", "review_status", "revision", "last_request_id"],
   "fields": [
     {"fieldname": "party_name", "label": "Party Name", "fieldtype": "Data", "reqd": 1, "in_list_view": 1},
     {"fieldname": "team", "label": "Team", "fieldtype": "Link", "options": "GBOS Team", "reqd": 1, "in_standard_filter": 1},
+    {"fieldname": "owner_user", "label": "Owner User", "fieldtype": "Link", "options": "User"},
     {"fieldname": "crm_organization", "label": "CRM Organization", "fieldtype": "Link", "options": "CRM Organization"},
     {"fieldname": "contact", "label": "Contact", "fieldtype": "Link", "options": "Contact"},
     {"fieldname": "crm_lead", "label": "CRM Lead", "fieldtype": "Link", "options": "CRM Lead"},

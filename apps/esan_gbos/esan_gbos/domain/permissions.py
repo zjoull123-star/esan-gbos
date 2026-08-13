@@ -53,6 +53,7 @@ _NON_DELETABLE_DOCTYPES = frozenset({"GBOS External Identity"})
 _ALL_PARENT_DOCTYPES = _BUSINESS_DOCTYPES | _INTEGRATION_DOCTYPES | {"GBOS Team"}
 INTERNAL_MATERIALIZER_ROLE = "Agent TrustedMaterializer"
 IDENTITY_RESOLVER_ROLE = "Observer Identity Resolver"
+EMAIL_GATEWAY_AUTHORITY_ROLE = "Email Gateway Authority Consumer"
 INTERNAL_MATERIALIZATION_SUBJECT_DOCTYPES = frozenset(
     {
         "GBOS Demand Signal",
@@ -141,7 +142,7 @@ def role_has_doctype_permission(
         return False
     if permission_type == "delete" and doctype in _NON_DELETABLE_DOCTYPES:
         return False
-    if role == IDENTITY_RESOLVER_ROLE:
+    if role in {IDENTITY_RESOLVER_ROLE, EMAIL_GATEWAY_AUTHORITY_ROLE}:
         return False
     if role == INTERNAL_MATERIALIZER_ROLE:
         if permission_type == "read":

@@ -10,6 +10,10 @@ from typing import Any
 
 import frappe
 
+from esan_gbos.domain.external_identity_projection import (
+    ExternalIdentityProjectionError,
+    build_external_identity_projection,
+)
 from esan_gbos.domain.permissions import IDENTITY_RESOLVER_ROLE
 from esan_gbos.identity_resolver_access import (
     identity_resolution_permission_scope,
@@ -213,17 +217,21 @@ def _resolve_lookup(site_id: str, lookup: dict[str, Any]) -> dict[str, Any]:
         raise _APIError("mapping_conflict", 409)
     if row.get("business_status") == "Active" and row.get("target_eligible") != 1:
         raise _APIError("mapping_not_resolved", 404)
+    try:
+        projection = build_external_identity_projection(row)
+    except ExternalIdentityProjectionError:
+        raise _APIError("mapping_conflict", 409) from None
     return {
         "schema_version": "1.0",
         "site_id": site_id,
         "identity_provider": lookup["identity_provider"],
         "external_subject_ref": lookup["external_subject_ref"],
-        "mapping_ref": mapping_ref,
-        "mapping_revision": revision,
-        "team_ref": team_ref,
-        "target_type": target_type,
+        "mapping_ref": projection["mapping_ref"],
+        "mapping_revision": projection["mapping_revision"],
+        "team_ref": projection["team_ref"],
+        "target_type": projection["target_type"],
         "target_ref": target_ref,
-        "status": "confirmed" if row.get("business_status") == "Active" else "revoked",
+        "status": projection["status"],
         "resolved_at": _timestamp(row.get("resolved_at")),
     }
 
