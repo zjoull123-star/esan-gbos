@@ -16,6 +16,10 @@ from services.agent_runtime.local_entrypoint import (
     require_component_enabled,
 )
 from services.observer.observer.email_draft_material import EmailDraftMaterialService
+from services.observer.observer.email_participant_authority import (
+    EmailParticipantAuthorityResolver,
+    PostgresEmailParticipantAuthorityRepository,
+)
 from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
 from services.observer.observer.identity_resolution_work import (
     PostgresIdentityResolutionWorkRepository,
@@ -106,7 +110,10 @@ def build_postgres_runtime(
         if draft_material_bearer_token is not None:
             email_draft_material = EmailDraftMaterialService(
                 store=evidence_store,
-                participant_resolver=_reject_participant_resolution,
+                participant_resolver=EmailParticipantAuthorityResolver(
+                    repository=PostgresEmailParticipantAuthorityRepository(cast(Any, connection)),
+                    store=evidence_store,
+                ),
                 clock=active_clock,
             )
     return compose_postgres_local_pilot_runtime(
@@ -219,12 +226,6 @@ def main(
 def _reject_outbox_publication(event: Any, event_id: str, idempotency_key: str) -> None:
     del event, event_id, idempotency_key
     raise RuntimeError("Observer API outbox publication is disabled")
-
-
-def _reject_participant_resolution(*_args: object, **_kwargs: object) -> Mapping[str, object]:
-    """Fail closed until an authorized Observer evidence participant set is supplied."""
-
-    raise PermissionError("participant authority is unavailable")
 
 
 def _utc_now() -> datetime:

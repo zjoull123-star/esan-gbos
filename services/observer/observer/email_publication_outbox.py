@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, cast
 
+from .email_participant_authority import (
+    EmailParticipantAuthorityBinding,
+    validate_gateway_receipt_binding,
+)
 from .email_publication import EmailMessagePublication
 from .models import _require_aware
 from .storage import Connection
@@ -122,6 +126,7 @@ class _RelayRecord:
     delivery_receipt: dict[str, object] | None = None
     delivery_receipt_sha256: str | None = None
     delivered_at: datetime | None = None
+    participant_authority_binding: EmailParticipantAuthorityBinding | None = None
 
 
 class InMemoryEmailPublicationOutbox:
@@ -262,20 +267,23 @@ class InMemoryEmailPublicationOutbox:
         now: datetime,
     ) -> EmailPublicationDeliveryReceipt:
         _require_aware(now, "now")
-        canonical_receipt, receipt_sha256 = _canonical_receipt(receipt)
         record = self._find(site_id, publication_id)
+        binding = validate_gateway_receipt_binding(
+            receipt,
+            publication_payload=record.publication.to_wire(),
+            payload_digest="sha256:" + record.publication.payload_sha256,
+        )
+        canonical_receipt, receipt_sha256 = _canonical_receipt(binding.to_wire())
         if record.status == "delivered":
             if not hmac_digest_equal(record.delivery_receipt_sha256, receipt_sha256):
                 raise EmailPublicationRelayConflict("receipt_replay_drift")
             return self._delivery_receipt(record, replayed=True)
         record = self._owned_lease(site_id, publication_id, worker_id, expected_generation, now)
-        expected_payload_digest = "sha256:" + record.publication.payload_sha256
-        if canonical_receipt.get("payload_digest") != expected_payload_digest:
-            raise EmailPublicationRelayConflict("receipt_payload_digest_mismatch")
         record.status = "delivered"
         record.delivery_receipt = canonical_receipt
         record.delivery_receipt_sha256 = receipt_sha256
         record.delivered_at = now
+        record.participant_authority_binding = binding
         record.lease_owner = None
         record.lease_expires_at = None
         return self._delivery_receipt(record, replayed=False)
@@ -343,7 +351,7 @@ class InMemoryEmailPublicationOutbox:
             or record.delivered_at is None
         ):
             raise RuntimeError("delivered relay record is incomplete")
-        receipt_ref = record.delivery_receipt.get("receipt_ref")
+        receipt_ref = record.delivery_receipt.get("gateway_receipt_ref")
         if not isinstance(receipt_ref, str) or not receipt_ref:
             raise EmailPublicationRelayConflict("receipt_ref_invalid")
         return EmailPublicationDeliveryReceipt(
@@ -568,16 +576,12 @@ class PostgresEmailPublicationRelay:
         now: datetime,
     ) -> EmailPublicationDeliveryReceipt:
         _require_aware(now, "now")
-        canonical_receipt, receipt_sha256 = _canonical_receipt(receipt)
-        receipt_ref = canonical_receipt.get("receipt_ref")
-        if not isinstance(receipt_ref, str) or not receipt_ref:
-            raise EmailPublicationRelayConflict("receipt_ref_invalid")
         with self._connection.transaction(), self._connection.cursor() as cursor:
             self._set_site(cursor, site_id)
             cursor.execute(
                 """
                 SELECT payload_digest, relay_status, delivery_receipt_digest,
-                       delivered_at
+                       delivered_at, payload
                 FROM observer.email_message_publication_outbox
                 WHERE site_id = %s AND publication_id = %s
                 FOR UPDATE
@@ -587,6 +591,21 @@ class PostgresEmailPublicationRelay:
             existing = cursor.fetchone()
             if existing is None:
                 raise EmailPublicationRelayConflict("publication_not_found")
+            publication_payload = existing[4]
+            if isinstance(publication_payload, str):
+                try:
+                    publication_payload = json.loads(publication_payload)
+                except json.JSONDecodeError:
+                    raise EmailPublicationRelayConflict("publication_payload_invalid") from None
+            if not isinstance(publication_payload, Mapping):
+                raise EmailPublicationRelayConflict("publication_payload_invalid")
+            binding = validate_gateway_receipt_binding(
+                receipt,
+                publication_payload=publication_payload,
+                payload_digest="sha256:" + str(existing[0]),
+            )
+            canonical_receipt, receipt_sha256 = _canonical_receipt(binding.to_wire())
+            receipt_ref = binding.gateway_receipt_ref
             if str(existing[1]) == "delivered":
                 if not hmac.compare_digest(str(existing[2]), receipt_sha256):
                     raise EmailPublicationRelayConflict("receipt_replay_drift")
@@ -598,8 +617,33 @@ class PostgresEmailPublicationRelay:
                     delivered_at=existing[3],
                     replayed=True,
                 )
-            if canonical_receipt.get("payload_digest") != "sha256:" + str(existing[0]):
-                raise EmailPublicationRelayConflict("receipt_payload_digest_mismatch")
+            cursor.execute(
+                """
+                INSERT INTO observer.email_gateway_inbox_bindings (
+                    site_id, gateway_receipt_ref, publication_ref,
+                    inbox_item_ref, message_ref, mailbox_ref,
+                    mailbox_config_revision, observer_delivery_ref,
+                    payload_digest, participant_binding_digest,
+                    evidence_binding_digest, acknowledged_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                """,
+                (
+                    site_id,
+                    binding.gateway_receipt_ref,
+                    binding.publication_ref,
+                    binding.inbox_item_ref,
+                    binding.message_ref,
+                    binding.mailbox_ref,
+                    binding.mailbox_config_revision,
+                    binding.observer_delivery_ref,
+                    binding.payload_digest,
+                    binding.participant_binding_digest,
+                    binding.evidence_binding_digest,
+                    now,
+                ),
+            )
             cursor.execute(
                 """
                 UPDATE observer.email_message_publication_outbox

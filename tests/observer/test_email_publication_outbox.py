@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from observer.email_participant_authority import canonical_binding_digest
 from observer.email_publication import EmailMessagePublication, EmailPublicationParticipant
 from observer.email_publication_outbox import (
     EMAIL_PUBLICATION_RELAY_STATES,
@@ -40,6 +41,22 @@ def _publication(*, subject_digest: str = "sha256:" + "a" * 64) -> EmailMessageP
         publication_revision=1,
         idempotency_key="idem:v1:" + "f" * 64,
     )
+
+
+def _gateway_receipt(publication: EmailMessagePublication) -> dict[str, object]:
+    payload = publication.to_wire()
+    return {
+        "gateway_receipt_ref": "EGR-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
+        "publication_ref": publication.publication_id,
+        "inbox_item_ref": "INB-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
+        "message_ref": "MSG-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
+        "mailbox_ref": publication.mailbox_id,
+        "mailbox_config_revision": publication.mailbox_config_revision,
+        "observer_delivery_ref": publication.observer_delivery_ref,
+        "payload_digest": "sha256:" + publication.payload_sha256,
+        "participant_binding_digest": canonical_binding_digest(payload["participants"]),
+        "evidence_binding_digest": canonical_binding_digest(payload["evidence_refs"]),
+    }
 
 
 def test_identical_digest_replay_returns_original_append_only_record() -> None:
@@ -118,6 +135,42 @@ def test_migration_adds_only_observer_publication_fence_tables_and_forced_rls() 
     assert "create table observer.gateway_" not in lowered
     assert "create table observer.email_gateway_" not in lowered
     assert "provider_cursor" not in lowered
+
+
+def test_participant_authority_migration_is_append_only_forced_rls_and_least_privilege() -> None:
+    sql = (
+        ROOT
+        / "services"
+        / "observer"
+        / "migrations"
+        / "016_email_gateway_participant_authority.sql"
+    ).read_text(encoding="utf-8")
+    lowered = sql.lower()
+
+    assert "create table if not exists observer.email_gateway_inbox_bindings" in lowered
+    assert "unique (site_id, inbox_item_ref)" in lowered
+    assert "unique (site_id, publication_ref)" in lowered
+    assert "email_gateway_inbox_binding_immutable" in lowered
+    assert "add column if not exists mailbox_address_identity_ref" in lowered
+    assert "force row level security" in lowered
+    assert "revoke all on observer.email_gateway_inbox_bindings from public" in lowered
+    assert (
+        "grant insert on observer.email_gateway_inbox_bindings\n    to gbos_observer_publisher"
+        in lowered
+    )
+    assert (
+        "grant select on observer.email_gateway_inbox_bindings\n    to gbos_observer_app" in lowered
+    )
+    assert (
+        "grant select on observer.email_gateway_inbox_bindings\n    to gbos_observer_publisher"
+        not in lowered
+    )
+    assert (
+        "grant insert on observer.email_gateway_inbox_bindings\n    to gbos_observer_app"
+        not in lowered
+    )
+    for forbidden in ("from_address", "to_address", "cc_address", "bcc_address", "email_address"):
+        assert forbidden not in lowered
 
 
 def test_publication_relay_uses_a_dedicated_least_privilege_role() -> None:
@@ -264,11 +317,7 @@ def test_relay_claim_heartbeat_release_and_ack_are_generation_fenced() -> None:
     assert retry.attempt_count == 2
     assert retry.generation == 2
 
-    gateway_receipt = {
-        "receipt_ref": "EGR-01KZQEC7B9A41Q2ZCDPFGQ7V5K",
-        "publication_ref": retry.publication_id,
-        "payload_digest": retry.transport_payload_digest,
-    }
+    gateway_receipt = _gateway_receipt(_publication())
     delivered = outbox.acknowledge(
         site_id="alpha.example",
         publication_id=retry.publication_id,
@@ -284,7 +333,7 @@ def test_relay_claim_heartbeat_release_and_ack_are_generation_fenced() -> None:
         publication_id=retry.publication_id,
         worker_id="stale-retry-after-success",
         expected_generation=0,
-        receipt=gateway_receipt,
+        receipt=dict(reversed(tuple(gateway_receipt.items()))),
         now=NOW + timedelta(seconds=12),
     )
     assert replay == delivered.__class__(
@@ -302,7 +351,10 @@ def test_relay_claim_heartbeat_release_and_ack_are_generation_fenced() -> None:
             publication_id=retry.publication_id,
             worker_id="gateway-relay-2",
             expected_generation=retry.generation,
-            receipt={**gateway_receipt, "receipt_ref": "EGR-drift"},
+            receipt={
+                **gateway_receipt,
+                "gateway_receipt_ref": "EGR-01KZQEC7B9A41Q2ZCDPFGQ7V5M",
+            },
             now=NOW + timedelta(seconds=12),
         )
 

@@ -12,6 +12,10 @@ from fastapi.testclient import TestClient
 
 from services.local_pilot_runtime import observer_api
 from services.local_pilot_runtime.runtime_support import SecretValue
+from services.observer.observer.email_participant_authority import (
+    EmailParticipantAuthorityResolver,
+    PostgresEmailParticipantAuthorityRepository,
+)
 from services.observer.observer.identity_resolution_work import (
     PostgresIdentityResolutionWorkRepository,
 )
@@ -179,6 +183,11 @@ def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_au
     assert "/internal/v1/bff/email-draft-material/finalize" in paths
     assert runtime.evidence_reveal is not None
     assert runtime.email_draft_material is not None
+    resolver = runtime.email_draft_material._participant_resolver
+    assert isinstance(resolver, EmailParticipantAuthorityResolver)
+    assert isinstance(resolver._repository, PostgresEmailParticipantAuthorityRepository)
+    assert resolver._repository._connection is runtime.connection
+    assert resolver._identity_resolver is None
 
 
 def test_observer_main_starts_injected_server_and_closes_connection(tmp_path: Path) -> None:

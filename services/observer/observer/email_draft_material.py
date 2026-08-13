@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -11,6 +12,10 @@ from email.message import EmailMessage
 from email.policy import SMTP
 from typing import Any, Protocol
 
+from .email_participant_authority import (
+    EmailParticipantAuthorityBinding,
+    canonical_binding_digest,
+)
 from .models import TenantScope
 
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
@@ -25,6 +30,16 @@ _RECEIPT_FIELDS = frozenset(
         "actor_ref",
         "team_ref",
         "request_digest",
+        "gateway_receipt_ref",
+        "publication_ref",
+        "message_ref",
+        "mailbox_ref",
+        "mailbox_config_revision",
+        "observer_delivery_ref",
+        "payload_digest",
+        "participant_binding_digest",
+        "evidence_binding_digest",
+        "participant_roles_digest",
         "issued_at",
         "expires_at",
     }
@@ -41,7 +56,10 @@ class CasStore(Protocol):
     def read(self, scope: TenantScope, object_ref: str) -> bytes: ...
 
 
-ParticipantResolver = Callable[[TenantScope, str, Mapping[str, object]], Mapping[str, object]]
+ParticipantResolver = Callable[
+    [TenantScope, "DraftAuthorizationReceipt", Mapping[str, object]],
+    Mapping[str, object],
+]
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -55,6 +73,16 @@ class DraftAuthorizationReceipt:
     actor_ref: str
     team_ref: str
     request_digest: str
+    gateway_receipt_ref: str
+    publication_ref: str
+    message_ref: str
+    mailbox_ref: str
+    mailbox_config_revision: int
+    observer_delivery_ref: str
+    payload_digest: str
+    participant_binding_digest: str
+    evidence_binding_digest: str
+    participant_roles_digest: str
     issued_at: datetime
     expires_at: datetime
 
@@ -68,6 +96,26 @@ class DraftAuthorizationReceipt:
         digest = value.get("request_digest")
         if not isinstance(digest, str) or _DIGEST.fullmatch(digest) is None:
             raise ValueError("invalid draft authorization digest")
+        role_digest = value.get("participant_roles_digest")
+        if not isinstance(role_digest, str) or _DIGEST.fullmatch(role_digest) is None:
+            raise ValueError("invalid participant roles digest")
+        binding = EmailParticipantAuthorityBinding.from_wire(
+            {
+                field: value.get(field)
+                for field in (
+                    "gateway_receipt_ref",
+                    "publication_ref",
+                    "inbox_item_ref",
+                    "message_ref",
+                    "mailbox_ref",
+                    "mailbox_config_revision",
+                    "observer_delivery_ref",
+                    "payload_digest",
+                    "participant_binding_digest",
+                    "evidence_binding_digest",
+                )
+            }
+        )
         issued_at = _time(value.get("issued_at"), "issued_at")
         expires_at = _time(value.get("expires_at"), "expires_at")
         if expires_at <= issued_at or (expires_at - issued_at).total_seconds() > 300:
@@ -90,6 +138,16 @@ class DraftAuthorizationReceipt:
             **fields,
             draft_revision=revision,
             request_digest=digest,
+            gateway_receipt_ref=binding.gateway_receipt_ref,
+            publication_ref=binding.publication_ref,
+            message_ref=binding.message_ref,
+            mailbox_ref=binding.mailbox_ref,
+            mailbox_config_revision=binding.mailbox_config_revision,
+            observer_delivery_ref=binding.observer_delivery_ref,
+            payload_digest=binding.payload_digest,
+            participant_binding_digest=binding.participant_binding_digest,
+            evidence_binding_digest=binding.evidence_binding_digest,
+            participant_roles_digest=role_digest,
             issued_at=issued_at,
             expires_at=expires_at,
         )
@@ -101,6 +159,12 @@ class DraftAuthorizationReceipt:
             f"purpose={self.purpose!r}, inbox_item_ref={self.inbox_item_ref!r}, "
             f"draft_ref={self.draft_ref!r}, draft_revision={self.draft_revision}, "
             "actor_ref=<redacted>, team_ref=<redacted>, request_digest=<redacted>, "
+            f"publication_ref={self.publication_ref!r}, message_ref={self.message_ref!r}, "
+            f"mailbox_ref={self.mailbox_ref!r}, "
+            f"mailbox_config_revision={self.mailbox_config_revision}, "
+            "gateway_receipt_ref=<redacted>, observer_delivery_ref=<redacted>, "
+            "payload_digest=<redacted>, participant_binding_digest=<redacted>, "
+            "evidence_binding_digest=<redacted>, participant_roles_digest=<redacted>, "
             f"issued_at={self.issued_at!r}, expires_at={self.expires_at!r})"
         )
 
@@ -183,6 +247,9 @@ class EmailDraftMaterialService:
         ):
             raise ValueError("draft revision or digest drift")
         roles = _participant_roles(participant_roles)
+        role_binding = canonical_binding_digest(roles)
+        if not hmac.compare_digest(role_binding, authorization.participant_roles_digest):
+            raise PermissionError("participant role binding mismatch")
         material = self._store.read(scope, draft_evidence_ref)
         actual_digest = "sha256:" + hashlib.sha256(material).hexdigest()
         if actual_digest != draft_digest or len(material) > _MAX_DRAFT_BYTES:
@@ -198,7 +265,7 @@ class EmailDraftMaterialService:
         replay = self._replay(idempotency_key, replay_digest)
         if replay is not None:
             return replay
-        resolved = self._participant_resolver(scope, authorization.inbox_item_ref, roles)
+        resolved = self._participant_resolver(scope, authorization, roles)
         sender, recipients, cc, subject = _resolved_participants(resolved, roles)
         try:
             body = material.decode("utf-8")
@@ -214,7 +281,6 @@ class EmailDraftMaterialService:
         final_bytes = message.as_bytes(policy=SMTP)
         stored = self._store.put(scope, final_bytes, media_type="message/rfc822")
         final_digest = "sha256:" + hashlib.sha256(final_bytes).hexdigest()
-        role_binding = _json_digest(roles)
         result: dict[str, object] = {
             "evidence_ref": str(stored.object_ref),
             "digest": final_digest,
@@ -262,7 +328,7 @@ def _resolved_participants(
     value: Mapping[str, object], roles: Mapping[str, object]
 ) -> tuple[str, list[str], list[str], str]:
     if not isinstance(value, Mapping) or not set(value).issubset(
-        {"from", "to", "cc", "subject", "roles"}
+        {"from", "to", "cc", "subject", "roles", "parsed_address_roles_digest"}
     ):
         raise PermissionError("participant authority is invalid")
     if value.get("roles") != roles:

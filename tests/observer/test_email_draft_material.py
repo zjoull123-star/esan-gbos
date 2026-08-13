@@ -9,6 +9,7 @@ from services.observer.observer.email_draft_material import (
     DraftAuthorizationReceipt,
     EmailDraftMaterialService,
 )
+from services.observer.observer.email_participant_authority import canonical_binding_digest
 from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
 from services.observer.observer.models import TenantScope
 
@@ -16,6 +17,7 @@ SITE = "alpha.example"
 SCOPE = TenantScope(SITE, "observation_processing")
 NOW = datetime(2026, 8, 13, 10, tzinfo=UTC)
 DIGEST = "sha256:" + "a" * 64
+PARTICIPANT_ROLES = {"sender": "mailbox_owner", "recipients": ["original_sender"]}
 
 
 def _receipt(**changes: object) -> dict[str, object]:
@@ -29,6 +31,16 @@ def _receipt(**changes: object) -> dict[str, object]:
         "actor_ref": "sales-01",
         "team_ref": "TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "request_digest": DIGEST,
+        "gateway_receipt_ref": "EGR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "publication_ref": "PUB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "message_ref": "MSG-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "mailbox_config_revision": 1,
+        "observer_delivery_ref": "DLV-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "payload_digest": "sha256:" + "b" * 64,
+        "participant_binding_digest": "sha256:" + "c" * 64,
+        "evidence_binding_digest": "sha256:" + "d" * 64,
+        "participant_roles_digest": canonical_binding_digest(PARTICIPANT_ROLES),
         "issued_at": "2026-08-13T10:00:00Z",
         "expires_at": "2026-08-13T10:05:00Z",
     }
@@ -37,13 +49,18 @@ def _receipt(**changes: object) -> dict[str, object]:
 
 
 def _service(root: Path) -> EmailDraftMaterialService:
-    return EmailDraftMaterialService(
-        store=ContentAddressedEvidenceStore(root),
-        participant_resolver=lambda _scope, _inbox, roles: {
+    def resolve(_scope, authorization, roles):
+        if authorization.participant_binding_digest != "sha256:" + "c" * 64:
+            raise PermissionError("participant authority binding mismatch")
+        return {
             "from": "sales@example.invalid",
             "to": ["customer@example.invalid"],
             "roles": roles,
-        },
+        }
+
+    return EmailDraftMaterialService(
+        store=ContentAddressedEvidenceStore(root),
+        participant_resolver=resolve,
         clock=lambda: NOW,
     )
 
@@ -121,7 +138,7 @@ def test_finalize_resolves_addresses_from_opaque_roles_and_returns_only_cas_bind
         draft_evidence_ref=str(saved["evidence_ref"]),
         draft_digest=digest,
         draft_revision=1,
-        participant_roles={"sender": "mailbox_owner", "recipients": ["original_sender"]},
+        participant_roles=PARTICIPANT_ROLES,
         idempotency_key="draft-finalize-01",
     )
 
@@ -152,4 +169,52 @@ def test_finalize_rejects_raw_browser_addresses_and_stale_authorization(tmp_path
             draft_revision=1,
             participant_roles={"from": "sales@example.invalid"},
             idempotency_key="draft-finalize-01",
+        )
+
+
+def test_finalize_rejects_participant_role_digest_and_gateway_binding_drift(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path / "cas")
+    content = "Provider-neutral reply"
+    digest = service.digest_text(content)
+    wrong_roles = DraftAuthorizationReceipt.from_wire(
+        _receipt(
+            request_digest=digest,
+            participant_roles_digest="sha256:" + "9" * 64,
+        )
+    )
+    wrong_binding = DraftAuthorizationReceipt.from_wire(
+        _receipt(
+            request_digest=digest,
+            participant_binding_digest="sha256:" + "8" * 64,
+        )
+    )
+    saved = service.save(
+        SCOPE,
+        authorization=wrong_roles,
+        content=content,
+        content_digest=digest,
+        idempotency_key="draft-save-binding-01",
+    )
+
+    with pytest.raises(PermissionError, match="participant role binding"):
+        service.finalize(
+            SCOPE,
+            authorization=wrong_roles,
+            draft_evidence_ref=str(saved["evidence_ref"]),
+            draft_digest=digest,
+            draft_revision=1,
+            participant_roles=PARTICIPANT_ROLES,
+            idempotency_key="draft-finalize-binding-01",
+        )
+    with pytest.raises(PermissionError, match="participant authority"):
+        service.finalize(
+            SCOPE,
+            authorization=wrong_binding,
+            draft_evidence_ref=str(saved["evidence_ref"]),
+            draft_digest=digest,
+            draft_revision=1,
+            participant_roles=PARTICIPANT_ROLES,
+            idempotency_key="draft-finalize-binding-02",
         )

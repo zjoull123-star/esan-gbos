@@ -123,6 +123,9 @@ EMAIL_PUBLICATION_MIGRATION = (
 EMAIL_CONNECTOR_CONFIG_MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "015_email_gateway_connector_config.sql"
 )
+EMAIL_PARTICIPANT_AUTHORITY_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "016_email_gateway_participant_authority.sql"
+)
 
 pytestmark = [pytest.mark.postgres_integration]
 if not RUN_INTEGRATION:
@@ -171,7 +174,7 @@ def _identity_ref(provider: str, label: str) -> str:
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 17
+    assert _migration_ledger_count() == 18
     result = _container_sql(
         """
         SELECT count(*)
@@ -197,13 +200,14 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
               'retention_runs', 'retention_cas_tombstones',
               'model_fatal_latches', 'identity_authority_denials'
               , 'email_connector_config_projections', 'email_poll_batches',
-              'email_poll_batch_deliveries', 'email_message_publication_outbox'
+               'email_poll_batch_deliveries', 'email_message_publication_outbox'
+              , 'email_gateway_inbox_bindings'
           )
           AND c.relrowsecurity
           AND c.relforcerowsecurity
         """
     )
-    assert int(result.stdout.strip()) == 41
+    assert int(result.stdout.strip()) == 42
 
 
 def test_email_publication_migration_is_idempotent_forced_rls_and_least_grant() -> None:
@@ -211,8 +215,11 @@ def test_email_publication_migration_is_idempotent_forced_rls_and_least_grant() 
     config_sql = EMAIL_CONNECTOR_CONFIG_MIGRATION.read_text(encoding="utf-8")
     _container_sql(publication_sql)
     _container_sql(config_sql)
+    authority_sql = EMAIL_PARTICIPANT_AUTHORITY_MIGRATION.read_text(encoding="utf-8")
+    _container_sql(authority_sql)
     _container_sql(publication_sql)
     _container_sql(config_sql)
+    _container_sql(authority_sql)
 
     security = _container_sql(
         """
@@ -351,12 +358,38 @@ def test_email_publication_migration_is_idempotent_forced_rls_and_least_grant() 
           AND c.relkind = 'r'
           AND (
               c.relname LIKE 'gateway_%'
-              OR c.relname LIKE 'email_gateway_%'
+              OR (
+                  c.relname LIKE 'email_gateway_%'
+                  AND c.relname <> 'email_gateway_inbox_bindings'
+              )
               OR c.relname LIKE '%provider_cursor%'
           )
         """
     )
     assert forbidden.stdout.strip() == "0"
+
+    authority = _container_sql(
+        """
+        SELECT c.relrowsecurity, c.relforcerowsecurity,
+               has_table_privilege(
+                   'gbos_observer_publisher', c.oid, 'SELECT'
+               ),
+               has_table_privilege(
+                   'gbos_observer_publisher', c.oid, 'INSERT'
+               ),
+               has_table_privilege(
+                   'gbos_observer_app', c.oid, 'SELECT'
+               ),
+               has_table_privilege(
+                   'gbos_observer_app', c.oid, 'INSERT'
+               )
+        FROM pg_class AS c
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'observer'
+          AND c.relname = 'email_gateway_inbox_bindings'
+        """
+    )
+    assert authority.stdout.strip() == "t|t|f|t|t|f"
 
 
 def test_email_connector_config_repository_replays_and_fences_revisions() -> None:
@@ -484,6 +517,7 @@ def _migration_ledger_count() -> int:
               'observer/013_local_pilot_identity_digest_boundary.sql',
               'observer/014_email_gateway_publication.sql',
               'observer/015_email_gateway_connector_config.sql',
+              'observer/016_email_gateway_participant_authority.sql',
               'context/001_gate3_context.sql'
         )
         """

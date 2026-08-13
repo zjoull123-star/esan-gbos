@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from observer.control_service import ConnectorControlResult, ConnectorStatus
 from observer.email_connector_config import InMemoryEmailConnectorConfigRepository
+from observer.email_participant_authority import canonical_binding_digest
 from observer.identity_resolution_work import IdentityResolutionWorkSnapshot
 from observer.local_pilot_api import LocalPilotAPIConfig, create_local_pilot_app
 from observer.models import ConnectorKey, TenantScope
@@ -865,12 +866,24 @@ def test_email_draft_material_uses_separate_bearer_and_closed_save_finalize_shap
         "receipt_ref": "DAR-01",
         "site_id": "alpha.example",
         "purpose": "email_draft_material",
-        "inbox_item_ref": "INB-01",
+        "inbox_item_ref": "INB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "draft_ref": "DRF-01",
         "draft_revision": 1,
         "actor_ref": "sales-01",
         "team_ref": "team-sales",
         "request_digest": "sha256:" + "a" * 64,
+        "gateway_receipt_ref": "EGR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "publication_ref": "PUB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "message_ref": "MSG-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "mailbox_config_revision": 1,
+        "observer_delivery_ref": "DLV-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "payload_digest": "sha256:" + "b" * 64,
+        "participant_binding_digest": "sha256:" + "c" * 64,
+        "evidence_binding_digest": "sha256:" + "d" * 64,
+        "participant_roles_digest": canonical_binding_digest(
+            {"sender": "mailbox_owner", "recipients": ["original_sender"]}
+        ),
         "issued_at": "2026-08-08T08:59:00Z",
         "expires_at": "2026-08-08T09:01:00Z",
     }
