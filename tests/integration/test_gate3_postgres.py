@@ -174,7 +174,7 @@ def _identity_ref(provider: str, label: str) -> str:
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 19
+    assert _migration_ledger_count() == 21
     result = _container_sql(
         """
         SELECT count(*)
@@ -201,13 +201,20 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
               'model_fatal_latches', 'identity_authority_denials'
               , 'email_connector_config_projections', 'email_poll_batches',
                'email_poll_batch_deliveries', 'email_message_publication_outbox'
-              , 'email_gateway_inbox_bindings'
+              , 'email_gateway_inbox_bindings',
+              'email_draft_material_receipts',
+              'email_draft_evidence_bindings',
+              'email_final_mime_evidence_bindings',
+              'email_material_retention_requests',
+              'email_material_retention_work',
+              'email_material_tombstone_receipts',
+              'email_material_legal_hold_events'
           )
           AND c.relrowsecurity
           AND c.relforcerowsecurity
         """
     )
-    assert int(result.stdout.strip()) == 42
+    assert int(result.stdout.strip()) == 49
 
 
 def test_email_publication_migration_is_idempotent_forced_rls_and_least_grant() -> None:
@@ -543,6 +550,8 @@ def _migration_ledger_count() -> int:
               'observer/015_email_gateway_connector_config.sql',
               'observer/016_email_gateway_participant_authority.sql',
               'observer/017_email_connector_lease_generation_fence.sql',
+              'observer/018_email_draft_material_evidence_binding.sql',
+              'observer/019_email_material_retention_tombstones.sql',
               'context/001_gate3_context.sql'
         )
         """

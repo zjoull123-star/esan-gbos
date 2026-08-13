@@ -136,6 +136,8 @@ class PostgresLocalPilotRuntime:
     evidence_reveal: Any | None
     email_draft_material_repository: Any | None
     email_draft_material: Any | None
+    email_material_retention_repository: Any | None
+    email_material_retention: Any | None
     email_mailbox_identity: Any | None
     email_address_match: Any | None
     app: Any
@@ -178,6 +180,8 @@ def compose_postgres_local_pilot_runtime(
     evidence_reveal: Any | None = None,
     email_draft_material_repository: Any | None = None,
     email_draft_material: Any | None = None,
+    email_material_retention_repository: Any | None = None,
+    email_material_retention: Any | None = None,
     email_mailbox_identity: Any | None = None,
     email_address_match: Any | None = None,
 ) -> PostgresLocalPilotRuntime:
@@ -264,6 +268,7 @@ def compose_postgres_local_pilot_runtime(
         email_connector_configs=active_email_connector_configs,
         evidence_reveal=evidence_reveal,
         email_draft_material=email_draft_material,
+        email_material_retention=email_material_retention,
         email_mailbox_identity=email_mailbox_identity,
         email_address_match=email_address_match,
     )
@@ -281,6 +286,8 @@ def compose_postgres_local_pilot_runtime(
         evidence_reveal=evidence_reveal,
         email_draft_material_repository=email_draft_material_repository,
         email_draft_material=email_draft_material,
+        email_material_retention_repository=email_material_retention_repository,
+        email_material_retention=email_material_retention,
         email_mailbox_identity=email_mailbox_identity,
         email_address_match=email_address_match,
         app=app,

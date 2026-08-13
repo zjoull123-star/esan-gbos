@@ -26,6 +26,13 @@ from services.observer.observer.email_draft_material_repository import (
     PostgresEmailDraftMaterialRepository,
 )
 from services.observer.observer.email_mailbox_identity import EmailMailboxIdentityService
+from services.observer.observer.email_material_retention import (
+    AuthoritativeTerminalRegistrar,
+    EmailMaterialRetentionService,
+)
+from services.observer.observer.email_material_retention_repository import (
+    PostgresEmailMaterialRetentionRepository,
+)
 from services.observer.observer.email_participant_authority import (
     EmailParticipantAuthorityResolver,
     PostgresEmailParticipantAuthorityRepository,
@@ -157,6 +164,7 @@ def build_postgres_runtime(
     mailbox_projection_auth_ref: str | None = None,
     draft_material_bearer_token: SecretValue | None = None,
     draft_material_auth_ref: str | None = None,
+    terminal_retention_registrar: AuthoritativeTerminalRegistrar | None = None,
     identity_resolver: HmacSha256IdentityTokenResolver | None = None,
     identity_hmac_key: bytes | None = None,
     evidence_cas_root: Path = DEFAULT_EVIDENCE_CAS_ROOT,
@@ -185,12 +193,22 @@ def build_postgres_runtime(
             else None
         ),
         draft_material_auth_ref=draft_material_auth_ref,
+        retention_bearer_token=(
+            draft_material_bearer_token.reveal()
+            if draft_material_bearer_token is not None
+            else None
+        ),
+        retention_auth_ref=(
+            "observer-retention-verifier-v1" if draft_material_bearer_token is not None else None
+        ),
     )
     storage = PostgresLocalPilotStorage(connection)  # type: ignore[arg-type]
     active_clock = clock or _utc_now
     evidence_reveal = None
     email_draft_material_repository = None
     email_draft_material = None
+    email_material_retention_repository = None
+    email_material_retention = None
     email_mailbox_identity = None
     email_address_match = None
     if mailbox_projection_bearer_token is not None:
@@ -215,6 +233,16 @@ def build_postgres_runtime(
                     store=evidence_store,
                     identity_resolver=identity_resolver,
                 ),
+                clock=active_clock,
+            )
+            email_material_retention_repository = PostgresEmailMaterialRetentionRepository(
+                connection
+            )
+            email_material_retention = EmailMaterialRetentionService(
+                repository=email_material_retention_repository,
+                cas=evidence_store,
+                authoritative_registrar=terminal_retention_registrar,
+                worker_id="observer-email-material-retention-1",
                 clock=active_clock,
             )
             address_match_signing_key = hmac.new(
@@ -247,6 +275,8 @@ def build_postgres_runtime(
         evidence_reveal=evidence_reveal,
         email_draft_material_repository=email_draft_material_repository,
         email_draft_material=email_draft_material,
+        email_material_retention_repository=email_material_retention_repository,
+        email_material_retention=email_material_retention,
         email_mailbox_identity=email_mailbox_identity,
         email_address_match=email_address_match,
     )
@@ -335,6 +365,7 @@ def main(
         connection = connect_postgres(config.postgres, connector=connector)
         if draft_material_bearer is not None:
             PostgresEmailDraftMaterialRepository(connection).preflight()
+            PostgresEmailMaterialRetentionRepository(connection).preflight()
         runtime = build_postgres_runtime(
             connection=connection,
             bearer_token=bearer_token,

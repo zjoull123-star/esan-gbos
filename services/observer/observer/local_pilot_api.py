@@ -28,6 +28,7 @@ from .email_connector_config import (
     EmailConnectorConfigUnavailable,
 )
 from .email_draft_material import DraftAuthorizationReceipt
+from .email_material_retention import EmailMaterialRetentionRequest
 from .identity_resolution_work import (
     IdentityAuthorityDenial,
     IdentityAuthorityDenialConflict,
@@ -69,6 +70,8 @@ class LocalPilotAPIConfig:
     mailbox_projection_auth_ref: str | None = field(default=None, repr=False)
     draft_material_bearer_token: str | None = field(default=None, repr=False)
     draft_material_auth_ref: str | None = field(default=None, repr=False)
+    retention_bearer_token: str | None = field(default=None, repr=False)
+    retention_auth_ref: str | None = field(default=None, repr=False)
     max_request_bytes: int = 262_144
 
     def __post_init__(self) -> None:
@@ -95,6 +98,12 @@ class LocalPilotAPIConfig:
             if self.draft_material_auth_ref != "observer-email-draft-material-v1":
                 raise ValueError("draft material authentication reference is invalid")
             _safe_secret(self.draft_material_bearer_token, "draft_material_bearer_token")
+        if (self.retention_bearer_token is None) != (self.retention_auth_ref is None):
+            raise ValueError("retention authentication is incomplete")
+        if self.retention_bearer_token is not None:
+            if self.retention_auth_ref != "observer-retention-verifier-v1":
+                raise ValueError("retention authentication reference is invalid")
+            _safe_secret(self.retention_bearer_token, "retention_bearer_token")
         if not 1 <= self.max_request_bytes <= 1_048_576:
             raise ValueError("max_request_bytes is outside the local API budget")
         if self.network_mode == "loopback":
@@ -245,6 +254,24 @@ class EmailDraftMaterial(Protocol):
         participant_roles: dict[str, object],
         idempotency_key: str,
     ) -> dict[str, object]: ...
+
+
+class EmailMaterialRetention(Protocol):
+    def register_terminal(
+        self,
+        scope: TenantScope,
+        *,
+        authority_receipt_ref: str,
+    ) -> EmailMaterialRetentionRequest: ...
+
+    def verify_tombstone(
+        self,
+        scope: TenantScope,
+        *,
+        evidence_ref: str,
+        tombstone_receipt_ref: str,
+        checked_at: datetime,
+    ) -> bool: ...
 
 
 class EmailMailboxIdentity(Protocol):
@@ -460,6 +487,20 @@ class EmailDraftFinalizeRequest(_ClosedModel):
     idempotency_key: str = Field(min_length=8, max_length=256)
 
 
+class EmailMaterialRetentionRegisterRequest(_ClosedModel):
+    schema_version: Literal["1.0"]
+    site_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]{0,139}$")
+    authority_receipt_ref: str = Field(pattern=r"^[A-Z]{3}-[0-9A-HJKMNP-TV-Z]{26}$")
+
+
+class EmailMaterialTombstoneVerifyRequest(_ClosedModel):
+    schema_version: Literal["1.0"]
+    site_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]{0,139}$")
+    evidence_ref: str = Field(pattern=r"^EVR-[0-9A-HJKMNP-TV-Z]{26}$")
+    tombstone_receipt_ref: str = Field(pattern=r"^[A-Z]{3}-[0-9A-HJKMNP-TV-Z]{26}$")
+    checked_at: str = Field(min_length=20, max_length=35)
+
+
 class EmailMailboxIdentityRequest(_ClosedModel):
     canonical_mailbox_address: str = Field(min_length=1, max_length=254)
     idempotency_key: str = Field(min_length=8, max_length=256)
@@ -491,6 +532,7 @@ def create_local_pilot_app(
     email_connector_configs: EmailConnectorConfigs | None = None,
     evidence_reveal: EvidenceReveal | None = None,
     email_draft_material: EmailDraftMaterial | None = None,
+    email_material_retention: EmailMaterialRetention | None = None,
     email_mailbox_identity: EmailMailboxIdentity | None = None,
     email_address_match: EmailAddressMatch | None = None,
 ) -> FastAPI:
@@ -891,6 +933,46 @@ def create_local_pilot_app(
         )
         return _bff_envelope(result, site_id=scope.site_id, request_id=request_id)
 
+    @application.post("/internal/v1/retention/email-material/register")
+    def retention_email_material_register(
+        request: Request,
+        payload: Annotated[EmailMaterialRetentionRegisterRequest, Body()],
+    ) -> dict[str, object]:
+        guard.require_running()
+        scope = _retention_scope(request, payload.site_id)
+        if email_material_retention is None:
+            raise KillSwitchEngaged("email material retention is unavailable")
+        result = email_material_retention.register_terminal(
+            scope,
+            authority_receipt_ref=payload.authority_receipt_ref,
+        )
+        return result.registration_wire()
+
+    @application.post("/internal/v1/retention/tombstones/verify")
+    def retention_tombstone_verify(
+        request: Request,
+        payload: Annotated[EmailMaterialTombstoneVerifyRequest, Body()],
+    ) -> dict[str, object]:
+        guard.require_running()
+        scope = _retention_scope(request, payload.site_id)
+        if email_material_retention is None:
+            raise KillSwitchEngaged("email material retention is unavailable")
+        checked_at = _wire_datetime(payload.checked_at, "checked_at")
+        if not email_material_retention.verify_tombstone(
+            scope,
+            evidence_ref=payload.evidence_ref,
+            tombstone_receipt_ref=payload.tombstone_receipt_ref,
+            checked_at=checked_at,
+        ):
+            raise LookupError("email material tombstone is unavailable")
+        return {
+            "schema_version": "1.0",
+            "site_id": payload.site_id,
+            "evidence_ref": payload.evidence_ref,
+            "tombstone_receipt_ref": payload.tombstone_receipt_ref,
+            "verified": True,
+        }
+
     @application.post("/internal/v1/bff/email-mailbox-identity/derive")
     def bff_email_mailbox_identity_derive(
         request: Request,
@@ -998,7 +1080,14 @@ async def _validate_internal_request(
 ) -> JSONResponse | None:
     authorization = request.headers.get("authorization")
     auth_ref = request.headers.get("x-gbos-local-auth-ref")
-    if request.url.path in {
+    retention_path = request.url.path in {
+        "/internal/v1/retention/email-material/register",
+        "/internal/v1/retention/tombstones/verify",
+    }
+    if retention_path:
+        bearer_token = config.retention_bearer_token
+        expected_auth_ref = config.retention_auth_ref
+    elif request.url.path in {
         "/internal/v1/email-connectors/apply-config",
         "/internal/v1/email-connectors/health",
         "/internal/v1/bff/evidence/reveal",
@@ -1028,11 +1117,10 @@ async def _validate_internal_request(
         or not hmac.compare_digest(auth_ref, expected_auth_ref)
     ):
         return _error(request, 401, "authentication_required")
-    for header in (
-        "x-site-id",
-        "x-processing-purpose",
-        "x-request-id",
-    ):
+    required_headers = ["x-site-id", "x-processing-purpose"]
+    if not retention_path:
+        required_headers.append("x-request-id")
+    for header in required_headers:
         value = request.headers.get(header)
         if value is None or _BOUND_ID.fullmatch(value) is None:
             return _error(request, 422, "invalid_query")
@@ -1068,6 +1156,28 @@ def _governed_scope(
     except ValueError as exc:
         raise ValueError("invalid site scope") from exc
     return scope, request.headers["x-request-id"]
+
+
+def _retention_scope(request: Request, payload_site_id: str) -> TenantScope:
+    header_site_id = request.headers["x-site-id"]
+    purpose = request.headers["x-processing-purpose"]
+    if not hmac.compare_digest(purpose, "audit_compliance"):
+        raise PermissionError("processing purpose mismatch")
+    if not hmac.compare_digest(header_site_id, payload_site_id):
+        raise PermissionError("retention site mismatch")
+    try:
+        return TenantScope(header_site_id, "observation_processing")
+    except ValueError as exc:
+        raise ValueError("invalid site scope") from exc
+
+
+def _wire_datetime(value: str, field_name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        _require_aware(parsed, field_name)
+    except ValueError as exc:
+        raise ValueError(f"invalid {field_name}") from exc
+    return parsed.astimezone(UTC)
 
 
 def _matching_idempotency(request: Request, payload_key: str) -> None:

@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from observer.control_service import ConnectorControlResult, ConnectorStatus
 from observer.email_connector_config import InMemoryEmailConnectorConfigRepository
+from observer.email_material_retention import EmailMaterialRetentionRequest
 from observer.email_participant_authority import canonical_binding_digest
 from observer.identity_resolution_work import IdentityResolutionWorkSnapshot
 from observer.local_pilot_api import LocalPilotAPIConfig, create_local_pilot_app
@@ -168,6 +169,42 @@ class FakeEmailDraftMaterial:
         }
 
 
+class FakeEmailMaterialRetention:
+    def __init__(self, *, verified: bool = True) -> None:
+        self.verified = verified
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def verify_tombstone(self, scope: TenantScope, **values: Any) -> bool:
+        self.calls.append(("verify", {"scope": scope, **values}))
+        return self.verified
+
+    def register_terminal(
+        self, scope: TenantScope, *, authority_receipt_ref: str
+    ) -> EmailMaterialRetentionRequest:
+        self.calls.append(
+            (
+                "register",
+                {"scope": scope, "authority_receipt_ref": authority_receipt_ref},
+            )
+        )
+        terminal_at = NOW - timedelta(days=31)
+        return EmailMaterialRetentionRequest(
+            request_ref="EMR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            site_id=scope.site_id,
+            purpose="email_draft_material",
+            evidence_ref="EVR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            material_kind="draft",
+            draft_ref="DRF-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            draft_revision=1,
+            object_ref="obs:v1:" + "a" * 32 + ":sha256:" + "b" * 64,
+            digest="sha256:" + "b" * 64,
+            terminal_state="discarded",
+            terminal_at=terminal_at,
+            not_before=terminal_at + timedelta(days=30),
+            authority_receipt_ref="ETA-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        )
+
+
 class FakeEmailAddressMatch:
     def __init__(self) -> None:
         self.calls: list[object] = []
@@ -239,6 +276,8 @@ def _config(
         mailbox_projection_auth_ref="gateway-mailbox-projection-v1",
         draft_material_bearer_token="observer-draft-material-token",
         draft_material_auth_ref="observer-email-draft-material-v1",
+        retention_bearer_token="observer-draft-material-token",
+        retention_auth_ref="observer-retention-verifier-v1",
         max_request_bytes=max_request_bytes,
     )
 
@@ -270,6 +309,7 @@ def _app(
     connector_configs: InMemoryEmailConnectorConfigRepository | None = None,
     evidence_reveal: FakeEvidenceReveal | None = None,
     draft_material: FakeEmailDraftMaterial | None = None,
+    email_material_retention: FakeEmailMaterialRetention | None = None,
     mailbox_identity: object | None = None,
     address_match: object | None = None,
 ) -> tuple[FastAPI, FakeControlService, FakeReadService]:
@@ -286,6 +326,7 @@ def _app(
         email_connector_configs=connector_configs,
         evidence_reveal=evidence_reveal,
         email_draft_material=draft_material,
+        email_material_retention=email_material_retention,
         email_mailbox_identity=mailbox_identity,
         email_address_match=address_match,
     )
@@ -1009,6 +1050,151 @@ def test_email_draft_material_uses_separate_bearer_and_closed_save_finalize_shap
     assert saved.status_code == finalized.status_code == 200
     assert raw_address.status_code == 422
     assert [name for name, _call in material.calls] == ["save", "finalize"]
+
+
+def test_retention_verify_uses_frozen_gateway_shape_and_separate_auth() -> None:
+    retention = FakeEmailMaterialRetention()
+    app, _control, _reader = _app(email_material_retention=retention)
+    headers = {
+        **_headers(purpose="audit_compliance", request_id="retention-verify-01"),
+        "Authorization": "Bearer observer-draft-material-token",
+        "X-GBOS-Local-Auth-Ref": "observer-retention-verifier-v1",
+    }
+    payload = {
+        "schema_version": "1.0",
+        "site_id": "alpha.example",
+        "evidence_ref": "EVR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "tombstone_receipt_ref": "TMB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "checked_at": "2026-08-14T04:00:01+00:00",
+    }
+
+    response = TestClient(app).post(
+        "/internal/v1/retention/tombstones/verify",
+        headers=headers,
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        key: value for key, value in payload.items() if key != "checked_at"
+    } | {"verified": True}
+    assert retention.calls == [
+        (
+            "verify",
+            {
+                "scope": TenantScope("alpha.example", "observation_processing"),
+                "evidence_ref": payload["evidence_ref"],
+                "tombstone_receipt_ref": payload["tombstone_receipt_ref"],
+                "checked_at": datetime(2026, 8, 14, 4, 0, 1, tzinfo=UTC),
+            },
+        )
+    ]
+
+    extra = TestClient(app).post(
+        "/internal/v1/retention/tombstones/verify",
+        headers=headers,
+        json={**payload, "digest": "sha256:" + "b" * 64},
+    )
+    wrong_site = TestClient(app).post(
+        "/internal/v1/retention/tombstones/verify",
+        headers=headers,
+        json={**payload, "site_id": "other.example"},
+    )
+    wrong_auth = TestClient(app).post(
+        "/internal/v1/retention/tombstones/verify",
+        headers={**headers, "X-GBOS-Local-Auth-Ref": "observer-email-draft-material-v1"},
+        json=payload,
+    )
+    assert extra.status_code == 422
+    assert wrong_site.status_code == 403
+    assert wrong_auth.status_code == 401
+
+
+def test_retention_verify_and_registration_fail_closed_without_durable_authority() -> None:
+    unverified = FakeEmailMaterialRetention(verified=False)
+    app, _control, _reader = _app(email_material_retention=unverified)
+    headers = {
+        **_headers(purpose="audit_compliance", request_id="retention-verify-02"),
+        "Authorization": "Bearer observer-draft-material-token",
+        "X-GBOS-Local-Auth-Ref": "observer-retention-verifier-v1",
+    }
+    payload = {
+        "schema_version": "1.0",
+        "site_id": "alpha.example",
+        "evidence_ref": "EVR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "tombstone_receipt_ref": "TMB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "checked_at": "2026-08-14T04:00:01+00:00",
+    }
+    assert (
+        TestClient(app)
+        .post(
+            "/internal/v1/retention/tombstones/verify",
+            headers=headers,
+            json=payload,
+        )
+        .status_code
+        == 404
+    )
+
+    unavailable_app, _control, _reader = _app(email_material_retention=None)
+    assert (
+        TestClient(unavailable_app)
+        .post(
+            "/internal/v1/retention/email-material/register",
+            headers=headers,
+            json={
+                "schema_version": "1.0",
+                "site_id": "alpha.example",
+                "authority_receipt_ref": "ETA-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            },
+        )
+        .status_code
+        == 503
+    )
+
+
+def test_retention_registration_accepts_only_an_opaque_authority_receipt() -> None:
+    retention = FakeEmailMaterialRetention()
+    app, _control, _reader = _app(email_material_retention=retention)
+    headers = {
+        **_headers(purpose="audit_compliance", request_id="retention-register-01"),
+        "Authorization": "Bearer observer-draft-material-token",
+        "X-GBOS-Local-Auth-Ref": "observer-retention-verifier-v1",
+    }
+    payload = {
+        "schema_version": "1.0",
+        "site_id": "alpha.example",
+        "authority_receipt_ref": "ETA-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    }
+
+    response = TestClient(app).post(
+        "/internal/v1/retention/email-material/register",
+        headers=headers,
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "schema_version": "1.0",
+        "site_id": "alpha.example",
+        "evidence_ref": "EVR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "request_ref": "EMR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "not_before": "2026-08-07T09:00:00Z",
+    }
+    assert retention.calls[0] == (
+        "register",
+        {
+            "scope": TenantScope("alpha.example", "observation_processing"),
+            "authority_receipt_ref": payload["authority_receipt_ref"],
+        },
+    )
+    injected_terminal_data = TestClient(app).post(
+        "/internal/v1/retention/email-material/register",
+        headers=headers,
+        json={**payload, "terminal_at": "2026-07-14T04:00:00Z"},
+    )
+    assert injected_terminal_data.status_code == 422
 
 
 def test_email_mailbox_identity_uses_draft_material_auth_and_exact_closed_shape(

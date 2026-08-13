@@ -16,6 +16,12 @@ from services.local_pilot_runtime.runtime_support import SecretValue
 from services.observer.observer.email_draft_material_repository import (
     PostgresEmailDraftMaterialRepository,
 )
+from services.observer.observer.email_material_retention import (
+    EmailMaterialRetentionService,
+)
+from services.observer.observer.email_material_retention_repository import (
+    PostgresEmailMaterialRetentionRepository,
+)
 from services.observer.observer.email_participant_authority import (
     EmailParticipantAuthorityResolver,
     PostgresEmailParticipantAuthorityRepository,
@@ -246,6 +252,16 @@ def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_au
         PostgresEmailDraftMaterialRepository,
     )
     assert runtime.email_draft_material._repository._connection is runtime.connection
+    assert isinstance(runtime.email_material_retention, EmailMaterialRetentionService)
+    assert isinstance(
+        runtime.email_material_retention_repository,
+        PostgresEmailMaterialRetentionRepository,
+    )
+    assert runtime.email_material_retention_repository._connection is runtime.connection
+    assert runtime.email_material_retention._authoritative_registrar is None
+    assert runtime.email_material_retention._cas is runtime.email_draft_material._store
+    assert "/internal/v1/retention/tombstones/verify" in paths
+    assert "/internal/v1/retention/email-material/register" in paths
     resolver = runtime.email_draft_material._participant_resolver
     assert isinstance(resolver, EmailParticipantAuthorityResolver)
     assert isinstance(resolver._repository, PostgresEmailParticipantAuthorityRepository)
@@ -280,7 +296,12 @@ def test_observer_main_preflights_draft_repository_before_runtime_factory_and_se
     monkeypatch.setattr(
         PostgresEmailDraftMaterialRepository,
         "preflight",
-        lambda self: events.append("preflight"),
+        lambda self: events.append("draft_preflight"),
+    )
+    monkeypatch.setattr(
+        PostgresEmailMaterialRetentionRepository,
+        "preflight",
+        lambda self: events.append("retention_preflight"),
     )
 
     class Runtime:
@@ -306,7 +327,7 @@ def test_observer_main_preflights_draft_repository_before_runtime_factory_and_se
     )
 
     assert result == 0
-    assert events == ["preflight", "factory", "server"]
+    assert events == ["draft_preflight", "retention_preflight", "factory", "server"]
     assert connection.closed is True
 
 
