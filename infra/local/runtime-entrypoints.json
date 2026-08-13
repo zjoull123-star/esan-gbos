@@ -104,9 +104,17 @@
     },
     "email-gateway-retention-worker": {
       "path": "services/local_pilot_runtime/email_gateway_retention_worker.py",
-      "status": "default_off_fail_closed_verifier",
+      "status": "default_off_terminal_retention_bridge",
       "network": "local-internal-only",
       "database_role": "gbos_email_gateway_retention_worker",
+      "external_send": false,
+      "host_ports": false
+    },
+    "observer-email-material-retention-worker": {
+      "path": "services/local_pilot_runtime/observer_email_material_retention_worker.py",
+      "status": "default_off_terminal_retention_bridge",
+      "network": "local-internal-only",
+      "database_role": "gbos_observer_app",
       "external_send": false,
       "host_ports": false
     },

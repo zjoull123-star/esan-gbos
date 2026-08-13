@@ -194,7 +194,7 @@ def test_command_relay_and_fake_send_worker_are_profile_only_closed_and_least_se
     sender = _block(compose, "email-send-worker")
 
     assert 'profiles: ["email-approved-outbound"]' in bootstrap
-    assert 'profiles: ["email-approved-outbound"]' in authority_bootstrap
+    assert 'profiles: ["email-approved-outbound", "email-initial-routing"]' in authority_bootstrap
     assert 'profiles: ["email-approved-outbound"]' in relay
     assert 'profiles: ["email-approved-outbound"]' in sender
     assert all("local-internal" in service for service in (bootstrap, authority_bootstrap, relay))
@@ -493,6 +493,15 @@ def test_email_gateway_retention_runtime_is_separate_default_off_and_provider_fr
         "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
         "auth_ref": "observer-retention-verifier-v1",
     }
+    assert config["observer_registration"] == {
+        "endpoint": "http://observer-api:8003/internal/v1/retention/email-material/register",
+        "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
+        "auth_ref": "observer-retention-verifier-v1",
+    }
+    assert config["gateway_retention_api"] == {
+        "bearer_file": "/run/secrets/email_gateway_retention_bearer",
+        "auth_ref": "email-gateway-retention-v1",
+    }
 
     compose = (ROOT / "infra/local/compose.yml").read_text()
     service = _block(compose, "email-gateway-retention-worker")
@@ -502,6 +511,7 @@ def test_email_gateway_retention_runtime_is_separate_default_off_and_provider_fr
     assert "${GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH:-true}" in service
     assert "postgres_email_gateway_retention_worker_password" in service
     assert "observer_email_draft_material_bearer" in service
+    assert "email_gateway_retention_bearer" in service
     assert "email_credential" not in service
     assert "wecom_credential" not in service
     assert "controlled-egress" not in service
@@ -513,28 +523,94 @@ def test_email_gateway_retention_runtime_is_separate_default_off_and_provider_fr
     runtime = json.loads((ROOT / "infra/local/runtime-entrypoints.json").read_text())
     assert runtime["services"]["email-gateway-retention-worker"] == {
         "path": "services/local_pilot_runtime/email_gateway_retention_worker.py",
-        "status": "default_off_fail_closed_verifier",
+        "status": "default_off_terminal_retention_bridge",
         "network": "local-internal-only",
         "database_role": "gbos_email_gateway_retention_worker",
         "external_send": False,
         "host_ports": False,
     }
 
+    observer_config = json.loads(
+        (tmp_path / "runtime-observer-email-material-retention.json").read_text()
+    )
+    assert observer_config == {
+        "schema_version": "1.0",
+        "site_id": "gbos.localhost",
+        "external_send": False,
+        "postgres": {
+            "host": "postgres",
+            "port": 5432,
+            "database": "gbos_local_pilot",
+            "user": "gbos_observer_app",
+            "password_file": "/run/secrets/postgres_observer_password",
+            "connect_timeout_seconds": 5,
+        },
+        "gateway_api": {
+            "authority_endpoint": (
+                "http://email-gateway-retention-worker:9102/internal/v1/retention/"
+                "email-material/authority/resolve"
+            ),
+            "callback_endpoint": (
+                "http://email-gateway-retention-worker:9102/internal/v1/retention/"
+                "email-material/tombstone-callback"
+            ),
+            "bearer_file": "/run/secrets/email_gateway_retention_bearer",
+            "auth_ref": "email-gateway-retention-v1",
+        },
+        "worker": {
+            "worker_id": "observer-email-material-retention-worker",
+            "batch_size": 100,
+            "interval_seconds": 3600,
+        },
+    }
+    observer_worker = _block(compose, "observer-email-material-retention-worker")
+    assert 'profiles: ["email-gateway-retention"]' in observer_worker
+    assert "postgres_observer_password" in observer_worker
+    assert "email_gateway_retention_bearer" in observer_worker
+    assert "local-pilot-evidence-cas:/var/lib/gbos/evidence" in observer_worker
+    assert "networks: [local-internal]" in observer_worker
+    assert "controlled-egress" not in observer_worker
+    assert "ports:" not in observer_worker
+    assert 'GBOS_EXTERNAL_SEND_ENABLED: "false"' in observer_worker
+    assert (
+        "GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_ENABLED: "
+        "${GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_ENABLED:-false}"
+    ) in observer_worker
+    assert (
+        "GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_KILL_SWITCH: "
+        "${GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_KILL_SWITCH:-true}"
+    ) in observer_worker
+    assert runtime["services"]["observer-email-material-retention-worker"] == {
+        "path": "services/local_pilot_runtime/observer_email_material_retention_worker.py",
+        "status": "default_off_terminal_retention_bridge",
+        "network": "local-internal-only",
+        "database_role": "gbos_observer_app",
+        "external_send": False,
+        "host_ports": False,
+    }
 
-def test_start_requires_two_exact_email_gateway_retention_opt_ins() -> None:
+
+def test_start_requires_three_exact_email_gateway_retention_opt_ins() -> None:
     start = (ROOT / "scripts/local-pilot/start").read_text()
     assert "--enable-email-gateway-retention-scheduler" in start
     assert "--acknowledge-email-gateway-draft-reference-expiry" in start
+    assert "--acknowledge-terminal-email-material-deletion" in start
     assert 'GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED="false"' in start
     assert 'GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH="true"' in start
     assert 'GBOS_EMAIL_GATEWAY_RETENTION_ENABLED="false"' in start
     assert 'GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED="false"' in start
+    assert 'GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_ENABLED="false"' in start
+    assert 'GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_KILL_SWITCH="true"' in start
     assert 'GBOS_GLOBAL_KILL_SWITCH="true"' in start
     assert 'GBOS_EMAIL_GATEWAY_KILL_SWITCH="true"' in start
     enabled = start.split('if [[ "${ENABLE_EMAIL_GATEWAY_RETENTION}" == "true" ]]', maxsplit=1)[1]
     assert 'GBOS_GLOBAL_KILL_SWITCH="false"' in enabled
     assert 'GBOS_EMAIL_GATEWAY_KILL_SWITCH="false"' in enabled
+    assert 'GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_ENABLED="true"' in enabled
+    assert 'GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_KILL_SWITCH="false"' in enabled
     assert "profile_args+=(--profile email-gateway-retention)" in start
+    assert "email-gateway-retention-worker" in start
+    assert "observer-email-material-retention-worker" in start
 
 
 def test_retention_worker_secret_is_required_private_and_materialized_before_migrate() -> None:
@@ -552,6 +628,11 @@ def test_retention_worker_secret_is_required_private_and_materialized_before_mig
     assert "Required Keychain item is unavailable" in prepare
     assert "Required Keychain item is empty" in prepare
     assert 'chmod 600 "${secret_dir}/${output_name}"' in prepare
+    assert (
+        "write_keychain_secret \\\n"
+        "  email_gateway_retention_bearer \\\n"
+        '  "keychain://com.esan.gbos.local-pilot/email-gateway-retention-bearer"'
+    ) in prepare
 
     compose = (ROOT / "infra/local/compose.yml").read_text()
     migrations = _block(compose, "migrations")

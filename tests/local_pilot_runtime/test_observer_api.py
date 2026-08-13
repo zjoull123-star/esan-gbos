@@ -4,8 +4,9 @@ import hashlib
 import importlib
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
@@ -182,6 +183,131 @@ def _enable_email_gateway(manifest_path: Path) -> None:
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
 
+def _retention_config(tmp_path: Path) -> tuple[Path, Path]:
+    bearer = tmp_path / "email_gateway_retention_bearer"
+    _secret(bearer, "retention-token")
+    path = tmp_path / "runtime-observer-email-material-retention.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "site_id": "gbos.localhost",
+                "external_send": False,
+                "postgres": {
+                    "host": "postgres",
+                    "port": 5432,
+                    "database": "gbos_local_pilot",
+                    "user": "gbos_observer_app",
+                    "password_file": "/run/secrets/postgres_observer_password",
+                    "connect_timeout_seconds": 5,
+                },
+                "gateway_api": {
+                    "authority_endpoint": "http://email-gateway-retention-worker:9102/internal/v1/retention/email-material/authority/resolve",
+                    "callback_endpoint": "http://email-gateway-retention-worker:9102/internal/v1/retention/email-material/tombstone-callback",
+                    "bearer_file": "/run/secrets/email_gateway_retention_bearer",
+                    "auth_ref": "email-gateway-retention-v1",
+                },
+                "worker": {
+                    "worker_id": "observer-email-material-retention-worker",
+                    "batch_size": 100,
+                    "interval_seconds": 3600,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path, bearer
+
+
+def test_gateway_terminal_authority_registrar_uses_closed_local_contract() -> None:
+    calls: list[dict[str, object]] = []
+    terminal_at = datetime(2026, 8, 14, 8, tzinfo=UTC)
+
+    def transport(**kwargs: object) -> tuple[int, dict[str, object]]:
+        calls.append(kwargs)
+        payload = kwargs["payload"]
+        assert isinstance(payload, dict)
+        return 200, {
+            "schema_version": "1.0",
+            "authority_receipt_ref": payload["authority_receipt_ref"],
+            "site_id": payload["site_id"],
+            "purpose": "email_draft_material",
+            "evidence_ref": "EVR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "terminal_state": "sent",
+            "terminal_at": terminal_at.isoformat().replace("+00:00", "Z"),
+            "draft_ref": "DRF-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "draft_revision": 4,
+        }
+
+    registrar = observer_api.HttpGatewayTerminalAuthorityRegistrar(
+        endpoint="http://email-gateway-retention-worker:9102/internal/v1/retention/email-material/authority/resolve",
+        bearer_token="retention-token",
+        auth_ref="email-gateway-retention-v1",
+        transport=transport,
+    )
+    scope = TenantScope("alpha.example", "observation_processing")
+
+    authority = registrar.resolve_terminal(
+        scope,
+        "ETA-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    )
+
+    assert authority.site_id == scope.site_id
+    assert authority.terminal_at == terminal_at
+    assert authority.draft_revision == 4
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["url"] == (
+        "http://email-gateway-retention-worker:9102/internal/v1/retention/"
+        "email-material/authority/resolve"
+    )
+    assert call["timeout_seconds"] == 3.0
+    sent_payload = call["payload"]
+    assert isinstance(sent_payload, dict)
+    assert call["headers"] == {
+        "Accept": "application/json",
+        "Authorization": "Bearer retention-token",
+        "Content-Type": "application/json",
+        "X-GBOS-Local-Auth-Ref": "email-gateway-retention-v1",
+        "X-Processing-Purpose": "email_draft_material",
+        "X-Request-ID": sent_payload["request_id"],
+        "X-Site-ID": "alpha.example",
+    }
+    assert set(sent_payload) == {
+        "schema_version",
+        "site_id",
+        "authority_receipt_ref",
+        "request_id",
+    }
+
+
+def test_gateway_terminal_authority_registrar_rejects_extra_or_unbounded_response() -> None:
+    response = {
+        "schema_version": "1.0",
+        "authority_receipt_ref": "ETA-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "site_id": "alpha.example",
+        "purpose": "email_draft_material",
+        "evidence_ref": "EVR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "terminal_state": "sent",
+        "terminal_at": "2026-08-14T08:00:00Z",
+        "draft_ref": "DRF-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "draft_revision": 4,
+        "raw_content": "forbidden",
+    }
+    registrar = observer_api.HttpGatewayTerminalAuthorityRegistrar(
+        endpoint="http://email-gateway-retention-worker:9102/internal/v1/retention/email-material/authority/resolve",
+        bearer_token="retention-token",
+        auth_ref="email-gateway-retention-v1",
+        transport=lambda **_kwargs: (200, response),
+    )
+
+    with pytest.raises(ValueError, match="response rejected"):
+        registrar.resolve_terminal(
+            TenantScope("alpha.example", "observation_processing"),
+            "ETA-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        )
+
+
 def test_observer_runtime_composes_real_health_without_model_projection() -> None:
     runtime = observer_api.build_postgres_runtime(
         connection=_Connection(),
@@ -290,8 +416,10 @@ def test_observer_main_preflights_draft_repository_before_runtime_factory_and_se
     _secret(draft, "draft-token")
     identity.write_bytes(b"i" * 32)
     identity.chmod(0o600)
+    retention_config, retention_bearer = _retention_config(tmp_path)
     connection = _Connection()
     events: list[str] = []
+    built: list[dict[str, object]] = []
 
     monkeypatch.setattr(
         PostgresEmailDraftMaterialRepository,
@@ -307,8 +435,9 @@ def test_observer_main_preflights_draft_repository_before_runtime_factory_and_se
     class Runtime:
         app = FastAPI()
 
-    def build(**_kwargs: object) -> Runtime:
+    def build(**kwargs: object) -> Runtime:
         events.append("factory")
+        built.append(kwargs)
         return Runtime()
 
     monkeypatch.setattr(observer_api, "build_postgres_runtime", build)
@@ -322,13 +451,66 @@ def test_observer_main_preflights_draft_repository_before_runtime_factory_and_se
         mailbox_projection_bearer_file=projection,
         draft_material_bearer_file=draft,
         identity_hmac_key_file=identity,
+        email_material_retention_config_path=retention_config,
+        email_gateway_retention_bearer_file=retention_bearer,
         connector=lambda **_kwargs: connection,
         server_runner=lambda *_args, **_kwargs: events.append("server"),
     )
 
     assert result == 0
     assert events == ["draft_preflight", "retention_preflight", "factory", "server"]
+    assert isinstance(
+        built[0]["terminal_retention_registrar"],
+        observer_api.HttpGatewayTerminalAuthorityRegistrar,
+    )
     assert connection.closed is True
+
+
+@pytest.mark.parametrize("case", ["missing_config", "wrong_site", "missing_secret"])
+def test_observer_main_requires_retention_gateway_preflight_before_postgres(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    manifest_path, config_path, observer_secret, cursor_secret = _files(tmp_path)
+    _enable_email_gateway(manifest_path)
+    secret_dir = tmp_path / "gateway-secrets"
+    secret_dir.mkdir()
+    projection = secret_dir / "mailbox_projection_bearer"
+    draft = secret_dir / "draft_material_bearer"
+    identity = secret_dir / "identity_hmac_key"
+    _secret(projection, "projection-token")
+    _secret(draft, "draft-token")
+    identity.write_bytes(b"i" * 32)
+    identity.chmod(0o600)
+    retention_config, retention_bearer = _retention_config(tmp_path)
+    if case == "missing_config":
+        retention_config = tmp_path / "missing-retention-config"
+    elif case == "wrong_site":
+        value = json.loads(retention_config.read_text(encoding="utf-8"))
+        value["site_id"] = "other.example"
+        retention_config.write_text(json.dumps(value), encoding="utf-8")
+    else:
+        retention_bearer = tmp_path / "missing-retention-bearer"
+    connect_calls: list[dict[str, object]] = []
+
+    result = observer_api.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        environ={"GBOS_LOCAL_RUNTIME_ENABLED": "true"},
+        observer_bearer_file=observer_secret,
+        observer_auth_ref="observer-auth-v1",
+        cursor_secret_file=cursor_secret,
+        mailbox_projection_bearer_file=projection,
+        draft_material_bearer_file=draft,
+        identity_hmac_key_file=identity,
+        email_material_retention_config_path=retention_config,
+        email_gateway_retention_bearer_file=retention_bearer,
+        connector=lambda **kwargs: connect_calls.append(kwargs),
+        server_runner=lambda *_args, **_kwargs: None,
+    )
+
+    assert result == 78
+    assert connect_calls == []
 
 
 def test_address_match_evidence_reader_binds_delivered_publication_site_and_cas() -> None:
@@ -344,7 +526,7 @@ def test_address_match_evidence_reader_binds_delivered_publication_site_and_cas(
         ]
     )
     store = _CasStore(content)
-    reader = observer_api.PostgresEmailAddressMatchEvidenceReader(connection, store)
+    reader = observer_api.PostgresEmailAddressMatchEvidenceReader(connection, cast(Any, store))
     scope = TenantScope(
         "alpha.example",
         "email_address_identity_confirmation",

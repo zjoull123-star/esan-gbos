@@ -280,9 +280,13 @@ services:
       - source: observer_email_draft_material_bearer
         target: observer_email_draft_material_bearer
         mode: 0600
+      - source: email_gateway_retention_bearer
+        target: email_gateway_retention_bearer
+        mode: 0400
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
       - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-observer.json:/config/local-pilot-runtime.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-observer-email-material-retention.json:/config/runtime-observer-email-material-retention.json:ro
       - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/connectors.json:/config/connectors.json:ro
       - ../../.runtime/local-pilot:/run/gbos:ro
       - local-pilot-evidence-cas:/var/lib/gbos/evidence
@@ -368,6 +372,9 @@ services:
       - source: observer_email_draft_material_bearer
         target: observer_email_draft_material_bearer
         mode: 0400
+      - source: email_gateway_retention_bearer
+        target: email_gateway_retention_bearer
+        mode: 0400
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
       - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-email-gateway-retention-worker.json:/config/email-gateway-retention-runtime.json:ro
@@ -388,6 +395,44 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  observer-email-material-retention-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["email-gateway-retention"]
+    command: ["python", "-m", "services.local_pilot_runtime.observer_email_material_retention_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_GLOBAL_KILL_SWITCH: ${GBOS_GLOBAL_KILL_SWITCH:-true}
+      GBOS_EMAIL_GATEWAY_KILL_SWITCH: ${GBOS_EMAIL_GATEWAY_KILL_SWITCH:-true}
+      GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_ENABLED: ${GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_ENABLED:-false}
+      GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_KILL_SWITCH: ${GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_KILL_SWITCH:-true}
+      GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_CONFIG: /config/runtime-observer-email-material-retention.json
+      GBOS_LOCAL_PILOT_MANIFEST: /config/local-pilot-manifest.json
+      GBOS_EXTERNAL_SEND_ENABLED: "false"
+    secrets:
+      - postgres_observer_password
+      - source: email_gateway_retention_bearer
+        target: email_gateway_retention_bearer
+        mode: 0400
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-observer-email-material-retention.json:/config/runtime-observer-email-material-retention.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+      - local-pilot-evidence-cas:/var/lib/gbos/evidence
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      email-gateway-retention-worker:
+        condition: service_started
     read_only: true
     tmpfs:
       - /tmp
@@ -1466,6 +1511,8 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_gateway_command_ingest_bearer
   observer_email_draft_material_bearer:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/observer_email_draft_material_bearer
+  email_gateway_retention_bearer:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_gateway_retention_bearer
   mailbox_projection_bearer:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/mailbox_projection_bearer
   email_gateway_data_key:

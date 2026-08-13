@@ -19,8 +19,9 @@ from services.email_gateway.models import (
     IdentityProjection,
     Mailbox,
     TenantScope,
+    canonical_digest,
 )
-from services.email_gateway.operations import InboxOperations
+from services.email_gateway.operations import InboxCommandAuthority, InboxOperations
 from services.email_gateway.repositories.identity import InMemoryIdentityProjectionRepository
 from services.email_gateway.repositories.intake import InMemoryIntakeRepository
 from services.email_gateway.repositories.mailboxes import InMemoryMailboxRepository
@@ -127,6 +128,37 @@ def _actor(ref: str, role: str) -> GatewayActorScope:
     return GatewayActorScope(SCOPE.site_id, ref, (TEAM_REF,), (role,))
 
 
+def _command_authority(
+    command: str,
+    *,
+    actor: GatewayActorScope,
+    inbox_item_ref: str,
+    expected_revision: int,
+    target_user_ref: str | None = None,
+    business_ref: str | None = None,
+) -> InboxCommandAuthority:
+    return InboxCommandAuthority(
+        schema_version="1.0",
+        command=command,
+        actor_ref_digest=canonical_digest({"site_id": actor.site_id, "user_ref": actor.actor_ref}),
+        actor_roles=actor.roles,
+        actor_team_refs=actor.team_refs,
+        actor_eligibility_revision=DIGEST_A,
+        inbox_item_ref=inbox_item_ref,
+        expected_inbox_revision=expected_revision,
+        target_user_ref_digest=(
+            None
+            if target_user_ref is None
+            else canonical_digest({"site_id": actor.site_id, "user_ref": target_user_ref})
+        ),
+        target_team_refs=actor.team_refs if target_user_ref is not None else (),
+        target_eligibility_revision=DIGEST_B if target_user_ref is not None else None,
+        business_ref=business_ref,
+        business_team_ref=actor.team_refs[0] if business_ref is not None else None,
+        business_revision=1 if business_ref is not None else None,
+    )
+
+
 def test_human_operations_offline_e2e_preserves_one_audit_trail_and_never_sends(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -220,9 +252,15 @@ def test_human_operations_offline_e2e_preserves_one_audit_trail_and_never_sends(
         now=NOW + timedelta(seconds=1),
     )
 
+    claim_actor = _actor("sales-b", "Sales User")
     claim_command = dict(
-        actor=_actor("sales-b", "Sales User"),
-        actor_enabled=True,
+        actor=claim_actor,
+        authority=_command_authority(
+            "claim",
+            actor=claim_actor,
+            inbox_item_ref=second.inbox_item_ref,
+            expected_revision=second.revision,
+        ),
         inbox_item_ref=second.inbox_item_ref,
         expected_revision=second.revision,
         request_id="REQ-CLAIM",
@@ -235,14 +273,19 @@ def test_human_operations_offline_e2e_preserves_one_audit_trail_and_never_sends(
     assert restarted_operations.claim(SCOPE, **claim_command) == claimed
     assert workflow.audit_count(SCOPE) == audit_after_claim
 
+    manager = _actor("manager", "Sales Manager")
     reassigned = restarted_operations.reassign(
         SCOPE,
-        actor=_actor("manager", "Sales Manager"),
-        actor_enabled=True,
+        actor=manager,
+        authority=_command_authority(
+            "reassign",
+            actor=manager,
+            inbox_item_ref=claimed.inbox_item_ref,
+            expected_revision=claimed.revision,
+            target_user_ref="sales-c",
+        ),
         inbox_item_ref=claimed.inbox_item_ref,
         assignee_user_ref="sales-c",
-        assignee_team_ref=TEAM_REF,
-        assignee_enabled=True,
         expected_revision=claimed.revision,
         request_id="REQ-REASSIGN",
         idempotency_key="reassign",
@@ -300,14 +343,19 @@ def test_human_operations_offline_e2e_preserves_one_audit_trail_and_never_sends(
     )
     assert set(conversation.inbox_item_refs) == {first.inbox_item_ref, reassigned.inbox_item_ref}
 
+    sales_actor = _actor("sales-a", "Sales User")
     linked = restarted_operations.link_business(
         SCOPE,
-        actor=_actor("sales-a", "Sales User"),
-        actor_enabled=True,
+        actor=sales_actor,
+        authority=_command_authority(
+            "link_business",
+            actor=sales_actor,
+            inbox_item_ref=first.inbox_item_ref,
+            expected_revision=first.revision,
+            business_ref="CRM-DEAL-OFFLINE-01",
+        ),
         inbox_item_ref=first.inbox_item_ref,
         business_ref="CRM-DEAL-OFFLINE-01",
-        authority_valid=True,
-        authority_team_ref=TEAM_REF,
         expected_revision=first.revision,
         request_id="REQ-LINK",
         idempotency_key="link",

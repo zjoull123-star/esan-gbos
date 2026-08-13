@@ -12,6 +12,7 @@ ENABLE_RETENTION_SCHEDULER="false"
 ACKNOWLEDGE_PERIODIC_RETENTION="false"
 ENABLE_EMAIL_GATEWAY_RETENTION="false"
 ACKNOWLEDGE_EMAIL_GATEWAY_RETENTION="false"
+ACKNOWLEDGE_TERMINAL_EMAIL_MATERIAL_DELETION="false"
 while (( $# > 0 )); do
   case "$1" in
     --manifest)
@@ -36,8 +37,11 @@ while (( $# > 0 )); do
     --acknowledge-email-gateway-draft-reference-expiry)
       ACKNOWLEDGE_EMAIL_GATEWAY_RETENTION="true"
       ;;
+    --acknowledge-terminal-email-material-deletion)
+      ACKNOWLEDGE_TERMINAL_EMAIL_MATERIAL_DELETION="true"
+      ;;
     *)
-      echo "Usage: scripts/local-pilot/start [--manifest PATH] [--canary-control PATH] [--enable-retention-scheduler --acknowledge-periodic-expired-local-data-deletion] [--enable-email-gateway-retention-scheduler --acknowledge-email-gateway-draft-reference-expiry]" >&2
+      echo "Usage: scripts/local-pilot/start [--manifest PATH] [--canary-control PATH] [--enable-retention-scheduler --acknowledge-periodic-expired-local-data-deletion] [--enable-email-gateway-retention-scheduler --acknowledge-email-gateway-draft-reference-expiry --acknowledge-terminal-email-material-deletion]" >&2
       exit 64
       ;;
   esac
@@ -48,8 +52,9 @@ if [[ "${ENABLE_RETENTION_SCHEDULER}" != "${ACKNOWLEDGE_PERIODIC_RETENTION}" ]];
   echo "Periodic retention requires both the enable flag and deletion acknowledgement." >&2
   exit 64
 fi
-if [[ "${ENABLE_EMAIL_GATEWAY_RETENTION}" != "${ACKNOWLEDGE_EMAIL_GATEWAY_RETENTION}" ]]; then
-  echo "Email Gateway retention requires both exact opt-ins." >&2
+if [[ "${ENABLE_EMAIL_GATEWAY_RETENTION}" != "${ACKNOWLEDGE_EMAIL_GATEWAY_RETENTION}" ]] ||
+  [[ "${ENABLE_EMAIL_GATEWAY_RETENTION}" != "${ACKNOWLEDGE_TERMINAL_EMAIL_MATERIAL_DELETION}" ]]; then
+  echo "Email Gateway retention requires the enable flag and both exact deletion acknowledgements." >&2
   exit 64
 fi
 if [[ "${ENABLE_RETENTION_SCHEDULER}" == "true" || "${ENABLE_EMAIL_GATEWAY_RETENTION}" == "true" ]]; then
@@ -126,7 +131,7 @@ if [[ -n "${CANARY_CONTROL}" ]]; then
   running_services="$(compose ps --status running --services)"
   while IFS= read -r running_service; do
     case "${running_service}" in
-      agent-worker|communication-draft-worker|connector-worker|email-poller|identity-resolution-worker|materialization-worker|media-worker|model-projection-worker|retention-scheduler|wecom-poller|webhook-ingress)
+      agent-worker|communication-draft-worker|connector-worker|email-gateway-retention-worker|email-poller|identity-resolution-worker|materialization-worker|media-worker|model-projection-worker|observer-email-material-retention-worker|retention-scheduler|wecom-poller|webhook-ingress)
         echo "A canary producer or model worker is already running; stop it before guarded startup." >&2
         exit 78
         ;;
@@ -212,6 +217,8 @@ GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED="false"
 GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH="true"
 GBOS_EMAIL_GATEWAY_RETENTION_ENABLED="false"
 GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED="false"
+GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_ENABLED="false"
+GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_KILL_SWITCH="true"
 export \
   GBOS_CONNECTOR_KILL_SWITCH \
   GBOS_IDENTITY_RESOLUTION_KILL_SWITCH \
@@ -233,7 +240,9 @@ export \
   GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED \
   GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH \
   GBOS_EMAIL_GATEWAY_RETENTION_ENABLED \
-  GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED
+  GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED \
+  GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_ENABLED \
+  GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_KILL_SWITCH
 
 profile_args=(--profile runtime --profile observability)
 if [[ "${ENABLE_RETENTION_SCHEDULER}" == "true" ]]; then
@@ -255,6 +264,8 @@ if [[ "${ENABLE_EMAIL_GATEWAY_RETENTION}" == "true" ]]; then
   GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH="false"
   GBOS_EMAIL_GATEWAY_RETENTION_ENABLED="true"
   GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED="true"
+  GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_ENABLED="true"
+  GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_KILL_SWITCH="false"
   profile_args+=(--profile email-gateway-retention)
   export \
     GBOS_GLOBAL_KILL_SWITCH \
@@ -262,7 +273,9 @@ if [[ "${ENABLE_EMAIL_GATEWAY_RETENTION}" == "true" ]]; then
     GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED \
     GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH \
     GBOS_EMAIL_GATEWAY_RETENTION_ENABLED \
-    GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED
+    GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED \
+    GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_ENABLED \
+    GBOS_OBSERVER_EMAIL_MATERIAL_RETENTION_KILL_SWITCH
 fi
 connector_profile_enabled=false
 identity_profile_enabled=false

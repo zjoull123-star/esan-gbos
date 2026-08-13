@@ -373,7 +373,7 @@ class PostgresEmailSendRepository:
                 request_digest=claim.snapshot.envelope.final_mime_digest,
                 safe_code=safe_code,
             )
-            self._insert_provider_receipt(
+            provider_receipt_record_ref = self._insert_provider_receipt(
                 db,
                 scope,
                 send_outbox_ref=claim.snapshot.send_outbox_ref,
@@ -384,6 +384,12 @@ class PostgresEmailSendRepository:
                 observed_at=now,
                 identity=claim.fence_token,
             )
+            if outcome in {"accepted", "delivered"}:
+                self._create_sent_material_authorities(
+                    db,
+                    scope,
+                    provider_receipt_record_ref=provider_receipt_record_ref,
+                )
         return self._claim_snapshot(claim, state)
 
     def mark_uncertain(
@@ -488,7 +494,7 @@ class PostgresEmailSendRepository:
                     (state, safe_code, now, scope.site_id, send_outbox_ref),
                 )
             if outcome in self._TERMINAL_STATES:
-                self._insert_provider_receipt(
+                provider_receipt_record_ref = self._insert_provider_receipt(
                     db,
                     scope,
                     send_outbox_ref=send_outbox_ref,
@@ -499,6 +505,12 @@ class PostgresEmailSendRepository:
                     observed_at=now,
                     identity=stable_request_id + ":reconciliation",
                 )
+                if outcome in {"accepted", "delivered"}:
+                    self._create_sent_material_authorities(
+                        db,
+                        scope,
+                        provider_receipt_record_ref=provider_receipt_record_ref,
+                    )
         return SendOutboxSnapshot(
             send_outbox_ref=snapshot.send_outbox_ref,
             command_receipt_ref=snapshot.command_receipt_ref,
@@ -630,7 +642,10 @@ class PostgresEmailSendRepository:
         provider_receipt_ref: str | None,
         observed_at: datetime,
         identity: str,
-    ) -> None:
+    ) -> str:
+        provider_receipt_record_ref = stable_ref(
+            "PRC", identity, outcome, provider_receipt_ref or "none"
+        )
         db.execute(
             """
             INSERT INTO email_gateway.provider_receipts (
@@ -640,7 +655,7 @@ class PostgresEmailSendRepository:
             """,
             (
                 scope.site_id,
-                stable_ref("PRC", identity, outcome, provider_receipt_ref or "none"),
+                provider_receipt_record_ref,
                 send_outbox_ref,
                 attempt,
                 outcome,
@@ -648,6 +663,19 @@ class PostgresEmailSendRepository:
                 provider_receipt_ref,
                 observed_at,
             ),
+        )
+        return provider_receipt_record_ref
+
+    @staticmethod
+    def _create_sent_material_authorities(
+        db: Any,
+        scope: TenantScope,
+        *,
+        provider_receipt_record_ref: str,
+    ) -> None:
+        db.execute(
+            "SELECT email_gateway.create_sent_email_material_authorities(%s, %s)",
+            (scope.site_id, provider_receipt_record_ref),
         )
 
     @staticmethod

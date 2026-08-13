@@ -138,6 +138,23 @@ Send Outbox 关闭。离线测试只允许 fake publication 进入两个独立 p
   串行处理并写幂等 receipt。run 使用 generation/attempt/lease fence；emergency stop 时不
   claim 新任务。安全失败码进入 retry，下个周期重试；达到固定上限才进入 dead letter。
 
+终态草稿与最终 MIME 的 30 天删除桥默认关闭。它只在 `local_pilot_go=true`、
+Email Gateway kill switch 已解除，并同时给出下面三个精确 opt-in 时进入
+`email-gateway-retention` profile：
+
+```sh
+scripts/local-pilot/start \
+  --manifest /absolute/path/to/approved-pilot-manifest.json \
+  --enable-email-gateway-retention-scheduler \
+  --acknowledge-email-gateway-draft-reference-expiry \
+  --acknowledge-terminal-email-material-deletion
+```
+
+最后一个确认表示允许 Observer 在 30 天到期且无 legal hold 时实际删除 CAS 内容；
+缺少任一参数均在 secret、数据库或 Compose 变更前拒绝。Gateway 仅登记/验证权威和接收
+tombstone callback，实际 CAS 删除只由隔离的 Observer worker 串行执行。当前正式
+manifest 仍为 No-Go，因此本命令没有 live 执行证据，也不得仅凭静态测试解释为已删除。
+
 Email Gateway 只暴露冻结的低基数指标：publication backlog/oldest age 的固定
 `queued|retry|leased|dead_letter` state、closed Inbox queue enum、无标签的 SLA overdue、
 identity pending、unassigned，以及固定 allowlist 的 authority failure、worker heartbeat、

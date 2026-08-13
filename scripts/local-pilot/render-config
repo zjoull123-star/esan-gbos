@@ -455,11 +455,57 @@ def _email_gateway_retention_runtime_config(manifest: dict[str, Any]) -> dict[st
             "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
             "auth_ref": "observer-retention-verifier-v1",
         },
+        "observer_registration": {
+            "endpoint": (
+                "http://observer-api:8003/internal/v1/retention/email-material/register"
+            ),
+            "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
+            "auth_ref": "observer-retention-verifier-v1",
+        },
+        "gateway_retention_api": {
+            "bearer_file": "/run/secrets/email_gateway_retention_bearer",
+            "auth_ref": "email-gateway-retention-v1",
+        },
         "worker_id": "local-pilot-email-gateway-retention-worker",
         "batch_size": 100,
         "interval_seconds": 3600,
         "metrics_port": 9102,
         "required_workers": ["retention"],
+    }
+
+
+def _observer_email_material_retention_runtime_config(
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "site_id": manifest["site_id"],
+        "external_send": False,
+        "postgres": {
+            "host": "postgres",
+            "port": 5432,
+            "database": "gbos_local_pilot",
+            "user": "gbos_observer_app",
+            "password_file": "/run/secrets/postgres_observer_password",
+            "connect_timeout_seconds": 5,
+        },
+        "gateway_api": {
+            "authority_endpoint": (
+                "http://email-gateway-retention-worker:9102/internal/v1/retention/"
+                "email-material/authority/resolve"
+            ),
+            "callback_endpoint": (
+                "http://email-gateway-retention-worker:9102/internal/v1/retention/"
+                "email-material/tombstone-callback"
+            ),
+            "bearer_file": "/run/secrets/email_gateway_retention_bearer",
+            "auth_ref": "email-gateway-retention-v1",
+        },
+        "worker": {
+            "worker_id": "observer-email-material-retention-worker",
+            "batch_size": 100,
+            "interval_seconds": 3600,
+        },
     }
 
 
@@ -569,6 +615,11 @@ def main() -> int:
             output_dir,
             "runtime-email-gateway-retention-worker.json",
             _email_gateway_retention_runtime_config(manifest),
+        )
+        _atomic_private_json(
+            output_dir,
+            "runtime-observer-email-material-retention.json",
+            _observer_email_material_retention_runtime_config(manifest),
         )
         _atomic_private_json(
             output_dir,

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
+import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, Protocol, cast
 
+import httpx
 from fastapi import FastAPI
 
 from services.agent_runtime.local_entrypoint import (
@@ -29,6 +32,7 @@ from services.observer.observer.email_mailbox_identity import EmailMailboxIdenti
 from services.observer.observer.email_material_retention import (
     AuthoritativeTerminalRegistrar,
     EmailMaterialRetentionService,
+    TerminalMaterialAuthority,
 )
 from services.observer.observer.email_material_retention_repository import (
     PostgresEmailMaterialRetentionRepository,
@@ -44,7 +48,7 @@ from services.observer.observer.identity_resolution_work import (
 from services.observer.observer.identity_tokens import HmacSha256IdentityTokenResolver
 from services.observer.observer.local_pilot_api import LocalPilotAPIConfig
 from services.observer.observer.local_pilot_storage import PostgresLocalPilotStorage
-from services.observer.observer.models import TenantScope
+from services.observer.observer.models import TenantScope, stable_ulid
 from services.observer.observer.read_service import (
     EvidenceRevealService,
     PostgresEvidenceBindingResolver,
@@ -56,6 +60,19 @@ from services.observer.observer.runtime import (
 )
 
 from .email_gateway_config import MAILBOX_PROJECTION_AUTH_REF
+from .observer_email_material_retention_worker import (
+    AUTH_REF as EMAIL_GATEWAY_RETENTION_AUTH_REF,
+)
+from .observer_email_material_retention_worker import (
+    AUTHORITY_ENDPOINT,
+    load_observer_email_material_retention_config,
+)
+from .observer_email_material_retention_worker import (
+    DEFAULT_BEARER_FILE as DEFAULT_EMAIL_GATEWAY_RETENTION_BEARER,
+)
+from .observer_email_material_retention_worker import (
+    DEFAULT_CONFIG as DEFAULT_EMAIL_MATERIAL_RETENTION_CONFIG,
+)
 from .runtime_support import (
     RuntimeSupportError,
     SecretValue,
@@ -81,6 +98,169 @@ ServerRunner = Callable[..., None]
 ADDRESS_MATCH_CALLER_REF = "frappe-identity-command"
 _ADDRESS_MATCH_SIGNING_CONTEXT = b"gbos:observer:email-address-match:v1"
 _MAX_ADDRESS_MATCH_MESSAGE_BYTES = 10_000_000
+_MAX_RETENTION_AUTHORITY_RESPONSE_BYTES = 65_536
+_RETENTION_REF = re.compile(r"^[A-Z]{3}-[0-9A-HJKMNP-TV-Z]{26}$")
+_UTC_TIMESTAMP = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z$"
+)
+
+
+class _AuthorityTransport(Protocol):
+    def __call__(
+        self,
+        *,
+        url: str,
+        headers: Mapping[str, str],
+        payload: Mapping[str, object],
+        timeout_seconds: float,
+    ) -> tuple[int, Mapping[str, object]]: ...
+
+
+class HttpGatewayTerminalAuthorityRegistrar:
+    """Resolve terminal material only through the dedicated local Gateway authority."""
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        bearer_token: str,
+        auth_ref: str,
+        transport: _AuthorityTransport | None = None,
+    ) -> None:
+        if (
+            endpoint != AUTHORITY_ENDPOINT
+            or not isinstance(bearer_token, str)
+            or not 1 <= len(bearer_token) <= 4_096
+            or bearer_token != bearer_token.strip()
+            or any(char in bearer_token for char in "\x00\r\n")
+            or auth_ref != EMAIL_GATEWAY_RETENTION_AUTH_REF
+        ):
+            raise ValueError("Gateway terminal authority configuration rejected")
+        self._endpoint = endpoint
+        self._bearer_token = bearer_token
+        self._auth_ref = auth_ref
+        self._transport = transport or self._post
+
+    def __repr__(self) -> str:
+        return "HttpGatewayTerminalAuthorityRegistrar(credentials=<redacted>)"
+
+    def resolve_terminal(
+        self,
+        scope: TenantScope,
+        authority_receipt_ref: str,
+    ) -> TerminalMaterialAuthority:
+        if _RETENTION_REF.fullmatch(authority_receipt_ref) is None:
+            raise ValueError("Gateway terminal authority request rejected")
+        request_id = "ETR-" + stable_ulid(
+            "observer-email-material-terminal-authority",
+            scope.site_id,
+            authority_receipt_ref,
+        )
+        payload: dict[str, object] = {
+            "schema_version": "1.0",
+            "site_id": scope.site_id,
+            "authority_receipt_ref": authority_receipt_ref,
+            "request_id": request_id,
+        }
+        status, response = self._transport(
+            url=self._endpoint,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self._bearer_token}",
+                "Content-Type": "application/json",
+                "X-GBOS-Local-Auth-Ref": self._auth_ref,
+                "X-Processing-Purpose": "email_draft_material",
+                "X-Request-ID": request_id,
+                "X-Site-ID": scope.site_id,
+            },
+            payload=payload,
+            timeout_seconds=3.0,
+        )
+        fields = {
+            "schema_version",
+            "authority_receipt_ref",
+            "site_id",
+            "purpose",
+            "evidence_ref",
+            "terminal_state",
+            "terminal_at",
+            "draft_ref",
+            "draft_revision",
+        }
+        if status != 200 or not isinstance(response, Mapping) or set(response) != fields:
+            raise ValueError("Gateway terminal authority response rejected")
+        response_receipt = response.get("authority_receipt_ref")
+        evidence_ref = response.get("evidence_ref")
+        terminal_state = response.get("terminal_state")
+        terminal_at_value = response.get("terminal_at")
+        draft_ref = response.get("draft_ref")
+        draft_revision = response.get("draft_revision")
+        if (
+            response.get("schema_version") != "1.0"
+            or response.get("site_id") != scope.site_id
+            or response.get("purpose") != "email_draft_material"
+            or not isinstance(response_receipt, str)
+            or not hmac.compare_digest(response_receipt, authority_receipt_ref)
+            or not isinstance(evidence_ref, str)
+            or terminal_state not in {"sent", "discarded"}
+            or not isinstance(terminal_at_value, str)
+            or not isinstance(draft_ref, str)
+            or isinstance(draft_revision, bool)
+            or not isinstance(draft_revision, int)
+        ):
+            raise ValueError("Gateway terminal authority response rejected")
+        terminal_at = self._terminal_at(terminal_at_value)
+        try:
+            return TerminalMaterialAuthority(
+                authority_receipt_ref=response_receipt,
+                site_id=scope.site_id,
+                purpose="email_draft_material",
+                evidence_ref=evidence_ref,
+                terminal_state=cast(Literal["sent", "discarded"], terminal_state),
+                terminal_at=terminal_at,
+                draft_ref=draft_ref,
+                draft_revision=draft_revision,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Gateway terminal authority response rejected") from exc
+
+    @staticmethod
+    def _terminal_at(value: str) -> datetime:
+        if _UTC_TIMESTAMP.fullmatch(value) is None:
+            raise ValueError("Gateway terminal authority response rejected")
+        try:
+            parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+        except ValueError as exc:
+            raise ValueError("Gateway terminal authority response rejected") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("Gateway terminal authority response rejected")
+        return parsed.astimezone(UTC)
+
+    @staticmethod
+    def _post(
+        *,
+        url: str,
+        headers: Mapping[str, str],
+        payload: Mapping[str, object],
+        timeout_seconds: float,
+    ) -> tuple[int, Mapping[str, object]]:
+        with httpx.Client(
+            timeout=timeout_seconds,
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.post(url, headers=headers, json=payload)
+        content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip()
+        if (
+            content_type != "application/json"
+            or len(response.content) > _MAX_RETENTION_AUTHORITY_RESPONSE_BYTES
+        ):
+            return response.status_code, {}
+        try:
+            body = response.json()
+        except ValueError, json.JSONDecodeError:
+            return response.status_code, {}
+        return response.status_code, body if isinstance(body, dict) else {}
 
 
 class PostgresEmailAddressMatchEvidenceReader:
@@ -293,6 +473,8 @@ def main(
     mailbox_projection_bearer_file: Path = DEFAULT_MAILBOX_PROJECTION_BEARER,
     draft_material_bearer_file: Path = DEFAULT_DRAFT_MATERIAL_BEARER,
     identity_hmac_key_file: Path = DEFAULT_IDENTITY_HMAC_KEY,
+    email_material_retention_config_path: Path = DEFAULT_EMAIL_MATERIAL_RETENTION_CONFIG,
+    email_gateway_retention_bearer_file: Path = DEFAULT_EMAIL_GATEWAY_RETENTION_BEARER,
     observer_port: int = DEFAULT_OBSERVER_PORT,
     internal_network: bool = False,
     connector: Callable[..., object] | None = None,
@@ -339,6 +521,7 @@ def main(
         draft_material_auth_ref = None
         identity_resolver = None
         identity_hmac_key = None
+        terminal_retention_registrar = None
         if isinstance(gateway, Mapping) and gateway.get("kill_switch") is False:
             mailbox_projection_bearer = load_secret_file(mailbox_projection_bearer_file)
             mailbox_projection_auth_ref = MAILBOX_PROJECTION_AUTH_REF
@@ -362,6 +545,17 @@ def main(
                 raise ValueError("email Gateway identity resolver is unavailable")
             identity_hmac_key = identity_secret.reveal()
             identity_resolver = HmacSha256IdentityTokenResolver(identity_hmac_key)
+            retention_config = load_observer_email_material_retention_config(
+                email_material_retention_config_path
+            )
+            if retention_config.site_id != config.site_id:
+                raise ValueError("email material retention site binding rejected")
+            retention_bearer = load_secret_file(email_gateway_retention_bearer_file)
+            terminal_retention_registrar = HttpGatewayTerminalAuthorityRegistrar(
+                endpoint=retention_config.gateway_api.authority_endpoint,
+                bearer_token=retention_bearer.reveal(),
+                auth_ref=retention_config.gateway_api.auth_ref,
+            )
         connection = connect_postgres(config.postgres, connector=connector)
         if draft_material_bearer is not None:
             PostgresEmailDraftMaterialRepository(connection).preflight()
@@ -375,6 +569,7 @@ def main(
             mailbox_projection_auth_ref=mailbox_projection_auth_ref,
             draft_material_bearer_token=draft_material_bearer,
             draft_material_auth_ref=draft_material_auth_ref,
+            terminal_retention_registrar=terminal_retention_registrar,
             identity_resolver=identity_resolver,
             identity_hmac_key=identity_hmac_key,
             bind_host=bind_host,
@@ -451,6 +646,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "HttpGatewayTerminalAuthorityRegistrar",
     "app",
     "build_postgres_runtime",
     "main",
