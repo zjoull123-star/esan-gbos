@@ -28,6 +28,7 @@ _RLS_TABLES = {
     "routing_rules",
     "send_outbox",
     "thread_suggestions",
+    "worker_heartbeats",
 }
 
 
@@ -48,7 +49,7 @@ def _gateway_enabled() -> str:
 def _apply_gateway_migrations(connection) -> None:
     root = Path(__file__).resolve().parents[2]
     migrations = sorted((root / "services" / "email_gateway" / "migrations").glob("*.sql"))
-    assert len(migrations) == 5
+    assert len(migrations) == 6
     for path in migrations:
         connection.execute(path.read_text())
 
@@ -60,7 +61,7 @@ def test_email_gateway_migrations_run_twice_with_forced_rls_and_no_forbidden_tab
 
     root = Path(__file__).resolve().parents[2]
     migrations = sorted((root / "services" / "email_gateway" / "migrations").glob("*.sql"))
-    assert len(migrations) == 5
+    assert len(migrations) == 6
     with psycopg.connect(dsn, autocommit=True) as connection:
         for _ in range(2):
             for path in migrations:

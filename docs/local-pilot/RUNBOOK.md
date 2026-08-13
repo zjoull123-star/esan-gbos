@@ -72,10 +72,10 @@ DeepSeek 默认关闭。runtime entrypoint、Compose config 和源绑定镜像�
 - 编排：`infra/local/compose.yml`
 - 本地不可变 evidence truth 是 `local-pilot-evidence-cas` filesystem CAS。
   MinIO 不属于 required runtime，也没有对象存储控制台。
-- Prometheus 是可选 profile；固定 3.7.3 镜像已完成 `promtool` 配置/规则校验，
-  当前共 9 条低基数规则通过静态校验：原有 7 条 identity-resolution 规则，
-  加上 `RetentionSchedulerStale`（最近成功已超过两个日常周期）和
-  `RetentionSchedulerFailure`（最近一次 bounded pass 失败且尚未由成功周期恢复）。
+- Prometheus 是可选 profile；固定 3.7.3 镜像已对当前共 13 条低基数规则通过静态校验
+  （`promtool check rules`）：7 条 identity-resolution 规则、
+  `RetentionSchedulerStale`、`RetentionSchedulerFailure`，以及 Task 13 冻结的 4 条
+  Email Gateway 人工收件箱规则。
   先前 live scrape 只证明 `identity-resolution` target 为 `up=1`；默认关闭的
   retention scheduler 没有本次 live 运行证据，不能把静态告警校验解释为周期删除已运行。
   `gbos_identity_resolver_ready=0` 是预期禁用态结果，不可解释为真实 worker 已就绪或
@@ -115,6 +115,53 @@ Frappe 与 runtime 分别标记 source reference `4b2512b` 和 `341b2df`，完�
 本次 closure snapshot 使用了 governed dependency/image/scanner network，并启动了
 isolated PostgreSQL validation/build/scanner containers；没有 provider/channel network，
 也没有 pilot application services。真实 IMAP/model/external calls 仍为零。
+
+## Email Gateway human operations
+
+Task 13 的人工收件箱边界默认保持 provider、model、network、external send 和
+Send Outbox 关闭。离线测试只允许 fake publication 进入两个独立 primary mailbox，
+随后验证人工身份投影、精确路由、claim/reassign、SLA、建议拒绝后人工合并、业务关联和
+草稿编辑；它不能被解释为真实邮箱登录、真实 provider 回调、模型调用或外发证据。
+
+保留执行遵循以下固定规则：
+
+- 原始 EML、正文、附件和最终 MIME 始终由 Observer CAS 管理；Gateway 不直接执行
+  CAS DELETE，也不创建重复的 raw-delivery、checkpoint、cursor 或 legal-hold 权威表。
+- editable 草稿及仍活跃 Inbox/Conversation 的草稿内容引用继续保留。sent/terminal 或
+  explicitly discarded 草稿的可编辑内容引用从终态时间起精确保留 30 天。
+- 未确认 display/subject projection 只随对应 Observer raw-evidence expiry 清理。
+  没有 durable Observer tombstone/expiration receipt，或 Observer 报告 legal hold 时，
+  Gateway 必须阻断本地引用过期。
+- confirmed CRM metadata、mapping/authority revision receipt、Conversation、assignment、
+  SLA、business link、content digest、provider receipt 和 audit 按 CRM lifecycle 保留。
+- dry-run 只生成 bounded plan，不写 content-expiration receipt；execute 每次最多 100 条，
+  串行处理并写幂等 receipt。run 使用 generation/attempt/lease fence；emergency stop 时不
+  claim 新任务。安全失败码进入 retry，下个周期重试；达到固定上限才进入 dead letter。
+
+Email Gateway 只暴露冻结的低基数指标：publication backlog/oldest age 的固定
+`queued|retry|leased|dead_letter` state、closed Inbox queue enum、无标签的 SLA overdue、
+identity pending、unassigned，以及固定 allowlist 的 authority failure、worker heartbeat、
+dead-letter work kind。mailbox、address、message、participant、identity、Party、User、
+provider payload 和 error payload 禁止作为 label。readiness 必须有数据库持久 heartbeat，
+且最老 heartbeat age 不得超过 30 秒。
+
+告警处置顺序：
+
+1. `EmailGatewayWorkerHeartbeatStale`：heartbeat age `>30s` 持续 2 分钟。先保持 external
+   send/所有 outbound switch 关闭，检查对应 worker 的持久 heartbeat 和 lease fence；
+   不得用进程存在代替数据库 heartbeat。
+2. `EmailGatewayDeadLetterIncrease`：5 分钟增量 `>0` 且持续 5 分钟。按固定 `work_kind`
+   隔离，检查 safe receipt/audit，不查看或复制原始 payload；修复后以同一 idempotency
+   identity 人工重放。
+3. `EmailGatewayPublicationBacklogStale`：queued/retry 最老年龄 `>300s` 持续 10 分钟。
+   先确认 emergency stop、mailbox isolation、relay heartbeat 和 Observer receipt，禁止推进
+   provider cursor 或绕过 publication receipt。
+4. `EmailGatewaySlaOverdue`：overdue `>0` 持续 15 分钟。由同 team manager 人工 claim 或
+   reassign；不得通过发送或 Send Outbox 状态变更伪造 first response。
+
+真实 identity/routing/provider gate、真实 mailbox credential、provider callback/poll、
+外发批准和 Send Outbox 仍未由该离线流程执行；启用前必须另取当前 source/image 绑定的
+授权与 live evidence。
 
 ## Task 13 credential-free closure 与 real-canary operator sequence
 

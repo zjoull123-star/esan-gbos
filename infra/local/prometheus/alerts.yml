@@ -75,3 +75,37 @@ groups:
         annotations:
           summary: Retention scheduler latest bounded pass failed
           runbook_url: docs/local-pilot/RUNBOOK.md#retention
+  - name: email-gateway
+    rules:
+      - alert: EmailGatewayWorkerHeartbeatStale
+        expr: gbos_email_gateway_worker_heartbeat_age_seconds > 30
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Email Gateway worker heartbeat is stale
+          runbook_url: docs/local-pilot/RUNBOOK.md#email-gateway-human-operations
+      - alert: EmailGatewayDeadLetterIncrease
+        expr: increase(gbos_email_gateway_dead_letter_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Email Gateway durable work entered dead letter
+          runbook_url: docs/local-pilot/RUNBOOK.md#email-gateway-human-operations
+      - alert: EmailGatewayPublicationBacklogStale
+        expr: max(gbos_email_gateway_publication_oldest_age_seconds{state=~"queued|retry"}) > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Email Gateway publication backlog is stale
+          runbook_url: docs/local-pilot/RUNBOOK.md#email-gateway-human-operations
+      - alert: EmailGatewaySlaOverdue
+        expr: gbos_email_gateway_sla_overdue > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Email Gateway inbox items are past first-response SLA
+          runbook_url: docs/local-pilot/RUNBOOK.md#email-gateway-human-operations
