@@ -186,11 +186,20 @@ def test_observer_identity_resolver_is_install_managed_and_has_no_desk_or_docper
     install_path = PACKAGE_ROOT / "install.py"
     install_source = install_path.read_text(encoding="utf-8")
     install_roles = set(_literal_assignment(install_path, "GBOS_ROLES"))
+    service_roles = {
+        "INTERNAL_MATERIALIZER_ROLE",
+        "IDENTITY_RESOLVER_ROLE",
+        "EMAIL_GATEWAY_AUTHORITY_ROLE",
+    }
+    role_sets = [
+        {element.id for element in node.elts if isinstance(element, ast.Name)}
+        for node in ast.walk(ast.parse(install_source))
+        if isinstance(node, ast.Set)
+    ]
 
     assert "Observer Identity Resolver" in install_roles
     assert "IDENTITY_RESOLVER_ROLE" in install_source
-    assert "role_name not in {INTERNAL_MATERIALIZER_ROLE, IDENTITY_RESOLVER_ROLE}" in install_source
-    assert "role in {INTERNAL_MATERIALIZER_ROLE, IDENTITY_RESOLVER_ROLE}" in install_source
+    assert role_sets.count(service_roles) >= 2
 
 
 def test_internal_materializer_doctype_permissions_are_exactly_the_coarse_minimum() -> None:

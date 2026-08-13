@@ -110,6 +110,17 @@ def _files(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     return manifest_path, config_path, observer_secret, cursor_secret
 
 
+def _enable_email_gateway(manifest_path: Path) -> None:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["email_gateway"] = {
+        "kill_switch": False,
+        "publication_kill_switch": False,
+        "external_send": False,
+        "mailboxes": [],
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
 def test_observer_runtime_composes_real_health_without_model_projection() -> None:
     runtime = observer_api.build_postgres_runtime(
         connection=_Connection(),
@@ -140,6 +151,7 @@ def test_observer_runtime_composes_real_health_without_model_projection() -> Non
         PostgresIdentityResolutionWorkRepository,
     )
     assert runtime.identity_resolution_metrics._connection is runtime.connection
+    assert runtime.email_connector_config_repository._connection is runtime.connection
     with pytest.raises(RuntimeError, match="disabled"):
         runtime.outbox._publisher(object(), "event-1", "idem-1")
 
@@ -173,6 +185,29 @@ def test_observer_main_starts_injected_server_and_closes_connection(tmp_path: Pa
     }
     assert TestClient(seen[0][0]).get("/health").json()["status"] == "ok"
     assert connection.closed is True
+
+
+def test_observer_main_requires_distinct_mailbox_projection_secret_before_postgres(
+    tmp_path: Path,
+) -> None:
+    manifest_path, config_path, observer_secret, cursor_secret = _files(tmp_path)
+    _enable_email_gateway(manifest_path)
+    connect_calls: list[dict[str, object]] = []
+
+    missing = observer_api.main(
+        manifest_path=manifest_path,
+        runtime_config_path=config_path,
+        environ={"GBOS_LOCAL_RUNTIME_ENABLED": "true"},
+        observer_bearer_file=observer_secret,
+        observer_auth_ref="observer-auth-v1",
+        cursor_secret_file=cursor_secret,
+        mailbox_projection_bearer_file=tmp_path / "missing-projection-token",
+        connector=lambda **kwargs: connect_calls.append(kwargs),
+        server_runner=lambda *_args, **_kwargs: None,
+    )
+
+    assert missing == 78
+    assert connect_calls == []
 
 
 def test_observer_main_defaults_fail_closed_before_postgres_and_do_not_print_secrets(

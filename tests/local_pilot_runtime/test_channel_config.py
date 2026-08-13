@@ -15,6 +15,7 @@ from services.local_pilot_runtime.channel_config import (
     load_channel_credential,
     load_channel_credential_from_provider,
     require_active_channel,
+    translate_legacy_imap_mailbox,
 )
 from services.local_pilot_runtime.secret_provider import SecretBytes, SecretProviderError
 
@@ -391,3 +392,33 @@ def test_channel_provider_json_keeps_duplicate_rejection_and_hides_provider_erro
     ) as failed:
         load_channel_credential_from_provider(config, "email", FailingProvider())
     assert "SECRET-PROVIDER-DETAIL" not in repr(failed.value)
+
+
+def test_legacy_imap_translation_is_disabled_selective_archive_without_secret_read(
+    tmp_path: Path,
+) -> None:
+    path = _connectors(tmp_path)
+    value = json.loads(path.read_text())
+    value["channels"]["email"].update(
+        {"enabled": False, "kill_switch": True, "activation_time": None}
+    )
+    manifest = _manifest()
+    manifest["channels"]["email"].update({"enabled": False, "activation_time": None})
+    config = load_channel_config(
+        _private_json(path, value),
+        expected_site_id="alpha.example",
+        manifest=manifest,
+    )
+
+    translated = translate_legacy_imap_mailbox(
+        config,
+        mailbox_ref="MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        cutover_publication_revision=9,
+        activation_watermark="uidvalidity:42;uid:100",
+        business_mode="selective_archive",
+    )
+
+    assert translated.enabled is False
+    assert translated.backfill_history is False
+    assert translated.provider_kind == "imap_smtp"
+    assert translated.cutover_publication_revision == 9

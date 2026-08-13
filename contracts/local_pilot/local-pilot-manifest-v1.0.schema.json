@@ -145,6 +145,9 @@
         }
       ]
     },
+    "email_gateway": {
+      "$ref": "#/$defs/emailGateway"
+    },
     "channels": {
       "type": "object",
       "additionalProperties": false,
@@ -166,6 +169,52 @@
     }
   },
   "$defs": {
+    "emailGateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kill_switch", "publication_kill_switch", "external_send", "mailboxes"],
+      "properties": {
+        "kill_switch": {"type": "boolean"},
+        "publication_kill_switch": {"type": "boolean"},
+        "external_send": {"const": false},
+        "mailboxes": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/gatewayMailbox"}
+        }
+      }
+    },
+    "gatewayMailbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mailbox_ref", "provider_kind", "business_mode", "enabled",
+        "cutover_publication_revision", "activation_watermark",
+        "legacy_migration", "backfill_history"
+      ],
+      "properties": {
+        "mailbox_ref": {"type": "string", "minLength": 1, "maxLength": 80},
+        "provider_kind": {"enum": ["fake", "imap_smtp", "wecom_app_mail"]},
+        "business_mode": {"enum": ["primary", "selective_archive", "migration"]},
+        "enabled": {"type": "boolean"},
+        "cutover_publication_revision": {"type": "integer", "minimum": 1},
+        "activation_watermark": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "legacy_migration": {"type": "boolean"},
+        "backfill_history": {"const": false}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"legacy_migration": {"const": true}}},
+          "then": {
+            "properties": {
+              "provider_kind": {"const": "imap_smtp"},
+              "business_mode": {"enum": ["selective_archive", "migration"]},
+              "enabled": {"const": false}
+            }
+          }
+        }
+      ]
+    },
     "keychainRef": {
       "type": "string",
       "minLength": 12,

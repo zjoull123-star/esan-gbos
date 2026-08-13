@@ -70,6 +70,22 @@ export const WORKSPACE_NAVIGATION: readonly NavigationItem[] = [
     group: "intelligence",
     roles: ["CEO", "Sales Manager", "Sales User", "Integration Admin"],
   },
+  {
+    id: "email-inbox",
+    label: "邮件收件箱",
+    to: "/gbos/email",
+    icon: "inbox",
+    group: "operations",
+    roles: ["CEO", "Sales Manager", "Sales User", "Reviewer"],
+  },
+  {
+    id: "email-gateway-admin",
+    label: "邮件网关",
+    to: "/gbos/email-gateway",
+    icon: "settings",
+    group: "system",
+    roles: ["Integration Admin"],
+  },
 ] as const;
 
 export const hasFullNavigationAccess = (roles: readonly string[]) =>
@@ -77,7 +93,11 @@ export const hasFullNavigationAccess = (roles: readonly string[]) =>
 
 export const navigationForRoles = (roles: readonly string[]) => {
   if (hasFullNavigationAccess(roles)) {
-    return [...WORKSPACE_NAVIGATION];
+    return WORKSPACE_NAVIGATION.filter(
+      (item) =>
+        item.id !== "email-gateway-admin" ||
+        roles.some((role) => role === "GBOS Admin" || item.roles.includes(role as never)),
+    );
   }
   return WORKSPACE_NAVIGATION.filter((item) =>
     item.roles.some((role) => roles.includes(role)),

@@ -430,6 +430,8 @@ def main(
         ):
             raise ChannelConfigError("pull channel remains kill-switched")
         manifest = load_local_manifest(manifest_path)
+        if channel_name == "email" and "email_gateway" in manifest:
+            raise ChannelConfigError("legacy email poller is replaced by Gateway mailboxes")
         require_component_enabled(
             manifest,
             component=channel_name,

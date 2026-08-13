@@ -77,12 +77,21 @@ _DEPLOYMENT_TEXT_SECRET_FILENAMES = {
     "frappe_materializer_api_secret": "frappe_materializer_api_secret",
     "frappe_identity_resolver_api_key": "frappe_identity_resolver_api_key",
     "frappe_identity_resolver_api_secret": "frappe_identity_resolver_api_secret",
+    "postgres_email_gateway_password": "postgres_email_gateway_password",
+    "postgres_observer_publisher_password": "postgres_observer_publisher_password",
+    "email_publication_bearer": "email_publication_bearer",
+    "email_gateway_bff_bearer": "email_gateway_bff_bearer",
+    "mailbox_projection_bearer": "mailbox_projection_bearer",
+    "email_gateway_data_key": "email_gateway_data_key",
 }
 _POSTGRES_SECRET_NAMES = {
     "gbos_observer_app": "postgres_observer_password",
     "gbos_context_app": "postgres_context_password",
     "gbos_agent_app": "postgres_agent_password",
     "gbos_media_app": "postgres_media_password",
+    "gbos_email_gateway_app": "postgres_email_gateway_password",
+    "gbos_email_gateway_worker": "postgres_email_gateway_password",
+    "gbos_observer_publisher": "postgres_observer_publisher_password",
 }
 
 ProviderMode = Literal["disabled", "deterministic", "deepseek"]

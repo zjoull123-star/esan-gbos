@@ -445,7 +445,7 @@ describe("应用壳", () => {
       wrapper
         .findAll("[aria-label='已授权工作台'] a")
         .map((link) => link.text()),
-    ).toEqual(["进入销售协同", "进入沟通观察"]);
+    ).toEqual(["进入销售协同", "进入沟通观察", "进入邮件收件箱"]);
     expect(wrapper.text()).not.toContain("经营总览");
     expect(wrapper.find("[data-official-value]").exists()).toBe(false);
     expect(fetcher).not.toHaveBeenCalled();

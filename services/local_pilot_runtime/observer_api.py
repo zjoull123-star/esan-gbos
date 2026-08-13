@@ -26,6 +26,7 @@ from services.observer.observer.runtime import (
     compose_postgres_local_pilot_runtime,
 )
 
+from .email_gateway_config import MAILBOX_PROJECTION_AUTH_REF
 from .runtime_support import (
     RuntimeSupportError,
     SecretValue,
@@ -41,6 +42,7 @@ from .server import ServerBindingError, run_server, validate_server_binding
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
 DEFAULT_CURSOR_SECRET = Path("/run/secrets/cursor_hmac_key")
+DEFAULT_MAILBOX_PROJECTION_BEARER = Path("/run/secrets/mailbox_projection_bearer")
 DEFAULT_OBSERVER_PORT = 8003
 ServerRunner = Callable[..., None]
 
@@ -51,6 +53,8 @@ def build_postgres_runtime(
     bearer_token: SecretValue,
     auth_ref: str,
     cursor_secret: SecretValue,
+    mailbox_projection_bearer_token: SecretValue | None = None,
+    mailbox_projection_auth_ref: str | None = None,
     bind_host: str,
     network_mode: str,
     enabled: bool = True,
@@ -64,6 +68,12 @@ def build_postgres_runtime(
         network_mode=network_mode,  # type: ignore[arg-type]
         bearer_token=bearer_token.reveal(),
         auth_ref=auth_ref,
+        mailbox_projection_bearer_token=(
+            mailbox_projection_bearer_token.reveal()
+            if mailbox_projection_bearer_token is not None
+            else None
+        ),
+        mailbox_projection_auth_ref=mailbox_projection_auth_ref,
     )
     storage = PostgresLocalPilotStorage(connection)  # type: ignore[arg-type]
     return compose_postgres_local_pilot_runtime(
@@ -90,6 +100,7 @@ def main(
     observer_bearer_file: Path | None = None,
     observer_auth_ref: str | None = None,
     cursor_secret_file: Path = DEFAULT_CURSOR_SECRET,
+    mailbox_projection_bearer_file: Path = DEFAULT_MAILBOX_PROJECTION_BEARER,
     observer_port: int = DEFAULT_OBSERVER_PORT,
     internal_network: bool = False,
     connector: Callable[..., object] | None = None,
@@ -129,12 +140,20 @@ def main(
         auth_ref = observer_auth_ref or config.auth.context_auth_ref
         bearer_token = load_secret_file(bearer_path)
         cursor_secret = load_secret_file(cursor_secret_file)
+        gateway = manifest.get("email_gateway")
+        mailbox_projection_bearer = None
+        mailbox_projection_auth_ref = None
+        if isinstance(gateway, Mapping) and gateway.get("kill_switch") is False:
+            mailbox_projection_bearer = load_secret_file(mailbox_projection_bearer_file)
+            mailbox_projection_auth_ref = MAILBOX_PROJECTION_AUTH_REF
         connection = connect_postgres(config.postgres, connector=connector)
         runtime = build_postgres_runtime(
             connection=connection,
             bearer_token=bearer_token,
             auth_ref=auth_ref,
             cursor_secret=cursor_secret,
+            mailbox_projection_bearer_token=mailbox_projection_bearer,
+            mailbox_projection_auth_ref=mailbox_projection_auth_ref,
             bind_host=bind_host,
             network_mode=network_mode,
             clock=clock,

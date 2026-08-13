@@ -20,6 +20,12 @@ _ROLES = {
     "media": "gbos_media_app",
     "retention": "gbos_observer_app",
 }
+_EMAIL_GATEWAY_ROLES = {
+    "email-gateway-api": "gbos_email_gateway_app",
+    "email-gateway-worker": "gbos_email_gateway_worker",
+    "email-publication-worker": "gbos_observer_publisher",
+    "mailbox-config-projection-worker": "gbos_email_gateway_worker",
+}
 _ROLE_PASSWORD_FILES = {
     "observer": "/run/secrets/postgres_observer_password",
     "identity": "/run/secrets/postgres_observer_password",
@@ -29,6 +35,10 @@ _ROLE_PASSWORD_FILES = {
     "materialization": "/run/secrets/postgres_agent_password",
     "communication": "/run/secrets/postgres_context_password",
     "retention": "/run/secrets/postgres_observer_password",
+    "email-gateway-api": "/run/secrets/postgres_email_gateway_password",
+    "email-gateway-worker": "/run/secrets/postgres_email_gateway_password",
+    "email-publication-worker": "/run/secrets/postgres_observer_publisher_password",
+    "mailbox-config-projection-worker": "/run/secrets/postgres_email_gateway_password",
 }
 _CHANNEL_FILES = {
     "email": "/run/secrets/email_credential",
@@ -47,6 +57,7 @@ _TOP_LEVEL_FIELDS = {
     "local_pilot_status",
     "capabilities",
     "deepseek",
+    "email_gateway",
     "channels",
 }
 
@@ -89,10 +100,23 @@ def _load_manifest(path: Path, *, synthetic: bool) -> dict[str, Any]:
         raise ValueError("all external and formal capabilities must remain disabled")
     channels = value.get("channels")
     deepseek = value.get("deepseek")
+    email_gateway = value.get("email_gateway")
     if not isinstance(channels, dict) or set(channels) != set(_CHANNEL_FILES):
         raise ValueError("manifest channel set is not closed")
-    if not isinstance(deepseek, dict):
+    if not isinstance(deepseek, dict) or not isinstance(email_gateway, dict):
         raise ValueError("manifest DeepSeek declaration is missing")
+    if (
+        set(email_gateway)
+        != {"kill_switch", "publication_kill_switch", "external_send", "mailboxes"}
+        or email_gateway.get("external_send") is not False
+        or not isinstance(email_gateway.get("mailboxes"), list)
+    ):
+        raise ValueError("manifest Email Gateway declaration is invalid")
+    if channels["email"].get("enabled") is True:
+        raise ValueError(
+            "legacy Email channel must be disabled and migrated through "
+            "a revisioned Gateway mailbox"
+        )
     if synthetic:
         if value.get("local_pilot_go") is not False:
             raise ValueError("synthetic rendering requires local_pilot_go=false")
@@ -230,6 +254,75 @@ def _connector_config(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _email_gateway_runtime_config(
+    manifest: dict[str, Any],
+    *,
+    purpose: str,
+    role_name: str,
+) -> dict[str, Any]:
+    gateway = manifest["email_gateway"]
+    gateway_enabled = (
+        manifest["local_pilot_go"] is True
+        and gateway["kill_switch"] is False
+    )
+    publication_enabled = (
+        gateway_enabled and gateway["publication_kill_switch"] is False
+    )
+    enabled_component = {
+        "email-gateway-api": "email_gateway_api",
+        "email-gateway-worker": "email_gateway_worker",
+        "email-publication-worker": "email_publication_worker",
+        "mailbox-config-projection-worker": "mailbox_config_projection_worker",
+    }[purpose]
+    enabled = publication_enabled if purpose == "email-publication-worker" else gateway_enabled
+    components = {
+        name: {
+            "enabled": enabled and name == enabled_component,
+            "kill_switch": not (enabled and name == enabled_component),
+        }
+        for name in (
+            "email_gateway_api",
+            "email_gateway_worker",
+            "email_publication_worker",
+            "mailbox_config_projection_worker",
+        )
+    }
+    return {
+        "schema_version": "1.0",
+        "site_id": manifest["site_id"],
+        "external_send": False,
+        "postgres": {
+            "host": "postgres",
+            "port": 5432,
+            "database": "gbos_local_pilot",
+            "user": role_name,
+            "password_file": _ROLE_PASSWORD_FILES[purpose],
+            "connect_timeout_seconds": 5,
+        },
+        "endpoints": {
+            "email_gateway_api": "http://email-gateway-api:8004",
+            "observer_config_api": "http://observer-api:8003",
+        },
+        "auth": {
+            "email_gateway_data_key_file": "/run/secrets/email_gateway_data_key",
+            "email_publication_bearer_file": "/run/secrets/email_publication_bearer",
+            "email_publication_auth_ref": "observer-email-publication-v1",
+            "email_gateway_bff_bearer_file": "/run/secrets/email_gateway_bff_bearer",
+            "email_gateway_bff_auth_ref": "email-gateway-bff-v1",
+            "mailbox_projection_bearer_file": "/run/secrets/mailbox_projection_bearer",
+            "mailbox_projection_auth_ref": "gateway-mailbox-projection-v1",
+        },
+        "listen": {"host": "0.0.0.0", "port": 8004},
+        "components": components,
+        "worker": {
+            "worker_id": f"local-pilot-{purpose}",
+            "idle_delay_seconds": 1.0,
+            "heartbeat_interval_seconds": 5.0,
+        },
+        "mailboxes": gateway["mailboxes"],
+    }
+
+
 def _projection_config(
     manifest: dict[str, Any],
     *,
@@ -343,6 +436,16 @@ def main() -> int:
             ),
         )
         _atomic_private_json(output_dir, "connectors.json", _connector_config(manifest))
+        for purpose, role in _EMAIL_GATEWAY_ROLES.items():
+            _atomic_private_json(
+                output_dir,
+                f"runtime-{purpose}.json",
+                _email_gateway_runtime_config(
+                    manifest,
+                    purpose=purpose,
+                    role_name=role,
+                ),
+            )
         _atomic_private_json(
             output_dir,
             "projection-connections.json",

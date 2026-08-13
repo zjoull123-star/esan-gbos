@@ -14,6 +14,7 @@ import {
   BFF_V3_ENDPOINTS,
   BFF_V4_ENDPOINTS,
 } from "../src/api/bff";
+import { EMAIL_GATEWAY_ENDPOINTS } from "../src/api/email-gateway";
 
 const liveBaseUrl = process.env.GBOS_E2E_BASE_URL;
 const liveStorageState = process.env.GBOS_E2E_STORAGE_STATE;
@@ -44,9 +45,11 @@ const navigationHeadings = [
   "销售协同",
   "采购协同",
   "产品与样品",
+  "邮件收件箱",
   "审核队列",
   "沟通观察",
   "集成状态",
+  "邮件网关",
 ] as const;
 
 const allNavigationLabels = [
@@ -57,20 +60,26 @@ const allNavigationLabels = [
   "审核队列",
   "集成状态",
   "沟通观察",
+  "邮件收件箱",
+  "邮件网关",
 ] as const;
+
+const ceoNavigationLabels = allNavigationLabels.filter(
+  (label) => label !== "邮件网关",
+);
 
 const roleCases = [
   { name: "Guest", roles: [], navigation: [], deniedPath: "/gbos/ceo" },
   {
     name: "Sales User",
     roles: ["Sales User"],
-    navigation: ["销售协同", "沟通观察"],
+    navigation: ["销售协同", "沟通观察", "邮件收件箱"],
     deniedPath: "/gbos/purchase",
   },
   {
     name: "Sales Manager",
     roles: ["Sales Manager"],
-    navigation: ["销售协同", "沟通观察"],
+    navigation: ["销售协同", "沟通观察", "邮件收件箱"],
     deniedPath: "/gbos/integrations",
   },
   {
@@ -94,16 +103,16 @@ const roleCases = [
   {
     name: "Reviewer",
     roles: ["Reviewer"],
-    navigation: ["审核队列"],
+    navigation: ["审核队列", "邮件收件箱"],
     deniedPath: "/gbos/party/PARTY-E2E",
   },
   {
     name: "Integration Admin",
     roles: ["Integration Admin"],
-    navigation: ["集成状态", "沟通观察"],
+    navigation: ["集成状态", "沟通观察", "邮件网关"],
     deniedPath: "/gbos/sample/SAMPLE-E2E",
   },
-  { name: "CEO", roles: ["CEO"], navigation: [...allNavigationLabels] },
+  { name: "CEO", roles: ["CEO"], navigation: [...ceoNavigationLabels] },
   { name: "GBOS Admin", roles: ["GBOS Admin"], navigation: [...allNavigationLabels] },
 ] as const;
 
@@ -116,6 +125,8 @@ const allRoutes = [
   { path: "/gbos/review", heading: "人工审核队列" },
   { path: "/gbos/integrations", heading: "集成状态" },
   { path: "/gbos/communications", heading: "沟通观察" },
+  { path: "/gbos/email", heading: "统一邮件收件箱" },
+  { path: "/gbos/email-gateway", heading: "邮件网关配置台" },
   {
     path: "/gbos/communications/OBS-E2E-1",
     heading: "沟通观察详情",
@@ -336,6 +347,38 @@ const v4Envelope = <T>(data: T) => ({
     meta: { request_id: "req-e2e-v4", schema_version: "4.0" },
   },
 });
+
+const v5Envelope = <T>(data: T) => ({
+  message: {
+    data,
+    meta: { request_id: "req-e2e-v5", schema_version: "5.0" },
+  },
+});
+
+const syntheticEmailMailbox = {
+  mailbox_ref: "MBX-E2E-PRIMARY",
+  display_label: "销售主入口",
+  provider_kind: "fake",
+  business_mode: "primary",
+  business_purpose: "sales_follow_up",
+  default_team_label: "亮泽企业",
+  account_owner_label: "Eric Liao",
+  inbound_enabled: true,
+  outbound_enabled: false,
+  status: "active",
+  config_revision: 1,
+};
+
+const syntheticEmailInboxItem = {
+  inbox_item_ref: "INB-E2E-PRIMARY",
+  mailbox_label: "销售主入口",
+  mailbox_role: "primary",
+  received_at: "2026-08-13T10:00:00Z",
+  state: "identity_pending",
+  safe_summary: "一封等待人工确认身份的销售邮件。",
+  team_label: "亮泽企业",
+  revision: 1,
+};
 
 const syntheticIntegrationEnvelope = v4Envelope({
   connectors: [
@@ -567,6 +610,30 @@ const syntheticAiDraftDetailEnvelope = v4Envelope({
 });
 
 const harnessFixtures = new Map<string, unknown>([
+  [
+    `GET ${EMAIL_GATEWAY_ENDPOINTS.mailboxList}`,
+    v5Envelope({ mailboxes: [syntheticEmailMailbox], next_cursor: null }),
+  ],
+  [
+    `GET ${EMAIL_GATEWAY_ENDPOINTS.connectorHealth}`,
+    v5Envelope({
+      connector_health: [
+        {
+          mailbox_ref: syntheticEmailMailbox.mailbox_ref,
+          mailbox_label: syntheticEmailMailbox.display_label,
+          status: "healthy",
+          freshness: "fresh",
+          backlog: 0,
+          last_success_at: "2026-08-13T10:00:00Z",
+          safe_error_code: null,
+        },
+      ],
+    }),
+  ],
+  [
+    `GET ${EMAIL_GATEWAY_ENDPOINTS.inboxList}`,
+    v5Envelope({ inbox_items: [syntheticEmailInboxItem], next_cursor: null }),
+  ],
   [`GET ${BFF_ENDPOINTS.party360}`, syntheticPartyEnvelope],
   [`GET ${BFF_ENDPOINTS.workItemList}`, syntheticWorkEnvelope],
   [`GET ${BFF_ENDPOINTS.sampleStatus}`, syntheticSampleEnvelope],

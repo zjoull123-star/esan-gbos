@@ -80,6 +80,20 @@ def test_migration_adds_only_observer_publication_fence_tables_and_forced_rls() 
         assert f"ALTER TABLE observer.{table} FORCE ROW LEVEL SECURITY" in sql
         assert f"REVOKE ALL ON observer.{table} FROM PUBLIC" in sql
     assert "email_message_publication_outbox_immutable" in sql
+    config_sql = (
+        ROOT / "services" / "observer" / "migrations" / "015_email_gateway_connector_config.sql"
+    ).read_text(encoding="utf-8")
+    assert "email_connector_config_projection_immutable" in config_sql
+    for field in (
+        "config_publication_ref",
+        "entry_role",
+        "business_purpose",
+        "team_ref",
+        "credential_ref",
+        "inbound_enabled",
+        "activation_not_before",
+    ):
+        assert field in (sql + config_sql)
     assert "UNIQUE (site_id, mailbox_id, observer_delivery_ref)" in sql
     for relay_column in (
         "relay_status",
@@ -104,6 +118,25 @@ def test_migration_adds_only_observer_publication_fence_tables_and_forced_rls() 
     assert "create table observer.gateway_" not in lowered
     assert "create table observer.email_gateway_" not in lowered
     assert "provider_cursor" not in lowered
+
+
+def test_publication_relay_uses_a_dedicated_least_privilege_role() -> None:
+    sql = (
+        ROOT / "services" / "observer" / "migrations" / "015_email_gateway_connector_config.sql"
+    ).read_text(encoding="utf-8")
+    lowered = sql.lower()
+
+    assert "create role gbos_observer_publisher" in lowered
+    assert "nologin" in lowered
+    assert "grant usage on schema observer to gbos_observer_publisher" in lowered
+    assert (
+        "grant select on observer.email_message_publication_outbox\n    to gbos_observer_publisher"
+    ) in lowered
+    assert "on observer.email_message_publication_outbox to gbos_observer_publisher" in lowered
+    assert (
+        "insert on observer.email_message_publication_outbox to gbos_observer_publisher"
+    ) not in lowered
+    assert "delivery_receipt, delivery_receipt_digest, delivered_at, updated_at" in lowered
 
 
 @pytest.mark.parametrize(

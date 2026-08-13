@@ -652,6 +652,38 @@ def test_wecom_cli_without_official_sdk_factory_returns_78_before_database(
     assert database_calls == []
 
 
+def test_legacy_email_poller_is_blocked_when_gateway_mailbox_registry_is_declared(
+    tmp_path: Path,
+) -> None:
+    manifest, runtime, connectors = _poller_files(tmp_path, "email")
+    value = json.loads(manifest.read_text())
+    value["email_gateway"] = {
+        "kill_switch": False,
+        "publication_kill_switch": False,
+        "external_send": False,
+        "mailboxes": [],
+    }
+    _private_json(manifest, value)
+    calls: list[object] = []
+
+    result = main(
+        ["email"],
+        manifest_path=manifest,
+        runtime_config_path=runtime,
+        connectors_path=connectors,
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_CONNECTOR_KILL_SWITCH": "false",
+        },
+        connector=lambda **kwargs: calls.append(kwargs),
+        tls_client_factory=lambda *_: calls.append("provider"),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+    assert result == 78
+    assert calls == []
+
+
 class _EntryConnection:
     class Cursor:
         def __enter__(self) -> _EntryConnection.Cursor:

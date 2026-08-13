@@ -839,6 +839,10 @@ def test_keychain_secret_materialization_is_non_logging_and_mode_0600() -> None:
     assert "keychain://" in script
     assert 'secret_tmp_root="${secret_tmp_root%/}"' in script
     assert 'find "${secret_dir}"' not in library
+    assert (
+        'email_gateway_bff_bearer \\\n  "keychain://com.esan.gbos.local-pilot/email-gateway-bff-bearer"'
+        in script
+    )
 
 
 def test_identity_hmac_key_materializes_hex_keychain_output_as_exact_raw_bytes(

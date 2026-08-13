@@ -39,6 +39,19 @@ def test_manifest_loader_is_closed_and_component_default_is_disabled(tmp_path: P
         )
 
 
+def test_manifest_loader_accepts_the_closed_email_gateway_section(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    value = _manifest()
+    value["email_gateway"] = {
+        "enabled": False,
+        "kill_switch": True,
+        "external_send": False,
+    }
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    assert load_local_manifest(path)["email_gateway"] == value["email_gateway"]
+
+
 def test_local_runtime_entrypoint_imports_do_not_start_db_or_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

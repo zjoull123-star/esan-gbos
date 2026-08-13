@@ -198,6 +198,17 @@ class WeComCredentialConfig:
 ChannelCredential = EmailCredentialConfig | WhatsAppCredentialConfig | WeComCredentialConfig
 
 
+@dataclass(frozen=True, slots=True)
+class LegacyImapMailboxMigration:
+    mailbox_ref: str
+    provider_kind: Literal["imap_smtp"]
+    business_mode: Literal["selective_archive", "migration"]
+    enabled: Literal[False]
+    cutover_publication_revision: int
+    activation_watermark: str
+    backfill_history: Literal[False]
+
+
 class ChannelCredentialSecretProvider(Protocol):
     """Narrow provider surface required by channel credential loading."""
 
@@ -283,6 +294,48 @@ def require_active_channel(
     ):
         raise ChannelConfigError("channel is disabled or has not reached activation")
     return channel
+
+
+def translate_legacy_imap_mailbox(
+    config: ChannelConfig,
+    *,
+    mailbox_ref: str,
+    cutover_publication_revision: int,
+    activation_watermark: str,
+    business_mode: Literal["selective_archive", "migration"],
+) -> LegacyImapMailboxMigration:
+    """Describe a non-backfilled cutover without reading the legacy credential."""
+
+    email = config.channels.get("email")
+    if (
+        email is None
+        or email.enabled
+        or not email.kill_switch
+        or email.activation_time is not None
+        or email.backfill_history
+        or business_mode not in {"selective_archive", "migration"}
+        or not isinstance(mailbox_ref, str)
+        or not mailbox_ref
+        or mailbox_ref != mailbox_ref.strip()
+        or len(mailbox_ref) > 80
+        or not isinstance(cutover_publication_revision, int)
+        or isinstance(cutover_publication_revision, bool)
+        or cutover_publication_revision < 1
+        or not isinstance(activation_watermark, str)
+        or not activation_watermark
+        or activation_watermark != activation_watermark.strip()
+        or len(activation_watermark) > 4096
+    ):
+        raise ChannelConfigError("legacy IMAP cutover must remain disabled and bounded")
+    return LegacyImapMailboxMigration(
+        mailbox_ref=mailbox_ref,
+        provider_kind="imap_smtp",
+        business_mode=business_mode,
+        enabled=False,
+        cutover_publication_revision=cutover_publication_revision,
+        activation_watermark=activation_watermark,
+        backfill_history=False,
+    )
 
 
 def load_channel_credential(config: ChannelConfig, name: str) -> ChannelCredential:
@@ -550,10 +603,12 @@ __all__ = [
     "ChannelCredentialSecretProvider",
     "ChannelSettings",
     "EmailCredentialConfig",
+    "LegacyImapMailboxMigration",
     "WeComCredentialConfig",
     "WhatsAppCredentialConfig",
     "load_channel_config",
     "load_channel_credential",
     "load_channel_credential_from_provider",
     "require_active_channel",
+    "translate_legacy_imap_mailbox",
 ]

@@ -528,10 +528,12 @@ describe("v4 roles and pages", () => {
     expect(navigationForRoles(["Integration Admin"]).map((item) => item.to)).toEqual([
       "/gbos/integrations",
       "/gbos/communications",
+      "/gbos/email-gateway",
     ]);
     expect(navigationForRoles(["Sales User"]).map((item) => item.to)).toEqual([
       "/gbos/sales",
       "/gbos/communications",
+      "/gbos/email",
     ]);
     expect(isRouteAllowed("/gbos/integrations", ["Sales User"])).toBe(false);
     expect(isRouteAllowed("/gbos/communications/OBS-1", ["CEO"])).toBe(true);

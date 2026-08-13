@@ -25,6 +25,10 @@ from services.context.context_service.storage import (
 from services.local_pilot_runtime.model_projection_worker import ProjectionLeaseConflict
 from services.observer.observer.api import create_observer_app
 from services.observer.observer.application import ManualImportPipeline, canonical_import_body
+from services.observer.observer.email_connector_config import (
+    EmailConnectorConfigConflict,
+    PostgresEmailConnectorConfigRepository,
+)
 from services.observer.observer.evidence_store import ContentAddressedEvidenceStore
 from services.observer.observer.identity_resolution import (
     IdentityResolutionConflict,
@@ -63,6 +67,7 @@ from services.observer.observer.models import (
     NormalizedObservationInput,
     Participant,
     RawDelivery,
+    stable_ulid,
 )
 from services.observer.observer.models import (
     TenantScope as ObserverTenantScope,
@@ -115,6 +120,9 @@ IDENTITY_DIGEST_MIGRATION = (
 EMAIL_PUBLICATION_MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "014_email_gateway_publication.sql"
 )
+EMAIL_CONNECTOR_CONFIG_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "015_email_gateway_connector_config.sql"
+)
 
 pytestmark = [pytest.mark.postgres_integration]
 if not RUN_INTEGRATION:
@@ -163,7 +171,7 @@ def _identity_ref(provider: str, label: str) -> str:
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 16
+    assert _migration_ledger_count() == 17
     result = _container_sql(
         """
         SELECT count(*)
@@ -199,9 +207,12 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
 
 
 def test_email_publication_migration_is_idempotent_forced_rls_and_least_grant() -> None:
-    migration_sql = EMAIL_PUBLICATION_MIGRATION.read_text(encoding="utf-8")
-    _container_sql(migration_sql)
-    _container_sql(migration_sql)
+    publication_sql = EMAIL_PUBLICATION_MIGRATION.read_text(encoding="utf-8")
+    config_sql = EMAIL_CONNECTOR_CONFIG_MIGRATION.read_text(encoding="utf-8")
+    _container_sql(publication_sql)
+    _container_sql(config_sql)
+    _container_sql(publication_sql)
+    _container_sql(config_sql)
 
     security = _container_sql(
         """
@@ -244,7 +255,92 @@ def test_email_publication_migration_is_idempotent_forced_rls_and_least_grant() 
         )
         """
     )
-    assert int(relay_grants.stdout.strip()) == 11
+    assert int(relay_grants.stdout.strip()) == 0
+
+    publisher = _container_sql(
+        """
+        SELECT rolcanlogin,
+               has_schema_privilege('gbos_observer_publisher', 'observer', 'USAGE'),
+               has_table_privilege(
+                   'gbos_observer_publisher',
+                   'observer.email_message_publication_outbox',
+                   'SELECT'
+               ),
+               has_table_privilege(
+                   'gbos_observer_publisher',
+                   'observer.email_message_publication_outbox',
+                   'INSERT'
+               ),
+               has_table_privilege(
+                   'gbos_observer_publisher',
+                   'observer.email_connector_config_projections',
+                   'SELECT'
+               )
+        FROM pg_roles
+        WHERE rolname = 'gbos_observer_publisher'
+        """
+    )
+    assert publisher.stdout.strip() == "f|t|t|f|f"
+
+    publisher_relay_columns = _container_sql(
+        """
+        SELECT count(*)
+        FROM (VALUES
+            ('relay_status'), ('attempt_count'), ('next_attempt_at'),
+            ('lease_owner'), ('lease_expires_at'), ('relay_generation'),
+            ('last_error_code'), ('delivery_receipt'),
+            ('delivery_receipt_digest'), ('delivered_at'), ('updated_at')
+        ) AS relay(column_name)
+        WHERE has_column_privilege(
+            'gbos_observer_publisher',
+            'observer.email_message_publication_outbox',
+            relay.column_name,
+            'UPDATE'
+        )
+        """
+    )
+    assert int(publisher_relay_columns.stdout.strip()) == 11
+
+    config_boundary = _container_sql(
+        """
+        SELECT count(*)
+        FROM information_schema.columns
+        WHERE table_schema = 'observer'
+          AND table_name = 'email_connector_config_projections'
+          AND column_name IN (
+              'config_publication_ref', 'entry_role', 'business_purpose',
+              'team_ref', 'credential_ref', 'inbound_enabled'
+          )
+          AND is_nullable = 'NO'
+        """
+    )
+    assert int(config_boundary.stdout.strip()) == 6
+    immutable_config = _container_sql(
+        """
+        SELECT count(*)
+        FROM pg_trigger
+        WHERE tgrelid = 'observer.email_connector_config_projections'::regclass
+          AND tgname = 'email_connector_config_projection_immutable'
+          AND NOT tgisinternal
+        """
+    )
+    assert immutable_config.stdout.strip() == "1"
+    immutable_publisher_columns = _container_sql(
+        """
+        SELECT count(*)
+        FROM (VALUES
+            ('site_id'), ('publication_id'), ('mailbox_id'), ('payload'),
+            ('payload_digest'), ('created_at')
+        ) AS immutable(column_name)
+        WHERE has_column_privilege(
+            'gbos_observer_publisher',
+            'observer.email_message_publication_outbox',
+            immutable.column_name,
+            'UPDATE'
+        )
+        """
+    )
+    assert int(immutable_publisher_columns.stdout.strip()) == 0
 
     forbidden = _container_sql(
         """
@@ -261,6 +357,109 @@ def test_email_publication_migration_is_idempotent_forced_rls_and_least_grant() 
         """
     )
     assert forbidden.stdout.strip() == "0"
+
+
+def test_email_connector_config_repository_replays_and_fences_revisions() -> None:
+    if not all((CONTEXT_HOST, CONTEXT_PORT, CONTEXT_DATABASE, CONTEXT_PASSWORD)):
+        pytest.fail("Gate 3 PostgreSQL connection components are required")
+    from services.email_gateway.models import canonical_digest
+
+    suffix = uuid.uuid4().hex
+    site_id = f"email-config-{suffix[:12]}.example"
+    mailbox_ref = "MBX-" + stable_ulid("gateway-mailbox", suffix)
+    instance_ref = "OCI-" + stable_ulid("observer-email-instance", suffix)
+    team_one = "TEM-" + stable_ulid("email-team-one", suffix)
+    team_two = "TEM-" + stable_ulid("email-team-two", suffix)
+    first_ref = "MCP-" + stable_ulid("email-config-one", suffix)
+    second_ref = "MCP-" + stable_ulid("email-config-two", suffix)
+    now = datetime.now(UTC).replace(microsecond=0)
+
+    def projection(revision: int, team_ref: str) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "site_id": site_id,
+            "observer_connector_instance_ref": instance_ref,
+            "provider_kind": "imap_smtp",
+            "entry_role": "primary",
+            "business_purpose": "sales_follow_up",
+            "team_ref": team_ref,
+            "credential_ref": "secretref:v1/email-primary",
+            "inbound_enabled": True,
+            "activation_watermark": {
+                "mailbox_id": mailbox_ref,
+                "mailbox_config_revision": revision,
+                "not_before": now.isoformat().replace("+00:00", "Z"),
+            },
+            "projection_revision": revision,
+        }
+        return {**payload, "projection_digest": canonical_digest(payload)}
+
+    connection = connect_postgres_components(
+        host=str(CONTEXT_HOST),
+        port=int(str(CONTEXT_PORT)),
+        database=str(CONTEXT_DATABASE),
+        user="gbos_email_owner",
+        password=str(CONTEXT_PASSWORD),
+    )
+    restart = None
+    try:
+        repository = PostgresEmailConnectorConfigRepository(connection)
+        first = repository.apply(
+            config_publication_ref=first_ref,
+            projection=projection(1, team_one),
+            projected_at=now,
+        )
+        restart = connect_postgres_components(
+            host=str(CONTEXT_HOST),
+            port=int(str(CONTEXT_PORT)),
+            database=str(CONTEXT_DATABASE),
+            user="gbos_email_owner",
+            password=str(CONTEXT_PASSWORD),
+        )
+        restarted = PostgresEmailConnectorConfigRepository(restart)
+        replay = restarted.apply(
+            config_publication_ref=first_ref,
+            projection=projection(1, team_one),
+            projected_at=now + timedelta(seconds=1),
+        )
+        second = restarted.apply(
+            config_publication_ref=second_ref,
+            projection=projection(2, team_two),
+            projected_at=now + timedelta(seconds=2),
+        )
+
+        assert replay.to_wire() == first.to_wire()
+        assert replay.replayed is True
+        assert second.projection_revision == 2
+        with pytest.raises(EmailConnectorConfigConflict):
+            restarted.apply(
+                config_publication_ref="MCP-" + stable_ulid("stale", suffix),
+                projection=projection(1, team_one),
+                projected_at=now + timedelta(seconds=3),
+            )
+
+        with restart.transaction(), restart.cursor() as cursor:
+            cursor.execute("SELECT set_config('app.site_id', %s, true)", (site_id,))
+            cursor.execute(
+                """
+                SELECT instance.team_ref, instance.agent_task_type,
+                       checkpoint.status, count(projection.*)
+                  FROM observer.connector_instances AS instance
+                  JOIN observer.connector_checkpoints AS checkpoint
+                    USING (site_id, connector, connector_instance_id)
+                  JOIN observer.email_connector_config_projections AS projection
+                    USING (site_id, connector, connector_instance_id)
+                 WHERE instance.site_id = %s
+                   AND instance.connector_instance_id = %s
+                 GROUP BY instance.team_ref, instance.agent_task_type,
+                          checkpoint.status
+                """,
+                (site_id, instance_ref),
+            )
+            assert cursor.fetchone() == (team_two, "sales", "healthy", 2)
+    finally:
+        if restart is not None:
+            restart.close()
+        connection.close()
 
 
 def _migration_ledger_count() -> int:
@@ -284,6 +483,7 @@ def _migration_ledger_count() -> int:
               'observer/012_local_pilot_identity_authority_safety.sql',
               'observer/013_local_pilot_identity_digest_boundary.sql',
               'observer/014_email_gateway_publication.sql',
+              'observer/015_email_gateway_connector_config.sql',
               'context/001_gate3_context.sql'
         )
         """

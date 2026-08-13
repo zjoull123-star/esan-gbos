@@ -7,6 +7,11 @@ const PRODUCT_ROLES = ["Product/R&D"] as const;
 const REVIEW_ROLES = ["Reviewer"] as const;
 const INTEGRATION_ROLES = ["Integration Admin"] as const;
 const COMMUNICATION_ROLES = [...CEO_ROLES, ...SALES_ROLES, ...INTEGRATION_ROLES] as const;
+const EMAIL_INBOX_ROLES = [
+  ...CEO_ROLES,
+  ...SALES_ROLES,
+  ...REVIEW_ROLES,
+] as const;
 const OVERVIEW_ROLES = [
   ...CEO_ROLES,
   ...SALES_ROLES,
@@ -71,6 +76,18 @@ export const APP_ROUTES = [
     component: () => import("./views/CommunicationDetailView.vue"),
     props: true,
     meta: { roles: COMMUNICATION_ROLES },
+  },
+  {
+    path: "/gbos/email",
+    name: "email-inbox",
+    component: () => import("./views/EmailInboxView.vue"),
+    meta: { roles: EMAIL_INBOX_ROLES },
+  },
+  {
+    path: "/gbos/email-gateway",
+    name: "email-gateway-admin",
+    component: () => import("./views/EmailGatewayAdminView.vue"),
+    meta: { roles: INTEGRATION_ROLES },
   },
   {
     path: "/gbos/review/:id",

@@ -132,6 +132,7 @@ class PostgresLocalPilotRuntime:
     projection_repository: Any | None
     projection_publisher: Any | None
     identity_resolution_metrics: IdentityResolutionMetrics
+    email_connector_config_repository: Any
     app: Any
     connection: Any
     storage: Any
@@ -168,11 +169,13 @@ def compose_postgres_local_pilot_runtime(
     intelligence_publisher: Any | None = None,
     restricted_model_policy: Literal["deny", "local_tokenized"] = "deny",
     identity_resolution_metrics: IdentityResolutionMetrics | None = None,
+    email_connector_configs: Any | None = None,
 ) -> PostgresLocalPilotRuntime:
     """Wire the PostgreSQL repositories, worker and authenticated internal app."""
 
     from .context_outbox import ContextOutboxPublisherWorker
     from .control_service import LocalPilotControlService, PostgresControlRepository
+    from .email_connector_config import PostgresEmailConnectorConfigRepository
     from .identity_resolution_work import PostgresIdentityResolutionWorkRepository
     from .local_pilot_api import create_local_pilot_app
     from .model_projection import (
@@ -199,6 +202,11 @@ def compose_postgres_local_pilot_runtime(
         PostgresIdentityResolutionWorkRepository(connection)
         if identity_resolution_metrics is None
         else identity_resolution_metrics
+    )
+    active_email_connector_configs = (
+        PostgresEmailConnectorConfigRepository(connection)
+        if email_connector_configs is None
+        else email_connector_configs
     )
     projection_repository = None
     projection_publisher = None
@@ -243,6 +251,7 @@ def compose_postgres_local_pilot_runtime(
         guard=guard,
         clock=clock,
         identity_resolution_metrics=active_identity_resolution_metrics,
+        email_connector_configs=active_email_connector_configs,
     )
     return PostgresLocalPilotRuntime(
         guard=guard,
@@ -254,6 +263,7 @@ def compose_postgres_local_pilot_runtime(
         projection_repository=projection_repository,
         projection_publisher=projection_publisher,
         identity_resolution_metrics=active_identity_resolution_metrics,
+        email_connector_config_repository=active_email_connector_configs,
         app=app,
         connection=connection,
         storage=storage,

@@ -2,21 +2,22 @@
 set -euo pipefail
 umask 077
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH='' cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 IMAGE="pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966"
 OBSERVER_014="${REPO_ROOT}/services/observer/migrations/014_email_gateway_publication.sql"
-[[ -f "${OBSERVER_014}" ]] || exit 66
+OBSERVER_015="${REPO_ROOT}/services/observer/migrations/015_email_gateway_connector_config.sql"
+[[ -f "${OBSERVER_014}" && -f "${OBSERVER_015}" ]] || exit 66
 
 usage() {
-  echo "Usage: scripts/dev/test-email-gateway-postgres --observer-through 014|--all" >&2
+  echo "Usage: scripts/dev/test-email-gateway-postgres --observer-through 015|--all" >&2
   exit 64
 }
 
 [[ $# -eq 2 || $# -eq 1 ]] || usage
 MODE="${1:-}"
 if [[ "${MODE}" == "--observer-through" ]]; then
-  [[ "${2:-}" == "014" ]] || usage
+  [[ "${2:-}" == "015" ]] || usage
 elif [[ "${MODE}" == "--all" ]]; then
   [[ $# -eq 1 ]] || usage
 else
@@ -103,7 +104,7 @@ apply_set() {
   for migration in "${REPO_ROOT}"/services/observer/migrations/[0-9][0-9][0-9]_*.sql; do
     base="$(basename -- "${migration}")"
     number="${base%%_*}"
-    if [[ "${MODE}" == "--observer-through" ]] && ((10#${number} > 14)); then
+    if [[ "${MODE}" == "--observer-through" ]] && ((10#${number} > 15)); then
       continue
     fi
     apply_migration "${migration}" "observer/${base}"
@@ -137,7 +138,7 @@ cd "${REPO_ROOT}"
 PYTHONDONTWRITEBYTECODE=1 uv run --frozen --no-sync pytest \
   -p no:cacheprovider \
   tests/integration/test_gate3_postgres.py \
-  -k 'gate3_migrations_run_twice_and_enable_forced_rls or email_publication_migration_is_idempotent_forced_rls_and_least_grant' \
+  -k 'gate3_migrations_run_twice_and_enable_forced_rls or email_publication_migration_is_idempotent_forced_rls_and_least_grant or email_connector_config_repository_replays_and_fences_revisions' \
   -q
 if [[ "${MODE}" == "--all" ]]; then
   PYTHONDONTWRITEBYTECODE=1 uv run --frozen --no-sync pytest \

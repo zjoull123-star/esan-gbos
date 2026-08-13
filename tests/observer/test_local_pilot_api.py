@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from observer.control_service import ConnectorControlResult, ConnectorStatus
+from observer.email_connector_config import InMemoryEmailConnectorConfigRepository
 from observer.identity_resolution_work import IdentityResolutionWorkSnapshot
 from observer.local_pilot_api import LocalPilotAPIConfig, create_local_pilot_app
 from observer.models import ConnectorKey, TenantScope
@@ -40,11 +41,18 @@ STATUS = ConnectorStatus(
 class FakeControlService:
     def __init__(self) -> None:
         self.last_key: ConnectorKey | None = None
+        self.list_calls: list[tuple[TenantScope, str | None]] = []
 
     def resolve_instance(self, *_args: object, **_kwargs: object) -> ConnectorKey:
         return ConnectorKey("email", "sales-inbox")
 
-    def list_status(self, *_args: object, **_kwargs: object) -> tuple[ConnectorStatus, ...]:
+    def list_status(
+        self,
+        scope: TenantScope,
+        *,
+        channel: str | None = None,
+    ) -> tuple[ConnectorStatus, ...]:
+        self.list_calls.append((scope, channel))
         return (STATUS,)
 
     def pause(self, _scope: object, key: ConnectorKey, **_kwargs: object) -> ConnectorControlResult:
@@ -173,6 +181,8 @@ def _config(
         network_mode=network_mode,
         bearer_token="synthetic-local-token",
         auth_ref="observer-token-v1",
+        mailbox_projection_bearer_token="mailbox-projection-token",
+        mailbox_projection_auth_ref="gateway-mailbox-projection-v1",
         max_request_bytes=max_request_bytes,
     )
 
@@ -201,6 +211,7 @@ def _app(
     clock: Callable[[], datetime] | None = None,
     enabled: bool = True,
     denials: FakeIdentityAuthorityDenials | None = None,
+    connector_configs: InMemoryEmailConnectorConfigRepository | None = None,
 ) -> tuple[FastAPI, FakeControlService, FakeReadService]:
     control = FakeControlService()
     reader = FakeReadService()
@@ -212,8 +223,161 @@ def _app(
         clock=clock or (lambda: NOW),
         identity_resolution_metrics=metrics,
         identity_authority_denials=denials,
+        email_connector_configs=connector_configs,
     )
     return app, control, reader
+
+
+def _connector_projection() -> dict[str, object]:
+    from services.email_gateway.models import MailboxConnectorProjection
+
+    return MailboxConnectorProjection(
+        site_id="alpha.example",
+        observer_connector_instance_ref="OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        provider_kind="imap_smtp",
+        entry_role="primary",
+        business_purpose="sales_follow_up",
+        team_ref="TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        credential_ref="secretref:v1/email-primary",
+        inbound_enabled=True,
+        mailbox_ref="MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        mailbox_config_revision=1,
+        activation_not_before=NOW,
+        projection_revision=1,
+    ).to_wire()
+
+
+def _connector_projection_headers(payload: dict[str, object]) -> dict[str, str]:
+    return _headers(
+        purpose="observation_processing",
+        request_id="MCP-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        Authorization="Bearer mailbox-projection-token",
+        **{
+            "X-GBOS-Local-Auth-Ref": "gateway-mailbox-projection-v1",
+            "X-Payload-Digest": str(payload["projection_digest"]),
+        },
+    )
+
+
+def test_mailbox_projection_uses_distinct_auth_and_exact_replay_receipt() -> None:
+    configs = InMemoryEmailConnectorConfigRepository()
+    app, _control, _reader = _app(connector_configs=configs)
+    client = TestClient(app)
+    payload = _connector_projection()
+
+    ordinary_auth = client.post(
+        "/internal/v1/email-connectors/apply-config",
+        headers=_headers(
+            purpose="observation_processing",
+            request_id="MCP-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            **{"X-Payload-Digest": str(payload["projection_digest"])},
+        ),
+        json=payload,
+    )
+    first = client.post(
+        "/internal/v1/email-connectors/apply-config",
+        headers=_connector_projection_headers(payload),
+        json=payload,
+    )
+    replay = client.post(
+        "/internal/v1/email-connectors/apply-config",
+        headers=_connector_projection_headers(payload),
+        json=payload,
+    )
+
+    assert ordinary_auth.status_code == 401
+    assert first.status_code == replay.status_code == 200
+    assert first.headers["cache-control"] == "no-store"
+    assert first.json() == replay.json()
+    assert first.json() == {
+        "schema_version": "1.0",
+        "receipt_ref": first.json()["receipt_ref"],
+        "config_publication_ref": "MCP-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "payload_digest": payload["projection_digest"],
+    }
+    assert len(configs.projections) == 1
+
+
+def test_mailbox_projection_rejects_missing_repo_fake_extra_and_digest_drift() -> None:
+    payload = _connector_projection()
+    missing, _control, _reader = _app()
+    configured, _control, _reader = _app(connector_configs=InMemoryEmailConnectorConfigRepository())
+    headers = _connector_projection_headers(payload)
+
+    missing_response = TestClient(missing).post(
+        "/internal/v1/email-connectors/apply-config", headers=headers, json=payload
+    )
+    fake = TestClient(configured).post(
+        "/internal/v1/email-connectors/apply-config",
+        headers=headers,
+        json={**payload, "provider_kind": "fake"},
+    )
+    extra = TestClient(configured).post(
+        "/internal/v1/email-connectors/apply-config",
+        headers=headers,
+        json={**payload, "unexpected": "private@example.invalid"},
+    )
+    drift = TestClient(configured).post(
+        "/internal/v1/email-connectors/apply-config",
+        headers={**headers, "X-Payload-Digest": "sha256:" + "0" * 64},
+        json=payload,
+    )
+
+    assert missing_response.status_code == 503
+    assert fake.status_code == extra.status_code == drift.status_code == 422
+    assert "private@example.invalid" not in extra.text
+
+
+def test_email_connector_health_uses_projection_auth_and_returns_only_safe_live_state() -> None:
+    app, control, _reader = _app()
+    client = TestClient(app)
+    headers = _headers(
+        purpose="email_connector_health_read",
+        request_id="email-health-001",
+        Authorization="Bearer mailbox-projection-token",
+        **{"X-GBOS-Local-Auth-Ref": "gateway-mailbox-projection-v1"},
+    )
+
+    ordinary = client.post(
+        "/internal/v1/email-connectors/health",
+        headers=_headers(purpose="email_connector_health_read"),
+        json={},
+    )
+    wrong_purpose = client.post(
+        "/internal/v1/email-connectors/health",
+        headers={**headers, "X-Processing-Purpose": "observation_processing"},
+        json={},
+    )
+    response = client.post(
+        "/internal/v1/email-connectors/health",
+        headers=headers,
+        json={},
+    )
+
+    assert ordinary.status_code == 401
+    assert wrong_purpose.status_code == 403
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "site_id": "alpha.example",
+        "data": {
+            "connectors": [
+                {
+                    "observer_connector_instance_ref": "sales-inbox",
+                    "status": "enabled",
+                    "freshness": "fresh",
+                    "backlog": 0,
+                    "last_success_at": "2026-08-08T08:59:00Z",
+                    "safe_error_code": None,
+                }
+            ]
+        },
+        "meta": {
+            "request_id": "email-health-001",
+            "schema_version": "1.0",
+        },
+    }
+    assert control.list_calls == [(TenantScope("alpha.example", "observation_processing"), "email")]
 
 
 def test_identity_authority_denial_is_authenticated_idempotent_and_redacted() -> None:

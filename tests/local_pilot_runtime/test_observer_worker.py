@@ -347,6 +347,7 @@ def test_email_decoder_receives_durable_metadata_and_hands_transient_evidence_to
     raw = (
         b"From: private@example.invalid\r\n"
         b"To: pilot@example.invalid\r\n"
+        b"Message-ID: <observer-worker@example.invalid>\r\n"
         b"Content-Type: text/plain; charset=utf-8\r\n"
         b"\r\nprivate email body"
     )
@@ -708,6 +709,7 @@ def test_worker_tokenization_failure_quarantines_before_sink_or_completion(
     raw = (
         b"From: pii-sentinel@example.invalid\r\n"
         b"To: pilot@example.invalid\r\n"
+        b"Message-ID: <tokenization-failure@example.invalid>\r\n"
         b"Content-Type: text/plain; charset=utf-8\r\n"
         b"\r\nprivate email body"
     )

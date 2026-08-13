@@ -53,11 +53,14 @@ services:
       - postgres_context_password
       - postgres_agent_password
       - postgres_media_password
+      - postgres_email_gateway_password
+      - postgres_observer_publisher_password
     volumes:
       - ../../services/observer/migrations:/migrations/observer:ro
       - ../../services/context/migrations:/migrations/context:ro
       - ../../services/agent_runtime/migrations:/migrations/agent:ro
       - ../../services/media_runtime/migrations:/migrations/media:ro
+      - ../../services/email_gateway/migrations:/migrations/email_gateway:ro
       - ../../scripts/local-pilot:/scripts:ro
     networks: [local-internal]
     depends_on:
@@ -267,6 +270,7 @@ services:
       - agent_api_bearer
       - cursor_hmac_key
       - context_client_bearer
+      - mailbox_projection_bearer
     volumes:
       - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
       - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-observer.json:/config/local-pilot-runtime.json:ro
@@ -289,6 +293,108 @@ services:
       timeout: 5s
       retries: 30
       start_period: 20s
+    restart: unless-stopped
+
+  email-gateway-api:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["email-gateway"]
+    command:
+      - python
+      - -c
+      - >-
+        from services.local_pilot_runtime.email_gateway_api import main;
+        raise SystemExit(main(internal_network=True))
+    environment:
+      <<: *runtime-environment
+      GBOS_EMAIL_GATEWAY_KILL_SWITCH: ${GBOS_EMAIL_GATEWAY_KILL_SWITCH:-true}
+      GBOS_EXTERNAL_SEND_ENABLED: "false"
+    secrets:
+      - postgres_email_gateway_password
+      - email_publication_bearer
+      - mailbox_projection_bearer
+      - email_gateway_data_key
+      - source: email_gateway_bff_bearer
+        target: email_gateway_bff_bearer
+        mode: 0600
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-email-gateway-api.json:/config/email-gateway-runtime.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  email-gateway-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["email-gateway"]
+    command: ["python", "-m", "services.local_pilot_runtime.email_gateway_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_EMAIL_GATEWAY_KILL_SWITCH: ${GBOS_EMAIL_GATEWAY_KILL_SWITCH:-true}
+      GBOS_EXTERNAL_SEND_ENABLED: "false"
+    secrets:
+      - postgres_email_gateway_password
+      - email_gateway_data_key
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-email-gateway-worker.json:/config/email-gateway-runtime.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  observer-email-publication-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["email-gateway"]
+    command: ["python", "-m", "services.local_pilot_runtime.email_publication_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_EMAIL_PUBLICATION_KILL_SWITCH: ${GBOS_EMAIL_PUBLICATION_KILL_SWITCH:-true}
+      GBOS_EXTERNAL_SEND_ENABLED: "false"
+    secrets:
+      - postgres_observer_publisher_password
+      - email_publication_bearer
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-email-publication-worker.json:/config/email-gateway-runtime.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      email-gateway-api:
+        condition: service_started
+    restart: unless-stopped
+
+  mailbox-config-projection-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["email-gateway"]
+    command: ["python", "-m", "services.local_pilot_runtime.mailbox_config_projection_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_EMAIL_GATEWAY_KILL_SWITCH: ${GBOS_EMAIL_GATEWAY_KILL_SWITCH:-true}
+      GBOS_EXTERNAL_SEND_ENABLED: "false"
+    secrets:
+      - postgres_email_gateway_password
+      - mailbox_projection_bearer
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-mailbox-config-projection-worker.json:/config/email-gateway-runtime.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      observer-api:
+        condition: service_started
     restart: unless-stopped
 
   connector-worker:
@@ -744,6 +850,12 @@ services:
           gbos_agent_auth_ref local-pilot-context-auth-v1;
         bench --site "$$site" set-config \
           gbos_agent_token_file /run/secrets/agent_api_bearer;
+        bench --site "$$site" set-config \
+          gbos_email_gateway_url http://email-gateway-api:8004;
+        bench --site "$$site" set-config \
+          gbos_email_gateway_auth_ref email-gateway-bff-v1;
+        bench --site "$$site" set-config \
+          gbos_email_gateway_token_file /run/secrets/email_gateway_bff_bearer;
         materializer_identities="$$(printf \
           '{"agent-materializer-v1":{"user":"gbos-materializer@localhost.invalid","site_id":"%s","processing_purposes":["observation_processing","sales_follow_up","procurement_coordination","product_sample_management","metric_reporting"]}}' \
           "$$site")";
@@ -759,6 +871,9 @@ services:
     secrets:
       - mariadb_root_password
       - frappe_admin_password
+      - source: email_gateway_bff_bearer
+        target: email_gateway_bff_bearer
+        mode: 0600
     volumes:
       - local-pilot-frappe-sites:/home/frappe/frappe-bench/sites
       - local-pilot-frappe-logs:/home/frappe/frappe-bench/logs
@@ -868,6 +983,9 @@ services:
     secrets:
       - source: agent_api_bearer
         target: agent_api_bearer
+        mode: 0600
+      - source: email_gateway_bff_bearer
+        target: email_gateway_bff_bearer
         mode: 0600
     volumes:
       - local-pilot-frappe-sites:/home/frappe/frappe-bench/sites
@@ -1071,6 +1189,10 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_agent_password
   postgres_media_password:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_media_password
+  postgres_email_gateway_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_email_gateway_password
+  postgres_observer_publisher_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_observer_publisher_password
   mariadb_root_password:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/mariadb_root_password
   frappe_admin_password:
@@ -1083,6 +1205,14 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/context_api_bearer
   context_client_bearer:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/context_client_bearer
+  email_publication_bearer:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_publication_bearer
+  email_gateway_bff_bearer:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_gateway_bff_bearer
+  mailbox_projection_bearer:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/mailbox_projection_bearer
+  email_gateway_data_key:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_gateway_data_key
   cursor_hmac_key:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/cursor_hmac_key
   tokenizer_hmac_key:

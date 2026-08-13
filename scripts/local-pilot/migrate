@@ -16,7 +16,9 @@ for secret_file in \
   /run/secrets/postgres_observer_password \
   /run/secrets/postgres_context_password \
   /run/secrets/postgres_agent_password \
-  /run/secrets/postgres_media_password; do
+  /run/secrets/postgres_media_password \
+  /run/secrets/postgres_email_gateway_password \
+  /run/secrets/postgres_observer_publisher_password; do
   [[ -f "${secret_file}" && ! -L "${secret_file}" && -s "${secret_file}" ]] || {
     echo "Required migration secret is unavailable: ${secret_file}" >&2
     exit 78
@@ -63,20 +65,36 @@ SQL
 
 apply_migration() {
   local migration="$1"
-  local group name checksum existing transaction_input
+  local group name checksum existing transaction_input ledger_select ledger_insert ledger_exists
   [[ -f "${migration}" ]] || {
     echo "Migration is missing: ${migration}" >&2
     exit 66
   }
   group="$(basename -- "$(dirname -- "${migration}")")"
   name="${group}/$(basename -- "${migration}")"
+  ledger_select="SELECT checksum FROM observer.schema_migrations WHERE migration_name = '${name}'"
+  if [[ "${group}" == "email_gateway" ]]; then
+    name="$(basename -- "${migration}")"
+    ledger_exists="$("${PSQL[@]}" -Atqc \
+      "SELECT to_regclass('email_gateway.schema_migrations') IS NOT NULL")"
+    if [[ "${ledger_exists}" == "t" ]]; then
+      ledger_select="SELECT checksum_sha256 FROM email_gateway.schema_migrations WHERE migration_name = '${name}'"
+    else
+      ledger_select="SELECT NULL"
+    fi
+  fi
   [[ "${name}" =~ ^[a-z0-9._/-]+$ ]] || {
     echo "Unsafe migration name: ${name}" >&2
     exit 65
   }
   checksum="$(sha256sum "${migration}" | awk '{print $1}')"
+  if [[ "${group}" == "email_gateway" ]]; then
+    ledger_insert="INSERT INTO email_gateway.schema_migrations (migration_name, checksum_sha256) VALUES ('${name}', '${checksum}')"
+  else
+    ledger_insert="INSERT INTO observer.schema_migrations (migration_name, checksum) VALUES ('${name}', '${checksum}')"
+  fi
   existing="$("${PSQL[@]}" -Atqc \
-    "SELECT checksum FROM observer.schema_migrations WHERE migration_name = '${name}'")"
+    "${ledger_select}")"
   if [[ -n "${existing}" ]]; then
     [[ "${existing}" == "${checksum}" ]] || {
       echo "Applied migration checksum changed: ${name}" >&2
@@ -95,18 +113,18 @@ apply_migration() {
   fi
   "${PSQL[@]}" --single-transaction \
     -f "${transaction_input}" \
-    -c "INSERT INTO observer.schema_migrations (migration_name, checksum)
-        VALUES ('${name}', '${checksum}')"
+    -c "${ledger_insert}"
 }
 
-# The frozen dependency order is observer context agent media. Each path is
+# The frozen dependency order is observer context agent media email_gateway. Each path is
 # checksum-ledgered before later groups are considered.
-for migration_group in observer context agent media; do
+for migration_group in observer context agent media email_gateway; do
   case "${migration_group}" in
     observer) migration_glob=(/migrations/observer/[0-9][0-9][0-9]_*.sql) ;;
     context) migration_glob=(/migrations/context/[0-9][0-9][0-9]_*.sql) ;;
     agent) migration_glob=(/migrations/agent/[0-9][0-9][0-9]_*.sql) ;;
     media) migration_glob=(/migrations/media/[0-9][0-9][0-9]_*.sql) ;;
+    email_gateway) migration_glob=(/migrations/email_gateway/[0-9][0-9][0-9]_*.sql) ;;
   esac
   ((${#migration_glob[@]} > 0)) || {
     echo "No ${migration_group} migrations were mounted." >&2
@@ -118,7 +136,7 @@ for migration_group in observer context agent media; do
 done
 
 # Migrations intentionally define NOLOGIN roles. Local composition enables
-# exactly four application identities only after the full chain succeeds.
+# exactly seven application identities only after the full chain succeeds.
 "${PSQL[@]}" <<'SQL'
 CREATE TEMP TABLE local_role_secrets (
   role_name text PRIMARY KEY,
@@ -141,10 +159,20 @@ TRUNCATE local_secret_input;
 INSERT INTO local_role_secrets
 SELECT 'gbos_media_app', password FROM local_secret_input;
 TRUNCATE local_secret_input;
+\copy local_secret_input(password) FROM '/run/secrets/postgres_email_gateway_password' WITH (FORMAT text)
+INSERT INTO local_role_secrets
+SELECT 'gbos_email_gateway_app', password FROM local_secret_input;
+INSERT INTO local_role_secrets
+SELECT 'gbos_email_gateway_worker', password FROM local_secret_input;
+TRUNCATE local_secret_input;
+\copy local_secret_input(password) FROM '/run/secrets/postgres_observer_publisher_password' WITH (FORMAT text)
+INSERT INTO local_role_secrets
+SELECT 'gbos_observer_publisher', password FROM local_secret_input;
+TRUNCATE local_secret_input;
 
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM local_role_secrets) <> 4
+  IF (SELECT count(*) FROM local_role_secrets) <> 7
     OR EXISTS (
       SELECT 1
       FROM local_role_secrets
@@ -173,6 +201,12 @@ ALTER ROLE gbos_agent_app
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE gbos_media_app
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+ALTER ROLE gbos_email_gateway_app
+  LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+ALTER ROLE gbos_email_gateway_worker
+  LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+ALTER ROLE gbos_observer_publisher
+  LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 
 SELECT format(
   'ALTER ROLE %I PASSWORD %L',
@@ -186,4 +220,4 @@ GRANT USAGE ON SCHEMA media_runtime TO gbos_media_app;
 GRANT SELECT, INSERT, UPDATE ON media_runtime.local_media_jobs TO gbos_media_app;
 SQL
 
-echo "Local-pilot observer/context/agent/media migrations are checksum-consistent."
+echo "Local-pilot observer/context/agent/media/email-gateway migrations are checksum-consistent."

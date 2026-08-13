@@ -20,6 +20,11 @@ from .control_service import (
     IdempotencyConflict,
     RevisionConflict,
 )
+from .email_connector_config import (
+    EmailConnectorConfigConflict,
+    EmailConnectorConfigReceipt,
+    EmailConnectorConfigUnavailable,
+)
 from .identity_resolution_work import (
     IdentityAuthorityDenial,
     IdentityAuthorityDenialConflict,
@@ -56,11 +61,28 @@ class LocalPilotAPIConfig:
     network_mode: Literal["loopback", "internal_network", "unix_socket"]
     bearer_token: str = field(repr=False)
     auth_ref: str = field(repr=False)
+    mailbox_projection_bearer_token: str | None = field(default=None, repr=False)
+    mailbox_projection_auth_ref: str | None = field(default=None, repr=False)
     max_request_bytes: int = 262_144
 
     def __post_init__(self) -> None:
         _safe_secret(self.bearer_token, "bearer_token")
         _safe_secret(self.auth_ref, "auth_ref")
+        if (self.mailbox_projection_bearer_token is None) != (
+            self.mailbox_projection_auth_ref is None
+        ):
+            raise ValueError("mailbox projection authentication is incomplete")
+        if self.mailbox_projection_bearer_token is not None:
+            if self.mailbox_projection_auth_ref is None:
+                raise ValueError("mailbox projection authentication is incomplete")
+            _safe_secret(
+                self.mailbox_projection_bearer_token,
+                "mailbox_projection_bearer_token",
+            )
+            _safe_secret(
+                self.mailbox_projection_auth_ref,
+                "mailbox_projection_auth_ref",
+            )
         if not 1 <= self.max_request_bytes <= 1_048_576:
             raise ValueError("max_request_bytes is outside the local API budget")
         if self.network_mode == "loopback":
@@ -173,12 +195,26 @@ class IdentityAuthorityDenials(Protocol):
     ) -> IdentityAuthorityDenial: ...
 
 
+class EmailConnectorConfigs(Protocol):
+    def apply(
+        self,
+        *,
+        config_publication_ref: str,
+        projection: dict[str, object],
+        projected_at: datetime,
+    ) -> EmailConnectorConfigReceipt: ...
+
+
 class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class ConnectorListRequest(_ClosedModel):
     channel: str | None = Field(default=None, min_length=1, max_length=80)
+
+
+class EmailConnectorHealthRequest(_ClosedModel):
+    pass
 
 
 class ConnectorCommandRequest(_ClosedModel):
@@ -228,6 +264,67 @@ class IdentityAuthorityDenyRequest(_ClosedModel):
     idempotency_key: str = Field(min_length=8, max_length=256)
 
 
+class ActivationWatermarkRequest(_ClosedModel):
+    mailbox_id: str = Field(pattern=r"^MBX-[0-9A-HJKMNP-TV-Z]{26}$")
+    mailbox_config_revision: int = Field(ge=1, le=2_147_483_647)
+    not_before: str = Field(
+        min_length=20,
+        max_length=35,
+        pattern=(
+            r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:"
+            r"[0-9]{2}(?:\.[0-9]{1,6})?Z$"
+        ),
+    )
+
+
+class EmailConnectorConfigRequest(_ClosedModel):
+    site_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]{0,139}$")
+    observer_connector_instance_ref: str = Field(pattern=r"^OCI-[0-9A-HJKMNP-TV-Z]{26}$")
+    provider_kind: Literal["wecom_app_mail", "imap_smtp"]
+    entry_role: Literal["primary", "workflow", "migration", "selective_archive"]
+    business_purpose: Literal[
+        "business_operations",
+        "observation_processing",
+        "entity_resolution",
+        "customer_service",
+        "sales_follow_up",
+        "procurement_coordination",
+        "product_sample_management",
+        "risk_review",
+        "metric_reporting",
+        "audit_compliance",
+    ]
+    team_ref: str = Field(pattern=r"^TEM-[0-9A-HJKMNP-TV-Z]{26}$")
+    credential_ref: str = Field(
+        min_length=14,
+        max_length=128,
+        pattern=r"^secretref:v1/[A-Za-z0-9][A-Za-z0-9._/-]*$",
+    )
+    inbound_enabled: bool
+    activation_watermark: ActivationWatermarkRequest
+    projection_revision: int = Field(ge=1, le=2_147_483_647)
+    projection_digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "site_id": self.site_id,
+            "observer_connector_instance_ref": self.observer_connector_instance_ref,
+            "provider_kind": self.provider_kind,
+            "entry_role": self.entry_role,
+            "business_purpose": self.business_purpose,
+            "team_ref": self.team_ref,
+            "credential_ref": self.credential_ref,
+            "inbound_enabled": self.inbound_enabled,
+            "activation_watermark": {
+                "mailbox_id": self.activation_watermark.mailbox_id,
+                "mailbox_config_revision": (self.activation_watermark.mailbox_config_revision),
+                "not_before": self.activation_watermark.not_before,
+            },
+            "projection_revision": self.projection_revision,
+            "projection_digest": self.projection_digest,
+        }
+
+
 def create_local_pilot_app(
     *,
     config: LocalPilotAPIConfig,
@@ -237,6 +334,7 @@ def create_local_pilot_app(
     clock: Clock,
     identity_resolution_metrics: IdentityResolutionMetrics | None = None,
     identity_authority_denials: IdentityAuthorityDenials | None = None,
+    email_connector_configs: EmailConnectorConfigs | None = None,
 ) -> FastAPI:
     """Create the authenticated Frappe v4 downstream surface without starting I/O."""
 
@@ -284,6 +382,22 @@ def create_local_pilot_app(
     ) -> JSONResponse:
         del exc
         return _error(request, 409, "idempotency_conflict")
+
+    @application.exception_handler(EmailConnectorConfigConflict)
+    async def connector_config_conflict(
+        request: Request,
+        exc: EmailConnectorConfigConflict,
+    ) -> JSONResponse:
+        del exc
+        return _error(request, 409, "projection_conflict")
+
+    @application.exception_handler(EmailConnectorConfigUnavailable)
+    async def connector_config_unavailable(
+        request: Request,
+        exc: EmailConnectorConfigUnavailable,
+    ) -> JSONResponse:
+        del exc
+        return _error(request, 503, "runtime_unavailable")
 
     @application.exception_handler(LookupError)
     async def not_found(request: Request, exc: Exception) -> JSONResponse:
@@ -350,6 +464,70 @@ def create_local_pilot_app(
         return Response(
             content=rendered,
             media_type=_PROMETHEUS_CONTENT_TYPE,
+        )
+
+    @application.post("/internal/v1/email-connectors/apply-config")
+    def apply_email_connector_config(
+        request: Request,
+        payload: Annotated[EmailConnectorConfigRequest, Body()],
+    ) -> dict[str, object]:
+        guard.require_running()
+        scope, config_publication_ref = _governed_scope(
+            request,
+            expected_purpose="observation_processing",
+        )
+        if payload.site_id != scope.site_id:
+            raise PermissionError("projection site scope mismatch")
+        declared_digest = request.headers.get("x-payload-digest")
+        if declared_digest is None or not hmac.compare_digest(
+            declared_digest, payload.projection_digest
+        ):
+            raise ValueError("projection digest header mismatch")
+        if email_connector_configs is None:
+            raise EmailConnectorConfigUnavailable("email connector configuration is unavailable")
+        projected_at = clock()
+        _require_aware(projected_at, "email connector projection clock")
+        receipt = email_connector_configs.apply(
+            config_publication_ref=config_publication_ref,
+            projection=payload.to_wire(),
+            projected_at=projected_at.astimezone(UTC),
+        )
+        return receipt.to_wire()
+
+    @application.post("/internal/v1/email-connectors/health")
+    def email_connector_health(
+        request: Request,
+        payload: Annotated[EmailConnectorHealthRequest, Body()],
+    ) -> dict[str, object]:
+        del payload
+        guard.require_running()
+        scope, request_id = _governed_scope(
+            request,
+            expected_purpose="email_connector_health_read",
+        )
+        statuses = control.list_status(scope, channel="email")
+        return _bff_envelope(
+            {
+                "connectors": [
+                    {
+                        "observer_connector_instance_ref": status.instance_id,
+                        "status": status.status,
+                        "freshness": status.freshness,
+                        "backlog": status.backlog,
+                        "last_success_at": (
+                            None
+                            if status.last_success_at is None
+                            else status.last_success_at.astimezone(UTC)
+                            .isoformat()
+                            .replace("+00:00", "Z")
+                        ),
+                        "safe_error_code": status.safe_error_code,
+                    }
+                    for status in statuses
+                ]
+            },
+            site_id=scope.site_id,
+            request_id=request_id,
         )
 
     @application.post("/internal/v1/bff/connectors/list")
@@ -544,14 +722,25 @@ async def _validate_internal_request(
 ) -> JSONResponse | None:
     authorization = request.headers.get("authorization")
     auth_ref = request.headers.get("x-gbos-local-auth-ref")
+    if request.url.path in {
+        "/internal/v1/email-connectors/apply-config",
+        "/internal/v1/email-connectors/health",
+    }:
+        bearer_token = config.mailbox_projection_bearer_token
+        expected_auth_ref = config.mailbox_projection_auth_ref
+    else:
+        bearer_token = config.bearer_token
+        expected_auth_ref = config.auth_ref
     if (
-        not isinstance(authorization, str)
+        bearer_token is None
+        or expected_auth_ref is None
+        or not isinstance(authorization, str)
         or not hmac.compare_digest(
             authorization,
-            f"Bearer {config.bearer_token}",
+            f"Bearer {bearer_token}",
         )
         or not isinstance(auth_ref, str)
-        or not hmac.compare_digest(auth_ref, config.auth_ref)
+        or not hmac.compare_digest(auth_ref, expected_auth_ref)
     ):
         return _error(request, 401, "authentication_required")
     for header in (

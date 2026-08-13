@@ -20,6 +20,7 @@ _TOP_LEVEL_FIELDS = frozenset(
         "capabilities",
         "deepseek",
         "channels",
+        "email_gateway",
     }
 )
 

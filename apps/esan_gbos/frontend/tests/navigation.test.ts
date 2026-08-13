@@ -19,6 +19,8 @@ describe("角色裁剪导航", () => {
       "/gbos/integrations",
       "/gbos/communications",
       "/gbos/communications/:id",
+      "/gbos/email",
+      "/gbos/email-gateway",
       "/gbos/review/:id",
       "/gbos/party/:id",
       "/gbos/sample/:id",
@@ -36,13 +38,13 @@ describe("角色裁剪导航", () => {
 
   it.each([
     [[], []],
-    [["Sales User"], ["销售协同", "沟通观察"]],
-    [["Sales Manager"], ["销售协同", "沟通观察"]],
+    [["Sales User"], ["销售协同", "沟通观察", "邮件收件箱"]],
+    [["Sales Manager"], ["销售协同", "沟通观察", "邮件收件箱"]],
     [["Buyer"], ["采购协同"]],
     [["Purchase Manager"], ["采购协同"]],
     [["Product/R&D"], ["产品与样品"]],
-    [["Reviewer"], ["审核队列"]],
-    [["Integration Admin"], ["集成状态", "沟通观察"]],
+    [["Reviewer"], ["审核队列", "邮件收件箱"]],
+    [["Integration Admin"], ["集成状态", "沟通观察", "邮件网关"]],
     [
       ["CEO"],
       [
@@ -53,6 +55,7 @@ describe("角色裁剪导航", () => {
         "审核队列",
         "集成状态",
         "沟通观察",
+        "邮件收件箱",
       ],
     ],
     [
@@ -65,6 +68,8 @@ describe("角色裁剪导航", () => {
         "审核队列",
         "集成状态",
         "沟通观察",
+        "邮件收件箱",
+        "邮件网关",
       ],
     ],
   ])("%j 只显示授权工作台", (roles, expected) => {
@@ -80,6 +85,7 @@ describe("角色裁剪导航", () => {
       ["审核队列", "/gbos/review"],
       ["集成状态", "/gbos/integrations"],
       ["沟通观察", "/gbos/communications"],
+      ["邮件收件箱", "/gbos/email"],
     ];
 
     expect(
@@ -99,6 +105,8 @@ describe("角色裁剪导航", () => {
       "审核队列",
       "集成状态",
       "沟通观察",
+      "邮件收件箱",
+      "邮件网关",
     ]);
   });
 
