@@ -33,6 +33,7 @@ from .secret_provider import MountedFileSecretProvider, SecretSpec
 
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_CONFIG = Path("/config/runtime-email-send-worker.json")
+DEFAULT_EMERGENCY_STOP = Path("/run/gbos/EMERGENCY_STOP")
 _MAX_CONFIG_BYTES = 65_536
 
 WorkerRunner = Callable[[EmailSendWorker, TenantScope, float], None]
@@ -42,6 +43,7 @@ def main(
     *,
     manifest_path: Path = DEFAULT_MANIFEST,
     config_path: Path = DEFAULT_CONFIG,
+    emergency_stop_path: Path = DEFAULT_EMERGENCY_STOP,
     environ: Mapping[str, str] | None = None,
     connector: Callable[..., object] | None = None,
     provider_factory: Callable[[], EmailProvider] | None = None,
@@ -56,6 +58,8 @@ def main(
     environment = os.environ if environ is None else environ
     connection: object | None = None
     try:
+        if _emergency_stop_active(emergency_stop_path):
+            raise LocalEntrypointDisabled("email send worker emergency stop is active")
         reject_plaintext_secret_environment(environment)
         manifest = load_local_manifest(manifest_path)
         require_component_enabled(manifest, component="email-send-worker", environ=environment)
@@ -109,7 +113,8 @@ def main(
             clock=lambda: datetime.now(UTC),
             authority_check=authority_check,
             lease_duration=timedelta(seconds=int(worker_config["lease_seconds"])),
-            runtime_stop_reader=runtime_stop_reader or (lambda: _runtime_stop(environment)),
+            runtime_stop_reader=runtime_stop_reader
+            or (lambda: _runtime_stop(environment, emergency_stop_path)),
         )
         scope = TenantScope(str(config["site_id"]), "customer_service")
         worker.consume_manual_reconciliations(scope, reconciliation_refs)
@@ -153,12 +158,24 @@ def _run_loop(worker: EmailSendWorker, scope: TenantScope, idle_delay: float) ->
         time.sleep(idle_delay)
 
 
-def _runtime_stop(environment: Mapping[str, str]) -> str | None:
+def _runtime_stop(environment: Mapping[str, str], emergency_stop_path: Path) -> str | None:
+    if _emergency_stop_active(emergency_stop_path):
+        return "emergency_stop_active"
     if environment.get("GBOS_EMAIL_SEND_KILL_SWITCH", "true") != "false":
         return "emergency_stop_active"
     if environment.get("GBOS_EXTERNAL_SEND_ENABLED", "false") != "false":
         return "external_send_disabled"
     return None
+
+
+def _emergency_stop_active(path: Path) -> bool:
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def _secret_provider() -> MountedFileSecretProvider:

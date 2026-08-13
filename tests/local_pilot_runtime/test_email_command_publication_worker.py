@@ -182,6 +182,80 @@ def test_gateway_failure_releases_frappe_claim_with_fixed_safe_code_and_never_ac
     assert all("acknowledge" not in str(call["url"]) for call in transport.calls)
 
 
+def test_relay_does_not_claim_when_emergency_stop_is_already_active() -> None:
+    transport = _Transport()
+    worker = CommandPublicationRelayWorker(
+        frappe=FrappeCommandPublicationClient(
+            transport=transport,
+            api_key="frappe-publication-key",
+            api_secret="frappe-publication-secret",
+        ),
+        gateway=GatewayCommandIngestClient(
+            transport=transport,
+            bearer_token="gateway-command-ingest-secret",
+        ),
+        site_id="gbos.localhost",
+        worker_id="email-command-relay-01",
+        clock=lambda: NOW,
+        lease_seconds=30,
+        runtime_stop_reader=lambda: "worker_shutdown",
+    )
+
+    assert worker.run_once().status == PublicationRelayStatus.IDLE
+    assert transport.calls == []
+
+
+def test_relay_releases_claim_if_emergency_stop_appears_before_gateway_accept() -> None:
+    transport = _Transport(
+        (200, _frappe(_claim())),
+        (200, _frappe({"lease": _lease()})),
+        (
+            200,
+            _frappe(
+                {
+                    "release": {
+                        "publication_ref": "PUB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                        "status": "retry",
+                        "safe_code": "worker_shutdown",
+                    }
+                }
+            ),
+        ),
+    )
+    stop_values = iter((None, "worker_shutdown"))
+    worker = CommandPublicationRelayWorker(
+        frappe=FrappeCommandPublicationClient(
+            transport=transport,
+            api_key="frappe-publication-key",
+            api_secret="frappe-publication-secret",
+        ),
+        gateway=GatewayCommandIngestClient(
+            transport=transport,
+            bearer_token="gateway-command-ingest-secret",
+        ),
+        site_id="gbos.localhost",
+        worker_id="email-command-relay-01",
+        clock=lambda: NOW,
+        lease_seconds=30,
+        runtime_stop_reader=lambda: next(stop_values),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == PublicationRelayStatus.RETRY
+    assert len(transport.calls) == 3
+    assert transport.calls[-1]["url"].endswith(  # type: ignore[union-attr]
+        "email_command_publication.release"
+    )
+    assert transport.calls[-1]["payload"]["payload"]["safe_code"] == (  # type: ignore[index]
+        "worker_shutdown"
+    )
+    assert all(
+        call["url"] != "http://email-gateway-api:8004/internal/v1/email-commands/accept"
+        for call in transport.calls
+    )
+
+
 def test_frappe_client_unwraps_only_the_exact_success_envelope() -> None:
     transport = _Transport((200, _frappe({"publication": None})))
     client = FrappeCommandPublicationClient(
@@ -313,6 +387,34 @@ def test_main_preflights_closed_config_and_secrets_then_constructs_and_runs_rela
     assert factory_calls == ["http"]
     assert len(transport.calls) == 1
     assert transport.calls[0]["url"].endswith("email_command_publication.claim")  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("broken_symlink", [False, True])
+def test_main_rejects_emergency_latch_before_secret_or_http_factory(
+    tmp_path: Path,
+    broken_symlink: bool,
+) -> None:
+    manifest_path, config_path = _runtime_files(tmp_path)
+    stop_path = tmp_path / "EMERGENCY_STOP"
+    if broken_symlink:
+        stop_path.symlink_to(tmp_path / "missing-latch-target")
+    else:
+        stop_path.write_text("latched")
+    secrets = _valid_secrets()
+    calls: list[str] = []
+
+    result = main(
+        manifest_path=manifest_path,
+        config_path=config_path,
+        emergency_stop_path=stop_path,
+        environ=_enabled_environment(),
+        transport_factory=lambda: calls.append("http"),  # type: ignore[arg-type,return-value]
+        secret_provider=secrets,
+    )
+
+    assert result == 78
+    assert secrets.calls == []
+    assert calls == []
 
 
 def test_disabled_config_returns_78_before_any_secret_or_http_factory(tmp_path: Path) -> None:

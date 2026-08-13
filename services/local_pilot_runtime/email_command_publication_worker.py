@@ -32,6 +32,7 @@ FRAPPE_METHOD = FRAPPE_BASE_URL + "/api/method/esan_gbos.api.internal.email_comm
 GATEWAY_ACCEPT = GATEWAY_BASE_URL + "/internal/v1/email-commands/accept"
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
 DEFAULT_CONFIG = Path("/config/runtime-email-command-publication-worker.json")
+DEFAULT_EMERGENCY_STOP = Path("/run/gbos/EMERGENCY_STOP")
 _MAX_CONFIG_BYTES = 65_536
 _SECRET_ROOT = Path("/run/secrets")
 _FRAPPE_KEY = "frappe_email_command_publication_api_key"
@@ -207,6 +208,7 @@ class CommandPublicationRelayWorker:
         worker_id: str,
         clock: Callable[[], datetime],
         lease_seconds: int,
+        runtime_stop_reader: Callable[[], str | None] | None = None,
     ) -> None:
         if not site_id or not worker_id or "@" in worker_id or not 10 <= lease_seconds <= 300:
             raise ValueError("invalid command publication worker")
@@ -216,8 +218,11 @@ class CommandPublicationRelayWorker:
         self._worker_id = worker_id
         self._clock = clock
         self._lease_seconds = lease_seconds
+        self._runtime_stop_reader = runtime_stop_reader or (lambda: None)
 
     def run_once(self) -> PublicationRelayResult:
+        if self._runtime_stop_reader() is not None:
+            return PublicationRelayResult(PublicationRelayStatus.IDLE)
         claim_request = self._request_id("claim")
         try:
             status, body = self._frappe.post(
@@ -258,6 +263,8 @@ class CommandPublicationRelayWorker:
             return PublicationRelayResult(
                 PublicationRelayStatus.RETRY, str(claim["publication_ref"])
             )
+        if self._runtime_stop_reader() is not None:
+            return self._release_claim(claim, safe_code="worker_shutdown")
         gateway_request = self._request_id("gateway", claim)
         try:
             gateway_status, gateway_body = self._gateway.accept(
@@ -274,25 +281,7 @@ class CommandPublicationRelayWorker:
                 if gateway_status == 429 or gateway_status >= 500
                 else "gateway_rejected_command"
             )
-            try:
-                release_status, release_body = self._frappe.post(
-                    "release",
-                    {
-                        **identity,
-                        "safe_code": safe_code,
-                        "request_id": self._request_id("release", claim),
-                    },
-                )
-            except Exception:
-                release_status, release_body = 503, {}
-            released = release_body.get("release") if release_status == 200 else None
-            state = released.get("status") if isinstance(released, Mapping) else None
-            return PublicationRelayResult(
-                PublicationRelayStatus.DEAD_LETTER
-                if state == "dead_letter"
-                else PublicationRelayStatus.RETRY,
-                str(claim["publication_ref"]),
-            )
+            return self._release_claim(claim, safe_code=safe_code)
         try:
             acknowledge_status, _ack = self._frappe.post(
                 "acknowledge",
@@ -309,6 +298,32 @@ class CommandPublicationRelayWorker:
         return PublicationRelayResult(
             PublicationRelayStatus.DELIVERED
             if acknowledge_status == 200
+            else PublicationRelayStatus.RETRY,
+            str(claim["publication_ref"]),
+        )
+
+    def _release_claim(
+        self,
+        claim: Mapping[str, Any],
+        *,
+        safe_code: str,
+    ) -> PublicationRelayResult:
+        try:
+            release_status, release_body = self._frappe.post(
+                "release",
+                {
+                    **self._identity(claim),
+                    "safe_code": safe_code,
+                    "request_id": self._request_id("release", claim),
+                },
+            )
+        except Exception:
+            release_status, release_body = 503, {}
+        released = release_body.get("release") if release_status == 200 else None
+        state = released.get("status") if isinstance(released, Mapping) else None
+        return PublicationRelayResult(
+            PublicationRelayStatus.DEAD_LETTER
+            if state == "dead_letter"
             else PublicationRelayStatus.RETRY,
             str(claim["publication_ref"]),
         )
@@ -425,6 +440,7 @@ def main(
     *,
     manifest_path: Path = DEFAULT_MANIFEST,
     config_path: Path = DEFAULT_CONFIG,
+    emergency_stop_path: Path = DEFAULT_EMERGENCY_STOP,
     environ: Mapping[str, str] | None = None,
     transport_factory: Callable[[], JsonTransport] | None = None,
     worker_runner: Callable[[CommandPublicationRelayWorker], None] | None = None,
@@ -435,6 +451,8 @@ def main(
 
     environment = os.environ if environ is None else environ
     try:
+        if _emergency_stop_active(emergency_stop_path):
+            raise LocalEntrypointDisabled("email command publication emergency stop is active")
         reject_plaintext_secret_environment(environment)
         manifest = load_local_manifest(manifest_path)
         require_component_enabled(
@@ -481,11 +499,24 @@ def main(
             worker_id=str(worker_config["worker_id"]),
             clock=clock or (lambda: datetime.now(UTC)),
             lease_seconds=int(worker_config["lease_seconds"]),
+            runtime_stop_reader=lambda: (
+                "worker_shutdown" if _emergency_stop_active(emergency_stop_path) else None
+            ),
         )
         (worker_runner or _run_once)(worker)
         return 0
     except LocalEntrypointDisabled, RuntimeSupportError, ValueError, OSError:
         return 78
+
+
+def _emergency_stop_active(path: Path) -> bool:
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def _load_config(path: Path) -> dict[str, Any]:

@@ -771,6 +771,13 @@ def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() ->
         "identity-resolution-worker",
         "model-projection-worker",
         "communication-draft-worker",
+        "email-command-publication-worker",
+        "email-send-worker",
+        "mailbox-config-projection-worker",
+        "observer-email-publication-worker",
+        "email-initial-route-worker",
+        "email-gateway-retention-worker",
+        "observer-email-material-retention-worker",
         "media-worker",
         "agent-worker",
         "materialization-worker",
@@ -782,7 +789,39 @@ def test_stop_preserves_volumes_and_emergency_stop_preserves_state_services() ->
     assert " mariadb" not in stop_command
     assert " local-pilot-evidence-cas" not in stop_command
     assert 'containment.py" activate' in emergency
-    assert "whatsapp-poller" not in emergency
+    for forensic_service in ("email-gateway-api", "whatsapp-poller"):
+        assert forensic_service not in emergency
+
+
+def test_emergency_stop_contains_and_verifies_outbound_worker_targets(
+    tmp_path: Path,
+) -> None:
+    repo, docker_log = _prepare_emergency_repo(tmp_path)
+
+    result = _run_emergency(repo, docker_log, running_service="email-initial-route-worker")
+
+    assert result.returncode != 0
+    commands = [json.loads(line) for line in docker_log.read_text(encoding="utf-8").splitlines()]
+    stop_command, inspection_command = commands
+    effect_producing_workers = (
+        "email-command-publication-worker",
+        "email-send-worker",
+        "mailbox-config-projection-worker",
+        "observer-email-publication-worker",
+        "email-initial-route-worker",
+        "email-gateway-retention-worker",
+        "observer-email-material-retention-worker",
+    )
+    for service in effect_producing_workers:
+        assert service in stop_command
+        assert service in inspection_command
+    assert "email-gateway-api" not in stop_command
+    assert "email-gateway-api" not in inspection_command
+    receipt = json.loads(
+        (repo / ".runtime" / "local-pilot" / "containment-receipt.json").read_text(encoding="utf-8")
+    )
+    assert receipt["verified"] is False
+    assert receipt["running_services"] == ["email-initial-route-worker"]
 
 
 def test_emergency_stop_verifies_containment_and_binds_a_private_receipt(

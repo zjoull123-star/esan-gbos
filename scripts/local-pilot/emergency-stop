@@ -19,6 +19,13 @@ targets=(
   identity-resolution-worker
   model-projection-worker
   communication-draft-worker
+  email-command-publication-worker
+  email-send-worker
+  mailbox-config-projection-worker
+  observer-email-publication-worker
+  email-initial-route-worker
+  email-gateway-retention-worker
+  observer-email-material-retention-worker
   media-worker
   agent-worker
   materialization-worker

@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+from inspect import signature
 from pathlib import Path
+
+from pytest import MonkeyPatch
 
 from services.email_gateway.provider import ProviderOutcome, ProviderSubmissionResult
 from services.email_gateway.send_outbox import PostgresEmailSendRepository
 from services.email_gateway.worker import WorkerAuthorityState
+from services.local_pilot_runtime import email_send_worker
 from services.local_pilot_runtime.email_send_worker import main
 from services.local_pilot_runtime.secret_provider import MountedFileSecretProvider, SecretSpec
 from tests.email_gateway.fakes.provider import FakeEmailProvider
@@ -24,6 +28,79 @@ def test_runtime_send_worker_is_default_off_before_database_or_provider_factory(
         connector=lambda **_kwargs: calls.append("database"),
         provider_factory=lambda: calls.append("provider"),  # type: ignore[arg-type,return-value]
     )
+
+    assert result == 78
+    assert calls == []
+
+
+def test_startup_emergency_latch_fails_closed_before_secret_database_or_factories(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    emergency_stop = tmp_path / "EMERGENCY_STOP"
+    emergency_stop.write_text("latched")
+
+    class RecordingSecretProvider:
+        def read_text(self, _name: str) -> None:
+            calls.append("secret")
+
+    result = main(
+        manifest_path=tmp_path / "missing.json",
+        config_path=tmp_path / "missing-runtime.json",
+        emergency_stop_path=emergency_stop,
+        environ={},
+        connector=lambda **_kwargs: calls.append("database"),
+        provider_factory=lambda: calls.append("provider"),  # type: ignore[arg-type,return-value]
+        authority_check=lambda _envelope: calls.append("authority"),  # type: ignore[arg-type,return-value]
+        worker_runner=lambda *_args: calls.append("runner"),
+        secret_provider=RecordingSecretProvider(),
+    )
+
+    assert result == 78
+    assert calls == []
+
+
+def test_emergency_stop_path_is_injectable_with_fail_closed_production_default() -> None:
+    parameter = signature(main).parameters["emergency_stop_path"]
+
+    assert parameter.default == Path("/run/gbos/EMERGENCY_STOP")
+
+
+def test_startup_broken_emergency_latch_symlink_fails_closed_before_manifest(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    emergency_stop = tmp_path / "EMERGENCY_STOP"
+    emergency_stop.symlink_to(tmp_path / "missing-latch-target")
+
+    def record_manifest(_path: Path) -> dict[str, object]:
+        calls.append("manifest")
+        return {}
+
+    monkeypatch.setattr(email_send_worker, "load_local_manifest", record_manifest)
+
+    result = main(emergency_stop_path=emergency_stop, environ={})
+
+    assert result == 78
+    assert calls == []
+
+
+def test_startup_uninspectable_emergency_latch_fails_closed_before_manifest(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    def deny_lstat(_path: object) -> os.stat_result:
+        raise PermissionError("denied")
+
+    def record_manifest(_path: Path) -> dict[str, object]:
+        calls.append("manifest")
+        return {}
+
+    monkeypatch.setattr(os, "lstat", deny_lstat)
+    monkeypatch.setattr(email_send_worker, "load_local_manifest", record_manifest)
+
+    result = main(emergency_stop_path=tmp_path / "EMERGENCY_STOP", environ={})
 
     assert result == 78
     assert calls == []
@@ -137,7 +214,7 @@ def test_explicit_fake_runtime_composes_durable_worker_role_and_runs_consumer(
     assert runner_calls[0][1].site_id == "gbos.localhost"
 
 
-def test_explicit_fake_runtime_injects_dynamic_stop_reader_into_constructed_worker(
+def test_explicit_fake_runtime_reads_emergency_latch_dynamically(
     tmp_path: Path,
 ) -> None:
     manifest = {
@@ -190,7 +267,8 @@ def test_explicit_fake_runtime_injects_dynamic_stop_reader_into_constructed_work
             ),
         ),
     )
-    stop_reads: list[str] = []
+    emergency_stop = tmp_path / "EMERGENCY_STOP"
+    stop_reads: list[str | None] = []
 
     class Connection:
         def close(self) -> None:
@@ -198,11 +276,14 @@ def test_explicit_fake_runtime_injects_dynamic_stop_reader_into_constructed_work
 
     def inspect(worker: object, _scope: object, _delay: float) -> None:
         stop_reads.append(worker._runtime_stop_reader())  # type: ignore[attr-defined]
+        emergency_stop.write_text("latched")
+        stop_reads.append(worker._runtime_stop_reader())  # type: ignore[attr-defined]
 
     assert (
         main(
             manifest_path=manifest_path,
             config_path=config_path,
+            emergency_stop_path=emergency_stop,
             environ={
                 "GBOS_LOCAL_RUNTIME_ENABLED": "true",
                 "GBOS_EMAIL_SEND_KILL_SWITCH": "false",
@@ -219,13 +300,12 @@ def test_explicit_fake_runtime_injects_dynamic_stop_reader_into_constructed_work
                 mailbox_revision_current=True,
                 route_authority_current=True,
             ),
-            runtime_stop_reader=lambda: "emergency_stop_active",
-            worker_runner=inspect,  # type: ignore[arg-type]
+            worker_runner=inspect,
             secret_provider=secret_provider,
         )
         == 0
     )
-    assert stop_reads == ["emergency_stop_active"]
+    assert stop_reads == [None, "emergency_stop_active"]
 
 
 def test_module_entrypoint_invokes_fail_closed_main() -> None:
