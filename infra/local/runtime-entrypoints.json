@@ -100,6 +100,14 @@
       "network": "local-internal-only",
       "database_role": "gbos_email_gateway_worker"
     },
+    "email-gateway-retention-worker": {
+      "path": "services/local_pilot_runtime/email_gateway_retention_worker.py",
+      "status": "default_off_fail_closed_verifier",
+      "network": "local-internal-only",
+      "database_role": "gbos_email_gateway_retention_worker",
+      "external_send": false,
+      "host_ports": false
+    },
     "observer-email-publication-worker": {
       "path": "services/local_pilot_runtime/email_publication_worker.py",
       "status": "blocked_role_grant",

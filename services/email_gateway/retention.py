@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from threading import RLock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from .models import (
     ContentProjection,
@@ -58,6 +58,18 @@ class RetentionPlanner:
             ):
                 eligible.append(item.projection_ref)
         return tuple(sorted(eligible))
+
+
+class ObserverTombstoneVerifier(Protocol):
+    """Read-only authority boundary for an Observer-owned deletion receipt."""
+
+    def verify_tombstone(
+        self,
+        scope: TenantScope,
+        projection: ContentProjection,
+        *,
+        now: datetime,
+    ) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +125,46 @@ class ContentExpirationReceipt:
     evidence_ref: str
     payload_digest: str
     expired_at: datetime
+
+
+class RetentionRunRepository(Protocol):
+    def enqueue(self, scope: TenantScope, run: RetentionRun) -> RetentionRun: ...
+
+    def claim(
+        self,
+        scope: TenantScope,
+        *,
+        worker_id: str,
+        now: datetime,
+        limit: int,
+    ) -> RetentionClaim | None: ...
+
+    def record_expiration(
+        self,
+        scope: TenantScope,
+        *,
+        claim: RetentionClaim,
+        projection: ContentProjection,
+        now: datetime,
+    ) -> ContentExpirationReceipt: ...
+
+    def complete(
+        self,
+        scope: TenantScope,
+        *,
+        claim: RetentionClaim,
+        expired_count: int,
+        now: datetime,
+    ) -> RetentionRun: ...
+
+    def fail(
+        self,
+        scope: TenantScope,
+        *,
+        claim: RetentionClaim,
+        safe_error_code: str,
+        now: datetime,
+    ) -> RetentionRun: ...
 
 
 class InMemoryRetentionRunRepository:
@@ -318,14 +370,16 @@ class RetentionScheduler:
 
     def __init__(
         self,
-        repository: InMemoryRetentionRunRepository,
+        repository: RetentionRunRepository,
         *,
         emergency_stop: Callable[[], bool],
+        observer_tombstone_verifier: ObserverTombstoneVerifier,
         metrics: GatewayMetrics | None = None,
         planner: RetentionPlanner | None = None,
     ) -> None:
         self.repository = repository
         self.emergency_stop = emergency_stop
+        self.observer_tombstone_verifier = observer_tombstone_verifier
         self.metrics = metrics
         self.planner = planner or RetentionPlanner()
 
@@ -403,6 +457,12 @@ class RetentionScheduler:
             expired_count = 0
             if not claim.dry_run:
                 for projection in claim.projections:
+                    if not self.observer_tombstone_verifier.verify_tombstone(
+                        scope,
+                        projection,
+                        now=now,
+                    ):
+                        raise ValidationError("Observer tombstone verification required")
                     self.repository.record_expiration(
                         scope,
                         claim=claim,

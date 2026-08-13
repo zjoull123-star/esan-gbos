@@ -457,3 +457,144 @@ def test_email_gateway_retention_and_alert_contract_is_closed() -> None:
     assert "GRANT DELETE" not in migration
     assert "DELETE FROM observer." not in migration
     assert "UPDATE observer." not in migration
+
+
+def test_email_gateway_retention_runtime_is_separate_default_off_and_provider_free(
+    tmp_path: Path,
+) -> None:
+    result = subprocess.run(
+        [
+            str(ROOT / "scripts/local-pilot/render-config"),
+            "--manifest",
+            str(ROOT / "infra/local/local-pilot-manifest.json"),
+            "--output-dir",
+            str(tmp_path),
+            "--synthetic",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    config = json.loads((tmp_path / "runtime-email-gateway-retention-worker.json").read_text())
+    assert config["external_send"] is False
+    assert config["postgres"] == {
+        "host": "postgres",
+        "port": 5432,
+        "database": "gbos_local_pilot",
+        "user": "gbos_email_gateway_retention_worker",
+        "password_file": "/run/secrets/postgres_email_gateway_retention_worker_password",
+        "connect_timeout_seconds": 5,
+    }
+    assert config["observer_verifier"] == {
+        "endpoint": "http://observer-api:8003/internal/v1/retention/tombstones/verify",
+        "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
+        "auth_ref": "observer-retention-verifier-v1",
+    }
+
+    compose = (ROOT / "infra/local/compose.yml").read_text()
+    service = _block(compose, "email-gateway-retention-worker")
+    assert 'profiles: ["email-gateway-retention"]' in service
+    assert "GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED: " in service
+    assert "${GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED:-false}" in service
+    assert "${GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH:-true}" in service
+    assert "postgres_email_gateway_retention_worker_password" in service
+    assert "observer_email_draft_material_bearer" in service
+    assert "email_credential" not in service
+    assert "wecom_credential" not in service
+    assert "controlled-egress" not in service
+    assert "ports:" not in service
+    assert "networks: [local-internal]" in service
+    assert "read_only: true" in service
+    assert 'cap_drop: ["ALL"]' in service
+
+    runtime = json.loads((ROOT / "infra/local/runtime-entrypoints.json").read_text())
+    assert runtime["services"]["email-gateway-retention-worker"] == {
+        "path": "services/local_pilot_runtime/email_gateway_retention_worker.py",
+        "status": "default_off_fail_closed_verifier",
+        "network": "local-internal-only",
+        "database_role": "gbos_email_gateway_retention_worker",
+        "external_send": False,
+        "host_ports": False,
+    }
+
+
+def test_start_requires_two_exact_email_gateway_retention_opt_ins() -> None:
+    start = (ROOT / "scripts/local-pilot/start").read_text()
+    assert "--enable-email-gateway-retention-scheduler" in start
+    assert "--acknowledge-email-gateway-draft-reference-expiry" in start
+    assert 'GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED="false"' in start
+    assert 'GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH="true"' in start
+    assert 'GBOS_EMAIL_GATEWAY_RETENTION_ENABLED="false"' in start
+    assert 'GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED="false"' in start
+    assert 'GBOS_GLOBAL_KILL_SWITCH="true"' in start
+    assert 'GBOS_EMAIL_GATEWAY_KILL_SWITCH="true"' in start
+    enabled = start.split('if [[ "${ENABLE_EMAIL_GATEWAY_RETENTION}" == "true" ]]', maxsplit=1)[1]
+    assert 'GBOS_GLOBAL_KILL_SWITCH="false"' in enabled
+    assert 'GBOS_EMAIL_GATEWAY_KILL_SWITCH="false"' in enabled
+    assert 'profile_args+=(--profile email-gateway-retention)' in start
+
+
+def test_retention_worker_secret_is_required_private_and_materialized_before_migrate() -> None:
+    prepare = (ROOT / "scripts/local-pilot/prepare-secrets").read_text()
+    invocation = (
+        "write_keychain_secret \\\n"
+        "  postgres_email_gateway_retention_worker_password \\\n"
+        '  "keychain://com.esan.gbos.local-pilot/'
+        'postgres-email-gateway-retention-worker-password"'
+    )
+    assert invocation in prepare
+    assert (
+        "write_optional_keychain_secret \\\n"
+        "  postgres_email_gateway_retention_worker_password"
+    ) not in prepare
+    assert "Required Keychain item is unavailable" in prepare
+    assert "Required Keychain item is empty" in prepare
+    assert 'chmod 600 "${secret_dir}/${output_name}"' in prepare
+
+    compose = (ROOT / "infra/local/compose.yml").read_text()
+    migrations = _block(compose, "migrations")
+    assert "postgres_email_gateway_retention_worker_password" in migrations
+    migrate = (ROOT / "scripts/local-pilot/migrate").read_text()
+    required_loop = migrate.split("for secret_file in", maxsplit=1)[1].split("done", maxsplit=1)[0]
+    assert "/run/secrets/postgres_email_gateway_retention_worker_password" in required_loop
+
+
+def test_migrate_materializes_dedicated_retention_login_idempotently_and_redacted() -> None:
+    migrate = (ROOT / "scripts/local-pilot/migrate").read_text()
+    copy = migrate.index(
+        "\\copy local_secret_input(password) FROM "
+        "'/run/secrets/postgres_email_gateway_retention_worker_password'"
+    )
+    insert = migrate.index(
+        "SELECT 'gbos_email_gateway_retention_worker', password", copy
+    )
+    truncate = migrate.index("TRUNCATE local_secret_input;", insert)
+    role_create = migrate.index("WHERE NOT EXISTS (SELECT 1 FROM pg_roles", truncate)
+    alter = migrate.index("ALTER ROLE gbos_email_gateway_retention_worker", role_create)
+    rotate = migrate.index("ALTER ROLE %I PASSWORD %L", alter)
+    assert copy < insert < truncate < role_create < alter < rotate
+    assert "password !~ '^[A-Za-z0-9_-]{16,128}$'" in migrate
+    assert "local role secret import failed closed" in migrate
+    assert "RAISE EXCEPTION 'local role secret import failed closed'" in migrate
+    assert "password=%" not in migrate.lower()
+    assert "echo \"${password}" not in migrate
+
+    migration = (
+        ROOT / "services/email_gateway/migrations/011_email_gateway_retention_runtime.sql"
+    ).read_text()
+    assert "CREATE ROLE gbos_email_gateway_retention_worker NOLOGIN" in migration
+    assert "GRANT DELETE" not in migration
+    for table, privilege in (
+        ("reply_drafts", "SELECT"),
+        ("retention_runs", "SELECT, INSERT, UPDATE"),
+        ("retention_run_items", "SELECT, INSERT"),
+        ("content_expiration_receipts", "SELECT, INSERT"),
+        ("retention_audit_events", "SELECT, INSERT"),
+        ("worker_heartbeats", "SELECT, INSERT, UPDATE"),
+    ):
+        assert (
+            f"GRANT {privilege} ON email_gateway.{table}\n"
+            "    TO gbos_email_gateway_retention_worker;"
+        ) in migration

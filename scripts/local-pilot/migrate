@@ -18,6 +18,7 @@ for secret_file in \
   /run/secrets/postgres_agent_password \
   /run/secrets/postgres_media_password \
   /run/secrets/postgres_email_gateway_password \
+  /run/secrets/postgres_email_gateway_retention_worker_password \
   /run/secrets/postgres_observer_publisher_password; do
   [[ -f "${secret_file}" && ! -L "${secret_file}" && -s "${secret_file}" ]] || {
     echo "Required migration secret is unavailable: ${secret_file}" >&2
@@ -155,7 +156,7 @@ for migration_group in observer context agent media email_gateway; do
 done
 
 # Migrations intentionally define NOLOGIN roles. Local composition enables
-# exactly seven application identities only after the full chain succeeds.
+# exactly eight required application identities only after the full chain succeeds.
 "${PSQL[@]}" <<'SQL'
 CREATE TEMP TABLE local_role_secrets (
   role_name text PRIMARY KEY,
@@ -184,6 +185,10 @@ SELECT 'gbos_email_gateway_app', password FROM local_secret_input;
 INSERT INTO local_role_secrets
 SELECT 'gbos_email_gateway_worker', password FROM local_secret_input;
 TRUNCATE local_secret_input;
+\copy local_secret_input(password) FROM '/run/secrets/postgres_email_gateway_retention_worker_password' WITH (FORMAT text)
+INSERT INTO local_role_secrets
+SELECT 'gbos_email_gateway_retention_worker', password FROM local_secret_input;
+TRUNCATE local_secret_input;
 \copy local_secret_input(password) FROM '/run/secrets/postgres_observer_publisher_password' WITH (FORMAT text)
 INSERT INTO local_role_secrets
 SELECT 'gbos_observer_publisher', password FROM local_secret_input;
@@ -199,7 +204,7 @@ TRUNCATE local_secret_input;
 
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM local_role_secrets) NOT BETWEEN 7 AND 9
+  IF (SELECT count(*) FROM local_role_secrets) NOT BETWEEN 8 AND 10
     OR EXISTS (
       SELECT 1
       FROM local_role_secrets
@@ -231,6 +236,8 @@ ALTER ROLE gbos_media_app
 ALTER ROLE gbos_email_gateway_app
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE gbos_email_gateway_worker
+  LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+ALTER ROLE gbos_email_gateway_retention_worker
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE gbos_observer_publisher
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;

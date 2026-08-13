@@ -115,3 +115,46 @@ def test_alert_file_contains_exactly_the_four_frozen_email_gateway_rules() -> No
         "        for: 15m\n",
     ):
         assert expected in group
+
+
+def test_readiness_rejects_missing_worker_backlog_or_retention_failure() -> None:
+    from services.email_gateway.metrics import GatewayMetrics
+
+    metrics = GatewayMetrics(required_workers=frozenset({"publication", "retention"}))
+    metrics.record_persisted_heartbeat("retention", at=NOW)
+    assert metrics.readiness(now=NOW).ready is False
+
+    metrics.record_persisted_heartbeat("publication", at=NOW)
+    metrics.set_gauge(
+        "gbos_email_gateway_publication_oldest_age_seconds",
+        301,
+        labels={"state": "queued"},
+    )
+    assert metrics.readiness(now=NOW).ready is False
+
+    metrics.set_gauge(
+        "gbos_email_gateway_publication_oldest_age_seconds",
+        300,
+        labels={"state": "queued"},
+    )
+    metrics.set_gauge("gbos_email_gateway_retention_failures", 1, labels={})
+    assert metrics.readiness(now=NOW).ready is False
+
+    metrics.set_gauge("gbos_email_gateway_retention_failures", 0, labels={})
+    assert metrics.readiness(now=NOW).ready is True
+
+
+def test_prometheus_render_has_frozen_names_and_never_renders_dynamic_content() -> None:
+    from services.email_gateway.metrics import GatewayMetrics
+
+    metrics = GatewayMetrics(required_workers=frozenset({"retention"}))
+    metrics.record_persisted_heartbeat("retention", at=NOW)
+    metrics.set_gauge("gbos_email_gateway_retention_backlog", 2, labels={})
+    metrics.set_gauge("gbos_email_gateway_retention_failures", 0, labels={})
+
+    rendered = metrics.render_prometheus(now=NOW)
+
+    assert "gbos_email_gateway_retention_backlog 2" in rendered
+    assert "gbos_email_gateway_retention_failures 0" in rendered
+    assert "site.local" not in rendered
+    assert "EVD-" not in rendered

@@ -54,6 +54,7 @@ services:
       - postgres_agent_password
       - postgres_media_password
       - postgres_email_gateway_password
+      - postgres_email_gateway_retention_worker_password
       - postgres_observer_publisher_password
       - postgres_email_command_executor_password
       - postgres_email_send_worker_password
@@ -362,6 +363,55 @@ services:
     depends_on:
       migrations:
         condition: service_completed_successfully
+    restart: unless-stopped
+
+  email-gateway-retention-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["email-gateway-retention"]
+    command: ["python", "-m", "services.local_pilot_runtime.email_gateway_retention_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_GLOBAL_KILL_SWITCH: ${GBOS_GLOBAL_KILL_SWITCH:-true}
+      GBOS_EMAIL_GATEWAY_KILL_SWITCH: ${GBOS_EMAIL_GATEWAY_KILL_SWITCH:-true}
+      GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED: ${GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED:-false}
+      GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH: ${GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH:-true}
+      GBOS_EMAIL_GATEWAY_RETENTION_ENABLED: ${GBOS_EMAIL_GATEWAY_RETENTION_ENABLED:-false}
+      GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED: ${GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED:-false}
+      GBOS_EMAIL_GATEWAY_RETENTION_CONFIG: /config/email-gateway-retention-runtime.json
+      GBOS_LOCAL_PILOT_MANIFEST: /config/local-pilot-manifest.json
+      GBOS_EXTERNAL_SEND_ENABLED: "false"
+    secrets:
+      - postgres_email_gateway_retention_worker_password
+      - source: observer_email_draft_material_bearer
+        target: observer_email_draft_material_bearer
+        mode: 0400
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-email-gateway-retention-worker.json:/config/email-gateway-retention-runtime.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      observer-api:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9102/healthz', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
   observer-email-publication-worker:
@@ -1363,6 +1413,8 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_media_password
   postgres_email_gateway_password:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_email_gateway_password
+  postgres_email_gateway_retention_worker_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_email_gateway_retention_worker_password
   postgres_observer_publisher_password:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_observer_publisher_password
   postgres_email_command_executor_password:

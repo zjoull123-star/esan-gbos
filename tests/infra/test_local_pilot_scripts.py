@@ -33,6 +33,7 @@ def _run_prepare_secrets_fixture(
     deepseek_value: str | None = None,
     email_channel_enabled: bool = True,
     email_gateway_enabled: bool = False,
+    retention_worker_password: str | None = "retention_worker_1234",
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     fixture_root = tmp_path / "prepare-secrets-fixture"
     scripts = fixture_root / "scripts" / "local-pilot"
@@ -51,6 +52,9 @@ def _run_prepare_secrets_fixture(
                 "email-credential": email_value,
                 "deepseek-api-key": deepseek_value,
                 "trusted-phrase-lexicon": '{"phrases":[]}',
+                "postgres-email-gateway-retention-worker-password": (
+                    retention_worker_password
+                ),
             }
         ),
         encoding="utf-8",
@@ -74,7 +78,10 @@ def _run_prepare_secrets_fixture(
         "responses = json.loads(\n"
         "    pathlib.Path(os.environ['KEYCHAIN_RESPONSES']).read_text(encoding='utf-8')\n"
         ")\n"
-        "print(responses.get(account, f'text-secret::{account}'))\n",
+        "value = responses.get(account, f'text-secret::{account}')\n"
+        "if value is None:\n"
+        "    raise SystemExit(44)\n"
+        "print(value)\n",
     )
 
     prepare = _read(SCRIPTS / "prepare-secrets").replace(
@@ -892,6 +899,25 @@ def test_keychain_secret_materialization_is_non_logging_and_mode_0600() -> None:
         'email_gateway_bff_bearer \\\n  "keychain://com.esan.gbos.local-pilot/email-gateway-bff-bearer"'
         in script
     )
+
+
+def test_retention_worker_password_missing_empty_or_malformed_fails_closed_without_leak(
+    tmp_path: Path,
+) -> None:
+    for index, value in enumerate((None, "", "short!")):
+        case = tmp_path / str(index)
+        case.mkdir()
+        result, security_log = _run_prepare_secrets_fixture(
+            case,
+            identity_value=bytes(range(32)).hex(),
+            retention_worker_password=value,
+        )
+        assert result.returncode == 78
+        assert "postgres_email_gateway_retention_worker_password" in result.stderr
+        if value:
+            assert value not in result.stdout
+            assert value not in result.stderr
+            assert value not in security_log.read_text(encoding="utf-8")
 
 
 def test_identity_hmac_key_materializes_hex_keychain_output_as_exact_raw_bytes(

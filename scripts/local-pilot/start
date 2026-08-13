@@ -10,6 +10,8 @@ MANIFEST="${DEFAULT_MANIFEST}"
 CANARY_CONTROL=""
 ENABLE_RETENTION_SCHEDULER="false"
 ACKNOWLEDGE_PERIODIC_RETENTION="false"
+ENABLE_EMAIL_GATEWAY_RETENTION="false"
+ACKNOWLEDGE_EMAIL_GATEWAY_RETENTION="false"
 while (( $# > 0 )); do
   case "$1" in
     --manifest)
@@ -28,8 +30,14 @@ while (( $# > 0 )); do
     --acknowledge-periodic-expired-local-data-deletion)
       ACKNOWLEDGE_PERIODIC_RETENTION="true"
       ;;
+    --enable-email-gateway-retention-scheduler)
+      ENABLE_EMAIL_GATEWAY_RETENTION="true"
+      ;;
+    --acknowledge-email-gateway-draft-reference-expiry)
+      ACKNOWLEDGE_EMAIL_GATEWAY_RETENTION="true"
+      ;;
     *)
-      echo "Usage: scripts/local-pilot/start [--manifest PATH] [--canary-control PATH] [--enable-retention-scheduler --acknowledge-periodic-expired-local-data-deletion]" >&2
+      echo "Usage: scripts/local-pilot/start [--manifest PATH] [--canary-control PATH] [--enable-retention-scheduler --acknowledge-periodic-expired-local-data-deletion] [--enable-email-gateway-retention-scheduler --acknowledge-email-gateway-draft-reference-expiry]" >&2
       exit 64
       ;;
   esac
@@ -40,8 +48,16 @@ if [[ "${ENABLE_RETENTION_SCHEDULER}" != "${ACKNOWLEDGE_PERIODIC_RETENTION}" ]];
   echo "Periodic retention requires both the enable flag and deletion acknowledgement." >&2
   exit 64
 fi
-if [[ "${ENABLE_RETENTION_SCHEDULER}" == "true" ]]; then
-  if ! python3 - "${MANIFEST}" <<'PY'
+if [[ "${ENABLE_EMAIL_GATEWAY_RETENTION}" != "${ACKNOWLEDGE_EMAIL_GATEWAY_RETENTION}" ]]; then
+  echo "Email Gateway retention requires both exact opt-ins." >&2
+  exit 64
+fi
+if [[ "${ENABLE_RETENTION_SCHEDULER}" == "true" || "${ENABLE_EMAIL_GATEWAY_RETENTION}" == "true" ]]; then
+  RETENTION_SCOPE="observer"
+  if [[ "${ENABLE_EMAIL_GATEWAY_RETENTION}" == "true" ]]; then
+    RETENTION_SCOPE="email-gateway"
+  fi
+  if ! python3 - "${MANIFEST}" "${RETENTION_SCOPE}" <<'PY'
 import json
 import sys
 
@@ -50,11 +66,16 @@ try:
         manifest = json.load(handle)
     if manifest.get("retention_days") != 30:
         raise ValueError
+    if sys.argv[2] == "email-gateway" and (
+        not isinstance(manifest.get("email_gateway"), dict)
+        or manifest["email_gateway"].get("kill_switch") is not False
+    ):
+        raise ValueError
 except (OSError, TypeError, ValueError, json.JSONDecodeError):
     raise SystemExit(78)
 PY
   then
-    echo "Periodic retention requires the exact approved 30-day manifest boundary." >&2
+    echo "Retention requires the exact approved 30-day manifest and Gateway boundary." >&2
     exit 78
   fi
 fi
@@ -185,6 +206,12 @@ GBOS_RETENTION_SCHEDULER_ENABLED="false"
 GBOS_RETENTION_SCHEDULER_KILL_SWITCH="true"
 GBOS_RETENTION_ENABLED="false"
 GBOS_RETENTION_DRY_RUN="true"
+GBOS_GLOBAL_KILL_SWITCH="true"
+GBOS_EMAIL_GATEWAY_KILL_SWITCH="true"
+GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED="false"
+GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH="true"
+GBOS_EMAIL_GATEWAY_RETENTION_ENABLED="false"
+GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED="false"
 export \
   GBOS_CONNECTOR_KILL_SWITCH \
   GBOS_IDENTITY_RESOLUTION_KILL_SWITCH \
@@ -200,7 +227,13 @@ export \
   GBOS_RETENTION_SCHEDULER_ENABLED \
   GBOS_RETENTION_SCHEDULER_KILL_SWITCH \
   GBOS_RETENTION_ENABLED \
-  GBOS_RETENTION_DRY_RUN
+  GBOS_RETENTION_DRY_RUN \
+  GBOS_GLOBAL_KILL_SWITCH \
+  GBOS_EMAIL_GATEWAY_KILL_SWITCH \
+  GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED \
+  GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH \
+  GBOS_EMAIL_GATEWAY_RETENTION_ENABLED \
+  GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED
 
 profile_args=(--profile runtime --profile observability)
 if [[ "${ENABLE_RETENTION_SCHEDULER}" == "true" ]]; then
@@ -214,6 +247,22 @@ if [[ "${ENABLE_RETENTION_SCHEDULER}" == "true" ]]; then
     GBOS_RETENTION_SCHEDULER_KILL_SWITCH \
     GBOS_RETENTION_ENABLED \
     GBOS_RETENTION_DRY_RUN
+fi
+if [[ "${ENABLE_EMAIL_GATEWAY_RETENTION}" == "true" ]]; then
+  GBOS_GLOBAL_KILL_SWITCH="false"
+  GBOS_EMAIL_GATEWAY_KILL_SWITCH="false"
+  GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED="true"
+  GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH="false"
+  GBOS_EMAIL_GATEWAY_RETENTION_ENABLED="true"
+  GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED="true"
+  profile_args+=(--profile email-gateway-retention)
+  export \
+    GBOS_GLOBAL_KILL_SWITCH \
+    GBOS_EMAIL_GATEWAY_KILL_SWITCH \
+    GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_ENABLED \
+    GBOS_EMAIL_GATEWAY_RETENTION_SCHEDULER_KILL_SWITCH \
+    GBOS_EMAIL_GATEWAY_RETENTION_ENABLED \
+    GBOS_EMAIL_GATEWAY_RETENTION_EXECUTE_ACKNOWLEDGED
 fi
 connector_profile_enabled=false
 identity_profile_enabled=false

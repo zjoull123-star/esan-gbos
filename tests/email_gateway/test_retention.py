@@ -8,6 +8,22 @@ from .conftest import DIGEST_A, NOW, OPAQUE_FROM, SITE
 ROOT = Path(__file__).resolve().parents[2]
 
 
+class _VerifiedObserverReceipt:
+    def verify_tombstone(self, _scope, _projection, *, now):
+        return now.tzinfo is not None
+
+
+def test_retention_scheduler_requires_an_explicit_observer_verifier() -> None:
+    import inspect
+
+    from services.email_gateway.retention import RetentionScheduler
+
+    parameter = inspect.signature(RetentionScheduler).parameters[
+        "observer_tombstone_verifier"
+    ]
+    assert parameter.default is inspect.Parameter.empty
+
+
 def test_retention_only_expires_unconfirmed_projection_with_observer_receipt(scope) -> None:
     from services.email_gateway.models import ContentProjection
     from services.email_gateway.retention import RetentionPlanner
@@ -175,7 +191,11 @@ def test_retention_run_is_idempotent_fenced_bounded_serial_and_dry_run_is_read_o
         for index in range(3)
     )
     repository = InMemoryRetentionRunRepository()
-    scheduler = RetentionScheduler(repository, emergency_stop=lambda: False)
+    scheduler = RetentionScheduler(
+        repository,
+        emergency_stop=lambda: False,
+        observer_tombstone_verifier=_VerifiedObserverReceipt(),
+    )
 
     dry_run = scheduler.schedule(
         scope,
@@ -249,7 +269,11 @@ def test_retention_emergency_stop_and_safe_failure_leave_work_retryable(scope) -
         active_draft_ref=None,
         confirmed=False,
     )
-    stopped = RetentionScheduler(InMemoryRetentionRunRepository(), emergency_stop=lambda: True)
+    stopped = RetentionScheduler(
+        InMemoryRetentionRunRepository(),
+        emergency_stop=lambda: True,
+        observer_tombstone_verifier=_VerifiedObserverReceipt(),
+    )
     stopped.schedule(
         scope,
         run_ref="RTR-STOP",
@@ -261,7 +285,11 @@ def test_retention_emergency_stop_and_safe_failure_leave_work_retryable(scope) -
     assert stopped.run_once(scope, worker_id="worker", now=NOW, limit=1) is None
 
     repository = InMemoryRetentionRunRepository(fail_projection_ref="PRJ-FAIL")
-    scheduler = RetentionScheduler(repository, emergency_stop=lambda: False)
+    scheduler = RetentionScheduler(
+        repository,
+        emergency_stop=lambda: False,
+        observer_tombstone_verifier=_VerifiedObserverReceipt(),
+    )
     scheduler.schedule(
         scope,
         run_ref="RTR-FAIL",
@@ -294,3 +322,96 @@ def test_human_retention_migration_freezes_draft_window_fencing_and_no_cas_delet
     assert "grant delete" not in sql
     assert "delete from observer." not in sql
     assert "update observer." not in sql
+
+
+def test_execute_requires_positive_observer_tombstone_verification(scope) -> None:
+    from services.email_gateway.models import ContentProjection
+    from services.email_gateway.retention import (
+        InMemoryRetentionRunRepository,
+        RetentionScheduler,
+    )
+
+    projection = ContentProjection(
+        projection_ref="PRJ-VERIFY",
+        site_id=SITE,
+        kind="draft_projection",
+        identity_ref=None,
+        evidence_ref="EVD-VERIFY",
+        expires_at=NOW,
+        observer_expiration_receipt_ref="TMB-VERIFY",
+        payload_digest=DIGEST_A,
+        active_draft_ref=None,
+        confirmed=False,
+    )
+    verified: list[tuple[str, str]] = []
+
+    class Verifier:
+        def verify_tombstone(self, checked_scope, checked_projection, *, now):
+            verified.append((checked_scope.site_id, checked_projection.projection_ref))
+            return False
+
+    repository = InMemoryRetentionRunRepository()
+    scheduler = RetentionScheduler(
+        repository,
+        emergency_stop=lambda: False,
+        observer_tombstone_verifier=Verifier(),
+    )
+    scheduler.schedule(
+        scope,
+        run_ref="RTR-VERIFY",
+        idempotency_key="retention-verify",
+        projections=(projection,),
+        dry_run=False,
+        now=NOW,
+    )
+
+    failed = scheduler.run_once(scope, worker_id="worker", now=NOW, limit=1)
+
+    assert failed is not None and failed.status == "retry"
+    assert verified == [(SITE, "PRJ-VERIFY")]
+    assert repository.expiration_receipts(scope) == ()
+
+
+def test_dry_run_never_calls_observer_tombstone_verifier(scope) -> None:
+    from services.email_gateway.models import ContentProjection
+    from services.email_gateway.retention import (
+        InMemoryRetentionRunRepository,
+        RetentionScheduler,
+    )
+
+    projection = ContentProjection(
+        projection_ref="PRJ-DRY-VERIFY",
+        site_id=SITE,
+        kind="draft_projection",
+        identity_ref=None,
+        evidence_ref="EVD-DRY-VERIFY",
+        expires_at=NOW,
+        observer_expiration_receipt_ref="TMB-DRY-VERIFY",
+        payload_digest=DIGEST_A,
+        active_draft_ref=None,
+        confirmed=False,
+    )
+
+    class Verifier:
+        def verify_tombstone(self, *_args, **_kwargs):
+            raise AssertionError("dry-run must not contact Observer")
+
+    repository = InMemoryRetentionRunRepository()
+    scheduler = RetentionScheduler(
+        repository,
+        emergency_stop=lambda: False,
+        observer_tombstone_verifier=Verifier(),
+    )
+    scheduler.schedule(
+        scope,
+        run_ref="RTR-DRY-VERIFY",
+        idempotency_key="retention-dry-verify",
+        projections=(projection,),
+        dry_run=True,
+        now=NOW,
+    )
+
+    completed = scheduler.run_once(scope, worker_id="worker", now=NOW, limit=1)
+
+    assert completed is not None and completed.status == "completed"
+    assert completed.expired_count == 0

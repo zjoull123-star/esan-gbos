@@ -31,6 +31,8 @@ _GAUGES: dict[str, Mapping[str, frozenset[str]]] = {
     "gbos_email_gateway_identity_pending": {},
     "gbos_email_gateway_unassigned": {},
     "gbos_email_gateway_worker_heartbeat_age_seconds": {"worker_kind": WORKER_KINDS},
+    "gbos_email_gateway_retention_backlog": {},
+    "gbos_email_gateway_retention_failures": {},
 }
 _COUNTERS: dict[str, Mapping[str, frozenset[str]]] = {
     "gbos_email_gateway_authority_failures_total": {"safe_reason_code": AUTHORITY_FAILURE_CODES},
@@ -49,9 +51,12 @@ class GatewayReadiness:
 class GatewayMetrics:
     """Content-free fixed-cardinality Gateway metrics and persisted-heartbeat readiness."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, required_workers: frozenset[str] = frozenset()) -> None:
+        if not required_workers.issubset(WORKER_KINDS):
+            raise ValidationError("metric label value rejected")
         self._values: dict[str, float] = {}
         self._persisted_heartbeats: dict[str, datetime] = {}
+        self._required_workers = required_workers
 
     def increment(self, name: str, *, labels: Mapping[str, str]) -> None:
         if name not in _COUNTERS:
@@ -97,6 +102,8 @@ class GatewayMetrics:
         self._aware(now, "readiness time")
         if not self._persisted_heartbeats:
             return GatewayReadiness(False, None)
+        if not self._required_workers.issubset(self._persisted_heartbeats):
+            return GatewayReadiness(False, None)
         ages = tuple((now - item).total_seconds() for item in self._persisted_heartbeats.values())
         if any(age < 0 for age in ages):
             raise ValidationError("heartbeat clock regression")
@@ -107,10 +114,35 @@ class GatewayMetrics:
                 (now - heartbeat).total_seconds(),
                 labels={"worker_kind": worker_kind},
             )
-        return GatewayReadiness(oldest <= _READINESS_WINDOW_SECONDS, oldest)
+        backlog = self._values.get(
+            "gbos_email_gateway_publication_oldest_age_seconds|state=queued", 0.0
+        )
+        retry_backlog = self._values.get(
+            "gbos_email_gateway_publication_oldest_age_seconds|state=retry", 0.0
+        )
+        failures = self._values.get("gbos_email_gateway_retention_failures", 0.0)
+        ready = (
+            oldest <= _READINESS_WINDOW_SECONDS
+            and max(backlog, retry_backlog) <= 300.0
+            and failures == 0.0
+        )
+        return GatewayReadiness(ready, oldest)
 
     def snapshot(self) -> dict[str, float]:
         return dict(self._values)
+
+    def render_prometheus(self, *, now: datetime) -> str:
+        self.readiness(now=now)
+        lines: list[str] = []
+        for key, value in sorted(self._values.items()):
+            name, separator, suffix = key.partition("|")
+            labels = ""
+            if separator:
+                pairs = [item.split("=", 1) for item in suffix.split(",")]
+                labels = "{" + ",".join(f'{label}="{item}"' for label, item in pairs) + "}"
+            number = str(int(value)) if value.is_integer() else format(value, ".6g")
+            lines.append(f"{name}{labels} {number}")
+        return "\n".join(lines) + "\n"
 
     def __repr__(self) -> str:
         return f"GatewayMetrics(series_count={len(self._values)}, labels=<redacted>)"

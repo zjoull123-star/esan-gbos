@@ -433,6 +433,36 @@ def _email_send_runtime_config(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _email_gateway_retention_runtime_config(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "site_id": manifest["site_id"],
+        "external_send": False,
+        "postgres": {
+            "host": "postgres",
+            "port": 5432,
+            "database": "gbos_local_pilot",
+            "user": "gbos_email_gateway_retention_worker",
+            "password_file": (
+                "/run/secrets/postgres_email_gateway_retention_worker_password"
+            ),
+            "connect_timeout_seconds": 5,
+        },
+        "observer_verifier": {
+            "endpoint": (
+                "http://observer-api:8003/internal/v1/retention/tombstones/verify"
+            ),
+            "bearer_file": "/run/secrets/observer_email_draft_material_bearer",
+            "auth_ref": "observer-retention-verifier-v1",
+        },
+        "worker_id": "local-pilot-email-gateway-retention-worker",
+        "batch_size": 100,
+        "interval_seconds": 3600,
+        "metrics_port": 9102,
+        "required_workers": ["retention"],
+    }
+
+
 def _canary_start_guard_config(manifest: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": "1.1",
@@ -534,6 +564,11 @@ def main() -> int:
             output_dir,
             "runtime-email-send-worker.json",
             _email_send_runtime_config(manifest),
+        )
+        _atomic_private_json(
+            output_dir,
+            "runtime-email-gateway-retention-worker.json",
+            _email_gateway_retention_runtime_config(manifest),
         )
         _atomic_private_json(
             output_dir,
