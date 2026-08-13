@@ -54,7 +54,7 @@ def _gateway_enabled() -> str:
 def _apply_gateway_migrations(connection) -> None:
     root = Path(__file__).resolve().parents[2]
     migrations = sorted((root / "services" / "email_gateway" / "migrations").glob("*.sql"))
-    assert len(migrations) == 7
+    assert len(migrations) == 8
     for path in migrations:
         connection.execute(path.read_text())
 
@@ -66,7 +66,7 @@ def test_email_gateway_migrations_run_twice_with_forced_rls_and_no_forbidden_tab
 
     root = Path(__file__).resolve().parents[2]
     migrations = sorted((root / "services" / "email_gateway" / "migrations").glob("*.sql"))
-    assert len(migrations) == 7
+    assert len(migrations) == 8
     with psycopg.connect(dsn, autocommit=True) as connection:
         for _ in range(2):
             for path in migrations:
@@ -359,6 +359,18 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
         publication = replace(publication, payload_digest=canonical_digest(publication.to_wire()))
         accepted = intake.accept(alpha, publication, mailbox)
         assert intake.accept(alpha, publication, mailbox) == accepted
+        binding = intake.load_participant_authority_binding(
+            alpha,
+            inbox_item_ref=accepted.inbox_item.inbox_item_ref,
+        )
+        assert binding is not None
+        assert binding["mailbox_config_revision"] == mailbox.config_revision
+        assert binding["participant_binding_digest"] == canonical_digest(
+            publication.to_wire()["participants"]
+        )
+        assert binding["evidence_binding_digest"] == canonical_digest(
+            publication.to_wire()["evidence_refs"]
+        )
         with pytest.raises(IdempotencyConflict):
             intake.accept(alpha, replace(publication, payload_digest=digest_b), mailbox)
 
@@ -369,6 +381,7 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
             mailbox_config_revision=second_mailbox.config_revision,
             observer_connector_instance_ref=second_mailbox.observer_connector_instance_ref,
             observer_delivery_ref="repo-delivery-alpha-2",
+            evidence_refs=("evidence-alpha-2",),
             idempotency_key="publication-alpha-2",
         )
         second_publication = replace(
@@ -379,6 +392,12 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
         assert accepted_second.message.message_ref == accepted.message.message_ref
         assert accepted_second.inbox_item.inbox_item_ref != accepted.inbox_item.inbox_item_ref
         assert accepted_second.receipt.inbox_item_ref == accepted_second.inbox_item.inbox_item_ref
+        second_binding = intake.load_participant_authority_binding(
+            alpha,
+            inbox_item_ref=accepted_second.inbox_item.inbox_item_ref,
+        )
+        assert second_binding is not None
+        assert second_binding["evidence_binding_digest"] != binding["evidence_binding_digest"]
 
         third_publication = replace(
             publication,

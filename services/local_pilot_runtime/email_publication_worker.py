@@ -17,6 +17,7 @@ from services.agent_runtime.local_entrypoint import (
     load_local_manifest,
     require_component_enabled,
 )
+from services.email_gateway.security import validate_participant_authority_binding
 from services.observer.observer.email_publication_outbox import (
     EmailPublicationRelayClaim as ObserverClaim,
 )
@@ -63,6 +64,44 @@ class EmailPublicationRelayWorker(FencedHttpRelayWorker):
     @property
     def identity_field(self) -> str:
         return "publication_id"
+
+    def _receipt(
+        self,
+        status: int,
+        response: object,
+        claim: RelayClaim,
+    ) -> str | None:
+        if (
+            status != 200
+            or not isinstance(response, dict)
+            or set(response) != {"schema_version", "binding"}
+            or response.get("schema_version") != "1.0"
+            or not isinstance(response.get("binding"), Mapping)
+        ):
+            return None
+        raw_binding = response["binding"]
+        inbox_item_ref = raw_binding.get("inbox_item_ref")
+        if not isinstance(inbox_item_ref, str):
+            return None
+        try:
+            binding = validate_participant_authority_binding(
+                raw_binding,
+                inbox_item_ref=inbox_item_ref,
+            )
+        except ValueError:
+            return None
+        if (
+            binding["publication_ref"] != claim.item_ref
+            or binding["payload_digest"] != claim.payload_digest
+        ):
+            return None
+        return str(binding["gateway_receipt_ref"])
+
+    def _delivery_receipt(self, response: dict[str, Any]) -> Mapping[str, object]:
+        binding = response.get("binding")
+        if not isinstance(binding, Mapping):  # pragma: no cover - guarded by _receipt
+            raise ValueError("publication authority binding is unavailable")
+        return dict(binding)
 
 
 @dataclass(frozen=True, slots=True)

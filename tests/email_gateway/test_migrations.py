@@ -16,6 +16,7 @@ def _all_sql() -> str:
         "005_email_gateway_human_operations.sql",
         "006_email_gateway_human_retention.sql",
         "007_email_gateway_outbound.sql",
+        "008_email_gateway_participant_authority.sql",
     ]
     return "\n".join(path.read_text() for path in files).lower()
 
@@ -130,3 +131,13 @@ def test_mailbox_config_outbox_persists_server_generated_activation_watermark() 
     assert "activation_not_before timestamptz" in sql
     assert "activation_not_before timestamptz not null" in sql
     assert "clock_timestamp()" in sql
+
+
+def test_participant_authority_binding_columns_are_nullable_for_legacy_and_digest_only() -> None:
+    sql = _all_sql()
+    assert "add column if not exists mailbox_config_revision bigint" in sql
+    assert "add column if not exists participant_binding_digest text" in sql
+    assert "add column if not exists evidence_binding_digest text" in sql
+    assert "update email_gateway.publication_receipts" not in sql
+    for forbidden in ("from_address", "to_address", "cc_address", "bcc_address"):
+        assert forbidden not in sql

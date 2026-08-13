@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from .mailboxes import MailboxRegistry
 from .models import (
     EmailMessagePublication,
@@ -9,11 +11,11 @@ from .models import (
     ValidationError,
     require_scope,
 )
-from .repositories.intake import InMemoryIntakeRepository
+from .repository import IntakeRepository
 
 
 class GatewayIntakeService:
-    def __init__(self, repository: InMemoryIntakeRepository, mailboxes: MailboxRegistry) -> None:
+    def __init__(self, repository: IntakeRepository, mailboxes: MailboxRegistry) -> None:
         self.repository = repository
         self.mailboxes = mailboxes
 
@@ -33,3 +35,15 @@ class GatewayIntakeService:
         if mailbox.status != "active" or not mailbox.inbound_enabled:
             raise ValidationError("mailbox is not accepting publications")
         return self.repository.accept(scope, publication, mailbox)
+
+    def load_participant_authority_binding(
+        self,
+        scope: TenantScope,
+        *,
+        inbox_item_ref: str,
+    ) -> Mapping[str, object] | None:
+        reader = getattr(self.repository, "load_participant_authority_binding", None)
+        if not callable(reader):
+            return None
+        value = reader(scope, inbox_item_ref=inbox_item_ref)
+        return value if isinstance(value, Mapping) else None

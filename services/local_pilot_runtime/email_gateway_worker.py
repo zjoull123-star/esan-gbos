@@ -196,7 +196,7 @@ class FencedHttpRelayWorker:
         try:
             self._outbox.mark_delivered(
                 claim,
-                receipt=response,
+                receipt=self._delivery_receipt(response),
                 now=self._clock(),
             )
         except Exception:
@@ -243,6 +243,9 @@ class FencedHttpRelayWorker:
         ):
             return None
         return receipt
+
+    def _delivery_receipt(self, response: dict[str, Any]) -> Mapping[str, object]:
+        return response
 
     @staticmethod
     def _validate_claim(claim: RelayClaim) -> None:

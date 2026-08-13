@@ -4,13 +4,28 @@ from __future__ import annotations
 
 import hmac
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from .models import stable_ref
+from .models import canonical_digest, stable_ref
 
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
+_PREFIXED_REF = re.compile(r"^(EGR|PUB|INB|MSG|MBX|DLV)-[0-9A-HJKMNP-TV-Z]{26}$")
+PARTICIPANT_AUTHORITY_BINDING_FIELDS = frozenset(
+    {
+        "gateway_receipt_ref",
+        "publication_ref",
+        "inbox_item_ref",
+        "message_ref",
+        "mailbox_ref",
+        "mailbox_config_revision",
+        "observer_delivery_ref",
+        "payload_digest",
+        "participant_binding_digest",
+        "evidence_binding_digest",
+    }
+)
 _TTL = timedelta(minutes=5)
 _COMMAND_AUTH_REF = "email-command-ingest-v1"
 _COMMAND_AUDIENCE = "email-command-executor"
@@ -72,6 +87,8 @@ class GatewayAuthorizationIssuer:
         draft_ref: str,
         draft_revision: int,
         request_digest: str,
+        participant_authority_binding: Mapping[str, object],
+        participant_roles_digest: str,
     ) -> dict[str, object]:
         issued_at = _now(self._clock)
         for value, field in (
@@ -87,8 +104,13 @@ class GatewayAuthorizationIssuer:
             or not isinstance(draft_revision, int)
             or draft_revision < 1
             or _DIGEST.fullmatch(request_digest) is None
+            or _DIGEST.fullmatch(participant_roles_digest) is None
         ):
             raise ValueError("invalid draft authorization binding")
+        binding = validate_participant_authority_binding(
+            participant_authority_binding,
+            inbox_item_ref=inbox_item_ref,
+        )
         return {
             "receipt_ref": stable_ref(
                 "DAR",
@@ -97,6 +119,8 @@ class GatewayAuthorizationIssuer:
                 draft_ref,
                 str(draft_revision),
                 request_digest,
+                canonical_digest(binding),
+                participant_roles_digest,
                 issued_at.isoformat(),
             ),
             "site_id": site_id,
@@ -107,6 +131,8 @@ class GatewayAuthorizationIssuer:
             "actor_ref": actor_ref,
             "team_ref": team_ref,
             "request_digest": request_digest,
+            **binding,
+            "participant_roles_digest": participant_roles_digest,
             "issued_at": _wire_time(issued_at),
             "expires_at": _wire_time(issued_at + _TTL),
         }
@@ -144,6 +170,46 @@ class GatewayAuthorizationIssuer:
         }
 
 
+def validate_participant_authority_binding(
+    value: object,
+    *,
+    inbox_item_ref: str,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != PARTICIPANT_AUTHORITY_BINDING_FIELDS:
+        raise ValueError("invalid participant authority binding")
+    result = dict(value)
+    for field, prefix in (
+        ("gateway_receipt_ref", "EGR"),
+        ("publication_ref", "PUB"),
+        ("inbox_item_ref", "INB"),
+        ("message_ref", "MSG"),
+        ("mailbox_ref", "MBX"),
+        ("observer_delivery_ref", "DLV"),
+    ):
+        candidate = result.get(field)
+        matched = _PREFIXED_REF.fullmatch(candidate) if isinstance(candidate, str) else None
+        if matched is None or matched.group(1) != prefix:
+            raise ValueError("invalid participant authority binding")
+    revision = result.get("mailbox_config_revision")
+    if (
+        isinstance(revision, bool)
+        or not isinstance(revision, int)
+        or not 1 <= revision <= 2_147_483_647
+    ):
+        raise ValueError("invalid participant authority binding")
+    for field in (
+        "payload_digest",
+        "participant_binding_digest",
+        "evidence_binding_digest",
+    ):
+        digest = result.get(field)
+        if not isinstance(digest, str) or _DIGEST.fullmatch(digest) is None:
+            raise ValueError("invalid participant authority binding")
+    if result["inbox_item_ref"] != inbox_item_ref:
+        raise ValueError("participant authority inbox drift")
+    return result
+
+
 def _now(clock: Callable[[], datetime]) -> datetime:
     value = clock()
     if not isinstance(value, datetime) or value.tzinfo is None:
@@ -167,4 +233,9 @@ def _bounded(value: object, field: str) -> str:
     return value
 
 
-__all__ = ["CommandIngestAuthorization", "GatewayAuthorizationIssuer"]
+__all__ = [
+    "PARTICIPANT_AUTHORITY_BINDING_FIELDS",
+    "CommandIngestAuthorization",
+    "GatewayAuthorizationIssuer",
+    "validate_participant_authority_binding",
+]

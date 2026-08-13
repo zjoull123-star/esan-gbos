@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from services.email_gateway.api import create_email_gateway_app
 from services.email_gateway.mailboxes import MailboxRegistry
-from services.email_gateway.models import Mailbox, TenantScope
+from services.email_gateway.models import InboxItem, Mailbox, TenantScope, canonical_digest
 from services.email_gateway.phase1_read import (
     ConnectorHealth,
     Phase1InboxItem,
@@ -16,6 +16,7 @@ from services.email_gateway.phase1_read import (
 )
 from services.email_gateway.repositories.mailboxes import InMemoryMailboxRepository
 from services.email_gateway.repositories.phase1_read import InMemoryPhase1ReadRepository
+from services.email_gateway.repositories.workflow import InMemoryWorkflowRepository
 from services.email_gateway.security import GatewayAuthorizationIssuer
 
 SITE = "alpha.example"
@@ -55,6 +56,18 @@ class _Health:
             )
             for item in mailboxes
         )
+
+
+class _ParticipantAuthority:
+    def __init__(self, binding: dict[str, object]) -> None:
+        self.binding = binding
+        self.calls: list[tuple[TenantScope, str]] = []
+
+    def load_participant_authority_binding(
+        self, scope: TenantScope, *, inbox_item_ref: str
+    ) -> dict[str, object] | None:
+        self.calls.append((scope, inbox_item_ref))
+        return dict(self.binding) if inbox_item_ref == self.binding["inbox_item_ref"] else None
 
 
 class _RecordingRead(InMemoryPhase1ReadRepository):
@@ -555,10 +568,25 @@ def test_gateway_issues_fresh_closed_draft_and_evidence_receipts_without_sensiti
         site_id=SITE,
         actor_ref=str(actor["actor_ref"]),
         team_ref="TEM-01",
-        inbox_item_ref="INB-01",
+        inbox_item_ref="INB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
         draft_ref="DRF-01",
         draft_revision=1,
         request_digest="sha256:" + "a" * 64,
+        participant_authority_binding={
+            "gateway_receipt_ref": "EGR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "publication_ref": "PUB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "inbox_item_ref": "INB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "message_ref": "MSG-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "mailbox_config_revision": 1,
+            "observer_delivery_ref": "DLV-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "payload_digest": "sha256:" + "b" * 64,
+            "participant_binding_digest": "sha256:" + "c" * 64,
+            "evidence_binding_digest": "sha256:" + "d" * 64,
+        },
+        participant_roles_digest=canonical_digest(
+            {"sender": "mailbox_owner", "recipients": ["original_sender"]}
+        ),
     )
     reveal = issuer.issue_evidence(
         site_id=SITE,
@@ -578,6 +606,16 @@ def test_gateway_issues_fresh_closed_draft_and_evidence_receipts_without_sensiti
         "actor_ref",
         "team_ref",
         "request_digest",
+        "gateway_receipt_ref",
+        "publication_ref",
+        "message_ref",
+        "mailbox_ref",
+        "mailbox_config_revision",
+        "observer_delivery_ref",
+        "payload_digest",
+        "participant_binding_digest",
+        "evidence_binding_digest",
+        "participant_roles_digest",
         "issued_at",
         "expires_at",
     }
@@ -594,3 +632,99 @@ def test_gateway_issues_fresh_closed_draft_and_evidence_receipts_without_sensiti
     }
     assert draft["expires_at"] == "2026-08-13T10:05:00Z"
     assert "@" not in repr(issuer)
+
+
+def test_draft_authorization_loads_durable_binding_only_after_actor_authorization() -> None:
+    now = datetime(2026, 8, 13, 10, tzinfo=UTC)
+    scope = TenantScope(SITE, "business_operations")
+    workflow = InMemoryWorkflowRepository()
+    inbox = InboxItem.new(
+        site_id=SITE,
+        mailbox_ref="MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        message_ref="MSG-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        team_ref="TEM-01",
+        received_at=now,
+    )
+    workflow.save_inbox(scope, inbox)
+    authority = _ParticipantAuthority(
+        {
+            "gateway_receipt_ref": "EGR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "publication_ref": "PUB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "inbox_item_ref": inbox.inbox_item_ref,
+            "message_ref": inbox.message_ref,
+            "mailbox_ref": inbox.mailbox_ref,
+            "mailbox_config_revision": 1,
+            "observer_delivery_ref": "DLV-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "payload_digest": "sha256:" + "b" * 64,
+            "participant_binding_digest": "sha256:" + "c" * 64,
+            "evidence_binding_digest": "sha256:" + "d" * 64,
+        }
+    )
+    app = create_email_gateway_app(
+        intake=_Intake(),  # type: ignore[arg-type]
+        participant_authority_reader=authority,
+        publication_bearer_token=PUBLICATION_TOKEN,
+        publication_auth_ref="observer-email-publication-v1",
+        bff_bearer_token=BFF_TOKEN,
+        bff_auth_ref="email-gateway-bff-v1",
+        mailbox_registry=MailboxRegistry(InMemoryMailboxRepository()),
+        read_repository=InMemoryPhase1ReadRepository(),
+        connector_health_reader=_Health(),
+        workflow_repository=workflow,
+        clock=lambda: now,
+    )
+    roles_digest = canonical_digest({"sender": "mailbox_owner", "recipients": ["original_sender"]})
+    payload = {
+        **_scope_payload(roles=["Reviewer"], teams=["TEM-01"]),
+        "phase": "authorize",
+        "inbox_item_ref": inbox.inbox_item_ref,
+        "draft_ref": "DRF-01",
+        "expected_revision": 0,
+        "content_digest": "sha256:" + "a" * 64,
+        "participant_roles_digest": roles_digest,
+        "idempotency_key": "draft-authorize-01",
+    }
+    headers = {
+        "Authorization": f"Bearer {BFF_TOKEN}",
+        "X-GBOS-Local-Auth-Ref": "email-gateway-bff-v1",
+        "X-Site-ID": SITE,
+        "X-Processing-Purpose": "email_inbox_command",
+        "X-Request-ID": "draft-authorize-request-01",
+        "Idempotency-Key": "draft-authorize-01",
+    }
+
+    response = TestClient(app).post(
+        "/internal/v1/bff/email-inbox/save-draft",
+        headers=headers,
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    receipt = response.json()["data"]["draft_authorization"]
+    assert receipt["participant_roles_digest"] == roles_digest
+    assert receipt["gateway_receipt_ref"] == authority.binding["gateway_receipt_ref"]
+    assert authority.calls == [(scope, inbox.inbox_item_ref)]
+
+    rejected = TestClient(app).post(
+        "/internal/v1/bff/email-inbox/save-draft",
+        headers={**headers, "Idempotency-Key": "draft-authorize-02"},
+        json={
+            **payload,
+            "allowed_team_refs": ["TEM-02"],
+            "idempotency_key": "draft-authorize-02",
+        },
+    )
+    assert rejected.status_code == 403
+    assert authority.calls == [(scope, inbox.inbox_item_ref)]
+
+    missing_digest = TestClient(app).post(
+        "/internal/v1/bff/email-inbox/save-draft",
+        headers={**headers, "Idempotency-Key": "draft-authorize-03"},
+        json={
+            key: value
+            for key, value in {**payload, "idempotency_key": "draft-authorize-03"}.items()
+            if key != "participant_roles_digest"
+        },
+    )
+    assert missing_digest.status_code == 400
+    assert authority.calls == [(scope, inbox.inbox_item_ref)]

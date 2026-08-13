@@ -439,9 +439,11 @@ def main(
             command_ingest_bearer_token = command_bearer.reveal()
             command_ingest_auth_ref = _COMMAND_INGEST_AUTH_REF
         factory = application_factory or create_email_gateway_app
+        intake_service = GatewayIntakeService(intake, MailboxRegistry(mailboxes))  # type: ignore[arg-type]
         application = _build_application(
             factory,
-            intake=GatewayIntakeService(intake, MailboxRegistry(mailboxes)),  # type: ignore[arg-type]
+            intake=intake_service,
+            participant_authority_reader=intake_service,
             publication_bearer_token=bearer.reveal(),
             publication_auth_ref=config.auth.email_publication_auth_ref,
             bff_bearer_token=bff_bearer.reveal(),
@@ -516,6 +518,7 @@ def _build_application(factory: ApplicationFactory, **kwargs: object) -> FastAPI
         return factory(**kwargs)
     current = {
         "intake",
+        "participant_authority_reader",
         "publication_bearer_token",
         "publication_auth_ref",
         "bff_bearer_token",

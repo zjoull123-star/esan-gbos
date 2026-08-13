@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol, cast
@@ -47,8 +48,17 @@ from .postgres import (
     site_transaction,
 )
 from .repositories.workflow import InMemoryWorkflowRepository, PostgresWorkflowRepository
-from .repository import ConnectorHealthReader, Phase1ReadRepository
-from .security import CommandIngestAuthorization, GatewayAuthorizationIssuer
+from .repository import (
+    ConnectorHealthReader,
+    ParticipantAuthorityBindingReader,
+    Phase1ReadRepository,
+)
+from .security import (
+    PARTICIPANT_AUTHORITY_BINDING_FIELDS,
+    CommandIngestAuthorization,
+    GatewayAuthorizationIssuer,
+    validate_participant_authority_binding,
+)
 
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 _AUTH_REF = "observer-email-publication-v1"
@@ -591,6 +601,7 @@ class _BFFError(Exception):
 def create_email_gateway_app(
     *,
     intake: EmailPublicationIntake,
+    participant_authority_reader: ParticipantAuthorityBindingReader | None = None,
     publication_bearer_token: str,
     publication_auth_ref: str,
     bff_bearer_token: str | None = None,
@@ -653,6 +664,11 @@ def create_email_gateway_app(
         or command_ingest_auth_ref != "email-command-ingest-v1"
     ):
         raise ValueError("invalid email command ingest credentials")
+    active_participant_authority_reader = participant_authority_reader
+    if active_participant_authority_reader is None and callable(
+        getattr(intake, "load_participant_authority_binding", None)
+    ):
+        active_participant_authority_reader = cast(ParticipantAuthorityBindingReader, intake)
     application = FastAPI(
         title="ESAN GBOS Email Gateway",
         version="1.0",
@@ -873,17 +889,41 @@ def create_email_gateway_app(
             if publication.site_id != site_id:
                 raise ValidationError("publication site mismatch")
             result = intake.accept(TenantScope(site_id, processing_purpose), publication)
+            if active_participant_authority_reader is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "participant_authority_unavailable"},
+                )
+            binding_value = active_participant_authority_reader.load_participant_authority_binding(
+                TenantScope(site_id, processing_purpose),
+                inbox_item_ref=result.receipt.inbox_item_ref,
+            )
+            binding = validate_participant_authority_binding(
+                binding_value,
+                inbox_item_ref=result.receipt.inbox_item_ref,
+            )
+            expected = {
+                "gateway_receipt_ref": result.receipt.receipt_ref,
+                "publication_ref": result.receipt.publication_ref,
+                "inbox_item_ref": result.receipt.inbox_item_ref,
+                "message_ref": result.receipt.message_ref,
+                "mailbox_ref": result.receipt.mailbox_ref,
+                "observer_delivery_ref": result.receipt.observer_delivery_ref,
+                "payload_digest": result.receipt.payload_digest,
+            }
+            if any(binding.get(field) != value for field, value in expected.items()):
+                raise ValidationError("participant authority receipt drift")
         except ValidationError as exc:
             raise HTTPException(
                 status_code=400,
                 detail={"code": "email_publication_rejected"},
             ) from exc
-        return {
-            "schema_version": "1.0",
-            "receipt_ref": result.receipt.receipt_ref,
-            "publication_id": result.receipt.publication_ref,
-            "payload_digest": result.receipt.payload_digest,
-        }
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "participant_authority_unavailable"},
+            ) from exc
+        return {"schema_version": "1.0", "binding": binding}
 
     if bff_enabled:
         assert bff_bearer_token is not None
@@ -1608,6 +1648,7 @@ def create_email_gateway_app(
                 "draft_ref",
                 "expected_revision",
                 "content_digest",
+                "participant_roles_digest",
                 "idempotency_key",
             }
             phase_fields = (
@@ -1643,6 +1684,20 @@ def create_email_gateway_app(
                 values["expected_revision"], "expected revision"
             )
             content_digest = _bounded_digest(values["content_digest"])
+            participant_roles_digest = _bounded_digest(values["participant_roles_digest"])
+            if active_participant_authority_reader is None:
+                raise _BFFError("runtime_unavailable", 503)
+            binding_value = active_participant_authority_reader.load_participant_authority_binding(
+                scope,
+                inbox_item_ref=inbox_ref,
+            )
+            try:
+                participant_authority_binding = validate_participant_authority_binding(
+                    binding_value,
+                    inbox_item_ref=inbox_ref,
+                )
+            except ValueError:
+                raise _BFFError("scope_mismatch", 403) from None
             if phase == "authorize":
                 receipt = authorization_issuer.issue_draft(
                     site_id=actor.site_id,
@@ -1652,6 +1707,8 @@ def create_email_gateway_app(
                     draft_ref=draft_ref,
                     draft_revision=expected_revision + 1,
                     request_digest=content_digest,
+                    participant_authority_binding=participant_authority_binding,
+                    participant_roles_digest=participant_roles_digest,
                 )
                 return _success(actor.site_id, {"draft_authorization": receipt})
             receipt = _validate_draft_authorization(
@@ -1663,6 +1720,8 @@ def create_email_gateway_app(
                 draft_ref=draft_ref,
                 draft_revision=expected_revision + 1,
                 content_digest=content_digest,
+                participant_authority_binding=participant_authority_binding,
+                participant_roles_digest=participant_roles_digest,
                 now=active_clock(),
             )
             evidence_ref = _bounded_text(values["evidence_ref"], "evidence ref", 512)
@@ -2129,6 +2188,8 @@ def _validate_draft_authorization(
     draft_ref: str,
     draft_revision: int,
     content_digest: str,
+    participant_authority_binding: Mapping[str, object],
+    participant_roles_digest: str,
     now: datetime,
 ) -> dict[str, object]:
     fields = {
@@ -2141,6 +2202,8 @@ def _validate_draft_authorization(
         "actor_ref",
         "team_ref",
         "request_digest",
+        *PARTICIPANT_AUTHORITY_BINDING_FIELDS,
+        "participant_roles_digest",
         "issued_at",
         "expires_at",
     }
@@ -2155,6 +2218,8 @@ def _validate_draft_authorization(
         "actor_ref": actor_ref,
         "team_ref": team_ref,
         "request_digest": content_digest,
+        **participant_authority_binding,
+        "participant_roles_digest": participant_roles_digest,
     }
     if any(value.get(field) != expected_value for field, expected_value in expected.items()):
         raise _BFFError("scope_mismatch", 403)

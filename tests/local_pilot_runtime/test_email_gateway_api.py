@@ -55,17 +55,37 @@ class _Intake:
 
         pub = publication
         receipt = PublicationReceipt(
-            receipt_ref="EGR-RECEIPT",
+            receipt_ref="EGR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
             publication_ref=pub.publication_ref,
             site_id=pub.site_id,
             mailbox_ref=pub.mailbox_ref,
             observer_delivery_ref=pub.observer_delivery_ref,
-            message_ref="MSG-MESSAGE",
-            inbox_item_ref="INB-INBOX",
+            message_ref="MSG-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            inbox_item_ref="INB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
             payload_digest=pub.payload_digest,
             received_at=pub.received_at,
         )
         return IntakeResult(receipt, object(), object())  # type: ignore[arg-type]
+
+    def load_participant_authority_binding(
+        self, scope: object, *, inbox_item_ref: str
+    ) -> dict[str, object] | None:
+        del scope
+        if inbox_item_ref != "INB-01ARZ3NDEKTSV4RRFFQ69G5FAV":
+            return None
+        payload = _wire()
+        return {
+            "gateway_receipt_ref": "EGR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "publication_ref": payload["publication_id"],
+            "inbox_item_ref": inbox_item_ref,
+            "message_ref": "MSG-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "mailbox_ref": payload["mailbox_id"],
+            "mailbox_config_revision": payload["mailbox_config_revision"],
+            "observer_delivery_ref": payload["observer_delivery_ref"],
+            "payload_digest": _payload_digest(payload),
+            "participant_binding_digest": _payload_digest(payload["participants"]),
+            "evidence_binding_digest": _payload_digest(payload["evidence_refs"]),
+        }
 
 
 def test_accept_boundary_uses_task1_wire_out_of_band_purpose_digest_and_stable_receipt() -> None:
@@ -98,9 +118,18 @@ def test_accept_boundary_uses_task1_wire_out_of_band_purpose_digest_and_stable_r
         == first.json()
         == {
             "schema_version": "1.0",
-            "receipt_ref": "EGR-RECEIPT",
-            "publication_id": payload["publication_id"],
-            "payload_digest": headers["X-Payload-Digest"],
+            "binding": {
+                "gateway_receipt_ref": "EGR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "publication_ref": payload["publication_id"],
+                "inbox_item_ref": "INB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "message_ref": "MSG-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "mailbox_ref": payload["mailbox_id"],
+                "mailbox_config_revision": 1,
+                "observer_delivery_ref": payload["observer_delivery_ref"],
+                "payload_digest": headers["X-Payload-Digest"],
+                "participant_binding_digest": _payload_digest(payload["participants"]),
+                "evidence_binding_digest": _payload_digest(payload["evidence_refs"]),
+            },
         }
     )
     assert first.headers["cache-control"] == "no-store"

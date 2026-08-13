@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from threading import RLock
 
 from ..models import (
@@ -33,6 +34,7 @@ class InMemoryIntakeRepository:
         self._messages: dict[tuple[str, str], ChannelMessage] = {}
         self._inbox: dict[tuple[str, str], InboxItem] = {}
         self._delivery_receipts: dict[tuple[str, str, str], PublicationReceipt] = {}
+        self._bindings: dict[tuple[str, str], dict[str, object]] = {}
         self._lock = RLock()
 
     def accept(
@@ -42,16 +44,25 @@ class InMemoryIntakeRepository:
         mailbox: Mailbox,
     ) -> IntakeResult:
         receipt_key = (scope.site_id, publication.publication_ref)
+        participant_digest, evidence_digest = _publication_binding_digests(publication)
         with self._lock:
             replay = self._receipts.get(receipt_key)
             if replay is not None:
                 if replay.payload_digest != publication.payload_digest:
                     raise IdempotencyConflict("publication payload drift")
-                return IntakeResult(
+                result = IntakeResult(
                     replay,
                     self._messages[(scope.site_id, replay.message_ref)],
                     self._inbox[(scope.site_id, replay.inbox_item_ref)],
                 )
+                self._require_binding(
+                    scope,
+                    publication,
+                    result.receipt,
+                    participant_digest=participant_digest,
+                    evidence_digest=evidence_digest,
+                )
+                return result
             delivery_key = (
                 scope.site_id,
                 publication.mailbox_ref,
@@ -61,11 +72,19 @@ class InMemoryIntakeRepository:
             if delivery_replay is not None:
                 if delivery_replay.payload_digest != publication.payload_digest:
                     raise IdempotencyConflict("mailbox delivery publication drift")
-                return IntakeResult(
+                result = IntakeResult(
                     delivery_replay,
                     self._messages[(scope.site_id, delivery_replay.message_ref)],
                     self._inbox[(scope.site_id, delivery_replay.inbox_item_ref)],
                 )
+                self._require_binding(
+                    scope,
+                    publication,
+                    result.receipt,
+                    participant_digest=participant_digest,
+                    evidence_digest=evidence_digest,
+                )
+                return result
             message_identity = publication.message_id_digest or canonical_digest(
                 {"publication_id": publication.publication_ref}
             )
@@ -119,7 +138,40 @@ class InMemoryIntakeRepository:
             self._inbox[(scope.site_id, inbox.inbox_item_ref)] = inbox
             self._receipts[receipt_key] = receipt
             self._delivery_receipts[delivery_key] = receipt
+            self._bindings[(scope.site_id, inbox.inbox_item_ref)] = _authority_binding(
+                receipt,
+                mailbox_config_revision=publication.mailbox_config_revision,
+                participant_binding_digest=participant_digest,
+                evidence_binding_digest=evidence_digest,
+            )
             return IntakeResult(receipt, message, inbox)
+
+    def load_participant_authority_binding(
+        self,
+        scope: TenantScope,
+        *,
+        inbox_item_ref: str,
+    ) -> Mapping[str, object] | None:
+        value = self._bindings.get((scope.site_id, inbox_item_ref))
+        return None if value is None else dict(value)
+
+    def _require_binding(
+        self,
+        scope: TenantScope,
+        publication: EmailMessagePublication,
+        receipt: PublicationReceipt,
+        *,
+        participant_digest: str,
+        evidence_digest: str,
+    ) -> None:
+        expected = _authority_binding(
+            receipt,
+            mailbox_config_revision=publication.mailbox_config_revision,
+            participant_binding_digest=participant_digest,
+            evidence_binding_digest=evidence_digest,
+        )
+        if self._bindings.get((scope.site_id, receipt.inbox_item_ref)) != expected:
+            raise IdempotencyConflict("participant authority binding drift")
 
     def counts(self, scope: TenantScope) -> tuple[int, int, int]:
         return (
@@ -168,6 +220,7 @@ class PostgresIntakeRepository:
             raise IdempotencyConflict("publication connector binding drift")
         if mailbox.status != "active" or not mailbox.inbound_enabled:
             raise IdempotencyConflict("publication mailbox is not active")
+        participant_digest, evidence_digest = _publication_binding_digests(publication)
 
         with redacted_database_errors(), site_transaction(self.connection, scope) as cursor:
             cursor.execute(
@@ -208,6 +261,14 @@ class PostgresIntakeRepository:
                     raise IdempotencyConflict("publication receipt binding drift")
                 if replay.payload_digest != publication.payload_digest:
                     raise IdempotencyConflict("publication payload drift")
+                self._require_binding(
+                    cursor,
+                    scope,
+                    publication,
+                    replay,
+                    participant_digest=participant_digest,
+                    evidence_digest=evidence_digest,
+                )
                 return self._result(cursor, scope, replay)
 
             message_identity = publication.message_id_digest or canonical_digest(
@@ -307,8 +368,9 @@ class PostgresIntakeRepository:
                 INSERT INTO email_gateway.publication_receipts (
                     site_id, receipt_ref, publication_ref, mailbox_ref,
                     observer_delivery_ref, message_ref, inbox_item_ref,
-                    payload_digest, received_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    payload_digest, received_at, mailbox_config_revision,
+                    participant_binding_digest, evidence_binding_digest
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT DO NOTHING
                 """,
                 (
@@ -321,6 +383,9 @@ class PostgresIntakeRepository:
                     receipt.inbox_item_ref,
                     receipt.payload_digest,
                     receipt.received_at,
+                    publication.mailbox_config_revision,
+                    participant_digest,
+                    evidence_digest,
                 ),
             )
             durable_receipt = self._find_receipt(
@@ -339,7 +404,71 @@ class PostgresIntakeRepository:
                 raise IdempotencyConflict("publication receipt binding drift")
             if durable_receipt.payload_digest != publication.payload_digest:
                 raise IdempotencyConflict("publication payload drift")
+            self._require_binding(
+                cursor,
+                scope,
+                publication,
+                durable_receipt,
+                participant_digest=participant_digest,
+                evidence_digest=evidence_digest,
+            )
             return self._result(cursor, scope, durable_receipt)
+
+    def load_participant_authority_binding(
+        self,
+        scope: TenantScope,
+        *,
+        inbox_item_ref: str,
+    ) -> Mapping[str, object] | None:
+        with redacted_database_errors(), site_transaction(self.connection, scope) as cursor:
+            return self._load_binding(cursor, scope, inbox_item_ref=inbox_item_ref)
+
+    def _require_binding(
+        self,
+        cursor: object,
+        scope: TenantScope,
+        publication: EmailMessagePublication,
+        receipt: PublicationReceipt,
+        *,
+        participant_digest: str,
+        evidence_digest: str,
+    ) -> None:
+        durable = self._load_binding(
+            cursor,
+            scope,
+            inbox_item_ref=receipt.inbox_item_ref,
+        )
+        expected = _authority_binding(
+            receipt,
+            mailbox_config_revision=publication.mailbox_config_revision,
+            participant_binding_digest=participant_digest,
+            evidence_binding_digest=evidence_digest,
+        )
+        if durable != expected:
+            raise IdempotencyConflict("participant authority binding drift")
+
+    @staticmethod
+    def _load_binding(
+        cursor: object,
+        scope: TenantScope,
+        *,
+        inbox_item_ref: str,
+    ) -> dict[str, object] | None:
+        cursor.execute(  # type: ignore[attr-defined]
+            """
+            SELECT receipt_ref, publication_ref, inbox_item_ref, message_ref,
+                   mailbox_ref, mailbox_config_revision, observer_delivery_ref,
+                   payload_digest, participant_binding_digest,
+                   evidence_binding_digest
+              FROM email_gateway.publication_receipts
+             WHERE site_id = %s AND inbox_item_ref = %s
+            """,
+            (scope.site_id, inbox_item_ref),
+        )
+        row = cursor.fetchone()  # type: ignore[attr-defined]
+        if row is None or any(value is None for value in row):
+            return None
+        return dict(zip(_AUTHORITY_BINDING_FIELDS, row, strict=True))
 
     def _find_receipt(
         self,
@@ -497,6 +626,48 @@ def _same_message_facts(existing: ChannelMessage, publication: EmailMessagePubli
         and existing.in_reply_to_digest == publication.in_reply_to_digest
         and existing.references_digests == publication.references_digests
     )
+
+
+_AUTHORITY_BINDING_FIELDS = (
+    "gateway_receipt_ref",
+    "publication_ref",
+    "inbox_item_ref",
+    "message_ref",
+    "mailbox_ref",
+    "mailbox_config_revision",
+    "observer_delivery_ref",
+    "payload_digest",
+    "participant_binding_digest",
+    "evidence_binding_digest",
+)
+
+
+def _publication_binding_digests(
+    publication: EmailMessagePublication,
+) -> tuple[str, str]:
+    wire = publication.to_wire()
+    return canonical_digest(wire["participants"]), canonical_digest(wire["evidence_refs"])
+
+
+def _authority_binding(
+    receipt: PublicationReceipt,
+    *,
+    mailbox_config_revision: int,
+    participant_binding_digest: str,
+    evidence_binding_digest: str,
+) -> dict[str, object]:
+    return {
+        "gateway_receipt_ref": receipt.receipt_ref,
+        "publication_ref": receipt.publication_ref,
+        "inbox_item_ref": receipt.inbox_item_ref,
+        "message_ref": receipt.message_ref,
+        "mailbox_ref": receipt.mailbox_ref,
+        "mailbox_config_revision": mailbox_config_revision,
+        "observer_delivery_ref": receipt.observer_delivery_ref,
+        "payload_digest": receipt.payload_digest,
+        "participant_binding_digest": participant_binding_digest,
+        "evidence_binding_digest": evidence_binding_digest,
+    }
 
 
 __all__ = ["InMemoryIntakeRepository", "PostgresIntakeRepository"]

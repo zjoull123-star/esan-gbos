@@ -43,7 +43,7 @@ class _Outbox:
         self.events.append(("heartbeat", claim.fence_token))
 
     def mark_delivered(self, claim: _Claim, *, receipt: dict[str, object], now: datetime) -> None:
-        self.events.append(("delivered", receipt["receipt_ref"]))
+        self.events.append(("delivered", receipt))
 
     def mark_failed(
         self, claim: _Claim, *, retry_at: datetime, error_code: str, now: datetime
@@ -71,11 +71,24 @@ def test_publication_relay_marks_delivered_only_after_exact_stable_receipt() -> 
             200,
             {
                 "schema_version": "1.0",
-                "receipt_ref": "EGR-1",
-                "publication_id": "PUB-1",
-                "payload_digest": "sha256:" + "a" * 64,
+                "binding": {
+                    "gateway_receipt_ref": "EGR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                    "publication_ref": "PUB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                    "inbox_item_ref": "INB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                    "message_ref": "MSG-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                    "mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                    "mailbox_config_revision": 1,
+                    "observer_delivery_ref": "DLV-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                    "payload_digest": "sha256:" + "a" * 64,
+                    "participant_binding_digest": "sha256:" + "b" * 64,
+                    "evidence_binding_digest": "sha256:" + "c" * 64,
+                },
             },
         )
+    )
+    outbox.claim_value = _Claim(
+        item_ref="PUB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        payload={"publication_id": "PUB-01ARZ3NDEKTSV4RRFFQ69G5FAV"},
     )
     worker = EmailPublicationRelayWorker(
         outbox=outbox,
@@ -89,7 +102,21 @@ def test_publication_relay_marks_delivered_only_after_exact_stable_receipt() -> 
     result = worker.run_once()
 
     assert result.status == RelayStatus.DELIVERED
-    assert outbox.events[-1] == ("delivered", "EGR-1")
+    assert outbox.events[-1][0] == "delivered"
+    delivered = outbox.events[-1][1]
+    assert isinstance(delivered, dict)
+    assert set(delivered) == {
+        "gateway_receipt_ref",
+        "publication_ref",
+        "inbox_item_ref",
+        "message_ref",
+        "mailbox_ref",
+        "mailbox_config_revision",
+        "observer_delivery_ref",
+        "payload_digest",
+        "participant_binding_digest",
+        "evidence_binding_digest",
+    }
     call = transport.calls[0]
     assert call["url"] == "http://email-gateway-api:8004/internal/v1/email-publications/accept"
     assert call["headers"]["X-Request-ID"] == "request-1"  # type: ignore[index]

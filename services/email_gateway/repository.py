@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Protocol
 
 from .models import (
@@ -35,6 +36,15 @@ class MailboxRepository(Protocol):
 
 class IntakeRepository(Protocol):
     def accept(self, scope: TenantScope, publication: object, mailbox: Mailbox) -> IntakeResult: ...
+
+
+class ParticipantAuthorityBindingReader(Protocol):
+    def load_participant_authority_binding(
+        self,
+        scope: TenantScope,
+        *,
+        inbox_item_ref: str,
+    ) -> Mapping[str, object] | None: ...
 
 
 class IdentityProjectionRepository(Protocol):
