@@ -153,7 +153,8 @@ def test_finalize_resolves_addresses_from_opaque_roles_and_returns_only_cas_bind
     )
 
     assert set(result) == {"evidence_ref", "digest", "role_binding", "participants"}
-    assert str(result["evidence_ref"]).startswith("obs:v1:")
+    assert str(result["evidence_ref"]).startswith("EVR-")
+    assert len(str(result["evidence_ref"])) == 30
     assert str(result["role_binding"]).startswith("sha256:")
     assert result["participants"] == [
         {

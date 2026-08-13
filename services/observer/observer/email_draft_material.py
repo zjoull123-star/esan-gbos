@@ -16,7 +16,7 @@ from .email_participant_authority import (
     EmailParticipantAuthorityBinding,
     canonical_binding_digest,
 )
-from .models import TenantScope
+from .models import TenantScope, stable_ulid
 
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 _OPAQUE_EMAIL = re.compile(r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
@@ -282,8 +282,16 @@ class EmailDraftMaterialService:
         final_bytes = message.as_bytes(policy=SMTP)
         stored = self._store.put(scope, final_bytes, media_type="message/rfc822")
         final_digest = "sha256:" + hashlib.sha256(final_bytes).hexdigest()
+        evidence_ref = "EVR-" + stable_ulid(
+            "email-final-mime-evidence",
+            scope.site_id,
+            authorization.draft_ref,
+            str(authorization.draft_revision),
+            final_digest,
+            str(stored.object_ref),
+        )
         result: dict[str, object] = {
-            "evidence_ref": str(stored.object_ref),
+            "evidence_ref": evidence_ref,
             "digest": final_digest,
             "role_binding": role_binding,
             "participants": participants,
