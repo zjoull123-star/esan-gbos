@@ -327,6 +327,32 @@ def test_heartbeat_acknowledge_and_release_require_the_exact_live_fence(
     }
 
 
+@pytest.mark.parametrize("method", ["heartbeat", "acknowledge"])
+def test_heartbeat_and_acknowledge_reject_an_expired_claim_lease(
+    publication_api: tuple[Any, _Frappe],
+    method: str,
+) -> None:
+    api, fake = publication_api
+    claimed = _claim(api)
+    api._now = lambda: NOW + timedelta(seconds=31)
+    request_id = f"publication-{method}-expired"
+    fake.local.request.headers["X-Request-ID"] = request_id
+    payload = _claim_identity(claimed, request_id)
+    if method == "heartbeat":
+        payload["lease_seconds"] = 30
+    else:
+        payload.update(
+            command_receipt_ref="ECR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            send_outbox_ref="SOB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            payload_digest=_payload_digest(),
+        )
+
+    response = getattr(api, method)(payload)
+
+    assert response == {"error": {"code": "claim_lease_expired"}}
+    assert fake.local.response["http_status_code"] == 409
+
+
 def test_release_uses_only_fixed_retry_or_dead_letter_safe_codes(
     publication_api: tuple[Any, _Frappe],
 ) -> None:

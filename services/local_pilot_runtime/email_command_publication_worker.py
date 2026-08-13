@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -18,13 +19,29 @@ from services.agent_runtime.local_entrypoint import (
     require_component_enabled,
 )
 
-from .runtime_support import reject_plaintext_secret_environment
+from .runtime_support import (
+    RuntimeSupportError,
+    TextSecretProvider,
+    reject_plaintext_secret_environment,
+)
+from .secret_provider import MountedFileSecretProvider, SecretSpec
 
 FRAPPE_BASE_URL = "http://frappe-backend:8000"
 GATEWAY_BASE_URL = "http://email-gateway-api:8004"
 FRAPPE_METHOD = FRAPPE_BASE_URL + "/api/method/esan_gbos.api.internal.email_command_publication."
 GATEWAY_ACCEPT = GATEWAY_BASE_URL + "/internal/v1/email-commands/accept"
 DEFAULT_MANIFEST = Path("/config/local-pilot-manifest.json")
+DEFAULT_CONFIG = Path("/config/runtime-email-command-publication-worker.json")
+_MAX_CONFIG_BYTES = 65_536
+_SECRET_ROOT = Path("/run/secrets")
+_FRAPPE_KEY = "frappe_email_command_publication_api_key"
+_FRAPPE_SECRET = "frappe_email_command_publication_api_secret"
+_GATEWAY_BEARER = "email_gateway_command_ingest_bearer"
+_AUTH_PATHS = {
+    "frappe_api_key_file": f"/run/secrets/{_FRAPPE_KEY}",
+    "frappe_api_secret_file": f"/run/secrets/{_FRAPPE_SECRET}",
+    "gateway_bearer_file": f"/run/secrets/{_GATEWAY_BEARER}",
+}
 
 
 class PublicationRelayStatus(StrEnum):
@@ -91,8 +108,16 @@ class FrappeCommandPublicationClient:
         self._timeout = timeout_seconds
 
     def post(self, method: str, payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
+        response_field = {
+            "claim": "publication",
+            "heartbeat": "lease",
+            "acknowledge": "acknowledgement",
+            "release": "release",
+        }.get(method)
+        if response_field is None:
+            raise RuntimeError("Frappe publication request rejected")
         request_id = str(payload["request_id"])
-        return self._transport.post(
+        status, body = self._transport.post(
             url=FRAPPE_METHOD + method,
             headers={
                 "Accept": "application/json",
@@ -103,9 +128,18 @@ class FrappeCommandPublicationClient:
                 "X-Request-ID": request_id,
                 "X-Site-ID": str(payload["site_id"]),
             },
-            payload=payload,
+            payload={"payload": dict(payload)},
             timeout_seconds=self._timeout,
         )
+        if (
+            status != 200
+            or set(body) != {"message"}
+            or not isinstance(body.get("message"), dict)
+            or set(body["message"]) != {response_field}
+            or not _valid_frappe_response(method, body["message"][response_field])
+        ):
+            raise RuntimeError("Frappe publication response rejected")
+        return status, body["message"]
 
     def __repr__(self) -> str:
         return "FrappeCommandPublicationClient(credentials=<redacted>)"
@@ -185,16 +219,19 @@ class CommandPublicationRelayWorker:
 
     def run_once(self) -> PublicationRelayResult:
         claim_request = self._request_id("claim")
-        status, body = self._frappe.post(
-            "claim",
-            {
-                "site_id": self._site_id,
-                "processing_purpose": "email_command_publication",
-                "worker_id": self._worker_id,
-                "lease_seconds": self._lease_seconds,
-                "request_id": claim_request,
-            },
-        )
+        try:
+            status, body = self._frappe.post(
+                "claim",
+                {
+                    "site_id": self._site_id,
+                    "processing_purpose": "email_command_publication",
+                    "worker_id": self._worker_id,
+                    "lease_seconds": self._lease_seconds,
+                    "request_id": claim_request,
+                },
+            )
+        except Exception:
+            return PublicationRelayResult(PublicationRelayStatus.RETRY)
         if status != 200 or set(body) != {"publication"}:
             return PublicationRelayResult(PublicationRelayStatus.RETRY)
         claim = body["publication"]
@@ -204,10 +241,19 @@ class CommandPublicationRelayWorker:
             return PublicationRelayResult(PublicationRelayStatus.DEAD_LETTER)
         identity = self._identity(claim)
         heartbeat_request = self._request_id("heartbeat", claim)
-        heartbeat_status, _heartbeat = self._frappe.post(
-            "heartbeat",
-            {**identity, "lease_seconds": self._lease_seconds, "request_id": heartbeat_request},
-        )
+        try:
+            heartbeat_status, _heartbeat = self._frappe.post(
+                "heartbeat",
+                {
+                    **identity,
+                    "lease_seconds": self._lease_seconds,
+                    "request_id": heartbeat_request,
+                },
+            )
+        except Exception:
+            return PublicationRelayResult(
+                PublicationRelayStatus.RETRY, str(claim["publication_ref"])
+            )
         if heartbeat_status != 200:
             return PublicationRelayResult(
                 PublicationRelayStatus.RETRY, str(claim["publication_ref"])
@@ -228,32 +274,38 @@ class CommandPublicationRelayWorker:
                 if gateway_status == 429 or gateway_status >= 500
                 else "gateway_rejected_command"
             )
-            release_status, release_body = self._frappe.post(
-                "release",
-                {
-                    **identity,
-                    "safe_code": safe_code,
-                    "request_id": self._request_id("release", claim),
-                },
-            )
+            try:
+                release_status, release_body = self._frappe.post(
+                    "release",
+                    {
+                        **identity,
+                        "safe_code": safe_code,
+                        "request_id": self._request_id("release", claim),
+                    },
+                )
+            except Exception:
+                release_status, release_body = 503, {}
             released = release_body.get("release") if release_status == 200 else None
             state = released.get("status") if isinstance(released, Mapping) else None
             return PublicationRelayResult(
                 PublicationRelayStatus.DEAD_LETTER
-                if state == "Dead Letter"
+                if state == "dead_letter"
                 else PublicationRelayStatus.RETRY,
                 str(claim["publication_ref"]),
             )
-        acknowledge_status, _ack = self._frappe.post(
-            "acknowledge",
-            {
-                **identity,
-                "command_receipt_ref": gateway_body["command_receipt_ref"],
-                "send_outbox_ref": gateway_body["send_outbox_ref"],
-                "payload_digest": claim["payload_digest"],
-                "request_id": self._request_id("acknowledge", claim),
-            },
-        )
+        try:
+            acknowledge_status, _ack = self._frappe.post(
+                "acknowledge",
+                {
+                    **identity,
+                    "command_receipt_ref": gateway_body["command_receipt_ref"],
+                    "send_outbox_ref": gateway_body["send_outbox_ref"],
+                    "payload_digest": claim["payload_digest"],
+                    "request_id": self._request_id("acknowledge", claim),
+                },
+            )
+        except Exception:
+            acknowledge_status = 503
         return PublicationRelayResult(
             PublicationRelayStatus.DELIVERED
             if acknowledge_status == 200
@@ -298,6 +350,60 @@ def _valid_claim(value: object) -> bool:
     )
 
 
+def _valid_frappe_response(method: str, value: object) -> bool:
+    if method == "claim":
+        return value is None or _valid_claim(value)
+    if not isinstance(value, Mapping):
+        return False
+    if method == "heartbeat":
+        return bool(
+            set(value)
+            == {
+                "publication_ref",
+                "attempt",
+                "generation",
+                "fence_token",
+                "lease_expires_at",
+            }
+            and str(value.get("publication_ref", "")).startswith("PUB-")
+            and isinstance(value.get("attempt"), int)
+            and isinstance(value.get("generation"), int)
+            and str(value.get("fence_token", "")).startswith("FNC-")
+            and isinstance(value.get("lease_expires_at"), str)
+        )
+    if method == "acknowledge":
+        return bool(
+            set(value)
+            == {
+                "publication_ref",
+                "command_receipt_ref",
+                "send_outbox_ref",
+                "payload_digest",
+                "status",
+            }
+            and str(value.get("publication_ref", "")).startswith("PUB-")
+            and str(value.get("command_receipt_ref", "")).startswith("ECR-")
+            and str(value.get("send_outbox_ref", "")).startswith("SOB-")
+            and str(value.get("payload_digest", "")).startswith("sha256:")
+            and value.get("status") == "acknowledged"
+        )
+    if method == "release":
+        return bool(
+            set(value) == {"publication_ref", "status", "safe_code"}
+            and str(value.get("publication_ref", "")).startswith("PUB-")
+            and value.get("status") in {"retry", "dead_letter"}
+            and value.get("safe_code")
+            in {
+                "gateway_unavailable",
+                "gateway_rate_limited",
+                "gateway_rejected_command",
+                "authority_recheck_failed",
+                "worker_shutdown",
+            }
+        )
+    return False
+
+
 def _valid_gateway_receipt(
     status: int,
     body: object,
@@ -318,10 +424,14 @@ def _valid_gateway_receipt(
 def main(
     *,
     manifest_path: Path = DEFAULT_MANIFEST,
+    config_path: Path = DEFAULT_CONFIG,
     environ: Mapping[str, str] | None = None,
     transport_factory: Callable[[], JsonTransport] | None = None,
+    worker_runner: Callable[[CommandPublicationRelayWorker], None] | None = None,
+    secret_provider: TextSecretProvider | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> int:
-    """Fail closed before credentials or HTTP are constructed."""
+    """Preflight closed local-only dependencies, then run one bounded relay pass."""
 
     environment = os.environ if environ is None else environ
     try:
@@ -338,14 +448,126 @@ def main(
             or not isinstance(gateway, Mapping)
             or gateway.get("command_publication_kill_switch") is not False
             or gateway.get("external_send") is not False
+            or environment.get("GBOS_EXTERNAL_SEND_ENABLED", "false") != "false"
         ):
             raise LocalEntrypointDisabled("email command publication relay is disabled")
-        if transport_factory is None:
-            transport_factory = HttpxJsonTransport
-        transport_factory()
+        config = _load_config(config_path)
+        if (
+            config["site_id"] != manifest.get("site_id")
+            or config["enabled"] is not True
+            or config["kill_switch"] is not False
+            or config["external_send"] is not False
+        ):
+            raise LocalEntrypointDisabled("email command publication config is closed")
+        worker_config = config["worker"]
+        if not isinstance(worker_config, Mapping):
+            raise LocalEntrypointDisabled("email command publication config is invalid")
+        active_secrets = secret_provider or _publication_secret_provider()
+        api_key = _read_secret(active_secrets, _FRAPPE_KEY, forbid_colon=True)
+        api_secret = _read_secret(active_secrets, _FRAPPE_SECRET)
+        gateway_bearer = _read_secret(active_secrets, _GATEWAY_BEARER)
+        transport = (transport_factory or HttpxJsonTransport)()
+        worker = CommandPublicationRelayWorker(
+            frappe=FrappeCommandPublicationClient(
+                transport=transport,
+                api_key=api_key,
+                api_secret=api_secret,
+            ),
+            gateway=GatewayCommandIngestClient(
+                transport=transport,
+                bearer_token=gateway_bearer,
+            ),
+            site_id=str(config["site_id"]),
+            worker_id=str(worker_config["worker_id"]),
+            clock=clock or (lambda: datetime.now(UTC)),
+            lease_seconds=int(worker_config["lease_seconds"]),
+        )
+        (worker_runner or _run_once)(worker)
         return 0
-    except LocalEntrypointDisabled, ValueError, OSError:
+    except LocalEntrypointDisabled, RuntimeSupportError, ValueError, OSError:
         return 78
+
+
+def _load_config(path: Path) -> dict[str, Any]:
+    if not path.is_file() or path.is_symlink() or path.stat().st_size > _MAX_CONFIG_BYTES:
+        raise LocalEntrypointDisabled("email command publication config is unavailable")
+    value = json.loads(path.read_bytes())
+    required = {
+        "schema_version",
+        "site_id",
+        "enabled",
+        "kill_switch",
+        "external_send",
+        "endpoints",
+        "auth",
+        "worker",
+    }
+    if not isinstance(value, dict) or set(value) != required or value["schema_version"] != "1.0":
+        raise LocalEntrypointDisabled("email command publication config is invalid")
+    endpoints = value["endpoints"]
+    auth = value["auth"]
+    worker = value["worker"]
+    if (
+        not isinstance(value["site_id"], str)
+        or not isinstance(value["enabled"], bool)
+        or not isinstance(value["kill_switch"], bool)
+        or not isinstance(value["external_send"], bool)
+        or not isinstance(endpoints, dict)
+        or endpoints != {"frappe": FRAPPE_BASE_URL, "gateway": GATEWAY_BASE_URL}
+        or not isinstance(auth, dict)
+        or auth != _AUTH_PATHS
+        or not isinstance(worker, dict)
+        or set(worker) != {"worker_id", "lease_seconds", "idle_delay_seconds"}
+        or not isinstance(worker["worker_id"], str)
+        or not worker["worker_id"]
+        or "@" in worker["worker_id"]
+        or not isinstance(worker["lease_seconds"], int)
+        or isinstance(worker["lease_seconds"], bool)
+        or not 10 <= worker["lease_seconds"] <= 300
+        or not isinstance(worker["idle_delay_seconds"], int | float)
+        or isinstance(worker["idle_delay_seconds"], bool)
+        or not 0 < worker["idle_delay_seconds"] <= 60
+    ):
+        raise LocalEntrypointDisabled("email command publication config is invalid")
+    return value
+
+
+def _read_secret(
+    provider: TextSecretProvider,
+    logical_name: str,
+    *,
+    forbid_colon: bool = False,
+) -> str:
+    secret = provider.read_text(logical_name)
+    if secret is None:
+        raise RuntimeSupportError("email command publication secret is unavailable")
+    value = secret.reveal()
+    if (
+        not 16 <= len(value) <= 128
+        or value != value.strip()
+        or any(character in value for character in "\x00\r\n")
+        or (forbid_colon and ":" in value)
+    ):
+        raise RuntimeSupportError("email command publication secret is invalid")
+    return value
+
+
+def _publication_secret_provider() -> MountedFileSecretProvider:
+    return MountedFileSecretProvider(
+        _SECRET_ROOT,
+        tuple(
+            SecretSpec(name, name, "text", 16, 128)
+            for name in (_FRAPPE_KEY, _FRAPPE_SECRET, _GATEWAY_BEARER)
+        ),
+    )
+
+
+def _run_once(worker: CommandPublicationRelayWorker) -> None:
+    worker.run_once()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 __all__ = [

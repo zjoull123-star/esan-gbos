@@ -48,6 +48,8 @@ def main(
     authority_check: Callable[[ApprovedOutboundEnvelope], WorkerAuthorityState] | None = None,
     worker_runner: WorkerRunner | None = None,
     secret_provider: TextSecretProvider | None = None,
+    runtime_stop_reader: Callable[[], str | None] | None = None,
+    reconciliation_refs: tuple[str, ...] = (),
 ) -> int:
     """Compose only an explicitly enabled local fake worker; never a real adapter."""
 
@@ -107,8 +109,10 @@ def main(
             clock=lambda: datetime.now(UTC),
             authority_check=authority_check,
             lease_duration=timedelta(seconds=int(worker_config["lease_seconds"])),
+            runtime_stop_reader=runtime_stop_reader or (lambda: _runtime_stop(environment)),
         )
         scope = TenantScope(str(config["site_id"]), "customer_service")
+        worker.consume_manual_reconciliations(scope, reconciliation_refs)
         (worker_runner or _run_loop)(
             worker,
             scope,
@@ -144,10 +148,17 @@ def _load_config(path: Path) -> dict[str, object]:
 
 
 def _run_loop(worker: EmailSendWorker, scope: TenantScope, idle_delay: float) -> None:
-    while True:
-        result = worker.run_once(scope)
-        if result.state == "idle":
-            time.sleep(idle_delay)
+    result = worker.run_once(scope)
+    if result.state == "idle":
+        time.sleep(idle_delay)
+
+
+def _runtime_stop(environment: Mapping[str, str]) -> str | None:
+    if environment.get("GBOS_EMAIL_SEND_KILL_SWITCH", "true") != "false":
+        return "emergency_stop_active"
+    if environment.get("GBOS_EXTERNAL_SEND_ENABLED", "false") != "false":
+        return "external_send_disabled"
+    return None
 
 
 def _secret_provider() -> MountedFileSecretProvider:
@@ -163,6 +174,10 @@ def _secret_provider() -> MountedFileSecretProvider:
             ),
         ),
     )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 __all__ = ["main"]

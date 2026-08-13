@@ -285,6 +285,11 @@ def _locked_claim(
         )
     ):
         raise _APIError("claim_fence_mismatch", 409)
+    if (
+        publication.publication_status == "Claimed"
+        and _document_time(publication.lease_expires_at) <= _now()
+    ):
+        raise _APIError("claim_lease_expired", 409)
     return publication
 
 

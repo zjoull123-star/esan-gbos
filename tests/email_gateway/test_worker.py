@@ -137,6 +137,45 @@ def test_live_authority_is_checked_exactly_once_immediately_before_provider_call
     assert len(provider.submissions) == 1
 
 
+def test_dynamic_emergency_stop_after_claim_prevents_provider_effect() -> None:
+    _command, scope, repository, receipt = _queued()
+    provider = FakeEmailProvider(AssertionError("provider must not run"))
+    stops = iter((None, "emergency_stop_active"))
+    worker = EmailSendWorker(
+        repository=repository,
+        provider=provider,
+        worker_id="fake-send-worker-1",
+        clock=lambda: NOW,
+        authority_check=lambda _envelope: _allowed(),
+        lease_duration=timedelta(seconds=30),
+        runtime_stop_reader=lambda: next(stops),
+    )
+
+    result = worker.run_once(scope)
+
+    assert result.state == "authority_review_required"
+    assert provider.submissions == []
+    assert repository.get(scope, receipt.send_outbox_ref).state == "authority_review_required"
+
+
+def test_dynamic_external_send_stop_before_claim_has_no_outbox_attempt_or_effect() -> None:
+    _command, scope, repository, receipt = _queued()
+    provider = FakeEmailProvider(AssertionError("provider must not run"))
+    worker = EmailSendWorker(
+        repository=repository,
+        provider=provider,
+        worker_id="fake-send-worker-1",
+        clock=lambda: NOW,
+        authority_check=lambda _envelope: _allowed(),
+        lease_duration=timedelta(seconds=30),
+        runtime_stop_reader=lambda: "external_send_disabled",
+    )
+
+    assert worker.run_once(scope).state == "idle"
+    assert repository.attempt_count(scope, receipt.send_outbox_ref) == 0
+    assert provider.submissions == []
+
+
 def test_postgres_worker_claims_state_with_skip_locked_and_appends_fenced_receipt() -> None:
     command = closed_command()
 

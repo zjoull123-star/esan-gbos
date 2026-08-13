@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
+from services.email_gateway.models import ValidationError
 from services.email_gateway.provider import (
     ProviderOutcome,
     ProviderSubmissionResult,
@@ -129,3 +132,78 @@ def test_unknown_lookup_remains_manual_and_never_requeues_same_approval() -> Non
     assert worker.run_once(scope).state == "idle"
     assert len(provider.submissions) == 1
     assert repository.receipt_count(scope, receipt.send_outbox_ref) == 0
+
+
+def test_manual_reconciliation_consumer_deduplicates_refs_and_uses_fenced_reconcile() -> None:
+    _command, scope, repository, receipt = _queued()
+    provider = FakeEmailProvider(
+        ProviderSubmissionUncertain("response lost"),
+        ProviderSubmissionResult(
+            outcome=ProviderOutcome.DELIVERED,
+            safe_code="lookup_delivered",
+            provider_receipt_ref="fake-delivery-1",
+        ),
+    )
+    worker = EmailSendWorker(
+        repository=repository,
+        provider=provider,
+        worker_id="fake-send-worker-1",
+        clock=lambda: NOW,
+        authority_check=lambda _envelope: _allowed(),
+        lease_duration=timedelta(seconds=30),
+    )
+    assert worker.run_once(scope).state == "reconciliation_required"
+
+    results = worker.consume_manual_reconciliations(
+        scope,
+        [receipt.send_outbox_ref, receipt.send_outbox_ref],
+    )
+
+    assert [result.state for result in results] == ["delivered"]
+    assert len(provider.submissions) == 1
+    assert provider.lookups == [
+        repository.stable_provider_request_id(scope, receipt.send_outbox_ref)
+    ]
+    assert repository.receipt_count(scope, receipt.send_outbox_ref) == 1
+    with pytest.raises(ValidationError, match="not awaiting reconciliation"):
+        worker.consume_manual_reconciliations(scope, [receipt.send_outbox_ref])
+    assert len(provider.lookups) == 1
+
+
+def test_dynamic_stop_prevents_manual_reconciliation_provider_lookup() -> None:
+    _command, scope, repository, receipt = _queued()
+    provider = FakeEmailProvider(
+        ProviderSubmissionUncertain("response lost"),
+        AssertionError("provider lookup must not run while stopped"),
+    )
+    stops = iter((None, None, "emergency_stop_active"))
+    worker = EmailSendWorker(
+        repository=repository,
+        provider=provider,
+        worker_id="fake-send-worker-1",
+        clock=lambda: NOW,
+        authority_check=lambda _envelope: _allowed(),
+        lease_duration=timedelta(seconds=30),
+        runtime_stop_reader=lambda: next(stops),
+    )
+    assert worker.run_once(scope).state == "reconciliation_required"
+
+    result = worker.consume_manual_reconciliations(scope, [receipt.send_outbox_ref])
+
+    assert [item.state for item in result] == ["idle"]
+    assert provider.lookups == []
+
+
+def test_manual_reconciliation_consumer_rejects_unbounded_duplicate_input() -> None:
+    _command, scope, repository, receipt = _queued()
+    worker = EmailSendWorker(
+        repository=repository,
+        provider=FakeEmailProvider(),
+        worker_id="fake-send-worker-1",
+        clock=lambda: NOW,
+        authority_check=lambda _envelope: _allowed(),
+        lease_duration=timedelta(seconds=30),
+    )
+
+    with pytest.raises(ValidationError, match="unbounded"):
+        worker.consume_manual_reconciliations(scope, [receipt.send_outbox_ref] * 51)
