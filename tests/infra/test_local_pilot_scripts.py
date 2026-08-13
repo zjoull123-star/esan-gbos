@@ -52,9 +52,7 @@ def _run_prepare_secrets_fixture(
                 "email-credential": email_value,
                 "deepseek-api-key": deepseek_value,
                 "trusted-phrase-lexicon": '{"phrases":[]}',
-                "postgres-email-gateway-retention-worker-password": (
-                    retention_worker_password
-                ),
+                "postgres-email-gateway-retention-worker-password": (retention_worker_password),
             }
         ),
         encoding="utf-8",
@@ -589,6 +587,16 @@ def test_start_runs_fail_closed_preflight_before_secret_or_compose_actions() -> 
     assert 'GBOS_COMMUNICATION_DRAFT_KILL_SWITCH="true"' in start
 
 
+def test_start_paths_force_recreate_services_bound_to_ephemeral_secret_files() -> None:
+    for script_name in ("start", "start-synthetic"):
+        start = _read(SCRIPTS / script_name)
+
+        assert start.count("up -d --wait --force-recreate") == 2
+        assert start.index('"${SCRIPT_DIR}/prepare-secrets"') < start.index(
+            "up -d --wait --force-recreate"
+        )
+
+
 def test_synthetic_start_is_explicit_image_gated_and_never_enables_external_profiles() -> None:
     start = _read(SCRIPTS / "start-synthetic")
 
@@ -628,7 +636,8 @@ def test_synthetic_start_is_explicit_image_gated_and_never_enables_external_prof
     migration = "compose --profile runtime run --rm migrations"
     volume_init = "compose --profile runtime run --rm --no-deps runtime-volume-init"
     bootstrap = "run --rm --no-deps frappe-materializer-bootstrap"
-    runtime_up = 'compose "${profile_args[@]}" up -d --wait "${synthetic_services[@]}"'
+    runtime_up = 'compose "${profile_args[@]}" up -d --wait --force-recreate'
+    runtime_up += ' "${synthetic_services[@]}"'
     demo_bootstrap = '"${SCRIPT_DIR}/bootstrap-synthetic-user" --acknowledge-synthetic'
     assert start.index(volume_init) < start.index(migration)
     assert start.index(migration) < start.index(bootstrap) < start.index(runtime_up)

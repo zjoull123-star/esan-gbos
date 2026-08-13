@@ -96,7 +96,7 @@ synthetic_services=(
 )
 compose "${profile_args[@]}" config --quiet
 compose --profile runtime run --rm --no-deps runtime-volume-init
-compose --profile runtime up -d --wait \
+compose --profile runtime up -d --wait --force-recreate \
   postgres \
   mariadb \
   redis-cache \
@@ -107,7 +107,7 @@ compose --profile runtime up -d --wait \
   frappe-websocket
 compose --profile runtime run --rm migrations
 compose --profile runtime --profile materializer-bootstrap run --rm --no-deps frappe-materializer-bootstrap
-compose "${profile_args[@]}" up -d --wait "${synthetic_services[@]}"
+compose "${profile_args[@]}" up -d --wait --force-recreate "${synthetic_services[@]}"
 "${SCRIPT_DIR}/bootstrap-synthetic-user" --acknowledge-synthetic --manifest "${MANIFEST}"
 
 started=true
