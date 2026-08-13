@@ -1,5 +1,5 @@
 {
-  "recorded_at": "2026-08-12T01:40:01.544476+00:00",
+  "recorded_at": "2026-08-13T17:22:15.657866+00:00",
   "recording_scope": "local docker image inspect after an explicit build or local image installation; null means not yet recorded and is fail-closed",
   "images": [
     {
@@ -31,7 +31,7 @@
       "source": "local-build",
       "platform": "linux/arm64",
       "reference": "esan-gbos-local-pilot-frappe:2026-08-08",
-      "local_inspect_digest": "sha256:2a0440df614314dec036ecc934e37aa0b3713b8cb8610e3ca2bd8ed69f9187c2",
+      "local_inspect_digest": "sha256:2d7664b878dd6bfade5da01cdff29abb7535809aaa6667544e5ea1ac1c258110",
       "local_repo_digest": null
     },
     {
@@ -55,7 +55,7 @@
       "source": "local-build",
       "platform": "linux/arm64",
       "reference": "esan-gbos-local-pilot-runtime:2026-08-08",
-      "local_inspect_digest": "sha256:de037ad28a020689fec8b72f743ad0224afdf5c2ca6856a2ea5568fabd45e568",
+      "local_inspect_digest": "sha256:b182f786f1a6b21ff167f3da1e990f7ff93f27062133ad78dc01ab650f11f297",
       "local_repo_digest": null
     },
     {
