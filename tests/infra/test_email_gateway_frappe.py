@@ -26,6 +26,16 @@ def test_runner_is_unique_current_source_twice_migrated_and_always_torn_down() -
 
 def test_runner_executes_only_named_native_authority_modules_without_provider_services() -> None:
     source = RUNNER.read_text(encoding="utf-8")
+    native_approval_test = (
+        ROOT
+        / "apps"
+        / "esan_gbos"
+        / "esan_gbos"
+        / "gbos"
+        / "doctype"
+        / "gbos_email_send_approval"
+        / "test_gbos_email_send_approval.py"
+    ).read_text(encoding="utf-8")
 
     assert (
         "run-tests --module esan_gbos.gbos.doctype.gbos_party_profile.test_gbos_party_profile"
@@ -58,6 +68,8 @@ def test_runner_executes_only_named_native_authority_modules_without_provider_se
     assert "scheduler" not in source
     assert "queue-short" not in source
     assert "esan_gbos.api.internal.email_command_publication" in source
+    assert "test_native_publication_claim_heartbeat_ack_and_replay" in native_approval_test
+    assert "test_native_publication_expired_claim_is_rejected" in native_approval_test
 
 
 def test_runner_passes_container_shell_variables_without_pid_expansion() -> None:

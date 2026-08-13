@@ -12,6 +12,7 @@ from frappe.auth import validate_auth
 from frappe.tests import IntegrationTestCase
 from werkzeug.wrappers import Request
 
+from esan_gbos.api.internal import email_command_publication as publication_api
 from esan_gbos.api.internal import email_gateway_authority as email_gateway_authority_api
 from esan_gbos.api.v5.email_send import _approve_locked, approve, submit_for_review
 from esan_gbos.domain.email_review_policy import (
@@ -20,7 +21,10 @@ from esan_gbos.domain.email_review_policy import (
 )
 from esan_gbos.domain.external_identity_projection import owner_eligibility_revision
 from esan_gbos.domain.naming import make_gbos_name
-from esan_gbos.domain.permissions import EMAIL_GATEWAY_AUTHORITY_ROLE
+from esan_gbos.domain.permissions import (
+    EMAIL_COMMAND_PUBLICATION_ROLE,
+    EMAIL_GATEWAY_AUTHORITY_ROLE,
+)
 from esan_gbos.gbos.doctype.gbos_command_publication.gbos_command_publication import (
     GBOSCommandPublication,
 )
@@ -34,6 +38,11 @@ AUTHORITY_AUTH_REF = "email-gateway-authority-v1"
 AUTHORITY_API_KEY = "EmailAuthorityKey_0123456789ABCDEF"
 AUTHORITY_API_SECRET = "EmailAuthoritySecret_0123456789ABCDEF"
 AUTHORITY_CONFIG_KEY = "gbos_email_gateway_authority_identities"
+PUBLICATION_USER = "gbos-email-command-publication@localhost.invalid"
+PUBLICATION_AUTH_REF = "email-command-publication-v1"
+PUBLICATION_API_KEY = "EmailPublicationKey_0123456789ABCDEF"
+PUBLICATION_API_SECRET = "EmailPublicationSecret_0123456789ABCDEF"
+PUBLICATION_CONFIG_KEY = "gbos_email_command_publication_identities"
 _MISSING = object()
 
 IGNORE_TEST_RECORD_DEPENDENCIES = [
@@ -265,6 +274,78 @@ class TestGBOSEmailSendApproval(IntegrationTestCase):
         validate_auth()
         self.assertEqual(frappe.session.user, AUTHORITY_USER)
 
+    def _publication_service_user(self) -> None:
+        if not frappe.db.exists("User", PUBLICATION_USER):
+            frappe.get_doc(
+                {
+                    "doctype": "User",
+                    "email": PUBLICATION_USER,
+                    "first_name": "GBOS Email Command Publication",
+                    "enabled": 1,
+                    "user_type": "Website User",
+                    "send_welcome_email": 0,
+                    "api_key": PUBLICATION_API_KEY,
+                    "api_secret": PUBLICATION_API_SECRET,
+                    "roles": [{"role": EMAIL_COMMAND_PUBLICATION_ROLE}],
+                }
+            ).insert(ignore_permissions=True)
+        frappe.clear_cache(user=PUBLICATION_USER)
+
+    def _publication_request(self, request_id: str) -> None:
+        frappe.local.response = frappe._dict()
+        frappe.local.request = Request.from_values(
+            method="POST",
+            headers={
+                "Authorization": f"token {PUBLICATION_API_KEY}:{PUBLICATION_API_SECRET}",
+                "X-Site-ID": frappe.local.site,
+                "X-Processing-Purpose": "email_command_publication",
+                "X-Request-ID": request_id,
+                "X-GBOS-Frappe-Auth-Ref": PUBLICATION_AUTH_REF,
+            },
+        )
+
+    def _authenticate_publication(self, request_id: str) -> None:
+        self._publication_service_user()
+        frappe.set_user("Guest")
+        frappe.local.login_manager = SimpleNamespace(user="Guest")
+        self._publication_request(request_id)
+        validate_auth()
+        self.assertEqual(frappe.session.user, PUBLICATION_USER)
+
+    def _approved_publication(self, suffix: str) -> tuple[object, object]:
+        live = self._live_snapshot()
+        _submitted, case = self._submit(live)
+        protected = protect_live_email_send_snapshot(
+            live,
+            site_id=frappe.local.site,
+            authenticated_user_name=TEST_OWNER,
+        )
+        frappe.local.gbos_request_id = None
+        with patch(
+            "esan_gbos.api.v5.email_send._derive_approval_live_snapshot",
+            return_value=protected,
+        ):
+            approved = approve(
+                case.name,
+                case.revision,
+                "Native publication boundary approval.",
+                "idem:v2:" + hashlib.sha256((case.name + suffix).encode()).hexdigest(),
+            )
+        self.assertNotIn("error", approved)
+        publication = frappe.get_doc(
+            "GBOS Command Publication", approved["data"]["command_publication_ref"]
+        )
+        return case, publication
+
+    def _configure_publication_identity(self) -> None:
+        frappe.conf[PUBLICATION_CONFIG_KEY] = {
+            PUBLICATION_AUTH_REF: {
+                "user": PUBLICATION_USER,
+                "site_id": frappe.local.site,
+                "processing_purposes": ["email_command_publication"],
+            }
+        }
+
     def test_specialized_approval_is_atomic_replay_stable_and_contains_no_raw_user(self) -> None:
         live = self._live_snapshot()
         submitted, case = self._submit(live)
@@ -414,6 +495,172 @@ class TestGBOSEmailSendApproval(IntegrationTestCase):
                 frappe.conf.pop(AUTHORITY_CONFIG_KEY, None)
             else:
                 frappe.conf[AUTHORITY_CONFIG_KEY] = previous_config
+            for attribute, value in (
+                ("request", previous_request),
+                ("response", previous_response),
+                ("login_manager", previous_login_manager),
+            ):
+                if value is _MISSING:
+                    if hasattr(frappe.local, attribute):
+                        delattr(frappe.local, attribute)
+                else:
+                    setattr(frappe.local, attribute, value)
+
+    def test_native_publication_claim_heartbeat_ack_and_replay(self) -> None:
+        previous_config = frappe.conf.get(PUBLICATION_CONFIG_KEY, _MISSING)
+        previous_request = getattr(frappe.local, "request", _MISSING)
+        previous_response = getattr(frappe.local, "response", _MISSING)
+        previous_login_manager = getattr(frappe.local, "login_manager", _MISSING)
+        try:
+            _case, publication = self._approved_publication("-native-publication")
+            self._configure_publication_identity()
+            claim_request_id = "native-publication-claim"
+            self._authenticate_publication(claim_request_id)
+            claim_payload = {
+                "site_id": frappe.local.site,
+                "processing_purpose": "email_command_publication",
+                "worker_id": "native-publication-worker",
+                "lease_seconds": 30,
+                "request_id": claim_request_id,
+            }
+
+            first_claim = publication_api.claim(claim_payload)
+            replayed_claim = publication_api.claim(claim_payload)
+
+            self.assertEqual(replayed_claim, first_claim)
+            claim = first_claim["publication"]
+            self.assertEqual(claim["publication_ref"], publication.name)
+            self.assertEqual(claim["attempt"], 1)
+            self.assertEqual(claim["generation"], 1)
+            identity = {
+                "site_id": frappe.local.site,
+                "processing_purpose": "email_command_publication",
+                "worker_id": "native-publication-worker",
+                "publication_ref": publication.name,
+                "attempt": claim["attempt"],
+                "generation": claim["generation"],
+                "fence_token": claim["fence_token"],
+            }
+
+            heartbeat_request_id = "native-publication-heartbeat"
+            self._publication_request(heartbeat_request_id)
+            heartbeat_payload = {
+                **identity,
+                "lease_seconds": 45,
+                "request_id": heartbeat_request_id,
+            }
+            first_heartbeat = publication_api.heartbeat(heartbeat_payload)
+            replayed_heartbeat = publication_api.heartbeat(heartbeat_payload)
+            self.assertEqual(replayed_heartbeat, first_heartbeat)
+
+            acknowledgement_request_id = "native-publication-acknowledgement"
+            self._publication_request(acknowledgement_request_id)
+            acknowledgement_payload = {
+                **identity,
+                "request_id": acknowledgement_request_id,
+                "command_receipt_ref": make_gbos_name("ECR"),
+                "send_outbox_ref": make_gbos_name("SOB"),
+                "payload_digest": claim["payload_digest"],
+            }
+            first_acknowledgement = publication_api.acknowledge(acknowledgement_payload)
+            replayed_acknowledgement = publication_api.acknowledge(acknowledgement_payload)
+
+            self.assertEqual(replayed_acknowledgement, first_acknowledgement)
+            self.assertEqual(first_acknowledgement["acknowledgement"]["status"], "acknowledged")
+            stored = frappe.get_doc("GBOS Command Publication", publication.name)
+            self.assertEqual(stored.publication_status, "Acknowledged")
+            self.assertEqual(
+                frappe.db.count(
+                    "GBOS Command Publication", {"approved_command": stored.approved_command}
+                ),
+                1,
+            )
+            self.assertEqual(frappe.local.response["headers"]["Cache-Control"], "no-store")
+            self.assertNotIn(TEST_OWNER, repr(first_claim))
+            self.assertNotIn(TEST_OWNER, repr(first_acknowledgement))
+        finally:
+            frappe.set_user("Administrator")
+            if previous_config is _MISSING:
+                frappe.conf.pop(PUBLICATION_CONFIG_KEY, None)
+            else:
+                frappe.conf[PUBLICATION_CONFIG_KEY] = previous_config
+            for attribute, value in (
+                ("request", previous_request),
+                ("response", previous_response),
+                ("login_manager", previous_login_manager),
+            ):
+                if value is _MISSING:
+                    if hasattr(frappe.local, attribute):
+                        delattr(frappe.local, attribute)
+                else:
+                    setattr(frappe.local, attribute, value)
+
+    def test_native_publication_expired_claim_is_rejected(self) -> None:
+        previous_config = frappe.conf.get(PUBLICATION_CONFIG_KEY, _MISSING)
+        previous_request = getattr(frappe.local, "request", _MISSING)
+        previous_response = getattr(frappe.local, "response", _MISSING)
+        previous_login_manager = getattr(frappe.local, "login_manager", _MISSING)
+        try:
+            _case, publication = self._approved_publication("-native-expired-publication")
+            self._configure_publication_identity()
+            claim_request_id = "native-expired-publication-claim"
+            self._authenticate_publication(claim_request_id)
+            claimed = publication_api.claim(
+                {
+                    "site_id": frappe.local.site,
+                    "processing_purpose": "email_command_publication",
+                    "worker_id": "native-expired-publication-worker",
+                    "lease_seconds": 30,
+                    "request_id": claim_request_id,
+                }
+            )["publication"]
+            identity = {
+                "site_id": frappe.local.site,
+                "processing_purpose": "email_command_publication",
+                "worker_id": "native-expired-publication-worker",
+                "publication_ref": publication.name,
+                "attempt": claimed["attempt"],
+                "generation": claimed["generation"],
+                "fence_token": claimed["fence_token"],
+            }
+            expired_at = datetime.now(UTC) + timedelta(minutes=10)
+
+            heartbeat_request_id = "native-expired-publication-heartbeat"
+            self._publication_request(heartbeat_request_id)
+            with patch.object(publication_api, "_now", return_value=expired_at):
+                heartbeat = publication_api.heartbeat(
+                    {
+                        **identity,
+                        "lease_seconds": 30,
+                        "request_id": heartbeat_request_id,
+                    }
+                )
+            self.assertEqual(heartbeat, {"error": {"code": "claim_lease_expired"}})
+            self.assertEqual(frappe.local.response["http_status_code"], 409)
+
+            acknowledgement_request_id = "native-expired-publication-ack"
+            self._publication_request(acknowledgement_request_id)
+            with patch.object(publication_api, "_now", return_value=expired_at):
+                acknowledgement = publication_api.acknowledge(
+                    {
+                        **identity,
+                        "request_id": acknowledgement_request_id,
+                        "command_receipt_ref": make_gbos_name("ECR"),
+                        "send_outbox_ref": make_gbos_name("SOB"),
+                        "payload_digest": claimed["payload_digest"],
+                    }
+                )
+            self.assertEqual(acknowledgement, {"error": {"code": "claim_lease_expired"}})
+            self.assertEqual(frappe.local.response["http_status_code"], 409)
+            stored = frappe.get_doc("GBOS Command Publication", publication.name)
+            self.assertEqual(stored.publication_status, "Claimed")
+            self.assertIsNone(stored.gateway_send_outbox_ref)
+        finally:
+            frappe.set_user("Administrator")
+            if previous_config is _MISSING:
+                frappe.conf.pop(PUBLICATION_CONFIG_KEY, None)
+            else:
+                frappe.conf[PUBLICATION_CONFIG_KEY] = previous_config
             for attribute, value in (
                 ("request", previous_request),
                 ("response", previous_response),
