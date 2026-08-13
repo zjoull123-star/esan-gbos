@@ -370,6 +370,13 @@ const syntheticEmailMailbox = {
   config_revision: 1,
 };
 
+const syntheticEmailSlaPolicy = {
+  policy_ref: "SLP-E2E-PRIMARY",
+  revision: 1,
+  first_response_duration_seconds: 3600,
+  effective_at: "2026-08-13T08:00:00+08:00",
+};
+
 const syntheticEmailInboxItem = {
   inbox_item_ref: "INB-E2E-PRIMARY",
   mailbox_label: "销售主入口",
@@ -632,6 +639,26 @@ const harnessFixtures = new Map<string, unknown>([
     }),
   ],
   [`GET ${EMAIL_GATEWAY_ENDPOINTS.ruleList}`, v5Envelope({ rules: [] })],
+  [
+    `GET ${EMAIL_GATEWAY_ENDPOINTS.slaPolicyList}`,
+    v5Envelope({
+      mailbox_ref: syntheticEmailMailbox.mailbox_ref,
+      sla_policies: [syntheticEmailSlaPolicy],
+      next_cursor: null,
+    }),
+  ],
+  [
+    `POST ${EMAIL_GATEWAY_ENDPOINTS.slaPolicyUpsert}`,
+    v5Envelope({
+      sla_policy: {
+        ...syntheticEmailSlaPolicy,
+        mailbox_ref: syntheticEmailMailbox.mailbox_ref,
+        revision: 2,
+        first_response_duration_seconds: 5400,
+        effective_at: "2026-08-15T09:30:00+08:00",
+      },
+    }),
+  ],
   [
     `POST ${EMAIL_GATEWAY_ENDPOINTS.mailboxUpsert}`,
     v5Envelope({
@@ -1245,6 +1272,54 @@ test("真实邮箱地址只进入一次请求并在成功后从页面与浏览�
     ...Object.values(sessionStorage),
   ].join("\n"));
   expect(persisted).not.toContain(rawAddress);
+});
+
+test("SLA 管理只提交冻结字段并且不在浏览器状态暴露邮箱引用", async ({ page }, testInfo) => {
+  test.skip(!isHarness(testInfo), "SLA 策略合成验收仅用于前端 harness");
+  const upsertBodies: string[] = [];
+  await setHarnessSession(page, ["GBOS Admin"]);
+  await page.route(`**${EMAIL_GATEWAY_ENDPOINTS.slaPolicyUpsert}`, async (route) => {
+    upsertBodies.push(route.request().postData() ?? "");
+    await route.fallback();
+  });
+  await page.goto(harnessEntry);
+  await navigateHarnessRoute(page, "/gbos/email-gateway");
+
+  await page.getByRole("button", { name: "配置 SLA" }).click();
+  await expect(page.getByRole("heading", { name: "销售主入口 · 首次响应 SLA" })).toBeVisible();
+  const duration = page.locator("[name='first_response_duration_seconds']");
+  const effectiveAt = page.locator("[name='effective_at']");
+  await expect(duration).toHaveValue("");
+  await expect(effectiveAt).toHaveValue("");
+  await duration.fill("5400");
+  await effectiveAt.fill("2026-08-15T09:30:00+08:00");
+  await page.getByRole("button", { name: "保存新版本" }).click();
+
+  await expect(page.getByText("SLA 新版本已保存。", { exact: true })).toBeVisible();
+  expect(upsertBodies).toHaveLength(1);
+  const body = Object.fromEntries(new URLSearchParams(upsertBodies[0]));
+  expect(body).toMatchObject({
+    mailbox_ref: syntheticEmailMailbox.mailbox_ref,
+    first_response_duration_seconds: "5400",
+    effective_at: "2026-08-15T09:30:00+08:00",
+    expected_revision: "1",
+  });
+  expect(body).not.toHaveProperty("policy_ref");
+  await expect(duration).toHaveValue("");
+  await expect(effectiveAt).toHaveValue("");
+
+  const browserState = await page.evaluate(() => ({
+    url: window.location.href,
+    dom: document.documentElement.innerHTML,
+    persisted: [...Object.values(localStorage), ...Object.values(sessionStorage)].join("\n"),
+  }));
+  expect(browserState.url).not.toContain(syntheticEmailMailbox.mailbox_ref);
+  expect(browserState.dom).not.toContain(syntheticEmailMailbox.mailbox_ref);
+  expect(browserState.persisted).not.toContain(syntheticEmailMailbox.mailbox_ref);
+  expect(browserState.dom).not.toContain(syntheticEmailSlaPolicy.policy_ref);
+  await expect(page.getByRole("button", { name: "批准", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toHaveCount(0);
+  expect(await axeViolations(page)).toEqual([]);
 });
 
 test("全部真实路由在 320、375、768、1024、1440 与 200% 等效视口无溢出", async ({

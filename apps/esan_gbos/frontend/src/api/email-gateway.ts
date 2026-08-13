@@ -38,6 +38,11 @@ import type {
   EmailRoutingRuleListPayload,
   EmailRoutingRulePayload,
   EmailRoutingRuleUpsertCommand,
+  EmailSlaPolicy,
+  EmailSlaPolicyListPayload,
+  EmailSlaPolicyListQuery,
+  EmailSlaPolicyPayload,
+  EmailSlaPolicyUpsertCommand,
   V5SuccessEnvelope,
 } from "./email-gateway-types";
 
@@ -49,6 +54,8 @@ export const EMAIL_GATEWAY_ENDPOINTS = {
   mailboxUpsert: "/api/method/esan_gbos.api.v5.email_admin.upsert_mailbox",
   mailboxSetStatus: "/api/method/esan_gbos.api.v5.email_admin.set_mailbox_status",
   ruleUpsert: "/api/method/esan_gbos.api.v5.email_admin.upsert_rule",
+  slaPolicyList: "/api/method/esan_gbos.api.v5.email_admin.list_sla_policies",
+  slaPolicyUpsert: "/api/method/esan_gbos.api.v5.email_admin.upsert_sla_policy",
   inboxList: "/api/method/esan_gbos.api.v5.email_inbox.list",
   inboxGet: "/api/method/esan_gbos.api.v5.email_inbox.get",
   inboxClaim: "/api/method/esan_gbos.api.v5.email_inbox.claim",
@@ -96,6 +103,9 @@ const opaqueRef = (value: unknown, maximum = 140): value is string =>
   boundedText(value, maximum) && !/[?&#@\s]/u.test(value);
 const commandRef = (value: unknown, maximum = 140): value is string =>
   boundedText(value, maximum) && !/[?&#\s]/u.test(value);
+const safeCursor = (value: unknown): value is string =>
+  boundedText(value, 512) && !/[?&#\s]/u.test(value) &&
+  ![...value].some((character) => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127);
 const unique = (values: readonly string[]) => new Set(values).size === values.length;
 
 const providerKinds = new Set<EmailProviderKind>(["fake", "imap_smtp", "wecom_app_mail"]);
@@ -118,6 +128,27 @@ const teamRefPattern = /^TEM-[0-9A-HJKMNP-TV-Z]{26}$/u;
 const connectorRefPattern = /^OCI-[0-9A-HJKMNP-TV-Z]{26}$/u;
 const credentialRefPattern = /^secretref:v1\/[A-Za-z0-9][A-Za-z0-9._/-]*$/u;
 const mailboxAddressPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/u;
+const rfc3339Pattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/u;
+
+const timezoneAwareRfc3339 = (value: unknown): value is string => {
+  if (typeof value !== "string" || value.length > 64) return false;
+  const match = rfc3339Pattern.exec(value);
+  if (!match) return false;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, offsetHourText, offsetMinuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offsetHour = Number(offsetHourText ?? 0);
+  const offsetMinute = Number(offsetMinuteText ?? 0);
+  const calendar = new Date(Date.UTC(year, month - 1, day));
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 &&
+    calendar.getUTCFullYear() === year && calendar.getUTCMonth() === month - 1 && calendar.getUTCDate() === day &&
+    hour <= 23 && minute <= 59 && second <= 59 && offsetHour <= 23 && offsetMinute <= 59 &&
+    !Number.isNaN(Date.parse(value));
+};
 
 const invalidResponse = (requestId?: string): never => {
   throw new BffError("invalid_response", { requestId });
@@ -195,6 +226,19 @@ const parseRule = (value: unknown, requestId?: string): EmailRoutingRule => {
     !nonNegativeInteger(value.priority) || !nonNegativeInteger(value.revision) || typeof value.enabled !== "boolean"
   ) invalidResponse(requestId);
   return value as unknown as EmailRoutingRule;
+};
+
+const parseSlaPolicy = (value: unknown, requestId?: string): EmailSlaPolicy => {
+  if (
+    !isRecord(value) || !closedKeys(value, [
+      "policy_ref", "revision", "first_response_duration_seconds", "effective_at",
+    ]) || !opaqueRef(value.policy_ref) || !nonNegativeInteger(value.revision) ||
+    !Number.isInteger(value.first_response_duration_seconds) ||
+    Number(value.first_response_duration_seconds) < 60 ||
+    Number(value.first_response_duration_seconds) > 604_800 ||
+    !timezoneAwareRfc3339(value.effective_at)
+  ) invalidResponse(requestId);
+  return value as unknown as EmailSlaPolicy;
 };
 
 const parseInboxCommand = (value: unknown, requestId?: string): EmailInboxCommandResult => {
@@ -393,6 +437,49 @@ export const createEmailGatewayClient = (dependencies: EmailGatewayDependencies 
       const result = parseSingle(response, "rule", parseRule) as V5SuccessEnvelope<EmailRoutingRulePayload>;
       if (result.data.rule.revision <= command.expected_revision) invalidResponse(response.meta.request_id);
       return result;
+    },
+    listSlaPolicies: async (query: EmailSlaPolicyListQuery) => {
+      if (!isRecord(query) || !closedKeys(query, ["mailboxRef"], ["cursor", "pageSize"]) ||
+        !opaqueRef(query.mailboxRef) ||
+        (query.cursor !== undefined && !safeCursor(query.cursor)) ||
+        (query.pageSize !== undefined && (!Number.isInteger(query.pageSize) || Number(query.pageSize) < 1 || Number(query.pageSize) > 50))) validationError();
+      const response = await get<unknown>(addQuery(EMAIL_GATEWAY_ENDPOINTS.slaPolicyList, {
+        mailbox_ref: query.mailboxRef as string,
+        cursor: query.cursor as string | undefined,
+        page_size: query.pageSize as number | undefined,
+      }));
+      const data = isRecord(response.data) ? response.data : invalidResponse(response.meta.request_id);
+      if (!closedKeys(data, ["mailbox_ref", "sla_policies", "next_cursor"]) ||
+        data.mailbox_ref !== query.mailboxRef || !opaqueRef(data.mailbox_ref) ||
+        !(data.next_cursor === null || safeCursor(data.next_cursor))) invalidResponse(response.meta.request_id);
+      const rows = Array.isArray(data.sla_policies) ? data.sla_policies : invalidResponse(response.meta.request_id);
+      const slaPolicies = rows.map((item) => parseSlaPolicy(item, response.meta.request_id));
+      if (!unique(slaPolicies.map((item) => item.policy_ref)) || !unique(slaPolicies.map((item) => String(item.revision)))) invalidResponse(response.meta.request_id);
+      return { ...response, data: {
+        mailbox_ref: data.mailbox_ref,
+        sla_policies: slaPolicies,
+        next_cursor: data.next_cursor,
+      } } as V5SuccessEnvelope<EmailSlaPolicyListPayload>;
+    },
+    upsertSlaPolicy: async (command: EmailSlaPolicyUpsertCommand) => {
+      if (!isRecord(command) || !closedKeys(command, [
+        "mailbox_ref", "first_response_duration_seconds", "effective_at", "expected_revision", "idempotency_key",
+      ])) validationError();
+      validateRevision(command);
+      if (!opaqueRef(command.mailbox_ref) || !Number.isInteger(command.first_response_duration_seconds) ||
+        command.first_response_duration_seconds < 60 || command.first_response_duration_seconds > 604_800 ||
+        !timezoneAwareRfc3339(command.effective_at)) validationError();
+      const response = await post<unknown>(EMAIL_GATEWAY_ENDPOINTS.slaPolicyUpsert, command as unknown as Record<string, unknown>);
+      const data = isRecord(response.data) ? response.data : invalidResponse(response.meta.request_id);
+      if (!closedKeys(data, ["sla_policy"])) invalidResponse(response.meta.request_id);
+      const policyRecord = isRecord(data.sla_policy) ? data.sla_policy : invalidResponse(response.meta.request_id);
+      if (!closedKeys(policyRecord, [
+          "policy_ref", "mailbox_ref", "revision", "first_response_duration_seconds", "effective_at",
+        ]) || policyRecord.mailbox_ref !== command.mailbox_ref || !opaqueRef(policyRecord.mailbox_ref)) invalidResponse(response.meta.request_id);
+      const { mailbox_ref: mailboxRef, ...policyValue } = policyRecord;
+      const slaPolicy = { ...parseSlaPolicy(policyValue, response.meta.request_id), mailbox_ref: mailboxRef };
+      if (slaPolicy.revision <= command.expected_revision) invalidResponse(response.meta.request_id);
+      return { ...response, data: { sla_policy: slaPolicy } } as V5SuccessEnvelope<EmailSlaPolicyPayload>;
     },
     listConnectorHealth: async () => {
       const response = await get<unknown>(EMAIL_GATEWAY_ENDPOINTS.connectorHealth);

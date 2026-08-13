@@ -130,7 +130,6 @@
               v-for="mailbox in mailboxes"
               :key="mailbox.mailbox_ref"
               class="email-mailbox-card"
-              :data-mailbox="mailbox.mailbox_ref"
               :data-mailbox-mode="mailbox.business_mode"
             >
               <div class="email-mailbox-card__heading">
@@ -148,12 +147,22 @@
                 <div><dt>收件</dt><dd>{{ mailbox.inbound_enabled ? "允许" : "关闭" }}</dd></div>
                 <div><dt>外发</dt><dd>关闭</dd></div>
                 <div><dt>配置版本</dt><dd>{{ mailbox.config_revision }}</dd></div>
+                <div><dt>SLA</dt><dd>{{ mailboxSlaStatus(mailbox) }}</dd></div>
               </dl>
               <div class="email-mailbox-actions" aria-label="邮箱安全状态操作">
+                <GbosButton
+                  data-sla-select
+                  intent="secondary"
+                  type="button"
+                  @click="selectSlaMailbox(mailbox)"
+                >
+                  配置 SLA
+                </GbosButton>
                 <GbosButton
                   v-if="mailbox.status === 'draft' || mailbox.status === 'paused'"
                   data-status-action="enable"
                   type="button"
+                  :disabled="!hasEffectiveSla(mailbox)"
                   @click="requestStatus(mailbox, 'enable')"
                 >
                   启用
@@ -180,6 +189,99 @@
             </li>
           </ul>
         </ResourceBoundary>
+
+        <section
+          v-if="selectedSlaMailbox"
+          data-sla-panel
+          class="email-sla-section"
+          aria-labelledby="email-sla-title"
+        >
+          <div class="email-sla-section__heading">
+            <div>
+              <h2 id="email-sla-title">
+                {{ selectedSlaMailbox.display_label }} · 首次响应 SLA
+              </h2>
+              <p>页面时间比较仅用于操作便利，服务端仍为最终权威；启用时仍须通过服务端治理校验。</p>
+            </div>
+            <GbosButton data-sla-reload intent="secondary" type="button" @click="loadSlaPolicies(selectedSlaMailbox)">
+              重新加载
+            </GbosButton>
+          </div>
+          <p v-if="slaLoadState === 'loading'" role="status">
+            正在读取 SLA 历史…
+          </p>
+          <p v-else-if="slaLoadState === 'error'" class="email-gateway-error" role="alert">
+            {{ slaLoadError }}
+          </p>
+          <template v-else-if="slaLoadState === 'ready'">
+            <p v-if="!latestSlaPolicy" class="email-sla-missing" role="status">
+              SLA 未配置。请明确设置响应时长和带时区的生效时间后，再启用邮箱。
+            </p>
+            <p v-else-if="latestSlaPending" class="email-sla-pending" role="status">
+              最新策略待生效；在生效时间到达前，页面保持启用操作不可用。
+            </p>
+            <p v-else class="email-sla-effective" role="status">
+              最新策略已按页面时钟生效；服务端仍会独立校验。
+            </p>
+            <form data-sla-form class="email-sla-form" autocomplete="off" @submit.prevent="saveSlaPolicy">
+              <label>
+                首次响应时长（秒）
+                <input
+                  v-model="slaDuration"
+                  name="first_response_duration_seconds"
+                  type="number"
+                  min="60"
+                  max="604800"
+                  step="1"
+                  required
+                  inputmode="numeric"
+                >
+              </label>
+              <label>
+                生效时间（RFC3339，须带时区）
+                <input
+                  v-model.trim="slaEffectiveAt"
+                  name="effective_at"
+                  type="text"
+                  maxlength="64"
+                  placeholder="2026-08-15T09:30:00+08:00"
+                  required
+                  spellcheck="false"
+                  autocomplete="off"
+                >
+              </label>
+              <GbosButton type="submit" :disabled="slaSaving">
+                {{ slaSaving ? "保存中…" : "保存新版本" }}
+              </GbosButton>
+            </form>
+            <div class="email-sla-history">
+              <h3>不可变版本历史</h3>
+              <ul v-if="sortedSlaPolicies.length" aria-label="SLA 不可变版本历史">
+                <li
+                  v-for="policy in sortedSlaPolicies"
+                  :key="policy.policy_ref"
+                  :data-sla-revision="policy.revision"
+                >
+                  <strong>版本 {{ policy.revision }}</strong>
+                  <span>首次响应 {{ policy.first_response_duration_seconds }} 秒</span>
+                  <time :datetime="policy.effective_at">生效时间 {{ policy.effective_at }}</time>
+                </li>
+              </ul>
+              <p v-else>
+                暂无历史版本。
+              </p>
+              <GbosButton
+                v-if="slaNextCursor"
+                data-sla-next-page
+                intent="secondary"
+                type="button"
+                @click="loadSlaPolicies(selectedSlaMailbox, slaNextCursor)"
+              >
+                加载更早版本
+              </GbosButton>
+            </div>
+          </template>
+        </section>
 
         <section class="email-health-section" aria-labelledby="email-health-title">
           <h2 id="email-health-title">
@@ -291,7 +393,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref } from "vue";
+import { computed, nextTick, onUnmounted, reactive, ref } from "vue";
 
 import { BffError } from "@/api/bff";
 import { useEmailGatewayClient } from "@/api/email-gateway";
@@ -305,6 +407,7 @@ import type {
   EmailMailboxStatus,
   EmailProviderKind,
   EmailRoutingRule,
+  EmailSlaPolicy,
 } from "@/api/email-gateway-types";
 import ResourceBoundary from "@/components/feedback/ResourceBoundary.vue";
 import OperationalListTemplate from "@/components/layout/OperationalListTemplate.vue";
@@ -325,6 +428,16 @@ const commandError = ref("");
 const statusTrigger = ref<HTMLElement>();
 const auditEvents = ref<{ id: string; label: string }[]>([]);
 const ruleReplacements = ref(new Map<string, EmailRoutingRule>());
+const selectedSlaMailbox = ref<EmailMailbox>();
+const slaPolicies = ref<EmailSlaPolicy[]>([]);
+const slaNextCursor = ref<string | null>(null);
+const slaLoadState = ref<"idle" | "loading" | "ready" | "error">("idle");
+const slaLoadError = ref("");
+const slaDuration = ref("");
+const slaEffectiveAt = ref("");
+const slaSaving = ref(false);
+const clientClock = ref(Date.now());
+const clockInterval = globalThis.setInterval(() => { clientClock.value = Date.now(); }, 30_000);
 const ruleForm = reactive({ teamRef: "", mailboxRef: "", ownerUserRef: "", priority: 10, enabled: true });
 const createForm = reactive<{
   canonicalMailboxAddress: string;
@@ -373,6 +486,11 @@ const mailboxes = computed(() =>
 );
 const health = computed(() => healthResource.data.value?.connector_health ?? []);
 const rules = computed(() => (ruleResource.data.value?.rules ?? []).map((rule) => ruleReplacements.value.get(rule.rule_ref) ?? rule));
+const sortedSlaPolicies = computed(() => [...slaPolicies.value].sort((left, right) => right.revision - left.revision));
+const latestSlaPolicy = computed(() => sortedSlaPolicies.value[0]);
+const latestSlaPending = computed(() => Boolean(
+  latestSlaPolicy.value && Date.parse(latestSlaPolicy.value.effective_at) > clientClock.value,
+));
 const mailboxBoundaryMessage = computed(() =>
   mailboxResource.state.value === "ready" && mailboxes.value.length === 0
     ? "当前没有已配置邮箱。"
@@ -407,10 +525,75 @@ const freshnessLabel = (value: EmailFreshnessState) =>
 const actionLabel = (value: EmailMailboxAction) =>
   ({ enable: "启用", pause: "暂停", revoke: "撤销" })[value];
 const mailboxLabel = (reference: string) => mailboxes.value.find((mailbox) => mailbox.mailbox_ref === reference)?.display_label ?? "受控邮箱";
+const clearSlaInputs = () => {
+  slaDuration.value = "";
+  slaEffectiveAt.value = "";
+};
+const clearProtectedSlaState = () => {
+  selectedSlaMailbox.value = undefined;
+  slaPolicies.value = [];
+  slaNextCursor.value = null;
+  slaLoadState.value = "idle";
+  slaLoadError.value = "";
+  clearSlaInputs();
+};
+const isSelectedSlaMailbox = (mailbox: EmailMailbox) =>
+  selectedSlaMailbox.value?.mailbox_ref === mailbox.mailbox_ref;
+const hasEffectiveSla = (mailbox: EmailMailbox) =>
+  isSelectedSlaMailbox(mailbox) && slaLoadState.value === "ready" &&
+  Boolean(latestSlaPolicy.value) && !latestSlaPending.value;
+const mailboxSlaStatus = (mailbox: EmailMailbox) => {
+  if (!isSelectedSlaMailbox(mailbox) || slaLoadState.value !== "ready" || !latestSlaPolicy.value) {
+    return "SLA 未配置 · 请先配置";
+  }
+  return latestSlaPending.value ? "待生效" : "已生效";
+};
+const loadSlaPolicies = async (mailbox: EmailMailbox, cursor?: string) => {
+  slaLoadState.value = "loading";
+  slaLoadError.value = "";
+  try {
+    const response = await client.listSlaPolicies({ mailboxRef: mailbox.mailbox_ref, cursor, pageSize: 50 });
+    if (selectedSlaMailbox.value?.mailbox_ref !== mailbox.mailbox_ref) return;
+    slaPolicies.value = cursor === undefined
+      ? response.data.sla_policies
+      : [
+          ...slaPolicies.value,
+          ...response.data.sla_policies.filter((candidate) =>
+            !slaPolicies.value.some((existing) => existing.revision === candidate.revision),
+          ),
+        ];
+    slaNextCursor.value = response.data.next_cursor;
+    slaLoadState.value = "ready";
+  } catch (error) {
+    if (error instanceof BffError && error.status === 403) {
+      clearProtectedSlaState();
+      commandError.value = "当前角色无权读取 SLA 配置，受保护状态已清除。";
+      return;
+    }
+    if (selectedSlaMailbox.value?.mailbox_ref !== mailbox.mailbox_ref) return;
+    slaPolicies.value = [];
+    slaNextCursor.value = null;
+    slaLoadState.value = "error";
+    slaLoadError.value = error instanceof BffError ? error.displayMessage : "SLA 历史读取失败，请稍后重试。";
+  }
+};
+const selectSlaMailbox = (mailbox: EmailMailbox) => {
+  selectedSlaMailbox.value = mailbox;
+  slaPolicies.value = [];
+  slaNextCursor.value = null;
+  clearSlaInputs();
+  notice.value = "";
+  commandError.value = "";
+  void loadSlaPolicies(mailbox);
+};
 const addAudit = (label: string) => {
   auditEvents.value = [{ id: `${Date.now()}-${auditEvents.value.length}`, label }, ...auditEvents.value].slice(0, 8);
 };
 const requestStatus = (mailbox: EmailMailbox, action: EmailMailboxAction) => {
+  if (action === "enable" && !hasEffectiveSla(mailbox)) {
+    commandError.value = "SLA 未配置或尚未生效，请先配置并等待生效；页面检查不替代服务端校验。";
+    return;
+  }
   statusTrigger.value = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
   pendingStatus.value = { mailbox, action };
   notice.value = "";
@@ -444,6 +627,44 @@ const confirmStatus = async () => {
     if (error instanceof BffError && error.status === 409) await mailboxResource.load();
   } finally {
     await closeStatusDialog();
+  }
+};
+const saveSlaPolicy = async () => {
+  const mailbox = selectedSlaMailbox.value;
+  if (!mailbox || slaSaving.value) return;
+  notice.value = "";
+  commandError.value = "";
+  const duration = Number(slaDuration.value);
+  const expectedRevision = latestSlaPolicy.value?.revision ?? 0;
+  slaSaving.value = true;
+  try {
+    const response = await client.upsertSlaPolicy({
+      mailbox_ref: mailbox.mailbox_ref,
+      first_response_duration_seconds: duration,
+      effective_at: slaEffectiveAt.value,
+      expected_revision: expectedRevision,
+      idempotency_key: `sla-policy-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    });
+    slaPolicies.value = [
+      response.data.sla_policy,
+      ...slaPolicies.value.filter((policy) => policy.revision !== response.data.sla_policy.revision),
+    ];
+    clearSlaInputs();
+    notice.value = "SLA 新版本已保存。";
+    addAudit(`邮箱“${mailbox.display_label}”的 SLA 版本 ${response.data.sla_policy.revision} 已保存。`);
+  } catch (error) {
+    if (error instanceof BffError && error.status === 403) {
+      clearProtectedSlaState();
+      commandError.value = "当前角色无权修改 SLA 配置，受保护状态已清除。";
+    } else if (error instanceof BffError && error.status === 409) {
+      clearSlaInputs();
+      await Promise.all([loadSlaPolicies(mailbox), mailboxResource.load()]);
+      commandError.value = "SLA 数据已被他人更新，请核对最新版本后重试。";
+    } else {
+      commandError.value = error instanceof BffError ? error.displayMessage : "SLA 未保存，请检查内容后重试。";
+    }
+  } finally {
+    slaSaving.value = false;
   }
 };
 const createMailbox = async () => {
@@ -517,7 +738,12 @@ const refreshAll = () => {
   void mailboxResource.load();
   void healthResource.load();
   void ruleResource.load();
+  if (selectedSlaMailbox.value) void loadSlaPolicies(selectedSlaMailbox.value);
 };
+onUnmounted(() => {
+  globalThis.clearInterval(clockInterval);
+  clearSlaInputs();
+});
 </script>
 
 <style scoped>
@@ -528,6 +754,7 @@ const refreshAll = () => {
 .email-health-grid,
 .email-rules-section,
 .email-rule-grid,
+.email-sla-section,
 .email-audit-section {
   min-width: 0;
 }
@@ -668,6 +895,7 @@ const refreshAll = () => {
 
 .email-health-section,
 .email-rules-section,
+.email-sla-section,
 .email-audit-section {
   margin-top: 20px;
 }
@@ -698,6 +926,27 @@ const refreshAll = () => {
 .email-rule-form label { display: grid; min-width: 0; gap: 6px; color: var(--gbos-muted); font-size: 13px; font-weight: 700; }
 .email-rule-form input { min-width: 0; min-height: 40px; padding: 8px 10px; border: 1px solid var(--gbos-border); border-radius: var(--gbos-radius-control); }
 .email-rule-form__check { grid-template-columns: auto 1fr; align-items: center; }
+.email-sla-section {
+  padding: 16px;
+  border: 1px solid var(--gbos-border);
+  border-radius: var(--gbos-radius-card);
+  background: var(--gbos-surface);
+}
+.email-sla-section__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.email-sla-section__heading h2,
+.email-sla-section__heading p,
+.email-sla-history h3 { margin: 0; }
+.email-sla-section__heading p { margin-top: 6px; color: var(--gbos-muted); }
+.email-sla-missing { color: var(--gbos-danger-text); }
+.email-sla-pending { color: var(--gbos-warning-text, var(--gbos-muted)); }
+.email-sla-effective { color: var(--gbos-success-text); }
+.email-sla-form { display: grid; grid-template-columns: minmax(180px, 0.6fr) minmax(min(100%, 320px), 1fr) auto; gap: 12px; align-items: end; margin-top: 12px; }
+.email-sla-form label { display: grid; min-width: 0; gap: 6px; color: var(--gbos-muted); font-size: 13px; font-weight: 700; }
+.email-sla-form input { width: 100%; min-width: 0; min-height: 40px; padding: 8px 10px; border: 1px solid var(--gbos-border); border-radius: var(--gbos-radius-control); }
+.email-sla-history { margin-top: 18px; }
+.email-sla-history ul { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+.email-sla-history li { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; overflow-wrap: anywhere; padding: 10px 12px; border: 1px solid var(--gbos-border); border-radius: var(--gbos-radius-control); }
+.email-sla-history > .gbos-button { margin-top: 12px; }
 .email-audit-section ul { margin: 0; padding-inline-start: 20px; }
 
 .email-status-confirm {
@@ -741,6 +990,9 @@ const refreshAll = () => {
   }
 
   .email-rule-form { grid-template-columns: minmax(0, 1fr); }
+  .email-sla-form,
+  .email-sla-history li { grid-template-columns: minmax(0, 1fr); }
+  .email-sla-section__heading { flex-direction: column; }
 
   .email-mailbox-card__heading,
   .email-mailbox-card dl div {

@@ -50,8 +50,15 @@ const inboxItem = {
   revision: 1,
 };
 
+const slaPolicy = {
+  policy_ref: "SLP-01",
+  revision: 2,
+  first_response_duration_seconds: 3600,
+  effective_at: "2026-08-13T08:00:00+08:00",
+};
+
 describe("Email Gateway v5 typed client", () => {
-  it("uses exactly the frozen 17-operation surface and no-store requests", async () => {
+  it("uses exactly the frozen 19-operation surface and no-store requests", async () => {
     expect(EMAIL_GATEWAY_ENDPOINTS).toEqual({
       mailboxList: "/api/method/esan_gbos.api.v5.email_admin.list_mailboxes",
       mailboxGet: "/api/method/esan_gbos.api.v5.email_admin.get_mailbox",
@@ -60,6 +67,8 @@ describe("Email Gateway v5 typed client", () => {
       mailboxUpsert: "/api/method/esan_gbos.api.v5.email_admin.upsert_mailbox",
       mailboxSetStatus: "/api/method/esan_gbos.api.v5.email_admin.set_mailbox_status",
       ruleUpsert: "/api/method/esan_gbos.api.v5.email_admin.upsert_rule",
+      slaPolicyList: "/api/method/esan_gbos.api.v5.email_admin.list_sla_policies",
+      slaPolicyUpsert: "/api/method/esan_gbos.api.v5.email_admin.upsert_sla_policy",
       inboxList: "/api/method/esan_gbos.api.v5.email_inbox.list",
       inboxGet: "/api/method/esan_gbos.api.v5.email_inbox.get",
       inboxClaim: "/api/method/esan_gbos.api.v5.email_inbox.claim",
@@ -87,6 +96,112 @@ describe("Email Gateway v5 typed client", () => {
     for (const [, init] of fetcher.mock.calls) {
       expect(init).toMatchObject({ method: "GET", cache: "no-store", credentials: "same-origin" });
       expect(init?.headers).toMatchObject({ "Cache-Control": "no-store", Pragma: "no-cache" });
+    }
+  });
+
+  it("lists and upserts governed SLA policy history with exact request shapes", async () => {
+    const fetcher = vi.fn<EmailGatewayFetcher>().mockImplementation((input) => {
+      const path = new URL(String(input), "https://gbos.invalid").pathname;
+      if (path === EMAIL_GATEWAY_ENDPOINTS.slaPolicyList) {
+        return Promise.resolve(okV5({
+          mailbox_ref: "MBX-01",
+          sla_policies: [slaPolicy],
+          next_cursor: null,
+        }));
+      }
+      return Promise.resolve(okV5({ sla_policy: { ...slaPolicy, mailbox_ref: "MBX-01", revision: 3 } }));
+    });
+    const client = createEmailGatewayClient({
+      fetcher,
+      isOnline: () => true,
+      getCsrfToken: () => "csrf-v5",
+    });
+
+    await client.listSlaPolicies({ mailboxRef: "MBX-01", cursor: "cursor-02", pageSize: 20 });
+    await client.upsertSlaPolicy({
+      mailbox_ref: "MBX-01",
+      first_response_duration_seconds: 5400,
+      effective_at: "2026-08-15T09:30:00+08:00",
+      expected_revision: 2,
+      idempotency_key: "sla-policy-0002",
+    });
+
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain(
+      `${EMAIL_GATEWAY_ENDPOINTS.slaPolicyList}?mailbox_ref=MBX-01&cursor=cursor-02&page_size=20`,
+    );
+    expect(Object.fromEntries(new URLSearchParams(String(fetcher.mock.calls[1]?.[1]?.body)))).toEqual({
+      mailbox_ref: "MBX-01",
+      first_response_duration_seconds: "5400",
+      effective_at: "2026-08-15T09:30:00+08:00",
+      expected_revision: "2",
+      idempotency_key: "sla-policy-0002",
+    });
+  });
+
+  it("rejects malformed SLA policy data, mailbox mismatch, and unsafe cursors", async () => {
+    const unsafePayloads = [
+      { mailbox_ref: "MBX-02", sla_policies: [slaPolicy], next_cursor: null },
+      { mailbox_ref: "MBX-01", sla_policies: [{ ...slaPolicy, extra: true }], next_cursor: null },
+      { mailbox_ref: "MBX-01", sla_policies: [{ ...slaPolicy, revision: true }], next_cursor: null },
+      { mailbox_ref: "MBX-01", sla_policies: [{ ...slaPolicy, first_response_duration_seconds: true }], next_cursor: null },
+      { mailbox_ref: "MBX-01", sla_policies: [{ ...slaPolicy, first_response_duration_seconds: 59 }], next_cursor: null },
+      { mailbox_ref: "MBX-01", sla_policies: [{ ...slaPolicy, first_response_duration_seconds: 604801 }], next_cursor: null },
+      { mailbox_ref: "MBX-01", sla_policies: [{ ...slaPolicy, effective_at: "2026-08-15T09:30:00" }], next_cursor: null },
+      { mailbox_ref: "MBX-01", sla_policies: [{ ...slaPolicy, effective_at: "2026-02-30T09:30:00Z" }], next_cursor: null },
+      { mailbox_ref: "MBX-01", sla_policies: [slaPolicy], next_cursor: "cursor?mailbox_ref=MBX-RAW" },
+    ];
+    for (const data of unsafePayloads) {
+      const client = createEmailGatewayClient({
+        fetcher: vi.fn<EmailGatewayFetcher>().mockResolvedValue(okV5(data)),
+        isOnline: () => true,
+      });
+      await expect(client.listSlaPolicies({ mailboxRef: "MBX-01" })).rejects.toMatchObject({ code: "invalid_response" });
+    }
+
+    const fetcher = vi.fn<EmailGatewayFetcher>();
+    const client = createEmailGatewayClient({ fetcher, isOnline: () => true, getCsrfToken: () => "csrf-v5" });
+    await expect(client.listSlaPolicies({ mailboxRef: "MBX-01", cursor: "unsafe cursor" })).rejects.toMatchObject({ code: "validation_error" });
+    await expect(client.listSlaPolicies({ mailboxRef: "MBX-01", invented: true } as never)).rejects.toMatchObject({ code: "validation_error" });
+    for (const command of [
+      { first_response_duration_seconds: true, effective_at: "2026-08-15T09:30:00+08:00", expected_revision: 0 },
+      { first_response_duration_seconds: 60, effective_at: "2026-08-15T09:30:00", expected_revision: 0 },
+      { first_response_duration_seconds: 60, effective_at: "2026-08-15T09:30:00+08:00", expected_revision: true },
+    ]) {
+      await expect(client.upsertSlaPolicy({
+        mailbox_ref: "MBX-01",
+        idempotency_key: "sla-policy-invalid",
+        ...command,
+      } as never)).rejects.toMatchObject({ code: "validation_error" });
+    }
+    await expect(client.upsertSlaPolicy({
+      mailbox_ref: "MBX-01",
+      first_response_duration_seconds: 60,
+      effective_at: "2026-08-15T09:30:00+08:00",
+      expected_revision: 0,
+      idempotency_key: "sla-policy-invalid",
+      invented: true,
+    } as never)).rejects.toMatchObject({ code: "validation_error" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects an SLA upsert response that mismatches the mailbox or does not advance revision", async () => {
+    for (const returned of [
+      { ...slaPolicy, mailbox_ref: "MBX-02", revision: 3 },
+      { ...slaPolicy, mailbox_ref: "MBX-01", revision: 2 },
+      { ...slaPolicy, mailbox_ref: "MBX-01", revision: 3, extra: "invented" },
+    ]) {
+      const client = createEmailGatewayClient({
+        fetcher: vi.fn<EmailGatewayFetcher>().mockResolvedValue(okV5({ sla_policy: returned })),
+        isOnline: () => true,
+        getCsrfToken: () => "csrf-v5",
+      });
+      await expect(client.upsertSlaPolicy({
+        mailbox_ref: "MBX-01",
+        first_response_duration_seconds: 5400,
+        effective_at: "2026-08-15T09:30:00+08:00",
+        expected_revision: 2,
+        idempotency_key: "sla-policy-0002",
+      })).rejects.toMatchObject({ code: "invalid_response" });
     }
   });
 
@@ -605,6 +720,154 @@ describe("Email inbox operator views", () => {
 });
 
 describe("Email Gateway admin Phase 1 view", () => {
+  it("keeps SLA inputs blank, renders immutable revision-descending history, and submits the highest revision", async () => {
+    const listSlaPolicies = vi.fn().mockResolvedValue({
+      data: { mailbox_ref: "MBX-01", sla_policies: [
+        { ...slaPolicy, revision: 1, first_response_duration_seconds: 7200 },
+        slaPolicy,
+      ], next_cursor: null },
+    });
+    const upsertSlaPolicy = vi.fn().mockResolvedValue({
+      data: { sla_policy: { ...slaPolicy, mailbox_ref: "MBX-01", revision: 3, first_response_duration_seconds: 5400 } },
+    });
+    const client = {
+      listMailboxes: vi.fn().mockResolvedValue({ data: { mailboxes: [mailbox], next_cursor: null } }),
+      listConnectorHealth: vi.fn().mockResolvedValue({ data: { connector_health: [] } }),
+      listRules: vi.fn().mockResolvedValue({ data: { rules: [] } }),
+      listSlaPolicies,
+      upsertSlaPolicy,
+    };
+    const wrapper = mount(EmailGatewayAdminView, {
+      global: { provide: { [EMAIL_GATEWAY_CLIENT_KEY as symbol]: client } },
+    });
+    await flushPromises();
+    await wrapper.get("[data-sla-select]").trigger("click");
+    await flushPromises();
+
+    const duration = wrapper.get("[name='first_response_duration_seconds']");
+    const effectiveAt = wrapper.get("[name='effective_at']");
+    expect(duration.element).toHaveProperty("value", "");
+    expect(effectiveAt.element).toHaveProperty("value", "");
+    expect(wrapper.findAll("[data-sla-revision]").map((row) => row.attributes("data-sla-revision"))).toEqual(["2", "1"]);
+
+    await duration.setValue("5400");
+    await effectiveAt.setValue("2026-08-15T09:30:00+08:00");
+    await wrapper.get("[data-sla-form]").trigger("submit");
+    await flushPromises();
+
+    expect(upsertSlaPolicy).toHaveBeenCalledWith(expect.objectContaining({
+      mailbox_ref: "MBX-01",
+      first_response_duration_seconds: 5400,
+      effective_at: "2026-08-15T09:30:00+08:00",
+      expected_revision: 2,
+    }));
+    expect(upsertSlaPolicy.mock.calls[0]?.[0]).not.toHaveProperty("policy_ref");
+    expect(duration.element).toHaveProperty("value", "");
+    expect(effectiveAt.element).toHaveProperty("value", "");
+    expect(wrapper.html()).not.toContain("MBX-01");
+    wrapper.unmount();
+  });
+
+  it("loads older immutable SLA versions without exposing the opaque cursor", async () => {
+    const listSlaPolicies = vi.fn()
+      .mockResolvedValueOnce({
+        data: { mailbox_ref: "MBX-01", sla_policies: [slaPolicy], next_cursor: "opaque-sla-cursor-02" },
+      })
+      .mockResolvedValueOnce({
+        data: { mailbox_ref: "MBX-01", sla_policies: [{ ...slaPolicy, policy_ref: "SLP-00", revision: 1 }], next_cursor: null },
+      });
+    const client = {
+      listMailboxes: vi.fn().mockResolvedValue({ data: { mailboxes: [mailbox], next_cursor: null } }),
+      listConnectorHealth: vi.fn().mockResolvedValue({ data: { connector_health: [] } }),
+      listRules: vi.fn().mockResolvedValue({ data: { rules: [] } }),
+      listSlaPolicies,
+    };
+    const wrapper = mount(EmailGatewayAdminView, {
+      global: { provide: { [EMAIL_GATEWAY_CLIENT_KEY as symbol]: client } },
+    });
+    await flushPromises();
+    await wrapper.get("[data-sla-select]").trigger("click");
+    await flushPromises();
+    await wrapper.get("[data-sla-next-page]").trigger("click");
+    await flushPromises();
+
+    expect(listSlaPolicies).toHaveBeenNthCalledWith(2, {
+      mailboxRef: "MBX-01",
+      cursor: "opaque-sla-cursor-02",
+      pageSize: 50,
+    });
+    expect(wrapper.findAll("[data-sla-revision]").map((row) => row.attributes("data-sla-revision"))).toEqual(["2", "1"]);
+    expect(wrapper.html()).not.toContain("opaque-sla-cursor-02");
+    expect(wrapper.find("[data-sla-next-page]").exists()).toBe(false);
+  });
+
+  it("fails enable closed until a loaded SLA is effective and labels future policy as pending", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-14T00:00:00Z"));
+    const paused = { ...mailbox, status: "paused" as const };
+    const listSlaPolicies = vi.fn().mockResolvedValue({
+      data: { mailbox_ref: "MBX-01", sla_policies: [{
+        ...slaPolicy,
+        effective_at: "2026-08-15T09:30:00+08:00",
+      }], next_cursor: null },
+    });
+    const client = {
+      listMailboxes: vi.fn().mockResolvedValue({ data: { mailboxes: [paused], next_cursor: null } }),
+      listConnectorHealth: vi.fn().mockResolvedValue({ data: { connector_health: [] } }),
+      listRules: vi.fn().mockResolvedValue({ data: { rules: [] } }),
+      listSlaPolicies,
+    };
+    const wrapper = mount(EmailGatewayAdminView, {
+      global: { provide: { [EMAIL_GATEWAY_CLIENT_KEY as symbol]: client } },
+    });
+    await flushPromises();
+
+    const enable = wrapper.get("[data-status-action='enable']");
+    expect(enable.attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain("SLA 未配置");
+    await wrapper.get("[data-sla-select]").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("待生效");
+    expect(enable.attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain("服务端仍为最终权威");
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("reloads SLA and mailbox once on 409 and clears protected SLA state on 403", async () => {
+    const listSlaPolicies = vi.fn()
+      .mockResolvedValueOnce({ data: { mailbox_ref: "MBX-01", sla_policies: [slaPolicy], next_cursor: null } })
+      .mockResolvedValueOnce({ data: { mailbox_ref: "MBX-01", sla_policies: [slaPolicy], next_cursor: null } })
+      .mockRejectedValueOnce(new BffError("permission_denied", { status: 403 }));
+    const listMailboxes = vi.fn().mockResolvedValue({ data: { mailboxes: [mailbox], next_cursor: null } });
+    const upsertSlaPolicy = vi.fn().mockRejectedValue(new BffError("revision_conflict", { status: 409 }));
+    const client = {
+      listMailboxes,
+      listConnectorHealth: vi.fn().mockResolvedValue({ data: { connector_health: [] } }),
+      listRules: vi.fn().mockResolvedValue({ data: { rules: [] } }),
+      listSlaPolicies,
+      upsertSlaPolicy,
+    };
+    const wrapper = mount(EmailGatewayAdminView, {
+      global: { provide: { [EMAIL_GATEWAY_CLIENT_KEY as symbol]: client } },
+    });
+    await flushPromises();
+    await wrapper.get("[data-sla-select]").trigger("click");
+    await flushPromises();
+    await wrapper.get("[name='first_response_duration_seconds']").setValue("5400");
+    await wrapper.get("[name='effective_at']").setValue("2026-08-15T09:30:00+08:00");
+    await wrapper.get("[data-sla-form]").trigger("submit");
+    await flushPromises();
+
+    expect(listSlaPolicies).toHaveBeenCalledTimes(2);
+    expect(listMailboxes).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain("SLA 数据已被他人更新");
+    await wrapper.get("[data-sla-reload]").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-sla-panel]").exists()).toBe(false);
+    expect(wrapper.html()).not.toContain("SLP-01");
+  });
+
   it("creates another primary mailbox with outbound locked off", async () => {
     const rawAddress = "mailbox-raw-sentinel@example.invalid";
     const created = { ...mailbox, mailbox_ref: "MBX-03", config_revision: 1 };
@@ -730,7 +993,11 @@ describe("Email Gateway admin Phase 1 view", () => {
     expect(wrapper.findAll("[data-mailbox-mode='primary']")).toHaveLength(2);
     expect(wrapper.text()).toContain("当前接口未提供连接器游标");
     expect(wrapper.text()).toContain("当前公开接口未提供服务端审计列表");
-    await wrapper.get("[data-mailbox='MBX-01'] [data-status-action='pause']").trigger("click");
+    const gulfMailboxCard = wrapper.findAll(".email-mailbox-card").find((card) =>
+      card.text().includes("海湾销售主入口"),
+    );
+    expect(gulfMailboxCard).toBeDefined();
+    await gulfMailboxCard?.get("[data-status-action='pause']").trigger("click");
     await flushPromises();
     await wrapper.get("[data-confirm-status]").trigger("click");
     await flushPromises();

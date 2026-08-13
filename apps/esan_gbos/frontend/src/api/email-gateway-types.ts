@@ -90,6 +90,38 @@ export interface EmailMailboxStatusCommand {
   idempotency_key: string;
 }
 
+export interface EmailSlaPolicy {
+  policy_ref: string;
+  revision: number;
+  first_response_duration_seconds: number;
+  effective_at: string;
+}
+
+export interface EmailMailboxSlaPolicy extends EmailSlaPolicy {
+  mailbox_ref: string;
+}
+
+export interface EmailSlaPolicyListPayload {
+  mailbox_ref: string;
+  sla_policies: EmailSlaPolicy[];
+  next_cursor: string | null;
+}
+
+export interface EmailSlaPolicyPayload { sla_policy: EmailMailboxSlaPolicy }
+export interface EmailSlaPolicyListQuery {
+  mailboxRef: string;
+  cursor?: string;
+  pageSize?: number;
+}
+
+export interface EmailSlaPolicyUpsertCommand {
+  mailbox_ref: string;
+  first_response_duration_seconds: number;
+  effective_at: string;
+  expected_revision: number;
+  idempotency_key: string;
+}
+
 export interface EmailRoutingRule {
   rule_ref: string;
   mailbox_ref: string;
