@@ -325,6 +325,13 @@ def _email_gateway_runtime_config(
             "observer_email_draft_material_auth_ref": (
                 "observer-email-draft-material-v1"
             ),
+            "frappe_email_gateway_authority_api_key_file": (
+                "/run/secrets/frappe_email_gateway_authority_api_key"
+            ),
+            "frappe_email_gateway_authority_api_secret_file": (
+                "/run/secrets/frappe_email_gateway_authority_api_secret"
+            ),
+            "frappe_email_gateway_authority_auth_ref": "email-gateway-authority-v1",
         },
         "listen": {"host": "0.0.0.0", "port": 8004},
         "components": components,

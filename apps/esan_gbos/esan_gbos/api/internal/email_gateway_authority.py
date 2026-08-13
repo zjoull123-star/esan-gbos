@@ -4,18 +4,29 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import wraps
 from typing import Any
 
 import frappe
 
+from esan_gbos.domain.approved_command import (
+    ApprovedCommandValidationError,
+    validate_email_send_approved_command,
+)
+from esan_gbos.domain.email_review_policy import (
+    EMAIL_SEND_REVIEW_POLICY,
+    EmailSendReviewPolicyError,
+    protected_user_ref,
+    validate_email_send_approval_snapshot,
+)
 from esan_gbos.domain.external_identity_projection import (
     ExternalIdentityProjectionError,
     build_external_identity_projection,
     owner_eligibility_revision,
 )
 from esan_gbos.domain.permissions import EMAIL_GATEWAY_AUTHORITY_ROLE
+from esan_gbos.domain.review_dto import ReviewDTOValidationError, canonical_payload_hash
 from esan_gbos.email_gateway_authority_access import (
     email_gateway_authority_permission_scope,
     require_email_gateway_authority_scope,
@@ -45,6 +56,20 @@ _ROUTE_FIELDS = frozenset(
         "expected_party_revision",
         "expected_team_revision",
         "expected_owner_eligibility_revision",
+    }
+)
+_COMMAND_FIELDS = frozenset(
+    {
+        "site_id",
+        "processing_purpose",
+        "request_id",
+        "auth_ref",
+        "publication_ref",
+        "attempt",
+        "generation",
+        "fence_token",
+        "command_ref",
+        "payload_digest",
     }
 )
 
@@ -125,6 +150,354 @@ def resolve_route(payload: dict[str, Any]) -> dict[str, Any]:
     return {"route_authority": decision}
 
 
+@frappe.whitelist(methods=["POST"])  # type: ignore[untyped-decorator]
+@_endpoint
+def resolve_email_send_command(payload: dict[str, Any]) -> dict[str, Any]:
+    request = _validated_request(payload, _COMMAND_FIELDS)
+    with email_gateway_authority_permission_scope(
+        request_id=request["request_id"], auth_ref=request["auth_ref"]
+    ):
+        try:
+            authority = _email_send_command_authority(request)
+        except _APIError:
+            raise
+        except (
+            ApprovedCommandValidationError,
+            EmailSendReviewPolicyError,
+            ExternalIdentityProjectionError,
+            ReviewDTOValidationError,
+            frappe.DoesNotExistError,
+            AttributeError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ):
+            raise _APIError("email_send_authority_unavailable", 409) from None
+    return {"email_send_authority": authority}
+
+
+def _email_send_command_authority(request: Mapping[str, Any]) -> dict[str, Any]:
+    require_email_gateway_authority_scope()
+    try:
+        publication = frappe.get_doc(
+            "GBOS Command Publication", request["publication_ref"], for_update=True
+        )
+        approved = frappe.get_doc("GBOS Approved Command", request["command_ref"], for_update=True)
+        case = frappe.get_doc("GBOS Review Case", approved.review_case, for_update=True)
+        approval = frappe.get_doc(
+            "GBOS Email Send Approval", approved.email_send_approval, for_update=True
+        )
+        command = validate_email_send_approved_command(frappe.parse_json(approved.command_payload))
+        publication_command = validate_email_send_approved_command(
+            frappe.parse_json(publication.command_payload)
+        )
+        current_approval = validate_email_send_approval_snapshot(_approval_snapshot(approval))
+        expires_at = _document_time(command["approval_expires_at"])
+        lease_expires_at = _document_time(publication.lease_expires_at)
+        approved_issued_at = _document_time(approved.issued_at)
+        approved_expires_at = _document_time(approved.expires_at)
+    except (
+        ApprovedCommandValidationError,
+        EmailSendReviewPolicyError,
+        frappe.DoesNotExistError,
+        ValueError,
+        TypeError,
+    ):
+        raise _APIError("email_send_authority_unavailable", 409) from None
+
+    payload_digest = "sha256:" + command["payload_sha256"]
+    if (
+        publication.name != request["publication_ref"]
+        or command["site_id"] != request["site_id"]
+        or publication.publication_status != "Claimed"
+        or publication.approved_command != approved.name
+        or approved.name != request["command_ref"]
+        or command["command_id"] != approved.name
+        or int(publication.attempt or 0) != request["attempt"]
+        or int(publication.generation or 0) != request["generation"]
+        or publication.fence_token != request["fence_token"]
+        or lease_expires_at <= datetime.now().astimezone()
+        or publication.payload_digest != request["payload_digest"]
+        or request["payload_digest"] != payload_digest
+        or publication_command != command
+        or approved.payload_sha256 != command["payload_sha256"]
+        or approved.actor_user_ref != command["actor_user_ref"]
+        or approved.policy_version != command["review_policy_version"]
+        or approved.command_type != command["command_type"]
+        or approved.idempotency_key != command["idempotency_key"]
+        or approved.stable_client_request_id != command["stable_client_request_id"]
+        or approved_issued_at != _document_time(command["issued_at"])
+        or approved_expires_at != expires_at
+        or case.subject_doctype != "GBOS Email Send Approval"
+        or case.last_request_id != command["request_id"]
+        or case.subject_name != approval.name
+        or case.approved_command != approved.name
+        or case.command_publication != publication.name
+        or case.business_status != "Approved"
+        or case.review_status != "Approved"
+        or int(case.revision or 0) != command["review_case_revision"]
+        or _review_case_ref(case.name) != command["review_case_ref"]
+        or case.policy_version != EMAIL_SEND_REVIEW_POLICY
+        or case.policy_version != command["review_policy_version"]
+        or case.team != command["team_ref"]
+        or case.assigned_reviewer != case.decided_by
+        or protected_user_ref(command["site_id"], case.assigned_reviewer)
+        != command["actor_user_ref"]
+        or approval.business_status != "Approved"
+        or approval.review_status != "Approved"
+        or approval.last_request_id != command["request_id"]
+        or int(approval.revision or 0) != int(case.subject_revision or 0) + 1
+        or approval.payload_sha256 != canonical_payload_hash(current_approval)
+        or current_approval != _command_approval_snapshot(command)
+        or expires_at <= datetime.now().astimezone()
+        or _pinned_subject_snapshot(case)
+        != _email_approval_subject_snapshot(approval, revision=int(case.subject_revision or 0))
+        or canonical_payload_hash(_pinned_subject_snapshot(case)) != case.subject_payload_sha256
+        or canonical_payload_hash(_review_case_payload(case)) != case.case_payload_sha256
+    ):
+        raise _APIError("email_send_authority_unavailable", 409)
+
+    route = _recipient_authority(command)
+    return {
+        "audience": "email-command-executor",
+        "granted_scopes": ["email-send-execute"],
+        "site_id": command["site_id"],
+        "processing_purpose": command["processing_purpose"],
+        "team_ref": route["team_ref"],
+        "authenticated_actor_user_ref": command["actor_user_ref"],
+        "delegated_approver_user_ref": command["delegated_approver_user_ref"],
+        "review_case_ref": command["review_case_ref"],
+        "review_case_revision": command["review_case_revision"],
+        "review_policy_version": command["review_policy_version"],
+        "party_ref": route["party_ref"],
+        "party_revision": route["party_revision"],
+        "team_revision": route["team_revision"],
+        "owner_user_ref": command["owner_user_ref"],
+        "owner_eligibility_revision": route["owner_eligibility_revision"],
+        "participants": command["participants"],
+        "final_mime_evidence_ref": command["final_mime_evidence_ref"],
+        "final_mime_digest": command["final_mime_digest"],
+        "evidence_refs": command["evidence_refs"],
+        "request_id": command["request_id"],
+        "idempotency_key": command["idempotency_key"],
+        "stable_client_request_id": command["stable_client_request_id"],
+        "replay_payload_sha256": command["payload_sha256"],
+    }
+
+
+def _recipient_authority(command: Mapping[str, Any]) -> dict[str, Any]:
+    route: dict[str, Any] | None = None
+    for participant in command["participants"]:
+        if participant["address_role"] == "sender":
+            continue
+        rows = _route_rows(participant["identity_mapping_ref"], for_update=True)
+        current = _current_recipient_route(rows, participant, command)
+        if route is None:
+            route = current
+        elif current != route:
+            raise _APIError("email_send_authority_unavailable", 409)
+    if route is None:
+        raise _APIError("email_send_authority_unavailable", 409)
+    return route
+
+
+def _current_recipient_route(
+    rows: list[dict[str, Any]], participant: Mapping[str, Any], command: Mapping[str, Any]
+) -> dict[str, Any]:
+    if len(rows) != 1:
+        raise _APIError("email_send_authority_unavailable", 409)
+    row = rows[0]
+    try:
+        projection = build_external_identity_projection(row)
+        party_revision = _row_positive_integer(row.get("party_revision"))
+        team_revision = _row_positive_integer(row.get("team_revision"))
+        owner_name = _row_ref(row.get("owner_user_ref"))
+        party_ref = _row_ref(row.get("party_ref"))
+        owner_revision = owner_eligibility_revision(
+            {
+                "name": party_ref,
+                "revision": party_revision,
+                "team": projection["team_ref"],
+                "owner_user": owner_name,
+            },
+            {
+                "owner_enabled": row.get("owner_enabled"),
+                "owner_user_type": row.get("owner_user_type"),
+                "membership_ref": row.get("membership_ref"),
+                "membership_parent": row.get("membership_parent"),
+                "membership_user": row.get("membership_user"),
+                "membership_enabled": row.get("membership_enabled"),
+                "membership_modified": row.get("membership_modified"),
+                "team_revision": team_revision,
+            },
+        )
+        owner_ref = protected_user_ref(command["site_id"], owner_name)
+    except ExternalIdentityProjectionError, EmailSendReviewPolicyError, ValueError, TypeError:
+        raise _APIError("email_send_authority_unavailable", 409) from None
+    if (
+        projection["status"] != "confirmed"
+        or projection["target_type"] != "Party"
+        or projection["mapping_ref"] != participant["identity_mapping_ref"]
+        or projection["mapping_revision"] != participant["identity_mapping_revision"]
+        or projection["team_ref"] != command["team_ref"]
+        or row.get("target_eligible") != 1
+        or party_ref != command["party_ref"]
+        or party_revision != command["party_revision"]
+        or team_revision != command["team_revision"]
+        or row.get("party_status") != "Active"
+        or row.get("party_review_status") != "Approved"
+        or row.get("team_status") != "Active"
+        or row.get("team_review_status") != "Approved"
+        or row.get("owner_enabled") != 1
+        or row.get("owner_user_type") != "System User"
+        or row.get("membership_enabled") != 1
+        or row.get("membership_parent") != projection["team_ref"]
+        or row.get("membership_user") != owner_name
+        or owner_ref != command["owner_user_ref"]
+        or owner_revision != command["owner_eligibility_revision"]
+    ):
+        raise _APIError("email_send_authority_unavailable", 409)
+    return {
+        "party_ref": party_ref,
+        "party_revision": party_revision,
+        "team_ref": projection["team_ref"],
+        "team_revision": team_revision,
+        "owner_eligibility_revision": owner_revision,
+    }
+
+
+def _command_approval_snapshot(command: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "site_id": command["site_id"],
+        "processing_purpose": command["processing_purpose"],
+        "team_ref": command["team_ref"],
+        "assignee_user_ref": command["delegated_approver_user_ref"],
+        "approval_expires_at": command["approval_expires_at"],
+        "mailbox_ref": command["mailbox_ref"],
+        "mailbox_config_revision": command["mailbox_config_revision"],
+        "inbox_item_ref": command["inbox_item_ref"],
+        "inbox_item_revision": command["inbox_item_revision"],
+        "conversation_ref": command["conversation_ref"],
+        "conversation_revision": command["conversation_revision"],
+        "reply_draft_ref": command["reply_draft_ref"],
+        "reply_draft_revision": command["reply_draft_revision"],
+        "reply_draft_digest": command["reply_draft_digest"],
+        "participants": command["participants"],
+        "party_ref": command["party_ref"],
+        "party_revision": command["party_revision"],
+        "team_revision": command["team_revision"],
+        "owner_user_ref": command["owner_user_ref"],
+        "owner_eligibility_revision": command["owner_eligibility_revision"],
+        "final_mime_evidence_ref": command["final_mime_evidence_ref"],
+        "final_mime_digest": command["final_mime_digest"],
+        "evidence_refs": command["evidence_refs"],
+        "stable_client_request_id": command["stable_client_request_id"],
+    }
+
+
+def _approval_snapshot(approval: Any) -> dict[str, Any]:
+    def value(field: str) -> Any:
+        result = getattr(approval, field)
+        if field in {"participants", "evidence_refs"} and isinstance(result, str):
+            return frappe.parse_json(result)
+        return result
+
+    return {
+        "schema_version": "1.0",
+        "site_id": value("site_id"),
+        "processing_purpose": value("processing_purpose"),
+        "team_ref": value("team"),
+        "assignee_user_ref": value("assignee_user_ref"),
+        "approval_expires_at": value("approval_expires_at"),
+        "mailbox_ref": value("mailbox_ref"),
+        "mailbox_config_revision": value("mailbox_config_revision"),
+        "inbox_item_ref": value("inbox_item_ref"),
+        "inbox_item_revision": value("inbox_item_revision"),
+        "conversation_ref": value("conversation_ref"),
+        "conversation_revision": value("conversation_revision"),
+        "reply_draft_ref": value("reply_draft_ref"),
+        "reply_draft_revision": value("reply_draft_revision"),
+        "reply_draft_digest": value("reply_draft_digest"),
+        "participants": value("participants"),
+        "party_ref": value("party_ref"),
+        "party_revision": value("party_revision"),
+        "team_revision": value("team_revision"),
+        "owner_user_ref": value("owner_user_ref"),
+        "owner_eligibility_revision": value("owner_eligibility_revision"),
+        "final_mime_evidence_ref": value("final_mime_evidence_ref"),
+        "final_mime_digest": value("final_mime_digest"),
+        "evidence_refs": value("evidence_refs"),
+        "stable_client_request_id": value("stable_client_request_id"),
+    }
+
+
+def _email_approval_subject_snapshot(approval: Any, *, revision: int) -> dict[str, Any]:
+    return {
+        "doctype": "GBOS Email Send Approval",
+        "name": approval.name,
+        "revision": revision,
+        "site_id": approval.site_id,
+        "processing_purpose": approval.processing_purpose,
+        "team": approval.team,
+        "assignee_user_ref": approval.assignee_user_ref,
+        "approval_expires_at": approval.approval_expires_at,
+        "mailbox_ref": approval.mailbox_ref,
+        "mailbox_config_revision": approval.mailbox_config_revision,
+        "inbox_item_ref": approval.inbox_item_ref,
+        "inbox_item_revision": approval.inbox_item_revision,
+        "conversation_ref": approval.conversation_ref,
+        "conversation_revision": approval.conversation_revision,
+        "reply_draft_ref": approval.reply_draft_ref,
+        "reply_draft_revision": approval.reply_draft_revision,
+        "reply_draft_digest": approval.reply_draft_digest,
+        "participants": frappe.parse_json(approval.participants),
+        "party_ref": approval.party_ref,
+        "party_revision": approval.party_revision,
+        "team_revision": approval.team_revision,
+        "owner_user_ref": approval.owner_user_ref,
+        "owner_eligibility_revision": approval.owner_eligibility_revision,
+        "final_mime_evidence_ref": approval.final_mime_evidence_ref,
+        "final_mime_digest": approval.final_mime_digest,
+        "evidence_refs": frappe.parse_json(approval.evidence_refs),
+        "stable_client_request_id": approval.stable_client_request_id,
+        "payload_sha256": approval.payload_sha256,
+    }
+
+
+def _pinned_subject_snapshot(case: Any) -> dict[str, Any]:
+    try:
+        value = frappe.parse_json(case.subject_snapshot)
+    except Exception:
+        raise _APIError("email_send_authority_unavailable", 409) from None
+    if not isinstance(value, dict):
+        raise _APIError("email_send_authority_unavailable", 409)
+    return value
+
+
+def _review_case_payload(case: Any) -> dict[str, Any]:
+    try:
+        subject_snapshot = frappe.parse_json(case.subject_snapshot)
+        evidence_refs = frappe.parse_json(case.evidence_refs)
+    except Exception:
+        raise _APIError("email_send_authority_unavailable", 409) from None
+    payload = {
+        "title": case.title,
+        "team": case.team,
+        "assigned_reviewer": case.assigned_reviewer,
+        "subject_doctype": case.subject_doctype,
+        "subject_name": case.subject_name,
+        "subject_revision": int(case.subject_revision or 0),
+        "subject_payload_sha256": case.subject_payload_sha256,
+        "subject_snapshot": subject_snapshot,
+        "evidence_refs": evidence_refs,
+        "policy_version": case.policy_version,
+    }
+    if case.approval_expires_at not in (None, ""):
+        payload["approval_expires_at"] = case.approval_expires_at
+    return payload
+
+
 def _route_decision(
     rows: list[dict[str, Any]],
     request: Mapping[str, Any],
@@ -200,15 +573,18 @@ def _validated_request(payload: dict[str, Any], fields: frozenset[str]) -> dict[
     if set(payload) != fields:
         raise _APIError("invalid_authority_request", 422)
     _authenticate(payload)
-    normalized = {
+    normalized: dict[str, Any] = {
         "site_id": _site(payload.get("site_id")),
         "processing_purpose": _text(payload.get("processing_purpose"), 80),
         "request_id": _text(payload.get("request_id"), 256),
         "auth_ref": _text(payload.get("auth_ref"), 140),
-        "mapping_ref": _ref(payload.get("mapping_ref")),
-        "expected_mapping_revision": _positive_integer(payload.get("expected_mapping_revision")),
-        "expected_team_ref": _ref(payload.get("expected_team_ref")),
     }
+    if fields in {_PROJECT_FIELDS, _ROUTE_FIELDS}:
+        normalized.update(
+            mapping_ref=_ref(payload.get("mapping_ref")),
+            expected_mapping_revision=_positive_integer(payload.get("expected_mapping_revision")),
+            expected_team_ref=_ref(payload.get("expected_team_ref")),
+        )
     if fields == _ROUTE_FIELDS:
         normalized.update(
             expected_party_revision=_positive_integer(payload.get("expected_party_revision")),
@@ -216,6 +592,15 @@ def _validated_request(payload: dict[str, Any], fields: frozenset[str]) -> dict[
             expected_owner_eligibility_revision=_digest(
                 payload.get("expected_owner_eligibility_revision")
             ),
+        )
+    if fields == _COMMAND_FIELDS:
+        normalized.update(
+            publication_ref=_prefixed_ref(payload.get("publication_ref"), "PUB"),
+            attempt=_positive_integer(payload.get("attempt")),
+            generation=_positive_integer(payload.get("generation")),
+            fence_token=_prefixed_ref(payload.get("fence_token"), "FNC"),
+            command_ref=_prefixed_ref(payload.get("command_ref"), "CMD"),
+            payload_digest=_digest(payload.get("payload_digest")),
         )
     return normalized
 
@@ -284,10 +669,9 @@ def _mapping_rows(mapping_ref: str) -> list[dict[str, Any]]:
     return _rows(rows)
 
 
-def _route_rows(mapping_ref: str) -> list[dict[str, Any]]:
+def _route_rows(mapping_ref: str, *, for_update: bool = False) -> list[dict[str, Any]]:
     require_email_gateway_authority_scope()
-    rows = frappe.db.sql(
-        """
+    query = """
         select mapping.`name` as `mapping_ref`, mapping.`revision` as `mapping_revision`,
                mapping.`team` as `team_ref`, mapping.`identity_type` as `target_type`,
                mapping.`user` as `user_ref`, mapping.`party_profile` as `party_ref`,
@@ -295,6 +679,8 @@ def _route_rows(mapping_ref: str) -> list[dict[str, Any]]:
                mapping.`modified` as `resolved_at`,
                party.`revision` as `party_revision`, party.`business_status` as `party_status`,
                party.`review_status` as `party_review_status`, team.`revision` as `team_revision`,
+               team.`business_status` as `team_status`,
+               team.`review_status` as `team_review_status`,
                party.`owner_user` as `owner_user_ref`, owner_user.`enabled` as `owner_enabled`,
                owner_user.`user_type` as `owner_user_type`, member.`name` as `membership_ref`,
                member.`parent` as `membership_parent`, member.`user` as `membership_user`,
@@ -309,7 +695,11 @@ def _route_rows(mapping_ref: str) -> list[dict[str, Any]]:
         left join `tabGBOS Team Member` member on member.`parent` = party.`team`
              and member.`user` = party.`owner_user`
         where mapping.`name` = %(mapping_ref)s limit 3
-        """,
+        """
+    if for_update:
+        query += " for update"
+    rows = frappe.db.sql(
+        query,
         {"mapping_ref": mapping_ref},
         as_dict=True,
     )
@@ -351,6 +741,13 @@ def _ref(value: object) -> str:
     return value
 
 
+def _prefixed_ref(value: object, prefix: str) -> str:
+    result = _ref(value)
+    if not result.startswith(prefix + "-"):
+        raise _APIError("invalid_authority_request", 422)
+    return result
+
+
 def _row_ref(value: object) -> str:
     if not isinstance(value, str) or not _REF.fullmatch(value):
         raise ValueError
@@ -387,4 +784,26 @@ def _timestamp(value: object) -> str:
     return value
 
 
-__all__ = ["project", "resolve_route"]
+def _document_time(value: object) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError from None
+    else:
+        raise ValueError
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _review_case_ref(value: object) -> str:
+    name = _row_ref(value)
+    if not name.startswith("REV-"):
+        raise ValueError
+    return "RVC-" + name[4:]
+
+
+__all__ = ["project", "resolve_email_send_command", "resolve_route"]

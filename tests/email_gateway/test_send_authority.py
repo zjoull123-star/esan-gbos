@@ -34,6 +34,7 @@ DRAFT = "DRF-01ARZ3NDEKTSV4RRFFQ69G5FAV"
 PARTY = "PTY-01ARZ3NDEKTSV4RRFFQ69G5FAV"
 MAPPING = "EID-01ARZ3NDEKTSV4RRFFQ69G5FAV"
 ACTOR = "owner@example.invalid"
+ACTOR_REF = "USR-6KFQEGWASP2R8CH6JW22BYMY2E"
 NOW = datetime(2026, 8, 13, 10, tzinfo=UTC)
 SCOPE = TenantScope(SITE, "sales_follow_up")
 ROLES = {"sender": "mailbox_owner", "recipients": ["original_sender"]}
@@ -82,6 +83,7 @@ def _service() -> tuple[EmailSendAuthority, InMemoryWorkflowRepository]:
         status="active",
         config_revision=3,
         observer_config_projection_receipt=None,
+        mailbox_address_identity_ref=SENDER,
     )
     workflow = InMemoryWorkflowRepository()
     workflow.save_inbox(
@@ -289,3 +291,79 @@ def test_validate_rejects_missing_bcc_or_raw_participant_projection(
             expected_gateway_snapshot=authorized["gateway_snapshot"],
             participant_projection=projection,
         )
+
+
+def _approved_command() -> dict[str, object]:
+    return {
+        "site_id": SITE,
+        "processing_purpose": SCOPE.processing_purpose,
+        "team_ref": TEAM,
+        "actor_user_ref": ACTOR_REF,
+        "delegated_approver_user_ref": ACTOR_REF,
+        "mailbox_ref": MAILBOX,
+        "mailbox_config_revision": 3,
+        "inbox_item_ref": INBOX,
+        "inbox_item_revision": 4,
+        "conversation_ref": CONVERSATION,
+        "conversation_revision": 2,
+        "reply_draft_ref": DRAFT,
+        "reply_draft_revision": 3,
+        "reply_draft_digest": "sha256:" + "4" * 64,
+        "participants": [
+            {"address_role": "sender", "opaque_address_ref": SENDER},
+            {
+                "address_role": "to",
+                "opaque_address_ref": RECIPIENT,
+                "identity_mapping_ref": MAPPING,
+                "identity_mapping_revision": 7,
+            },
+        ],
+        "party_ref": PARTY,
+        "owner_user_ref": ACTOR_REF,
+    }
+
+
+def test_command_validation_requires_outbound_enabled_not_inbound_enabled() -> None:
+    service, _workflow = _service()
+
+    with pytest.raises(EmailSendAuthorityConflict, match="mailbox_authority_unavailable"):
+        service.validate_command(SCOPE, command=_approved_command())
+
+
+def test_command_validation_reloads_exact_gateway_revisions_and_participants() -> None:
+    service, _workflow = _service()
+    repository = service._mailboxes.repository  # noqa: SLF001
+    mailbox = repository.get(SCOPE, MAILBOX)
+    assert mailbox is not None
+    repository._mailboxes[(SITE, MAILBOX)] = replace(  # type: ignore[attr-defined]  # noqa: SLF001
+        mailbox,
+        outbound_enabled=True,
+    )
+
+    result = service.validate_command(SCOPE, command=_approved_command())
+
+    assert result == {
+        "mailbox_ref": MAILBOX,
+        "mailbox_config_revision": 3,
+        "inbox_item_ref": INBOX,
+        "inbox_item_revision": 4,
+        "conversation_ref": CONVERSATION,
+        "conversation_revision": 2,
+        "reply_draft_ref": DRAFT,
+        "reply_draft_revision": 3,
+        "reply_draft_digest": "sha256:" + "4" * 64,
+        "participants": (
+            {
+                "address_role": "sender",
+                "opaque_address_ref": SENDER,
+                "identity_mapping_ref": None,
+                "identity_mapping_revision": None,
+            },
+            {
+                "address_role": "to",
+                "opaque_address_ref": RECIPIENT,
+                "identity_mapping_ref": MAPPING,
+                "identity_mapping_revision": 7,
+            },
+        ),
+    }

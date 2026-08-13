@@ -49,6 +49,13 @@ def _value(tmp_path: Path) -> dict[str, object]:
                 "/run/secrets/observer_email_draft_material_bearer"
             ),
             "observer_email_draft_material_auth_ref": ("observer-email-draft-material-v1"),
+            "frappe_email_gateway_authority_api_key_file": (
+                "/run/secrets/frappe_email_gateway_authority_api_key"
+            ),
+            "frappe_email_gateway_authority_api_secret_file": (
+                "/run/secrets/frappe_email_gateway_authority_api_secret"
+            ),
+            "frappe_email_gateway_authority_auth_ref": "email-gateway-authority-v1",
         },
         "listen": {"host": "0.0.0.0", "port": 8004},
         "components": {
@@ -85,6 +92,13 @@ def test_closed_config_defaults_off_and_uses_exact_internal_urls(tmp_path: Path)
     assert config.auth.observer_email_draft_material_auth_ref == (
         "observer-email-draft-material-v1"
     )
+    assert config.auth.frappe_email_gateway_authority_api_key_file == Path(
+        "/run/secrets/frappe_email_gateway_authority_api_key"
+    )
+    assert config.auth.frappe_email_gateway_authority_api_secret_file == Path(
+        "/run/secrets/frappe_email_gateway_authority_api_secret"
+    )
+    assert config.auth.frappe_email_gateway_authority_auth_ref == ("email-gateway-authority-v1")
     assert all(
         not component.enabled and component.kill_switch for component in config.components.values()
     )
@@ -103,6 +117,12 @@ def test_closed_config_defaults_off_and_uses_exact_internal_urls(tmp_path: Path)
         lambda value: value["auth"].update({"email_gateway_bff_auth_ref": "wrong"}),
         lambda value: value["auth"].update({"email_gateway_bff_bearer_file": "/tmp/inline"}),
         lambda value: value["auth"].update({"observer_email_draft_material_auth_ref": "wrong"}),
+        lambda value: value["auth"].update(
+            {"frappe_email_gateway_authority_api_key_file": "/tmp/inline"}
+        ),
+        lambda value: value["auth"].update(
+            {"frappe_email_gateway_authority_auth_ref": "email-command-publication-v1"}
+        ),
         lambda value: value["components"]["email_gateway_api"].update({"kill_switch": False}),
     ],
 )

@@ -41,6 +41,25 @@ def test_gateway_and_relays_are_default_killed_least_privilege_and_local_only() 
     assert "postgres_email_gateway_password" in gateway
     assert "postgres_email_command_executor_password" in gateway
     assert "email_gateway_command_ingest_bearer" in gateway
+    for secret in (
+        "frappe_email_gateway_authority_api_key",
+        "frappe_email_gateway_authority_api_secret",
+    ):
+        assert f"source: {secret}" in gateway
+        assert f"target: {secret}" in gateway
+        assert "mode: 0400" in gateway
+        for service in (
+            frappe_site,
+            frappe_backend,
+            gateway_worker,
+            publication,
+            projection,
+            frappe_worker,
+            frappe_scheduler,
+            observer_api,
+            connector,
+        ):
+            assert secret not in service
     assert (
         "GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH: "
         "${GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH:-true}" in gateway
@@ -129,6 +148,15 @@ def test_renderer_emits_role_separated_gateway_configs(tmp_path: Path) -> None:
         assert payload["auth"]["observer_email_draft_material_auth_ref"] == (
             "observer-email-draft-material-v1"
         )
+        assert payload["auth"]["frappe_email_gateway_authority_api_key_file"] == (
+            "/run/secrets/frappe_email_gateway_authority_api_key"
+        )
+        assert payload["auth"]["frappe_email_gateway_authority_api_secret_file"] == (
+            "/run/secrets/frappe_email_gateway_authority_api_secret"
+        )
+        assert payload["auth"]["frappe_email_gateway_authority_auth_ref"] == (
+            "email-gateway-authority-v1"
+        )
 
     runtime = json.loads((ROOT / "infra/local/runtime-entrypoints.json").read_text())
     assert runtime["services"]["observer-api"]["email_draft_material"] == {
@@ -158,15 +186,32 @@ def test_manifest_has_closed_revisioned_mailbox_list_and_default_switches() -> N
 
 def test_command_relay_and_fake_send_worker_are_profile_only_closed_and_least_secret() -> None:
     compose = (ROOT / "infra/local/compose.yml").read_text()
+    frappe_site = _block(compose, "frappe-site")
     bootstrap = _block(compose, "frappe-email-command-publication-bootstrap")
+    authority_bootstrap = _block(compose, "frappe-email-gateway-authority-bootstrap")
     relay = _block(compose, "email-command-publication-worker")
     sender = _block(compose, "email-send-worker")
 
     assert 'profiles: ["email-approved-outbound"]' in bootstrap
+    assert 'profiles: ["email-approved-outbound"]' in authority_bootstrap
     assert 'profiles: ["email-approved-outbound"]' in relay
     assert 'profiles: ["email-approved-outbound"]' in sender
-    assert "local-internal" in bootstrap and "local-internal" in relay
-    assert "controlled-egress" not in bootstrap + relay + sender
+    assert all("local-internal" in service for service in (bootstrap, authority_bootstrap, relay))
+    assert "controlled-egress" not in bootstrap + authority_bootstrap + relay + sender
+    assert (
+        "esan_gbos.email_gateway_authority_service.provision_email_gateway_authority"
+        in authority_bootstrap
+    )
+    assert "GBOS_EMAIL_GATEWAY_AUTHORITY_API_KEY_FILE" in authority_bootstrap
+    assert "GBOS_EMAIL_GATEWAY_AUTHORITY_API_SECRET_FILE" in authority_bootstrap
+    assert "gbos_email_gateway_authority_identities" in frappe_site
+    assert "email-gateway-authority@localhost.invalid" in frappe_site
+    assert '"processing_purposes":["email_gateway_authority"]' in frappe_site
+    authority_dependency = (
+        "frappe-email-gateway-authority-bootstrap:\n"
+        "        condition: service_completed_successfully"
+    )
+    assert authority_dependency in relay
     assert "GBOS_EMAIL_COMMAND_PUBLICATION_KILL_SWITCH" in relay
     assert "GBOS_EMAIL_SEND_KILL_SWITCH" in sender
     for secret in (
@@ -175,6 +220,14 @@ def test_command_relay_and_fake_send_worker_are_profile_only_closed_and_least_se
         "email_gateway_command_ingest_bearer",
     ):
         assert secret in relay
+    for secret in (
+        "frappe_email_gateway_authority_api_key",
+        "frappe_email_gateway_authority_api_secret",
+    ):
+        assert secret not in relay
+        assert secret not in sender
+        assert secret in authority_bootstrap
+        assert secret not in bootstrap
     assert "postgres" not in relay
     assert "provider" not in relay
     assert "frappe_email_command_publication_api_key" not in sender
@@ -233,6 +286,8 @@ def test_outbound_runtime_configs_and_secret_preparation_remain_provider_free(
     for secret in (
         "frappe_email_command_publication_api_key",
         "frappe_email_command_publication_api_secret",
+        "frappe_email_gateway_authority_api_key",
+        "frappe_email_gateway_authority_api_secret",
         "email_gateway_command_ingest_bearer",
         "postgres_email_command_executor_password",
         "postgres_email_send_worker_password",
@@ -251,6 +306,8 @@ def test_default_closed_outbound_secrets_are_sentinels_not_keychain_requirements
     for secret in (
         "frappe_email_command_publication_api_key",
         "frappe_email_command_publication_api_secret",
+        "frappe_email_gateway_authority_api_key",
+        "frappe_email_gateway_authority_api_secret",
         "email_gateway_command_ingest_bearer",
         "postgres_email_command_executor_password",
         "postgres_email_send_worker_password",
@@ -266,6 +323,8 @@ def test_optional_outbound_keychain_values_materialize_before_empty_sentinels() 
     for secret in (
         "frappe_email_command_publication_api_key",
         "frappe_email_command_publication_api_secret",
+        "frappe_email_gateway_authority_api_key",
+        "frappe_email_gateway_authority_api_secret",
         "email_gateway_command_ingest_bearer",
         "postgres_email_command_executor_password",
         "postgres_email_send_worker_password",

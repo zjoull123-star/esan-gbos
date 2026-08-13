@@ -85,6 +85,8 @@ _DEPLOYMENT_TEXT_SECRET_FILENAMES = {
     "observer_email_draft_material_bearer": "observer_email_draft_material_bearer",
     "frappe_email_command_publication_api_key": ("frappe_email_command_publication_api_key"),
     "frappe_email_command_publication_api_secret": ("frappe_email_command_publication_api_secret"),
+    "frappe_email_gateway_authority_api_key": "frappe_email_gateway_authority_api_key",
+    "frappe_email_gateway_authority_api_secret": "frappe_email_gateway_authority_api_secret",
     "email_gateway_command_ingest_bearer": "email_gateway_command_ingest_bearer",
     "postgres_email_command_executor_password": ("postgres_email_command_executor_password"),
     "postgres_email_send_worker_password": "postgres_email_send_worker_password",

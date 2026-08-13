@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from services.email_gateway.api import build_email_publication_api
+from services.email_gateway.command_authority import EmailCommandAuthorityResolver
 from services.email_gateway.models import IntakeResult
 from services.email_gateway.outbound import CommandIngestReceipt
 from services.email_gateway.phase1_read import Phase1Mailbox
@@ -232,6 +233,13 @@ def _enabled_runtime(tmp_path: Path) -> tuple[Path, Path, Path]:
                 "/run/secrets/observer_email_draft_material_bearer"
             ),
             "observer_email_draft_material_auth_ref": ("observer-email-draft-material-v1"),
+            "frappe_email_gateway_authority_api_key_file": (
+                "/run/secrets/frappe_email_gateway_authority_api_key"
+            ),
+            "frappe_email_gateway_authority_api_secret_file": (
+                "/run/secrets/frappe_email_gateway_authority_api_secret"
+            ),
+            "frappe_email_gateway_authority_auth_ref": "email-gateway-authority-v1",
         },
         "listen": {"host": "0.0.0.0", "port": 8004},
         "components": {
@@ -306,6 +314,20 @@ def _provider_with_command_ingest(root: Path) -> MountedFileSecretProvider:
                 "postgres_email_command_executor_password",
                 "text",
                 16,
+                128,
+            ),
+            SecretSpec(
+                "frappe_email_gateway_authority_api_key",
+                "frappe_email_gateway_authority_api_key",
+                "text",
+                15,
+                128,
+            ),
+            SecretSpec(
+                "frappe_email_gateway_authority_api_secret",
+                "frappe_email_gateway_authority_api_secret",
+                "text",
+                15,
                 128,
             ),
         ),
@@ -407,6 +429,11 @@ def test_main_mounts_command_ingest_on_port_8004_with_distinct_executor_connecti
         secret_root / "postgres_email_command_executor_password",
         "command-executor-postgres-password",
     )
+    _private(secret_root / "frappe_email_gateway_authority_api_key", "authority-key-value")
+    _private(
+        secret_root / "frappe_email_gateway_authority_api_secret",
+        "authority-secret-value",
+    )
     provider = _provider_with_command_ingest(secret_root)
     connections: list[str] = []
     captured: dict[str, object] = {}
@@ -445,6 +472,64 @@ def test_main_mounts_command_ingest_on_port_8004_with_distinct_executor_connecti
     assert captured["command_ingest_bearer_token"] == "command-ingest-value-1"
     assert captured["command_ingest_auth_ref"] == "email-command-ingest-v1"
     assert captured["command_ingest_service"] is not None
+    assert isinstance(
+        captured["command_ingest_service"]._authority,  # type: ignore[attr-defined]  # noqa: SLF001
+        EmailCommandAuthorityResolver,
+    )
+
+
+@pytest.mark.parametrize("credential_case", ["missing", "invalid"])
+def test_command_authority_credentials_fail_before_database_server_or_client_factory(
+    tmp_path: Path,
+    credential_case: str,
+) -> None:
+    manifest, config, secret_root = _enabled_runtime(tmp_path)
+    manifest_value = json.loads(manifest.read_text())
+    manifest_value["email_gateway"]["command_publication_kill_switch"] = False
+    manifest.write_text(json.dumps(manifest_value))
+    _private(secret_root / "email_gateway_bff_bearer", "bff-secret-value-1")
+    _private(secret_root / "email_gateway_command_ingest_bearer", "command-ingest-value-1")
+    _private(
+        secret_root / "postgres_email_command_executor_password",
+        "command-executor-postgres-password",
+    )
+    if credential_case == "invalid":
+        _private(
+            secret_root / "frappe_email_gateway_authority_api_key",
+            "invalid:key-value",
+        )
+    else:
+        _private(
+            secret_root / "frappe_email_gateway_authority_api_key",
+            "authority-key-value",
+        )
+    if credential_case != "missing":
+        _private(
+            secret_root / "frappe_email_gateway_authority_api_secret",
+            "authority-secret-value",
+        )
+    calls: list[str] = []
+
+    result = main(
+        manifest_path=manifest,
+        config_path=config,
+        emergency_stop_path=tmp_path / "no-emergency-stop",
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_EMAIL_GATEWAY_KILL_SWITCH": "false",
+            "GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH": "false",
+            "GBOS_EXTERNAL_SEND_ENABLED": "false",
+        },
+        connector=lambda **_: calls.append("db"),
+        application_factory=lambda **_: calls.append("application"),  # type: ignore[arg-type,return-value]
+        server_runner=lambda *_args, **_kwargs: calls.append("server"),
+        secret_provider=_provider_with_command_ingest(secret_root),
+        authority_client_factory=lambda **_: calls.append("authority-client"),  # type: ignore[arg-type,return-value]
+        internal_network=True,
+    )
+
+    assert result == 78
+    assert calls == []
 
 
 def test_create_application_exposes_command_ingest_endpoint_when_service_is_injected() -> None:

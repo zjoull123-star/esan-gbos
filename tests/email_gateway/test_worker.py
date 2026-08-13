@@ -28,7 +28,7 @@ def _queued():
     receipt = CommandIngestService(
         repository=repository,
         action_guard=ActionGuard(),
-        authority_resolver=lambda _scope, _command: authority_for(command),
+        authority_resolver=lambda _scope, _publication, _command: authority_for(command),
         clock=lambda: NOW,
     ).accept(
         scope,

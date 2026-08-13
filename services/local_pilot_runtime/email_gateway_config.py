@@ -17,6 +17,7 @@ EMAIL_PUBLICATION_AUTH_REF = "observer-email-publication-v1"
 EMAIL_GATEWAY_BFF_AUTH_REF = "email-gateway-bff-v1"
 MAILBOX_PROJECTION_AUTH_REF = "gateway-mailbox-projection-v1"
 OBSERVER_EMAIL_DRAFT_MATERIAL_AUTH_REF = "observer-email-draft-material-v1"
+FRAPPE_EMAIL_GATEWAY_AUTHORITY_AUTH_REF = "email-gateway-authority-v1"
 
 _TOP_FIELDS = frozenset(
     {
@@ -47,6 +48,9 @@ _AUTH_FIELDS = frozenset(
         "mailbox_projection_auth_ref",
         "observer_email_draft_material_bearer_file",
         "observer_email_draft_material_auth_ref",
+        "frappe_email_gateway_authority_api_key_file",
+        "frappe_email_gateway_authority_api_secret_file",
+        "frappe_email_gateway_authority_auth_ref",
     }
 )
 _LISTEN_FIELDS = frozenset({"host", "port"})
@@ -99,6 +103,9 @@ class EmailGatewayAuth:
     mailbox_projection_auth_ref: str
     observer_email_draft_material_bearer_file: Path
     observer_email_draft_material_auth_ref: str
+    frappe_email_gateway_authority_api_key_file: Path
+    frappe_email_gateway_authority_api_secret_file: Path
+    frappe_email_gateway_authority_auth_ref: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +258,12 @@ def _auth(value: Mapping[str, Any]) -> EmailGatewayAuth:
         != "/run/secrets/observer_email_draft_material_bearer"
         or value.get("observer_email_draft_material_auth_ref")
         != OBSERVER_EMAIL_DRAFT_MATERIAL_AUTH_REF
+        or value.get("frappe_email_gateway_authority_api_key_file")
+        != "/run/secrets/frappe_email_gateway_authority_api_key"
+        or value.get("frappe_email_gateway_authority_api_secret_file")
+        != "/run/secrets/frappe_email_gateway_authority_api_secret"
+        or value.get("frappe_email_gateway_authority_auth_ref")
+        != FRAPPE_EMAIL_GATEWAY_AUTHORITY_AUTH_REF
     ):
         raise EmailGatewayConfigError("gateway auth reference is invalid")
     return EmailGatewayAuth(
@@ -265,6 +278,13 @@ def _auth(value: Mapping[str, Any]) -> EmailGatewayAuth:
             "/run/secrets/observer_email_draft_material_bearer"
         ),
         observer_email_draft_material_auth_ref=OBSERVER_EMAIL_DRAFT_MATERIAL_AUTH_REF,
+        frappe_email_gateway_authority_api_key_file=Path(
+            "/run/secrets/frappe_email_gateway_authority_api_key"
+        ),
+        frappe_email_gateway_authority_api_secret_file=Path(
+            "/run/secrets/frappe_email_gateway_authority_api_secret"
+        ),
+        frappe_email_gateway_authority_auth_ref=FRAPPE_EMAIL_GATEWAY_AUTHORITY_AUTH_REF,
     )
 
 
@@ -363,6 +383,7 @@ __all__ = [
     "EMAIL_GATEWAY_API_URL",
     "EMAIL_GATEWAY_BFF_AUTH_REF",
     "EMAIL_PUBLICATION_AUTH_REF",
+    "FRAPPE_EMAIL_GATEWAY_AUTHORITY_AUTH_REF",
     "MAILBOX_PROJECTION_AUTH_REF",
     "OBSERVER_CONFIG_API_URL",
     "EmailGatewayConfigError",

@@ -32,9 +32,32 @@ def _service(command: dict[str, object], repository: InMemoryOutboundRepository)
     return CommandIngestService(
         repository=repository,
         action_guard=ActionGuard(),
-        authority_resolver=lambda _scope, _command: authority_for(command),
+        authority_resolver=lambda _scope, _publication, _command: authority_for(command),
         clock=lambda: NOW,
     )
+
+
+def test_ingest_passes_the_fenced_publication_to_live_authority() -> None:
+    command = closed_command()
+    repository = InMemoryOutboundRepository()
+    publication = _publication(command)
+    observed: list[CommandPublication] = []
+    service = CommandIngestService(
+        repository=repository,
+        action_guard=ActionGuard(),
+        authority_resolver=lambda _scope, current, _command: (
+            observed.append(current) or authority_for(command)
+        ),
+        clock=lambda: NOW,
+    )
+
+    service.accept(
+        TenantScope(command["site_id"], command["processing_purpose"]),
+        publication=publication,
+        command=command,
+    )
+
+    assert observed == [publication]
 
 
 def test_ingest_atomically_creates_one_receipt_and_one_immutable_outbox() -> None:

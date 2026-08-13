@@ -29,6 +29,7 @@ from services.email_gateway.api import (
     PostgresWorkflowAuthority,
     create_email_gateway_app,
 )
+from services.email_gateway.command_authority import EmailCommandAuthorityResolver
 from services.email_gateway.conversations import ConversationService
 from services.email_gateway.drafts import DraftService
 from services.email_gateway.email_send_authority import EmailSendAuthority
@@ -49,6 +50,10 @@ from services.email_gateway.repositories.workflow import PostgresWorkflowReposit
 from services.email_gateway.security import GatewayAuthorizationIssuer
 from services.email_gateway.send_outbox import PostgresSendOutboxRepository
 
+from .email_gateway_command_authority import (
+    FrappeEmailCommandAuthorityClient,
+    valid_frappe_email_command_authority_client_config,
+)
 from .email_gateway_config import (
     EmailGatewayConfigError,
     EmailGatewayRuntimeConfig,
@@ -79,6 +84,7 @@ _COMMAND_EXECUTOR_PASSWORD_FILE = Path("/run/secrets/postgres_email_command_exec
 
 
 ApplicationFactory = Callable[..., FastAPI]
+AuthorityClientFactory = Callable[..., FrappeEmailCommandAuthorityClient]
 
 
 class _HttpResponse(Protocol):
@@ -329,6 +335,7 @@ def main(
     server_runner: Callable[..., None] | None = None,
     secret_provider: TextSecretProvider | None = None,
     command_authority_resolver: AuthorityResolver | None = None,
+    authority_client_factory: AuthorityClientFactory | None = None,
     internal_network: bool = False,
 ) -> int:
     environment = os.environ if environ is None else environ
@@ -376,6 +383,47 @@ def main(
             logical_name="email_gateway_data_key",
         )
         cipher = GatewayDataCipher(data_key.reveal())
+        gateway_manifest = cast(Mapping[str, object], manifest["email_gateway"])
+        command_ingest_enabled = gateway_manifest.get("command_publication_kill_switch") is False
+        command_bearer = None
+        frappe_authority_client = None
+        if command_ingest_enabled:
+            if environment.get("GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH", "true") != "false":
+                raise LocalEntrypointDisabled("email command ingest is killed by default")
+            command_bearer = load_secret_file(
+                _COMMAND_INGEST_BEARER_FILE,
+                secret_provider=active_secret_provider,
+                logical_name="email_gateway_command_ingest_bearer",
+            )
+            if command_authority_resolver is None:
+                authority_key = load_secret_file(
+                    config.auth.frappe_email_gateway_authority_api_key_file,
+                    secret_provider=active_secret_provider,
+                    logical_name="frappe_email_gateway_authority_api_key",
+                )
+                authority_secret = load_secret_file(
+                    config.auth.frappe_email_gateway_authority_api_secret_file,
+                    secret_provider=active_secret_provider,
+                    logical_name="frappe_email_gateway_authority_api_secret",
+                )
+                authority_key_value = authority_key.reveal()
+                authority_secret_value = authority_secret.reveal()
+                authority_auth_ref = config.auth.frappe_email_gateway_authority_auth_ref
+                if not valid_frappe_email_command_authority_client_config(
+                    api_key=authority_key_value,
+                    api_secret=authority_secret_value,
+                    auth_ref=authority_auth_ref,
+                    timeout_seconds=5.0,
+                ):
+                    raise EmailGatewayConfigError("Frappe authority client config rejected")
+                frappe_authority_client = (
+                    authority_client_factory or FrappeEmailCommandAuthorityClient
+                )(
+                    api_key=authority_key_value,
+                    api_secret=authority_secret_value,
+                    auth_ref=authority_auth_ref,
+                    timeout_seconds=5.0,
+                )
         connection = connect_postgres(
             config.postgres,
             connector=connector,
@@ -404,18 +452,20 @@ def main(
                 auth_ref=config.auth.mailbox_projection_auth_ref,
             )
         )
-        gateway_manifest = cast(Mapping[str, object], manifest["email_gateway"])
+        mailbox_registry = MailboxRegistry(mailboxes)
+        intake_service = GatewayIntakeService(intake, mailbox_registry)  # type: ignore[arg-type]
+        identity_repository = PostgresIdentityProjectionRepository(cast(Any, connection))
+        email_send_authority = EmailSendAuthority(
+            mailboxes=mailbox_registry,
+            workflow=workflow,
+            identities=identity_repository,
+            binding_reader=intake_service,
+            authorization_issuer=GatewayAuthorizationIssuer(clock=lambda: datetime.now(UTC)),
+        )
         command_ingest_service: CommandIngestService | None = None
         command_ingest_bearer_token: str | None = None
         command_ingest_auth_ref: str | None = None
-        if gateway_manifest.get("command_publication_kill_switch") is False:
-            if environment.get("GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH", "true") != "false":
-                raise LocalEntrypointDisabled("email command ingest is killed by default")
-            command_bearer = load_secret_file(
-                _COMMAND_INGEST_BEARER_FILE,
-                secret_provider=active_secret_provider,
-                logical_name="email_gateway_command_ingest_bearer",
-            )
+        if command_ingest_enabled:
             executor_settings = PostgresSettings(
                 host=config.postgres.host,
                 port=config.postgres.port,
@@ -424,6 +474,16 @@ def main(
                 password_file=_COMMAND_EXECUTOR_PASSWORD_FILE,
                 connect_timeout_seconds=config.postgres.connect_timeout_seconds,
             )
+            live_authority = command_authority_resolver
+            if live_authority is None:
+                if frappe_authority_client is None:
+                    raise EmailGatewayConfigError("Frappe authority client unavailable")
+                live_authority = EmailCommandAuthorityResolver(
+                    frappe=frappe_authority_client,
+                    gateway=email_send_authority,
+                    emergency_stop_reader=emergency_stop_path.exists,
+                    external_send_reader=lambda: config.external_send,
+                )
             command_executor_connection = connect_postgres(
                 executor_settings,
                 connector=connector,
@@ -436,13 +496,14 @@ def main(
                     actual_database_role="gbos_email_command_executor",
                 ),
                 action_guard=ActionGuard(),
-                authority_resolver=(command_authority_resolver or _unavailable_command_authority),
+                authority_resolver=live_authority,
                 clock=lambda: datetime.now(UTC),
             )
+            if command_bearer is None:
+                raise EmailGatewayConfigError("email command bearer unavailable")
             command_ingest_bearer_token = command_bearer.reveal()
             command_ingest_auth_ref = _COMMAND_INGEST_AUTH_REF
         factory = application_factory or create_email_gateway_app
-        intake_service = GatewayIntakeService(intake, MailboxRegistry(mailboxes))  # type: ignore[arg-type]
         application = _build_application(
             factory,
             intake=intake_service,
@@ -451,7 +512,7 @@ def main(
             publication_auth_ref=config.auth.email_publication_auth_ref,
             bff_bearer_token=bff_bearer.reveal(),
             bff_auth_ref=config.auth.email_gateway_bff_auth_ref,
-            mailbox_registry=MailboxRegistry(mailboxes),
+            mailbox_registry=mailbox_registry,
             read_repository=phase1_read,
             connector_health_reader=connector_health,
             governed_inbox_read=PostgresGovernedInboxRead(
@@ -469,13 +530,7 @@ def main(
                 bearer_token=mailbox_projection_bearer.reveal(),
                 auth_ref=config.auth.mailbox_projection_auth_ref,
             ),
-            email_send_authority=EmailSendAuthority(
-                mailboxes=MailboxRegistry(mailboxes),
-                workflow=workflow,
-                identities=PostgresIdentityProjectionRepository(cast(Any, connection)),
-                binding_reader=intake_service,
-                authorization_issuer=GatewayAuthorizationIssuer(clock=lambda: datetime.now(UTC)),
-            ),
+            email_send_authority=email_send_authority,
             command_ingest_service=command_ingest_service,
             command_ingest_bearer_token=command_ingest_bearer_token,
             command_ingest_auth_ref=command_ingest_auth_ref,
@@ -502,12 +557,6 @@ def main(
             close_connection(command_executor_connection)
         if connection is not None:
             close_connection(connection)
-
-
-def _unavailable_command_authority(*_args: object, **_kwargs: object) -> Any:
-    """Fail closed until a live multi-authority resolver is injected."""
-
-    raise ValueError("live email command authority is unavailable")
 
 
 def _validate_manifest(manifest: Mapping[str, object], config: EmailGatewayRuntimeConfig) -> None:
@@ -607,6 +656,20 @@ def _secret_provider() -> MountedFileSecretProvider:
                 "postgres_email_command_executor_password",
                 "text",
                 16,
+                128,
+            ),
+            SecretSpec(
+                "frappe_email_gateway_authority_api_key",
+                "frappe_email_gateway_authority_api_key",
+                "text",
+                15,
+                128,
+            ),
+            SecretSpec(
+                "frappe_email_gateway_authority_api_secret",
+                "frappe_email_gateway_authority_api_secret",
+                "text",
+                15,
                 128,
             ),
         ),

@@ -2,7 +2,7 @@
 
 Status: **RED — not frozen**
 
-Official documentation reviewed: **2026-08-13 (Asia/Shanghai)**
+Official documentation reviewed: **2026-08-14 (Asia/Shanghai)**
 
 This note records only facts visible in current first-party WeCom documentation. It is not a
 wire-contract approval. The five inbound JSON Schemas and sanitized fixture bundle remain absent,
@@ -132,7 +132,7 @@ Sources: [send ordinary email](https://developer.work.weixin.qq.com/document/pat
 [update application mailbox](https://developer.work.weixin.qq.com/document/path/97373),
 [frequency limits](https://developer.work.weixin.qq.com/document/path/90312), and
 [global error codes](https://developer.work.weixin.qq.com/document/path/90313). Reviewed
-2026-08-13 (Asia/Shanghai).
+2026-08-14 (Asia/Shanghai).
 
 An ambiguous timeout may occur after the provider accepted the email. Without an official
 idempotency key or a stable receipt plus lookup API, retry could duplicate a real customer email.

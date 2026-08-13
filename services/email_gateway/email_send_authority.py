@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping, Sequence
-from typing import Protocol
+from typing import Any, Protocol
 
 from .mailboxes import MailboxRegistry
 from .models import Conversation, Draft, InboxItem, TenantScope, canonical_digest
@@ -19,6 +20,8 @@ _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 _PARTICIPANT_ROLES_DIGEST = canonical_digest(
     {"sender": "mailbox_owner", "recipients": ["original_sender"]}
 )
+_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_USER_REF_DOMAIN = b"gbos-user-ref-v1\x1f"
 _SNAPSHOT_FIELDS = frozenset(
     {
         "site_id",
@@ -174,6 +177,115 @@ class EmailSendAuthority:
             ],
         }
 
+    def validate_command(
+        self,
+        scope: TenantScope,
+        *,
+        command: Mapping[str, Any],
+    ) -> dict[str, object]:
+        """Reload Gateway-owned send bindings and require an outbound-capable mailbox."""
+
+        actor_ref = command.get("actor_user_ref")
+        inbox_ref = command.get("inbox_item_ref")
+        draft_ref = command.get("reply_draft_ref")
+        if not all(isinstance(value, str) for value in (actor_ref, inbox_ref, draft_ref)):
+            raise EmailSendAuthorityConflict("gateway_authority_drift")
+        candidate_inbox = self._workflow.get_inbox(scope, str(inbox_ref))
+        actor_name = None if candidate_inbox is None else candidate_inbox.assignee_user_ref
+        if actor_name is None or _protected_user_ref(scope.site_id, actor_name) != actor_ref:
+            raise EmailSendAuthorityConflict("inbox_authority_unavailable")
+        current, inbox, draft = self._current_snapshot(
+            scope,
+            actor_ref=actor_name,
+            inbox_item_ref=str(inbox_ref),
+            draft_ref=str(draft_ref),
+            require_outbound=True,
+        )
+        expected = {
+            "mailbox_ref": current["mailbox_ref"],
+            "mailbox_config_revision": current["mailbox_config_revision"],
+            "inbox_item_ref": current["inbox_item_ref"],
+            "inbox_item_revision": current["inbox_item_revision"],
+            "conversation_ref": current["conversation_ref"],
+            "conversation_revision": current["conversation_revision"],
+            "reply_draft_ref": current["reply_draft_ref"],
+            "reply_draft_revision": current["reply_draft_revision"],
+            "reply_draft_digest": current["reply_draft_digest"],
+        }
+        if any(command.get(key) != value for key, value in expected.items()):
+            raise EmailSendAuthorityConflict("gateway_authority_drift")
+        if (
+            command.get("team_ref") != current["team_ref"]
+            or command.get("party_ref") != current["party_ref"]
+            or command.get("owner_user_ref") != actor_ref
+            or command.get("delegated_approver_user_ref") != actor_ref
+        ):
+            raise EmailSendAuthorityConflict("gateway_authority_drift")
+
+        mailbox = self._mailboxes.get(scope, inbox.mailbox_ref)
+        if mailbox is None or mailbox.mailbox_address_identity_ref is None:
+            raise EmailSendAuthorityConflict("mailbox_authority_unavailable")
+        participants = command.get("participants")
+        if not isinstance(participants, Sequence) or isinstance(participants, (str, bytes)):
+            raise EmailSendAuthorityConflict("participant_projection_invalid")
+        resolved: list[dict[str, object]] = []
+        for index, item in enumerate(participants):
+            if not isinstance(item, Mapping):
+                raise EmailSendAuthorityConflict("participant_projection_invalid")
+            role = item.get("address_role")
+            opaque_ref = item.get("opaque_address_ref")
+            if (
+                not isinstance(role, str)
+                or not isinstance(opaque_ref, str)
+                or _OPAQUE_EMAIL.fullmatch(opaque_ref) is None
+            ):
+                raise EmailSendAuthorityConflict("participant_projection_invalid")
+            if index == 0:
+                if (
+                    role != "sender"
+                    or opaque_ref != mailbox.mailbox_address_identity_ref
+                    or set(item) != {"address_role", "opaque_address_ref"}
+                ):
+                    raise EmailSendAuthorityConflict("participant_projection_invalid")
+                resolved.append(
+                    {
+                        "address_role": role,
+                        "opaque_address_ref": opaque_ref,
+                        "identity_mapping_ref": None,
+                        "identity_mapping_revision": None,
+                    }
+                )
+                continue
+            if role not in {"to", "cc", "bcc"} or set(item) != {
+                "address_role",
+                "opaque_address_ref",
+                "identity_mapping_ref",
+                "identity_mapping_revision",
+            }:
+                raise EmailSendAuthorityConflict("participant_projection_invalid")
+            projection = self._identities.get(scope, opaque_ref)
+            if (
+                projection is None
+                or projection.status != "confirmed"
+                or projection.identity_type != "Party"
+                or projection.team_ref != current["team_ref"]
+                or projection.processing_purpose != scope.processing_purpose
+                or item.get("identity_mapping_ref") != projection.external_identity_ref
+                or item.get("identity_mapping_revision") != projection.external_identity_revision
+            ):
+                raise EmailSendAuthorityConflict("recipient_identity_unavailable")
+            resolved.append(
+                {
+                    "address_role": role,
+                    "opaque_address_ref": opaque_ref,
+                    "identity_mapping_ref": projection.external_identity_ref,
+                    "identity_mapping_revision": projection.external_identity_revision,
+                }
+            )
+        if len(resolved) < 2 or draft.content_digest != command.get("reply_draft_digest"):
+            raise EmailSendAuthorityConflict("gateway_authority_drift")
+        return {**expected, "participants": tuple(resolved)}
+
     def _current_snapshot(
         self,
         scope: TenantScope,
@@ -181,6 +293,7 @@ class EmailSendAuthority:
         actor_ref: str,
         inbox_item_ref: str,
         draft_ref: str,
+        require_outbound: bool = False,
     ) -> tuple[dict[str, object], InboxItem, Draft]:
         inbox = self._workflow.get_inbox(scope, inbox_item_ref)
         if (
@@ -196,7 +309,7 @@ class EmailSendAuthority:
             mailbox is None
             or mailbox.business_purpose != scope.processing_purpose
             or mailbox.status != "active"
-            or not mailbox.inbound_enabled
+            or not (mailbox.outbound_enabled if require_outbound else mailbox.inbound_enabled)
             or mailbox.default_team_ref != inbox.team_ref
         ):
             raise EmailSendAuthorityConflict("mailbox_authority_unavailable")
@@ -268,6 +381,18 @@ def _validate_snapshot(value: object) -> dict[str, object]:
     if _DIGEST.fullmatch(str(result["reply_draft_digest"])) is None:
         raise EmailSendAuthorityConflict("gateway_authority_drift")
     return result
+
+
+def _protected_user_ref(site_id: str, user_name: str) -> str:
+    digest = hashlib.sha256(
+        _USER_REF_DOMAIN + site_id.encode() + b"\x1f" + user_name.encode()
+    ).digest()
+    value = int.from_bytes(digest[:16], "big")
+    encoded = ["0"] * 26
+    for index in range(25, -1, -1):
+        value, remainder = divmod(value, 32)
+        encoded[index] = _CROCKFORD[remainder]
+    return "USR-" + "".join(encoded)
 
 
 def _validate_participant_projection(value: object) -> list[dict[str, str]]:

@@ -54,7 +54,7 @@ def test_closed_approved_command_fixture_reaches_fake_receipt_once_across_replay
     ingest = CommandIngestService(
         repository=repository,
         action_guard=ActionGuard(),
-        authority_resolver=lambda _scope, _command: authority_for(command),
+        authority_resolver=lambda _scope, _publication, _command: authority_for(command),
         clock=lambda: NOW,
     )
     first = ingest.accept(scope, publication=_publication(command), command=command)
@@ -96,7 +96,7 @@ def test_live_authority_rejection_never_creates_outbox(case: str) -> None:
     ingest = CommandIngestService(
         repository=repository,
         action_guard=ActionGuard(),
-        authority_resolver=lambda _scope, _command: live,
+        authority_resolver=lambda _scope, _publication, _command: live,
         clock=lambda: NOW,
     )
 
@@ -112,7 +112,7 @@ def test_uncertainty_and_emergency_stop_each_preserve_one_effect_maximum() -> No
     receipt = CommandIngestService(
         repository=repository,
         action_guard=ActionGuard(),
-        authority_resolver=lambda _scope, _command: authority_for(command),
+        authority_resolver=lambda _scope, _publication, _command: authority_for(command),
         clock=lambda: NOW,
     ).accept(scope, publication=_publication(command), command=command)
     provider = FakeEmailProvider(ProviderSubmissionUncertain("lost response"))

@@ -269,7 +269,7 @@ class EmailSendRepository(Protocol):
 
 
 AuthorityResolver = Callable[
-    [TenantScope, Mapping[str, Any]],
+    [TenantScope, CommandPublication, Mapping[str, Any]],
     EmailSendAuthorityReceipt,
 ]
 
@@ -312,7 +312,7 @@ class CommandIngestService:
         if replay is not None:
             return replay
         now = self._clock()
-        authority = self._authority(scope, command)
+        authority = self._authority(scope, publication, command)
         verified = self._guard.verify_email_send(command, authority=authority, now=now)
         receipt = self._repository.accept_verified(
             scope,

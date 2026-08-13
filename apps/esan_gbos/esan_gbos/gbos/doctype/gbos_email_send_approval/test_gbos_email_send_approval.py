@@ -3,17 +3,24 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import frappe
+from frappe.auth import validate_auth
 from frappe.tests import IntegrationTestCase
+from werkzeug.wrappers import Request
 
+from esan_gbos.api.internal import email_gateway_authority as email_gateway_authority_api
 from esan_gbos.api.v5.email_send import _approve_locked, approve, submit_for_review
 from esan_gbos.domain.email_review_policy import (
     protect_live_email_send_snapshot,
     protected_user_ref,
 )
+from esan_gbos.domain.external_identity_projection import owner_eligibility_revision
 from esan_gbos.domain.naming import make_gbos_name
+from esan_gbos.domain.permissions import EMAIL_GATEWAY_AUTHORITY_ROLE
 from esan_gbos.gbos.doctype.gbos_command_publication.gbos_command_publication import (
     GBOSCommandPublication,
 )
@@ -22,6 +29,12 @@ from esan_gbos.gbos.doctype.gbos_email_send_approval.gbos_email_send_approval im
 )
 
 TEST_OWNER = "gbos-email-send-owner@example.invalid"
+AUTHORITY_USER = "gbos-email-send-authority@localhost.invalid"
+AUTHORITY_AUTH_REF = "email-gateway-authority-v1"
+AUTHORITY_API_KEY = "EmailAuthorityKey_0123456789ABCDEF"
+AUTHORITY_API_SECRET = "EmailAuthoritySecret_0123456789ABCDEF"
+AUTHORITY_CONFIG_KEY = "gbos_email_gateway_authority_identities"
+_MISSING = object()
 
 IGNORE_TEST_RECORD_DEPENDENCIES = [
     "DocType",
@@ -140,6 +153,118 @@ class TestGBOSEmailSendApproval(IntegrationTestCase):
         case = frappe.get_doc("GBOS Review Case", response["data"]["review_case_ref"])
         return response, case
 
+    def _service_user(self) -> None:
+        if not frappe.db.exists("User", AUTHORITY_USER):
+            frappe.get_doc(
+                {
+                    "doctype": "User",
+                    "email": AUTHORITY_USER,
+                    "first_name": "GBOS Email Authority",
+                    "enabled": 1,
+                    "user_type": "Website User",
+                    "send_welcome_email": 0,
+                    "api_key": AUTHORITY_API_KEY,
+                    "api_secret": AUTHORITY_API_SECRET,
+                    "roles": [{"role": EMAIL_GATEWAY_AUTHORITY_ROLE}],
+                }
+            ).insert(ignore_permissions=True)
+        frappe.clear_cache(user=AUTHORITY_USER)
+
+    def _native_authority_snapshot(self) -> tuple[dict[str, object], Any]:
+        party = frappe.get_doc(
+            {
+                "doctype": "GBOS Party Profile",
+                "party_name": f"Email authority {frappe.generate_hash(length=8)}",
+                "team": self.team.name,
+                "owner_user": TEST_OWNER,
+                "origin": "Manual",
+                "business_status": "Active",
+                "review_status": "Pending",
+            }
+        ).insert(ignore_permissions=True)
+        frappe.db.set_value(
+            party.doctype,
+            party.name,
+            "review_status",
+            "Approved",
+            update_modified=False,
+        )
+        party = frappe.get_doc(party.doctype, party.name)
+        live = self._live_snapshot()
+        recipient = live["participants"][1]  # type: ignore[index]
+        identity = frappe.get_doc(
+            {
+                "doctype": "GBOS External Identity",
+                "team": self.team.name,
+                "identity_provider": "email",
+                "external_subject": recipient["opaque_address_ref"],
+                "identity_type": "Party",
+                "party_profile": party.name,
+                "origin": "Manual",
+                "business_status": "Active",
+                "review_status": "Pending",
+            }
+        ).insert(ignore_permissions=True)
+        frappe.db.set_value(
+            identity.doctype,
+            identity.name,
+            "review_status",
+            "Approved",
+            update_modified=False,
+        )
+        identity = frappe.get_doc(identity.doctype, identity.name)
+        member = frappe.db.get_value(
+            "GBOS Team Member",
+            {"parent": self.team.name, "user": TEST_OWNER, "enabled": 1},
+            ["name", "parent", "user", "enabled", "modified"],
+            as_dict=True,
+        )
+        owner = frappe.db.get_value(
+            "User",
+            TEST_OWNER,
+            ["enabled", "user_type"],
+            as_dict=True,
+        )
+        live.update(
+            party_ref=party.name,
+            party_revision=int(party.revision),
+            team_revision=int(self.team.revision),
+            owner_eligibility_revision=owner_eligibility_revision(
+                party,
+                {
+                    "owner_enabled": owner.enabled,
+                    "owner_user_type": owner.user_type,
+                    "membership_ref": member.name,
+                    "membership_parent": member.parent,
+                    "membership_user": member.user,
+                    "membership_enabled": member.enabled,
+                    "membership_modified": member.modified,
+                    "team_revision": int(self.team.revision),
+                },
+            ),
+        )
+        recipient["identity_mapping_ref"] = identity.name
+        recipient["identity_mapping_revision"] = int(identity.revision)
+        return live, identity
+
+    def _authenticate_authority(self, request_id: str) -> None:
+        self._service_user()
+        frappe.set_user("Guest")
+        frappe.local.login_manager = SimpleNamespace(user="Guest")
+        frappe.local.response = frappe._dict()
+        frappe.local.request = Request.from_values(
+            method="POST",
+            headers={
+                "Authorization": f"token {AUTHORITY_API_KEY}:{AUTHORITY_API_SECRET}",
+                "X-Site-ID": frappe.local.site,
+                "X-Processing-Purpose": "email_gateway_authority",
+                "X-Request-ID": request_id,
+                "X-GBOS-Frappe-Auth-Ref": AUTHORITY_AUTH_REF,
+            },
+        )
+        validate_auth()
+        self.assertEqual(frappe.session.user, AUTHORITY_USER)
+
     def test_specialized_approval_is_atomic_replay_stable_and_contains_no_raw_user(self) -> None:
         live = self._live_snapshot()
         submitted, case = self._submit(live)
@@ -208,6 +333,97 @@ class TestGBOSEmailSendApproval(IntegrationTestCase):
         publication.command_payload = "{}"
         with self.assertRaises(frappe.PermissionError):
             publication.save(ignore_permissions=True)
+
+    def test_native_fenced_publication_resolves_current_send_authority(self) -> None:
+        previous_config = frappe.conf.get(AUTHORITY_CONFIG_KEY, _MISSING)
+        previous_request = getattr(frappe.local, "request", _MISSING)
+        previous_response = getattr(frappe.local, "response", _MISSING)
+        previous_login_manager = getattr(frappe.local, "login_manager", _MISSING)
+        try:
+            live, identity = self._native_authority_snapshot()
+            submitted, case = self._submit(live)
+            protected = protect_live_email_send_snapshot(
+                live,
+                site_id=frappe.local.site,
+                authenticated_user_name=TEST_OWNER,
+            )
+            frappe.local.gbos_request_id = None
+            with patch(
+                "esan_gbos.api.v5.email_send._derive_approval_live_snapshot",
+                return_value=protected,
+            ):
+                approved = approve(
+                    case.name,
+                    case.revision,
+                    "Native authority must revalidate the current route.",
+                    "idem:v2:"
+                    + hashlib.sha256((case.name + "-native-authority").encode()).hexdigest(),
+                )
+            self.assertNotIn("error", approved)
+            command = frappe.get_doc(
+                "GBOS Approved Command", approved["data"]["approved_command_ref"]
+            )
+            publication = frappe.get_doc(
+                "GBOS Command Publication", approved["data"]["command_publication_ref"]
+            )
+            publication.flags.gbos_publication_worker = True
+            publication.publication_status = "Claimed"
+            publication.attempt = 1
+            publication.generation = 1
+            publication.worker_id = "native-email-authority-worker"
+            publication.fence_token = make_gbos_name("FNC")
+            publication.lease_expires_at = datetime.now(UTC) + timedelta(minutes=5)
+            publication.claim_request_id = "native-authority-claim"
+            publication.save(ignore_permissions=True)
+            command_payload = frappe.parse_json(command.command_payload)
+            request_id = command_payload["request_id"]
+            frappe.conf[AUTHORITY_CONFIG_KEY] = {
+                AUTHORITY_AUTH_REF: {
+                    "user": AUTHORITY_USER,
+                    "site_id": frappe.local.site,
+                    "processing_purposes": ["email_gateway_authority"],
+                }
+            }
+            self._authenticate_authority(request_id)
+
+            response = email_gateway_authority_api.resolve_email_send_command(
+                {
+                    "site_id": frappe.local.site,
+                    "processing_purpose": "email_gateway_authority",
+                    "request_id": request_id,
+                    "auth_ref": AUTHORITY_AUTH_REF,
+                    "publication_ref": publication.name,
+                    "attempt": 1,
+                    "generation": 1,
+                    "fence_token": publication.fence_token,
+                    "command_ref": command.name,
+                    "payload_digest": publication.payload_digest,
+                }
+            )
+
+            self.assertNotIn("error", response)
+            authority = response["email_send_authority"]
+            self.assertEqual(authority["audience"], "email-command-executor")
+            self.assertEqual(authority["party_ref"], live["party_ref"])
+            self.assertEqual(authority["participants"][1]["identity_mapping_ref"], identity.name)
+            self.assertEqual(frappe.local.response["headers"]["Cache-Control"], "no-store")
+            self.assertNotIn(TEST_OWNER, repr(response))
+        finally:
+            frappe.set_user("Administrator")
+            if previous_config is _MISSING:
+                frappe.conf.pop(AUTHORITY_CONFIG_KEY, None)
+            else:
+                frappe.conf[AUTHORITY_CONFIG_KEY] = previous_config
+            for attribute, value in (
+                ("request", previous_request),
+                ("response", previous_response),
+                ("login_manager", previous_login_manager),
+            ):
+                if value is _MISSING:
+                    if hasattr(frappe.local, attribute):
+                        delattr(frappe.local, attribute)
+                else:
+                    setattr(frappe.local, attribute, value)
 
     def test_publication_insert_failure_rolls_back_decision_and_command(self) -> None:
         live = self._live_snapshot()
