@@ -83,6 +83,11 @@ _DEPLOYMENT_TEXT_SECRET_FILENAMES = {
     "email_gateway_bff_bearer": "email_gateway_bff_bearer",
     "mailbox_projection_bearer": "mailbox_projection_bearer",
     "observer_email_draft_material_bearer": "observer_email_draft_material_bearer",
+    "frappe_email_command_publication_api_key": ("frappe_email_command_publication_api_key"),
+    "frappe_email_command_publication_api_secret": ("frappe_email_command_publication_api_secret"),
+    "email_gateway_command_ingest_bearer": "email_gateway_command_ingest_bearer",
+    "postgres_email_command_executor_password": ("postgres_email_command_executor_password"),
+    "postgres_email_send_worker_password": "postgres_email_send_worker_password",
     "email_gateway_data_key": "email_gateway_data_key",
 }
 _POSTGRES_SECRET_NAMES = {
@@ -93,6 +98,8 @@ _POSTGRES_SECRET_NAMES = {
     "gbos_email_gateway_app": "postgres_email_gateway_password",
     "gbos_email_gateway_worker": "postgres_email_gateway_password",
     "gbos_observer_publisher": "postgres_observer_publisher_password",
+    "gbos_email_command_executor": "postgres_email_command_executor_password",
+    "gbos_email_send_worker": "postgres_email_send_worker_password",
 }
 
 ProviderMode = Literal["disabled", "deterministic", "deepseek"]

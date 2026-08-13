@@ -55,6 +55,8 @@ services:
       - postgres_media_password
       - postgres_email_gateway_password
       - postgres_observer_publisher_password
+      - postgres_email_command_executor_password
+      - postgres_email_send_worker_password
     volumes:
       - ../../services/observer/migrations:/migrations/observer:ro
       - ../../services/context/migrations:/migrations/context:ro
@@ -311,10 +313,13 @@ services:
     environment:
       <<: *runtime-environment
       GBOS_EMAIL_GATEWAY_KILL_SWITCH: ${GBOS_EMAIL_GATEWAY_KILL_SWITCH:-true}
+      GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH: ${GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH:-true}
       GBOS_EXTERNAL_SEND_ENABLED: "false"
     secrets:
       - postgres_email_gateway_password
+      - postgres_email_command_executor_password
       - email_publication_bearer
+      - email_gateway_command_ingest_bearer
       - mailbox_projection_bearer
       - email_gateway_data_key
       - source: email_gateway_bff_bearer
@@ -398,6 +403,102 @@ services:
         condition: service_completed_successfully
       observer-api:
         condition: service_started
+    restart: unless-stopped
+
+  frappe-email-command-publication-bootstrap:
+    image: *frappe-image
+    pull_policy: never
+    profiles: ["email-approved-outbound"]
+    environment:
+      GBOS_LOCAL_PILOT_SITE_ID: "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}"
+      GBOS_PRODUCTION_ENABLED: "false"
+      GBOS_EMAIL_COMMAND_PUBLICATION_API_KEY_FILE: /run/secrets/frappe_email_command_publication_api_key
+      GBOS_EMAIL_COMMAND_PUBLICATION_API_SECRET_FILE: /run/secrets/frappe_email_command_publication_api_secret
+    entrypoint: ["/bin/sh", "-ceu"]
+    command:
+      - >-
+        test -s /run/secrets/frappe_email_command_publication_api_key;
+        test -s /run/secrets/frappe_email_command_publication_api_secret;
+        bench --site "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}" execute
+        esan_gbos.email_command_publication_service.provision_email_command_publication
+        --kwargs "{'confirm_local_pilot': True}"
+    secrets:
+      - frappe_email_command_publication_api_key
+      - frappe_email_command_publication_api_secret
+    volumes:
+      - local-pilot-frappe-sites:/home/frappe/frappe-bench/sites
+      - local-pilot-frappe-logs:/home/frappe/frappe-bench/logs
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      frappe-site:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+  email-command-publication-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["email-approved-outbound"]
+    command: ["python", "-m", "services.local_pilot_runtime.email_command_publication_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_EMAIL_COMMAND_PUBLICATION_KILL_SWITCH: ${GBOS_EMAIL_COMMAND_PUBLICATION_KILL_SWITCH:-true}
+      GBOS_EXTERNAL_SEND_ENABLED: "false"
+    secrets:
+      - frappe_email_command_publication_api_key
+      - frappe_email_command_publication_api_secret
+      - email_gateway_command_ingest_bearer
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-email-command-publication-worker.json:/config/runtime-email-command-publication-worker.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+    networks: [local-internal]
+    depends_on:
+      frappe-email-command-publication-bootstrap:
+        condition: service_completed_successfully
+      email-gateway-api:
+        condition: service_started
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  email-send-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["email-approved-outbound"]
+    command: ["python", "-m", "services.local_pilot_runtime.email_send_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_EMAIL_SEND_KILL_SWITCH: ${GBOS_EMAIL_SEND_KILL_SWITCH:-true}
+      GBOS_FAKE_EMAIL_SEND_ENABLED: ${GBOS_FAKE_EMAIL_SEND_ENABLED:-false}
+      GBOS_EXTERNAL_SEND_ENABLED: "false"
+    secrets:
+      - postgres_email_send_worker_password
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-email-send-worker.json:/config/runtime-email-send-worker.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
   connector-worker:
@@ -875,6 +976,11 @@ services:
           "$$site")";
         bench --site "$$site" set-config -p \
           gbos_identity_resolver_identities "$$identity_resolver_identities";
+        email_command_publication_identities="$$(printf \
+          '{"email-command-publication-v1":{"user":"email-command-publication@localhost.invalid","site_id":"%s","processing_purposes":["email_command_publication"]}}' \
+          "$$site")";
+        bench --site "$$site" set-config -p \
+          gbos_email_command_publication_identities "$$email_command_publication_identities";
         bench --site "$$site" migrate;
         bench --site "$$site" migrate
     secrets:
@@ -1208,6 +1314,10 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_email_gateway_password
   postgres_observer_publisher_password:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_observer_publisher_password
+  postgres_email_command_executor_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_email_command_executor_password
+  postgres_email_send_worker_password:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/postgres_email_send_worker_password
   mariadb_root_password:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/mariadb_root_password
   frappe_admin_password:
@@ -1224,6 +1334,8 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_publication_bearer
   email_gateway_bff_bearer:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_gateway_bff_bearer
+  email_gateway_command_ingest_bearer:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/email_gateway_command_ingest_bearer
   observer_email_draft_material_bearer:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/observer_email_draft_material_bearer
   mailbox_projection_bearer:
@@ -1246,6 +1358,10 @@ secrets:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/frappe_materializer_api_key
   frappe_materializer_api_secret:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/frappe_materializer_api_secret
+  frappe_email_command_publication_api_key:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/frappe_email_command_publication_api_key
+  frappe_email_command_publication_api_secret:
+    file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/frappe_email_command_publication_api_secret
   identity_hmac_key:
     file: ${GBOS_SECRET_DIR:-/tmp/gbos-local-pilot-secrets-unavailable}/identity_hmac_key
   frappe_identity_resolver_api_key:

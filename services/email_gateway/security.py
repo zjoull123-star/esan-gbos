@@ -2,14 +2,53 @@
 
 from __future__ import annotations
 
+import hmac
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from .models import stable_ref
 
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 _TTL = timedelta(minutes=5)
+_COMMAND_AUTH_REF = "email-command-ingest-v1"
+_COMMAND_AUDIENCE = "email-command-executor"
+_COMMAND_SCOPE = "email-send-execute"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CommandIngestAuthorization:
+    """Exact scoped bearer boundary for the command executor endpoint."""
+
+    bearer_token: str
+    auth_ref: str = _COMMAND_AUTH_REF
+
+    def __post_init__(self) -> None:
+        if (
+            not self.bearer_token
+            or self.bearer_token != self.bearer_token.strip()
+            or len(self.bearer_token) > 4096
+            or self.auth_ref != _COMMAND_AUTH_REF
+        ):
+            raise ValueError("invalid command ingest credentials")
+
+    def authorize(
+        self,
+        *,
+        authorization: str | None,
+        auth_ref: str | None,
+        audience: str | None,
+        granted_scope: str | None,
+    ) -> bool:
+        return bool(
+            authorization is not None
+            and hmac.compare_digest(authorization, f"Bearer {self.bearer_token}")
+            and auth_ref is not None
+            and hmac.compare_digest(auth_ref, self.auth_ref)
+            and audience == _COMMAND_AUDIENCE
+            and granted_scope == _COMMAND_SCOPE
+        )
 
 
 class GatewayAuthorizationIssuer:
@@ -128,4 +167,4 @@ def _bounded(value: object, field: str) -> str:
     return value
 
 
-__all__ = ["GatewayAuthorizationIssuer"]
+__all__ = ["CommandIngestAuthorization", "GatewayAuthorizationIssuer"]

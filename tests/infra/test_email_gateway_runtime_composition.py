@@ -38,6 +38,12 @@ def test_gateway_and_relays_are_default_killed_least_privilege_and_local_only() 
     assert "wecom_credential" not in gateway
     assert "local-internal" in gateway
     assert "postgres_email_gateway_password" in gateway
+    assert "postgres_email_command_executor_password" in gateway
+    assert "email_gateway_command_ingest_bearer" in gateway
+    assert (
+        "GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH: "
+        "${GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH:-true}" in gateway
+    )
     assert "postgres_observer_publisher_password" not in gateway
     assert "postgres_observer_publisher_password" in publication
     assert "postgres_email_gateway_password" not in publication
@@ -49,6 +55,7 @@ def test_gateway_and_relays_are_default_killed_least_privilege_and_local_only() 
         assert "mode: 0600" in service
     for service in (gateway_worker, publication, projection, frappe_worker, frappe_scheduler):
         assert "email_gateway_bff_bearer" not in service
+        assert "postgres_email_command_executor_password" not in service
     for service in (frappe_site, frappe_backend, observer_api):
         assert "source: observer_email_draft_material_bearer" in service
         assert "target: observer_email_draft_material_bearer" in service
@@ -135,6 +142,130 @@ def test_manifest_has_closed_revisioned_mailbox_list_and_default_switches() -> N
     assert gateway["mailboxes"] == []
 
 
+def test_command_relay_and_fake_send_worker_are_profile_only_closed_and_least_secret() -> None:
+    compose = (ROOT / "infra/local/compose.yml").read_text()
+    bootstrap = _block(compose, "frappe-email-command-publication-bootstrap")
+    relay = _block(compose, "email-command-publication-worker")
+    sender = _block(compose, "email-send-worker")
+
+    assert 'profiles: ["email-approved-outbound"]' in bootstrap
+    assert 'profiles: ["email-approved-outbound"]' in relay
+    assert 'profiles: ["email-approved-outbound"]' in sender
+    assert "local-internal" in bootstrap and "local-internal" in relay
+    assert "controlled-egress" not in bootstrap + relay + sender
+    assert "GBOS_EMAIL_COMMAND_PUBLICATION_KILL_SWITCH" in relay
+    assert "GBOS_EMAIL_SEND_KILL_SWITCH" in sender
+    for secret in (
+        "frappe_email_command_publication_api_key",
+        "frappe_email_command_publication_api_secret",
+        "email_gateway_command_ingest_bearer",
+    ):
+        assert secret in relay
+    assert "postgres" not in relay
+    assert "provider" not in relay
+    assert "frappe_email_command_publication_api_key" not in sender
+    assert "email_gateway_command_ingest_bearer" not in sender
+
+    manifest = json.loads((ROOT / "infra/local/local-pilot-manifest.json").read_text())
+    gateway = manifest["email_gateway"]
+    assert gateway["command_publication_kill_switch"] is True
+    assert gateway["send_kill_switch"] is True
+    assert gateway["external_send"] is False
+
+    runtime = json.loads((ROOT / "infra/local/runtime-entrypoints.json").read_text())
+    assert runtime["services"]["email-command-publication-worker"] == {
+        "enabled": False,
+        "network": "local-internal-only",
+        "frappe_url": "http://frappe-backend:8000",
+        "gateway_url": "http://email-gateway-api:8004",
+    }
+
+
+def test_outbound_runtime_configs_and_secret_preparation_remain_provider_free(
+    tmp_path: Path,
+) -> None:
+    result = subprocess.run(
+        [
+            str(ROOT / "scripts/local-pilot/render-config"),
+            "--manifest",
+            str(ROOT / "infra/local/local-pilot-manifest.json"),
+            "--output-dir",
+            str(tmp_path),
+            "--synthetic",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    relay = json.loads((tmp_path / "runtime-email-command-publication-worker.json").read_text())
+    sender = json.loads((tmp_path / "runtime-email-send-worker.json").read_text())
+    assert relay["enabled"] is False and relay["kill_switch"] is True
+    assert relay["external_send"] is False
+    assert set(relay["auth"]) == {
+        "frappe_api_key_file",
+        "frappe_api_secret_file",
+        "gateway_bearer_file",
+    }
+    assert "postgres" not in relay
+    assert sender["enabled"] is False and sender["kill_switch"] is True
+    assert sender["external_send"] is False
+    assert sender["provider_mode"] == "fake_disabled"
+    assert sender["postgres"]["user"] == "gbos_email_send_worker"
+
+    prepare = (ROOT / "scripts/local-pilot/prepare-secrets").read_text()
+    start = (ROOT / "scripts/local-pilot/start").read_text()
+    for secret in (
+        "frappe_email_command_publication_api_key",
+        "frappe_email_command_publication_api_secret",
+        "email_gateway_command_ingest_bearer",
+        "postgres_email_command_executor_password",
+        "postgres_email_send_worker_password",
+    ):
+        assert secret in prepare
+    assert 'GBOS_EMAIL_COMMAND_PUBLICATION_KILL_SWITCH="true"' in start
+    assert 'GBOS_EMAIL_SEND_KILL_SWITCH="true"' in start
+    assert 'GBOS_FAKE_EMAIL_SEND_ENABLED="false"' in start
+    assert 'GBOS_EXTERNAL_SEND_ENABLED="false"' in start
+    assert "email-approved-outbound" not in start
+
+
+def test_default_closed_outbound_secrets_are_sentinels_not_keychain_requirements() -> None:
+    prepare = (ROOT / "scripts/local-pilot/prepare-secrets").read_text()
+    optional_loop = prepare[prepare.index("# Compose declares every optional secret") :]
+    for secret in (
+        "frappe_email_command_publication_api_key",
+        "frappe_email_command_publication_api_secret",
+        "email_gateway_command_ingest_bearer",
+        "postgres_email_command_executor_password",
+        "postgres_email_send_worker_password",
+    ):
+        assert f"write_keychain_secret \\\n  {secret} " not in prepare
+        assert f"write_optional_keychain_secret \\\n  {secret} " in prepare
+        assert secret in optional_loop
+
+
+def test_optional_outbound_keychain_values_materialize_before_empty_sentinels() -> None:
+    prepare = (ROOT / "scripts/local-pilot/prepare-secrets").read_text()
+    sentinel = prepare.index("# Compose declares every optional secret")
+    for secret in (
+        "frappe_email_command_publication_api_key",
+        "frappe_email_command_publication_api_secret",
+        "email_gateway_command_ingest_bearer",
+        "postgres_email_command_executor_password",
+        "postgres_email_send_worker_password",
+    ):
+        reader = prepare.index(f"write_optional_keychain_secret \\\n  {secret} ")
+        assert reader < sentinel
+        assert 'if [[ ! -f "${secret_dir}/${optional}" ]]' in prepare[sentinel:]
+
+    compose = (ROOT / "infra/local/compose.yml").read_text()
+    bootstrap = _block(compose, "frappe-email-command-publication-bootstrap")
+    assert "test -s /run/secrets/frappe_email_command_publication_api_key" in bootstrap
+    assert "test -s /run/secrets/frappe_email_command_publication_api_secret" in bootstrap
+
+
 def test_renderer_refuses_to_double_run_the_legacy_email_poller(tmp_path: Path) -> None:
     manifest = json.loads((ROOT / "infra/local/local-pilot-manifest.json").read_text())
     manifest["channels"]["email"].update(
@@ -180,6 +311,27 @@ def test_migration_materializes_gateway_roles_before_reusing_secret_input() -> N
     )
 
     assert gateway_copy < app_insert < worker_insert < first_truncate < publisher_copy
+
+
+def test_migration_conditionally_materializes_outbound_roles_from_distinct_secrets() -> None:
+    compose = (ROOT / "infra/local/compose.yml").read_text()
+    migrations = _block(compose, "migrations")
+    migrate = (ROOT / "scripts/local-pilot/migrate").read_text()
+
+    for role, secret in (
+        ("gbos_email_command_executor", "postgres_email_command_executor_password"),
+        ("gbos_email_send_worker", "postgres_email_send_worker_password"),
+    ):
+        assert secret in migrations
+        copy = migrate.index(f"\\copy local_secret_input(password) FROM '/run/secrets/{secret}'")
+        insert = migrate.index(f"SELECT '{role}', password", copy)
+        truncate = migrate.index("TRUNCATE local_secret_input;", insert)
+        assert copy < insert < truncate
+        assert f"'{role}'" in migrate[migrate.index("SELECT format(", truncate) :]
+
+    assert "for optional_secret_file in" in migrate
+    assert '[[ -s "${optional_secret_file}" ]] || continue' in migrate
+    assert "local role secret import failed closed" in migrate
 
 
 def test_email_gateway_retention_and_alert_contract_is_closed() -> None:

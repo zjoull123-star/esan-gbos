@@ -8,7 +8,7 @@ import os
 import re
 import secrets
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, TypeGuard, cast
 from urllib import error as urlerror
@@ -17,6 +17,7 @@ from urllib import request as urlrequest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import FastAPI, HTTPException
 
+from services.action_guard.policy import ActionGuard
 from services.agent_runtime.local_entrypoint import (
     LocalEntrypointDisabled,
     load_local_manifest,
@@ -37,11 +38,13 @@ from services.email_gateway.evidence import (
 from services.email_gateway.intake import GatewayIntakeService
 from services.email_gateway.mailboxes import MailboxRegistry
 from services.email_gateway.operations import InboxOperations
+from services.email_gateway.outbound import AuthorityResolver, CommandIngestService
 from services.email_gateway.phase1_read import ConnectorHealth, Phase1Mailbox
 from services.email_gateway.repositories.intake import PostgresIntakeRepository
 from services.email_gateway.repositories.mailboxes import PostgresMailboxRepository
 from services.email_gateway.repositories.phase1_read import PostgresPhase1ReadRepository
 from services.email_gateway.repositories.workflow import PostgresWorkflowRepository
+from services.email_gateway.send_outbox import PostgresSendOutboxRepository
 
 from .email_gateway_config import (
     EmailGatewayConfigError,
@@ -50,6 +53,7 @@ from .email_gateway_config import (
     require_gateway_component,
 )
 from .runtime_support import (
+    PostgresSettings,
     RuntimeSupportError,
     TextSecretProvider,
     close_connection,
@@ -66,6 +70,9 @@ DEFAULT_EMERGENCY_STOP = Path("/run/gbos/EMERGENCY_STOP")
 OBSERVER_CONNECTOR_HEALTH_URL = "http://observer-api:8003/internal/v1/email-connectors/health"
 _MAX_HEALTH_RESPONSE_BYTES = 65_536
 _HEALTH_TIMEOUT_SECONDS = 3.0
+_COMMAND_INGEST_AUTH_REF = "email-command-ingest-v1"
+_COMMAND_INGEST_BEARER_FILE = Path("/run/secrets/email_gateway_command_ingest_bearer")
+_COMMAND_EXECUTOR_PASSWORD_FILE = Path("/run/secrets/postgres_email_command_executor_password")
 
 
 ApplicationFactory = Callable[..., FastAPI]
@@ -318,10 +325,12 @@ def main(
     application_factory: ApplicationFactory | None = None,
     server_runner: Callable[..., None] | None = None,
     secret_provider: TextSecretProvider | None = None,
+    command_authority_resolver: AuthorityResolver | None = None,
     internal_network: bool = False,
 ) -> int:
     environment = os.environ if environ is None else environ
     connection: object | None = None
+    command_executor_connection: object | None = None
     try:
         reject_plaintext_secret_environment(environment)
         manifest = load_local_manifest(manifest_path)
@@ -392,6 +401,43 @@ def main(
                 auth_ref=config.auth.mailbox_projection_auth_ref,
             )
         )
+        gateway_manifest = cast(Mapping[str, object], manifest["email_gateway"])
+        command_ingest_service: CommandIngestService | None = None
+        command_ingest_bearer_token: str | None = None
+        command_ingest_auth_ref: str | None = None
+        if gateway_manifest.get("command_publication_kill_switch") is False:
+            if environment.get("GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH", "true") != "false":
+                raise LocalEntrypointDisabled("email command ingest is killed by default")
+            command_bearer = load_secret_file(
+                _COMMAND_INGEST_BEARER_FILE,
+                secret_provider=active_secret_provider,
+                logical_name="email_gateway_command_ingest_bearer",
+            )
+            executor_settings = PostgresSettings(
+                host=config.postgres.host,
+                port=config.postgres.port,
+                database=config.postgres.database,
+                user="gbos_email_command_executor",
+                password_file=_COMMAND_EXECUTOR_PASSWORD_FILE,
+                connect_timeout_seconds=config.postgres.connect_timeout_seconds,
+            )
+            command_executor_connection = connect_postgres(
+                executor_settings,
+                connector=connector,
+                secret_provider=active_secret_provider,
+                environ=environment,
+            )
+            command_ingest_service = CommandIngestService(
+                repository=PostgresSendOutboxRepository(
+                    cast(Any, command_executor_connection),
+                    actual_database_role="gbos_email_command_executor",
+                ),
+                action_guard=ActionGuard(),
+                authority_resolver=(command_authority_resolver or _unavailable_command_authority),
+                clock=lambda: datetime.now(UTC),
+            )
+            command_ingest_bearer_token = command_bearer.reveal()
+            command_ingest_auth_ref = _COMMAND_INGEST_AUTH_REF
         factory = application_factory or create_email_gateway_app
         application = _build_application(
             factory,
@@ -418,6 +464,9 @@ def main(
                 bearer_token=mailbox_projection_bearer.reveal(),
                 auth_ref=config.auth.mailbox_projection_auth_ref,
             ),
+            command_ingest_service=command_ingest_service,
+            command_ingest_bearer_token=command_ingest_bearer_token,
+            command_ingest_auth_ref=command_ingest_auth_ref,
         )
         active_runner = server_runner or run_server
         active_runner(
@@ -437,8 +486,16 @@ def main(
     ):
         return 78
     finally:
+        if command_executor_connection is not None:
+            close_connection(command_executor_connection)
         if connection is not None:
             close_connection(connection)
+
+
+def _unavailable_command_authority(*_args: object, **_kwargs: object) -> Any:
+    """Fail closed until a live multi-authority resolver is injected."""
+
+    raise ValueError("live email command authority is unavailable")
 
 
 def _validate_manifest(manifest: Mapping[str, object], config: EmailGatewayRuntimeConfig) -> None:
@@ -475,6 +532,9 @@ def _build_application(factory: ApplicationFactory, **kwargs: object) -> FastAPI
         "workflow_authority",
         "evidence_authority",
         "evidence_client",
+        "command_ingest_service",
+        "command_ingest_bearer_token",
+        "command_ingest_auth_ref",
     }
     if current.issubset(parameters):
         selected = {name: value for name, value in kwargs.items() if name in parameters}
@@ -520,6 +580,20 @@ def _secret_provider() -> MountedFileSecretProvider:
                 "text",
                 64,
                 64,
+            ),
+            SecretSpec(
+                "email_gateway_command_ingest_bearer",
+                "email_gateway_command_ingest_bearer",
+                "text",
+                16,
+                4096,
+            ),
+            SecretSpec(
+                "postgres_email_command_executor_password",
+                "postgres_email_command_executor_password",
+                "text",
+                16,
+                128,
             ),
         ),
     )

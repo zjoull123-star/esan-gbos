@@ -28,6 +28,23 @@
     "prometheus_contract": "3.7 scrape_config authorization and http_headers"
   },
   "services": {
+    "email-command-publication-worker": {
+      "enabled": false,
+      "network": "local-internal-only",
+      "frappe_url": "http://frappe-backend:8000",
+      "gateway_url": "http://email-gateway-api:8004"
+    },
+    "frappe-email-command-publication-bootstrap": {
+      "path": "apps/esan_gbos/esan_gbos/email_command_publication_service.py",
+      "status": "profile_only_default_off",
+      "network": "local-internal-only"
+    },
+    "email-send-worker": {
+      "path": "services/local_pilot_runtime/email_send_worker.py",
+      "status": "fake_only_default_off",
+      "network": "local-internal-only",
+      "external_send": false
+    },
     "migrations": {
       "path": "scripts/local-pilot/migrate",
       "status": "executable"

@@ -39,6 +39,7 @@ _ROLE_PASSWORD_FILES = {
     "email-gateway-worker": "/run/secrets/postgres_email_gateway_password",
     "email-publication-worker": "/run/secrets/postgres_observer_publisher_password",
     "mailbox-config-projection-worker": "/run/secrets/postgres_email_gateway_password",
+    "email-send-worker": "/run/secrets/postgres_email_send_worker_password",
 }
 _CHANNEL_FILES = {
     "email": "/run/secrets/email_credential",
@@ -107,7 +108,14 @@ def _load_manifest(path: Path, *, synthetic: bool) -> dict[str, Any]:
         raise ValueError("manifest DeepSeek declaration is missing")
     if (
         set(email_gateway)
-        != {"kill_switch", "publication_kill_switch", "external_send", "mailboxes"}
+        != {
+            "kill_switch",
+            "publication_kill_switch",
+            "command_publication_kill_switch",
+            "send_kill_switch",
+            "external_send",
+            "mailboxes",
+        }
         or email_gateway.get("external_send") is not False
         or not isinstance(email_gateway.get("mailboxes"), list)
     ):
@@ -360,6 +368,64 @@ def _projection_config(
     }
 
 
+def _email_command_publication_runtime_config(
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    gateway = manifest["email_gateway"]
+    return {
+        "schema_version": "1.0",
+        "site_id": manifest["site_id"],
+        "enabled": False,
+        "kill_switch": gateway["command_publication_kill_switch"],
+        "external_send": False,
+        "endpoints": {
+            "frappe": "http://frappe-backend:8000",
+            "gateway": "http://email-gateway-api:8004",
+        },
+        "auth": {
+            "frappe_api_key_file": (
+                "/run/secrets/frappe_email_command_publication_api_key"
+            ),
+            "frappe_api_secret_file": (
+                "/run/secrets/frappe_email_command_publication_api_secret"
+            ),
+            "gateway_bearer_file": (
+                "/run/secrets/email_gateway_command_ingest_bearer"
+            ),
+        },
+        "worker": {
+            "worker_id": "local-pilot-email-command-publication-worker",
+            "lease_seconds": 30,
+            "idle_delay_seconds": 1.0,
+        },
+    }
+
+
+def _email_send_runtime_config(manifest: dict[str, Any]) -> dict[str, Any]:
+    gateway = manifest["email_gateway"]
+    return {
+        "schema_version": "1.0",
+        "site_id": manifest["site_id"],
+        "enabled": False,
+        "kill_switch": gateway["send_kill_switch"],
+        "external_send": False,
+        "provider_mode": "fake_disabled",
+        "postgres": {
+            "host": "postgres",
+            "port": 5432,
+            "database": "gbos_local_pilot",
+            "user": "gbos_email_send_worker",
+            "password_file": "/run/secrets/postgres_email_send_worker_password",
+            "connect_timeout_seconds": 5,
+        },
+        "worker": {
+            "worker_id": "local-pilot-email-send-worker",
+            "lease_seconds": 30,
+            "idle_delay_seconds": 1.0,
+        },
+    }
+
+
 def _canary_start_guard_config(manifest: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": "1.1",
@@ -452,6 +518,16 @@ def main() -> int:
                     role_name=role,
                 ),
             )
+        _atomic_private_json(
+            output_dir,
+            "runtime-email-command-publication-worker.json",
+            _email_command_publication_runtime_config(manifest),
+        )
+        _atomic_private_json(
+            output_dir,
+            "runtime-email-send-worker.json",
+            _email_send_runtime_config(manifest),
+        )
         _atomic_private_json(
             output_dir,
             "projection-connections.json",

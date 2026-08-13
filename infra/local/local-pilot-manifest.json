@@ -29,6 +29,8 @@
   "email_gateway": {
     "kill_switch": true,
     "publication_kill_switch": true,
+    "command_publication_kill_switch": true,
+    "send_kill_switch": true,
     "external_send": false,
     "mailboxes": []
   },

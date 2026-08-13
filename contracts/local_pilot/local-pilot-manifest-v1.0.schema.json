@@ -172,10 +172,19 @@
     "emailGateway": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kill_switch", "publication_kill_switch", "external_send", "mailboxes"],
+      "required": [
+        "kill_switch",
+        "publication_kill_switch",
+        "command_publication_kill_switch",
+        "send_kill_switch",
+        "external_send",
+        "mailboxes"
+      ],
       "properties": {
         "kill_switch": {"type": "boolean"},
         "publication_kill_switch": {"type": "boolean"},
+        "command_publication_kill_switch": {"const": true},
+        "send_kill_switch": {"const": true},
         "external_send": {"const": false},
         "mailboxes": {
           "type": "array",

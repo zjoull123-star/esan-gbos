@@ -37,6 +37,7 @@ from .models import (
     stable_ref,
 )
 from .operations import InboxOperations
+from .outbound import CommandIngestService, CommandPublication
 from .phase1_read import Phase1Mailbox, decode_cursor, encode_cursor
 from .postgres import (
     Connection,
@@ -47,7 +48,7 @@ from .postgres import (
 )
 from .repositories.workflow import InMemoryWorkflowRepository, PostgresWorkflowRepository
 from .repository import ConnectorHealthReader, Phase1ReadRepository
-from .security import GatewayAuthorizationIssuer
+from .security import CommandIngestAuthorization, GatewayAuthorizationIssuer
 
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 _AUTH_REF = "observer-email-publication-v1"
@@ -482,6 +483,104 @@ def build_email_publication_api(
     )
 
 
+def build_email_command_ingest_api(
+    *,
+    intake: CommandIngestService,
+    bearer_token: str,
+    auth_ref: str,
+) -> FastAPI:
+    """Build the isolated command-executor HTTP boundary."""
+
+    command_auth = CommandIngestAuthorization(
+        bearer_token=bearer_token,
+        auth_ref=auth_ref,
+    )
+    application = FastAPI(
+        title="ESAN GBOS Email Command Ingest",
+        version="1.0",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+
+    @application.middleware("http")
+    async def command_no_store(_request: Any, call_next: Any) -> Response:
+        response = cast(Response, await call_next(_request))
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @application.post("/internal/v1/email-commands/accept")
+    def accept_email_command(
+        payload: Annotated[Any, Body()],
+        authorization: str | None = Header(default=None),
+        request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+        site_id: str | None = Header(default=None, alias="X-Site-ID"),
+        processing_purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+        audience: str | None = Header(default=None, alias="X-Audience"),
+        granted_scope: str | None = Header(default=None, alias="X-GBOS-Scope"),
+        payload_digest: str | None = Header(default=None, alias="X-Payload-Digest"),
+        request_id: str | None = Header(default=None, alias="X-Request-ID"),
+    ) -> dict[str, str]:
+        if not command_auth.authorize(
+            authorization=authorization,
+            auth_ref=request_auth_ref,
+            audience=audience,
+            granted_scope=granted_scope,
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "email_command_scope_rejected"},
+            )
+        if (
+            not isinstance(payload, dict)
+            or set(payload)
+            != {
+                "publication_ref",
+                "attempt",
+                "generation",
+                "fence_token",
+                "payload_digest",
+                "command",
+            }
+            or not isinstance(site_id, str)
+            or not isinstance(processing_purpose, str)
+            or not isinstance(request_id, str)
+            or not request_id
+            or payload_digest != payload.get("payload_digest")
+            or not isinstance(payload.get("command"), dict)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "email_command_request_invalid"},
+            )
+        try:
+            publication = CommandPublication(
+                publication_ref=payload["publication_ref"],
+                attempt=payload["attempt"],
+                generation=payload["generation"],
+                fence_token=payload["fence_token"],
+                payload_digest=payload["payload_digest"],
+            )
+            receipt = intake.accept(
+                TenantScope(site_id, processing_purpose),
+                publication=publication,
+                command=payload["command"],
+            )
+        except IdempotencyConflict as error:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "email_command_replay_conflict"},
+            ) from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "email_command_rejected"},
+            ) from error
+        return receipt.to_wire()
+
+    return application
+
+
 class _BFFError(Exception):
     def __init__(self, code: str, status: int) -> None:
         super().__init__("email gateway request rejected")
@@ -508,6 +607,9 @@ def create_email_gateway_app(
     workflow_authority: WorkflowAuthority | None = None,
     evidence_authority: EvidenceBindingAuthority | None = None,
     evidence_client: ObserverEvidenceRevealClient | None = None,
+    command_ingest_service: CommandIngestService | None = None,
+    command_ingest_bearer_token: str | None = None,
+    command_ingest_auth_ref: str | None = None,
     clock: Any | None = None,
 ) -> FastAPI:
     if (
@@ -535,6 +637,22 @@ def create_email_gateway_app(
         or bff_auth_ref != _BFF_AUTH_REF
     ):
         raise ValueError("invalid Phase 1 BFF credentials")
+    command_values = (
+        command_ingest_service,
+        command_ingest_bearer_token,
+        command_ingest_auth_ref,
+    )
+    command_enabled = all(value is not None for value in command_values)
+    if any(value is not None for value in command_values) and not command_enabled:
+        raise ValueError("incomplete email command ingest composition")
+    if command_enabled and (
+        not isinstance(command_ingest_bearer_token, str)
+        or not command_ingest_bearer_token
+        or command_ingest_bearer_token != command_ingest_bearer_token.strip()
+        or len(command_ingest_bearer_token) > 4096
+        or command_ingest_auth_ref != "email-command-ingest-v1"
+    ):
+        raise ValueError("invalid email command ingest credentials")
     application = FastAPI(
         title="ESAN GBOS Email Gateway",
         version="1.0",
@@ -593,6 +711,81 @@ def create_email_gateway_app(
             content={"error": {"code": "revision_conflict"}},
             headers={"Cache-Control": "no-store"},
         )
+
+    if command_enabled:
+        command_auth = CommandIngestAuthorization(
+            bearer_token=cast(str, command_ingest_bearer_token),
+            auth_ref=cast(str, command_ingest_auth_ref),
+        )
+
+        @application.post("/internal/v1/email-commands/accept")
+        def accept_email_command(
+            payload: Annotated[Any, Body()],
+            authorization: str | None = Header(default=None),
+            request_auth_ref: str | None = Header(default=None, alias="X-GBOS-Local-Auth-Ref"),
+            site_id: str | None = Header(default=None, alias="X-Site-ID"),
+            processing_purpose: str | None = Header(default=None, alias="X-Processing-Purpose"),
+            audience: str | None = Header(default=None, alias="X-Audience"),
+            granted_scope: str | None = Header(default=None, alias="X-GBOS-Scope"),
+            payload_digest: str | None = Header(default=None, alias="X-Payload-Digest"),
+            request_id: str | None = Header(default=None, alias="X-Request-ID"),
+        ) -> dict[str, str]:
+            if not command_auth.authorize(
+                authorization=authorization,
+                auth_ref=request_auth_ref,
+                audience=audience,
+                granted_scope=granted_scope,
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail={"code": "email_command_scope_rejected"},
+                )
+            if (
+                not isinstance(payload, dict)
+                or set(payload)
+                != {
+                    "publication_ref",
+                    "attempt",
+                    "generation",
+                    "fence_token",
+                    "payload_digest",
+                    "command",
+                }
+                or not isinstance(site_id, str)
+                or not isinstance(processing_purpose, str)
+                or not isinstance(request_id, str)
+                or not request_id
+                or payload_digest != payload.get("payload_digest")
+                or not isinstance(payload.get("command"), dict)
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "email_command_request_invalid"},
+                )
+            try:
+                publication = CommandPublication(
+                    publication_ref=payload["publication_ref"],
+                    attempt=payload["attempt"],
+                    generation=payload["generation"],
+                    fence_token=payload["fence_token"],
+                    payload_digest=payload["payload_digest"],
+                )
+                receipt = cast(CommandIngestService, command_ingest_service).accept(
+                    TenantScope(site_id, processing_purpose),
+                    publication=publication,
+                    command=payload["command"],
+                )
+            except IdempotencyConflict as error:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "email_command_replay_conflict"},
+                ) from error
+            except ValueError as error:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "email_command_rejected"},
+                ) from error
+            return receipt.to_wire()
 
     @application.exception_handler(IdempotencyConflict)
     async def idempotency_error(_request: Request, _error: IdempotencyConflict) -> JSONResponse:

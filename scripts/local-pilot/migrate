@@ -34,6 +34,25 @@ for secret_file in \
   unset secret_value byte_count
 done
 
+for optional_secret_file in \
+  /run/secrets/postgres_email_command_executor_password \
+  /run/secrets/postgres_email_send_worker_password; do
+  [[ -f "${optional_secret_file}" && ! -L "${optional_secret_file}" ]] || {
+    echo "Optional migration secret path is unsafe: ${optional_secret_file}" >&2
+    exit 78
+  }
+  [[ -s "${optional_secret_file}" ]] || continue
+  secret_value="$(< "${optional_secret_file}")"
+  byte_count="$(wc -c < "${optional_secret_file}")"
+  byte_count="${byte_count//[[:space:]]/}"
+  if [[ ! "${secret_value}" =~ ^[A-Za-z0-9_-]{16,128}$ ]] ||
+    [[ "${byte_count}" -ne "${#secret_value}" ]]; then
+    echo "Invalid optional migration secret format: ${optional_secret_file}" >&2
+    exit 78
+  fi
+  unset secret_value byte_count
+done
+
 pgpass_file=/tmp/local-pilot.pgpass
 printf '%s:%s:%s:%s:%s\n' \
   "${POSTGRES_HOST:-postgres}" \
@@ -169,10 +188,18 @@ TRUNCATE local_secret_input;
 INSERT INTO local_role_secrets
 SELECT 'gbos_observer_publisher', password FROM local_secret_input;
 TRUNCATE local_secret_input;
+\copy local_secret_input(password) FROM '/run/secrets/postgres_email_command_executor_password' WITH (FORMAT text)
+INSERT INTO local_role_secrets
+SELECT 'gbos_email_command_executor', password FROM local_secret_input;
+TRUNCATE local_secret_input;
+\copy local_secret_input(password) FROM '/run/secrets/postgres_email_send_worker_password' WITH (FORMAT text)
+INSERT INTO local_role_secrets
+SELECT 'gbos_email_send_worker', password FROM local_secret_input;
+TRUNCATE local_secret_input;
 
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM local_role_secrets) <> 7
+  IF (SELECT count(*) FROM local_role_secrets) NOT BETWEEN 7 AND 9
     OR EXISTS (
       SELECT 1
       FROM local_role_secrets
@@ -207,6 +234,14 @@ ALTER ROLE gbos_email_gateway_worker
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE gbos_observer_publisher
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+
+SELECT format(
+  'ALTER ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS',
+  role_name
+)
+FROM local_role_secrets
+WHERE role_name IN ('gbos_email_command_executor', 'gbos_email_send_worker')
+\gexec
 
 SELECT format(
   'ALTER ROLE %I PASSWORD %L',

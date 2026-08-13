@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from services.email_gateway.api import build_email_publication_api
 from services.email_gateway.models import IntakeResult
+from services.email_gateway.outbound import CommandIngestReceipt
 from services.email_gateway.phase1_read import Phase1Mailbox
 from services.local_pilot_runtime import email_gateway_api
 from services.local_pilot_runtime.email_gateway_api import main
@@ -249,6 +250,39 @@ def _provider(root: Path) -> MountedFileSecretProvider:
     )
 
 
+def _provider_with_command_ingest(root: Path) -> MountedFileSecretProvider:
+    return MountedFileSecretProvider(
+        root,
+        (
+            SecretSpec(
+                "postgres_email_gateway_password",
+                "postgres_email_gateway_password",
+                "text",
+                16,
+                128,
+            ),
+            SecretSpec("email_publication_bearer", "email_publication_bearer", "text", 16, 4096),
+            SecretSpec("email_gateway_bff_bearer", "email_gateway_bff_bearer", "text", 16, 4096),
+            SecretSpec("mailbox_projection_bearer", "mailbox_projection_bearer", "text", 16, 4096),
+            SecretSpec("email_gateway_data_key", "email_gateway_data_key", "text", 64, 64),
+            SecretSpec(
+                "email_gateway_command_ingest_bearer",
+                "email_gateway_command_ingest_bearer",
+                "text",
+                16,
+                4096,
+            ),
+            SecretSpec(
+                "postgres_email_command_executor_password",
+                "postgres_email_command_executor_password",
+                "text",
+                16,
+                128,
+            ),
+        ),
+    )
+
+
 @pytest.mark.parametrize("unsafe_mode", [None, 0o644])
 def test_main_rejects_missing_or_unsafe_bff_secret_before_database_or_server(
     tmp_path: Path, unsafe_mode: int | None
@@ -323,6 +357,86 @@ def test_main_supplies_distinct_publication_and_bff_credentials_to_application_f
         captured["connector_health_reader"],
         email_gateway_api.ObserverConnectorHealthReader,
     )
+
+
+def test_main_mounts_command_ingest_on_port_8004_with_distinct_executor_connection(
+    tmp_path: Path,
+) -> None:
+    manifest, config, secret_root = _enabled_runtime(tmp_path)
+    manifest_value = json.loads(manifest.read_text())
+    manifest_value["email_gateway"].update(
+        {
+            "command_publication_kill_switch": False,
+            "send_kill_switch": True,
+        }
+    )
+    manifest.write_text(json.dumps(manifest_value))
+    _private(secret_root / "email_gateway_bff_bearer", "bff-secret-value-1")
+    _private(secret_root / "email_gateway_command_ingest_bearer", "command-ingest-value-1")
+    _private(
+        secret_root / "postgres_email_command_executor_password",
+        "command-executor-postgres-password",
+    )
+    provider = _provider_with_command_ingest(secret_root)
+    connections: list[str] = []
+    captured: dict[str, object] = {}
+
+    class Connection:
+        def close(self) -> None:
+            return None
+
+    def connector(**kwargs: object) -> Connection:
+        connections.append(str(kwargs.get("user")))
+        return Connection()
+
+    def factory(**kwargs: object) -> FastAPI:
+        captured.update(kwargs)
+        return FastAPI()
+
+    result = main(
+        manifest_path=manifest,
+        config_path=config,
+        emergency_stop_path=tmp_path / "no-emergency-stop",
+        environ={
+            "GBOS_LOCAL_RUNTIME_ENABLED": "true",
+            "GBOS_EMAIL_GATEWAY_KILL_SWITCH": "false",
+            "GBOS_EMAIL_COMMAND_INGEST_KILL_SWITCH": "false",
+            "GBOS_EXTERNAL_SEND_ENABLED": "false",
+        },
+        connector=connector,
+        application_factory=factory,
+        server_runner=lambda *_args, **_kwargs: None,
+        secret_provider=provider,
+        internal_network=True,
+    )
+
+    assert result == 0
+    assert connections == ["gbos_email_gateway_app", "gbos_email_command_executor"]
+    assert captured["command_ingest_bearer_token"] == "command-ingest-value-1"
+    assert captured["command_ingest_auth_ref"] == "email-command-ingest-v1"
+    assert captured["command_ingest_service"] is not None
+
+
+def test_create_application_exposes_command_ingest_endpoint_when_service_is_injected() -> None:
+    class Intake:
+        def accept(self, *_args: object, **_kwargs: object) -> CommandIngestReceipt:
+            return CommandIngestReceipt(
+                command_receipt_ref="ECR-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                send_outbox_ref="SOB-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                payload_digest="a" * 64,
+            )
+
+    app = email_gateway_api.create_email_gateway_app(
+        intake=_Intake(),
+        publication_bearer_token="publication-secret",
+        publication_auth_ref="observer-email-publication-v1",
+        command_ingest_service=Intake(),  # type: ignore[arg-type]
+        command_ingest_bearer_token="command-ingest-value-1",
+        command_ingest_auth_ref="email-command-ingest-v1",
+    )
+
+    paths = {route.path for route in app.routes}
+    assert "/internal/v1/email-commands/accept" in paths
 
 
 class _Response:
