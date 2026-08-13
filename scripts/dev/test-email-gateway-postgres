@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+IMAGE="pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966"
+OBSERVER_014="${REPO_ROOT}/services/observer/migrations/014_email_gateway_publication.sql"
+[[ -f "${OBSERVER_014}" ]] || exit 66
+
+usage() {
+  echo "Usage: scripts/dev/test-email-gateway-postgres --observer-through 014|--all" >&2
+  exit 64
+}
+
+[[ $# -eq 2 || $# -eq 1 ]] || usage
+MODE="${1:-}"
+if [[ "${MODE}" == "--observer-through" ]]; then
+  [[ "${2:-}" == "014" ]] || usage
+elif [[ "${MODE}" == "--all" ]]; then
+  [[ $# -eq 1 ]] || usage
+else
+  usage
+fi
+
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  echo "Email Gateway PostgreSQL gate unrun: Docker is unavailable." >&2
+  exit 77
+fi
+
+RUN_ID="email-gateway-pg-$RANDOM-$$"
+TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gbos-email-gateway.XXXXXX")"
+ENV_FILE="${TEMP_DIR}/postgres.env"
+POSTGRES_PASSWORD_VALUE="$(openssl rand -hex 32)"
+APP_PASSWORD_VALUE="$(openssl rand -hex 32)"
+cat >"${ENV_FILE}" <<EOF
+POSTGRES_DB=gbos_email_observer
+POSTGRES_USER=gbos_email_owner
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD_VALUE}
+EOF
+chmod 600 "${ENV_FILE}"
+
+cleanup() {
+  docker rm -f "${RUN_ID}" >/dev/null 2>&1 || true
+  rm -f -- "${ENV_FILE}"
+  rmdir -- "${TEMP_DIR}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+docker run -d --name "${RUN_ID}" \
+  --env-file "${ENV_FILE}" \
+  -p 127.0.0.1::5432 \
+  --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=2g \
+  "${IMAGE}" >/dev/null
+
+for _attempt in $(seq 1 60); do
+  if docker exec "${RUN_ID}" pg_isready \
+    -U gbos_email_owner -d gbos_email_observer >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+docker exec "${RUN_ID}" pg_isready \
+  -U gbos_email_owner -d gbos_email_observer >/dev/null
+
+psql_exec() {
+  docker exec -i \
+    -e PGPASSWORD="${POSTGRES_PASSWORD_VALUE}" \
+    "${RUN_ID}" psql \
+    -U gbos_email_owner -d gbos_email_observer -v ON_ERROR_STOP=1 "$@"
+}
+
+psql_exec -v app_password="${APP_PASSWORD_VALUE}" <<'SQL'
+CREATE SCHEMA IF NOT EXISTS observer;
+CREATE TABLE IF NOT EXISTS observer.schema_migrations (
+  migration_name text PRIMARY KEY,
+  checksum char(64) NOT NULL,
+  applied_at timestamptz NOT NULL DEFAULT now()
+);
+SQL
+
+apply_migration() {
+  local migration="$1"
+  local migration_name="$2"
+  local checksum existing
+  checksum="$(shasum -a 256 "${migration}" | awk '{print $1}')"
+  existing="$(psql_exec -Atq -c \
+    "SELECT checksum FROM observer.schema_migrations WHERE migration_name = '${migration_name}'")"
+  if [[ -n "${existing}" ]]; then
+    [[ "${existing}" == "${checksum}" ]] || {
+      echo "Applied migration checksum changed: ${migration_name}" >&2
+      exit 65
+    }
+    return
+  fi
+  psql_exec --single-transaction -f - \
+    -c "INSERT INTO observer.schema_migrations (migration_name, checksum) VALUES ('${migration_name}', '${checksum}')" \
+    <"${migration}"
+}
+
+apply_set() {
+  local migration base number
+  for migration in "${REPO_ROOT}"/services/observer/migrations/[0-9][0-9][0-9]_*.sql; do
+    base="$(basename -- "${migration}")"
+    number="${base%%_*}"
+    if [[ "${MODE}" == "--observer-through" ]] && ((10#${number} > 14)); then
+      continue
+    fi
+    apply_migration "${migration}" "observer/${base}"
+  done
+  apply_migration \
+    "${REPO_ROOT}/services/context/migrations/001_gate3_context.sql" \
+    "context/001_gate3_context.sql"
+}
+
+apply_set
+apply_set
+
+HOST_PORT="$(docker port "${RUN_ID}" 5432/tcp | awk -F: 'NR == 1 {print $NF}')"
+[[ "${HOST_PORT}" =~ ^[0-9]+$ ]] || {
+  echo "Could not resolve disposable PostgreSQL port." >&2
+  exit 69
+}
+
+export GBOS_RUN_POSTGRES_INTEGRATION=1
+export GBOS_GATE3_POSTGRES_CONTAINER="${RUN_ID}"
+export GBOS_GATE3_CONTEXT_HOST=127.0.0.1
+export GBOS_GATE3_CONTEXT_PORT="${HOST_PORT}"
+export GBOS_GATE3_CONTEXT_DATABASE=gbos_email_observer
+export GBOS_GATE3_CONTEXT_PASSWORD="${POSTGRES_PASSWORD_VALUE}"
+if [[ "${MODE}" == "--all" ]]; then
+  export GBOS_RUN_EMAIL_GATEWAY_POSTGRES=1
+  export GBOS_EMAIL_GATEWAY_POSTGRES_DSN="postgresql://gbos_email_owner:${POSTGRES_PASSWORD_VALUE}@127.0.0.1:${HOST_PORT}/gbos_email_observer"
+fi
+
+cd "${REPO_ROOT}"
+PYTHONDONTWRITEBYTECODE=1 uv run --frozen --no-sync pytest \
+  -p no:cacheprovider \
+  tests/integration/test_gate3_postgres.py \
+  -k 'gate3_migrations_run_twice_and_enable_forced_rls or email_publication_migration_is_idempotent_forced_rls_and_least_grant' \
+  -q
+if [[ "${MODE}" == "--all" ]]; then
+  PYTHONDONTWRITEBYTECODE=1 uv run --frozen --no-sync pytest \
+    -p no:cacheprovider tests/integration/test_email_gateway_postgres.py -q
+fi
+
+echo "Email Gateway PostgreSQL gate passed; disposable container cleanup is armed."

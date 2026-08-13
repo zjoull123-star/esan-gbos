@@ -4,6 +4,7 @@ import re
 from collections.abc import Mapping
 from typing import Protocol
 
+from .email_publication import EmailHeaderFacts, EmailParticipantSubject
 from .identity_tokens import (
     IdentityTokenError,
     IdentityTokenResolver,
@@ -394,21 +395,27 @@ class EmailObservationNormalizer:
         source_ref: str,
     ) -> NormalizedObservationInput:
         payload = item.payload
+        base_fields = {
+            "kind",
+            "source_ref",
+            "body_evidence",
+            "attachment_evidence",
+            "identity_subjects",
+        }
+        enhanced_fields = base_fields | {
+            "email_participant_subjects",
+            "email_header_facts",
+        }
         if (
-            set(payload)
-            != {
-                "kind",
-                "source_ref",
-                "body_evidence",
-                "attachment_evidence",
-                "identity_subjects",
-            }
+            set(payload) not in {frozenset(base_fields), frozenset(enhanced_fields)}
             or payload.get("source_ref") != source_ref
         ):
             raise NormalizationRejected("email.invalid_adapter_shape")
         body = payload.get("body_evidence")
         attachments = payload.get("attachment_evidence")
         identity_subjects = payload.get("identity_subjects")
+        participant_subjects = payload.get("email_participant_subjects")
+        header_facts = payload.get("email_header_facts")
         if (
             not isinstance(body, EvidenceArtifact)
             or body.content is None
@@ -420,6 +427,13 @@ class EmailObservationNormalizer:
             or len(attachments) > 1_000
             or not all(isinstance(value, EvidenceArtifact) for value in attachments)
             or not isinstance(identity_subjects, tuple)
+        ):
+            raise NormalizationRejected("email.invalid_evidence_shape")
+        if set(payload) == enhanced_fields and (
+            not isinstance(participant_subjects, tuple)
+            or not participant_subjects
+            or not all(isinstance(value, EmailParticipantSubject) for value in participant_subjects)
+            or not isinstance(header_facts, EmailHeaderFacts)
         ):
             raise NormalizationRejected("email.invalid_evidence_shape")
         checked: list[EvidenceArtifact] = [
@@ -451,17 +465,35 @@ class EmailObservationNormalizer:
             item=item,
             role="unknown",
             source_ref=source_ref,
-            participants=_scoped_participants(
-                item=item,
-                channel="email",
-                source_ref=source_ref,
-                provider="email",
-                subjects=identity_subjects,
-                role="unknown",
-                resolver=self._identity_resolver,
-                site_id=self._site_id,
-                purpose=self._purpose,
-                invalid_code="email.invalid_subject",
+            participants=(
+                tuple(
+                    _scoped_participants(
+                        item=item,
+                        channel="email",
+                        source_ref=source_ref,
+                        provider="email",
+                        subjects=(value.subject,),
+                        role="unknown",
+                        resolver=self._identity_resolver,
+                        site_id=self._site_id,
+                        purpose=self._purpose,
+                        invalid_code="email.invalid_subject",
+                    )[0]
+                    for value in participant_subjects
+                )
+                if isinstance(participant_subjects, tuple)
+                else _scoped_participants(
+                    item=item,
+                    channel="email",
+                    source_ref=source_ref,
+                    provider="email",
+                    subjects=identity_subjects,
+                    role="unknown",
+                    resolver=self._identity_resolver,
+                    site_id=self._site_id,
+                    purpose=self._purpose,
+                    invalid_code="email.invalid_subject",
+                )
             ),
             evidence=(
                 EvidenceArtifact(

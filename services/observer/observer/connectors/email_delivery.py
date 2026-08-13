@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from email import policy
 from email.headerregistry import AddressHeader
@@ -9,6 +10,11 @@ from email.message import EmailMessage, Message
 from email.parser import BytesParser
 from html.parser import HTMLParser
 
+from ..email_publication import (
+    EmailHeaderFacts,
+    EmailParticipantSubject,
+    header_digest,
+)
 from ..identity_tokens import (
     IdentityTokenError,
     TransientIdentitySubject,
@@ -175,6 +181,8 @@ class EmailRawDeliveryDecoder:
         if not isinstance(message, EmailMessage) or message.defects:
             raise DeliveryQuarantine("email.invalid_message")
         identity_subjects = self._identity_subjects(message)
+        participant_subjects = self._participant_subjects(message)
+        header_facts = self._header_facts(message)
 
         parts = self._bounded_parts(message)
         text_parts: list[tuple[str, bytes]] = []
@@ -235,6 +243,8 @@ class EmailRawDeliveryDecoder:
                     "body_evidence": body,
                     "attachment_evidence": tuple(attachments),
                     "identity_subjects": identity_subjects,
+                    "email_participant_subjects": participant_subjects,
+                    "email_header_facts": header_facts,
                 },
             ),
         )
@@ -271,6 +281,71 @@ class EmailRawDeliveryDecoder:
             seen.add(canonical)
             deduplicated.append(TransientIdentitySubject(provider="email", subject=subject))
         return tuple(deduplicated)
+
+    def _participant_subjects(
+        self,
+        message: EmailMessage,
+    ) -> tuple[EmailParticipantSubject, ...]:
+        result: list[EmailParticipantSubject] = []
+        total_recipients = 0
+        for role in ("from", "to", "cc", "bcc"):
+            values = self._addresses(
+                message.get_all(role, []),
+                code=("email.invalid_sender" if role == "from" else "email.invalid_recipient"),
+            )
+            if role == "from" and len(values) > 1:
+                raise DeliveryQuarantine("email.ambiguous_sender")
+            if role != "from":
+                total_recipients += len(values)
+            for subject in values:
+                try:
+                    normalize_identity_subject("email", subject)
+                except IdentityTokenError:
+                    raise DeliveryQuarantine("email.invalid_address") from None
+                result.append(
+                    EmailParticipantSubject(
+                        address_role=role,
+                        subject=TransientIdentitySubject(provider="email", subject=subject),
+                    )
+                )
+        if total_recipients > self._max_identity_recipients:
+            raise DeliveryQuarantine("email.recipient_limit")
+        if not result:
+            raise DeliveryQuarantine("email.addresses_missing")
+        return tuple(result)
+
+    @staticmethod
+    def _header_facts(message: EmailMessage) -> EmailHeaderFacts:
+        def one(name: str) -> str | None:
+            values = message.get_all(name, [])
+            if len(values) > 1:
+                raise DeliveryQuarantine("email.ambiguous_headers")
+            if not values:
+                return None
+            value = str(values[0])
+            if len(value.encode("utf-8")) > 65_536:
+                raise DeliveryQuarantine("email.header_bytes_limit")
+            return value
+
+        subject = one("subject") or ""
+        message_id = one("message-id")
+        in_reply_to = one("in-reply-to")
+        references = one("references")
+        reference_values = (
+            () if references is None else tuple(re.findall(r"<[^<>]{1,998}>", references))
+        )
+        if references is not None and not reference_values:
+            raise DeliveryQuarantine("email.invalid_references")
+        if len(reference_values) != len(set(reference_values)):
+            raise DeliveryQuarantine("email.duplicate_references")
+        if message_id is None and in_reply_to is None and not reference_values:
+            raise DeliveryQuarantine("email.thread_headers_missing")
+        return EmailHeaderFacts(
+            subject_digest=header_digest(subject),
+            message_id_digest=None if message_id is None else header_digest(message_id),
+            in_reply_to_digest=None if in_reply_to is None else header_digest(in_reply_to),
+            references_digests=tuple(header_digest(value) for value in reference_values),
+        )
 
     @staticmethod
     def _addresses(headers: list[object], *, code: str) -> list[str]:

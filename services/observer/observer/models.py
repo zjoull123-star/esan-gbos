@@ -38,6 +38,7 @@ PROCESSING_PURPOSES = frozenset(
         "business_operations",
         "observation_processing",
         "entity_resolution",
+        "email_address_identity_confirmation",
         "customer_service",
         "sales_follow_up",
         "procurement_coordination",

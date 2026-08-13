@@ -6,6 +6,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
+from .email_checkpoint_fence import EmailPollBatchFence
 from .local_pilot_storage import LocalPilotStorage
 from .models import ConnectorKey, RawDelivery, TenantScope, _require_aware
 from .storage import Connection
@@ -81,7 +82,29 @@ class PollingState(Protocol):
         scope: TenantScope,
         key: ConnectorKey,
         delivery: RawDelivery,
+        *,
+        batch_id: str | None = None,
     ) -> None: ...
+
+    def register_poll_batch(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        batch: PollBatch,
+        *,
+        expected_version: int,
+        now: datetime,
+    ) -> EmailPollBatchFence: ...
+
+    def finalize_poll_batch(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        batch_id: str,
+        expected_version: int,
+        now: datetime,
+    ) -> bool: ...
 
     def advance_checkpoint(
         self,
@@ -207,8 +230,50 @@ class PostgresPollingState:
         scope: TenantScope,
         key: ConnectorKey,
         delivery: RawDelivery,
+        *,
+        batch_id: str | None = None,
     ) -> None:
+        del batch_id
         self._durable_accept(scope, key, delivery)
+
+    def register_poll_batch(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        batch: PollBatch,
+        *,
+        expected_version: int,
+        now: datetime,
+    ) -> EmailPollBatchFence:
+        return self._storage.register_email_poll_batch(
+            scope,
+            key,
+            expected_cursor=batch.expected_cursor,
+            candidate_cursor=batch.candidate_cursor,
+            expected_version=expected_version,
+            delivery_ids=tuple(dict.fromkeys(value.delivery_id for value in batch.deliveries)),
+            delivery_received_at=tuple(
+                {value.delivery_id: value.received_at for value in batch.deliveries}.values()
+            ),
+            now=now,
+        )
+
+    def finalize_poll_batch(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        batch_id: str,
+        expected_version: int,
+        now: datetime,
+    ) -> bool:
+        return self._storage.finalize_email_poll_batch(
+            scope,
+            key,
+            batch_id=batch_id,
+            expected_version=expected_version,
+            now=now,
+        )
 
     def advance_checkpoint(
         self,
@@ -361,15 +426,61 @@ class DurablePollingScheduler:
                 paused=batch.disposition in {PollDisposition.PAUSE, PollDisposition.REJECTED},
             )
         accepted = 0
+        batch_id: str | None = None
+        if self._key.connector == "email" and batch.deliveries:
+            try:
+                registered = self._state.register_poll_batch(
+                    self._scope,
+                    self._key,
+                    batch,
+                    expected_version=version,
+                    now=now,
+                )
+                batch_id = registered.batch_id
+            except Exception:
+                return self._record_failure(now, "poll_batch_register_failed", paused=False)
         try:
             for delivery in batch.deliveries:
-                self._state.accept_delivery(self._scope, self._key, delivery)
+                if batch_id is None:
+                    self._state.accept_delivery(self._scope, self._key, delivery)
+                else:
+                    self._state.accept_delivery(
+                        self._scope,
+                        self._key,
+                        delivery,
+                        batch_id=batch_id,
+                    )
                 accepted += 1
         except Exception:
             return self._record_failure(now, "durable_accept_failed", paused=False)
 
         advanced = False
-        if batch.deliveries:
+        if batch.deliveries and batch_id is not None:
+            try:
+                advanced = self._state.finalize_poll_batch(
+                    self._scope,
+                    self._key,
+                    batch_id=batch_id,
+                    expected_version=version,
+                    now=now,
+                )
+            except Exception:
+                return self._record_failure(now, "checkpoint_conflict", paused=False)
+            if not advanced:
+                self._state.update_health(
+                    self._scope,
+                    self._key,
+                    status="degraded",
+                    error_code="email_batch_pending",
+                    now=now,
+                )
+                return PollRunResult(
+                    status="retry",
+                    accepted_count=accepted,
+                    checkpoint_advanced=False,
+                    safe_error_code="email_batch_pending",
+                )
+        elif batch.deliveries:
             try:
                 self._state.advance_checkpoint(
                     self._scope,

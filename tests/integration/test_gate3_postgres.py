@@ -112,6 +112,9 @@ IDENTITY_AUTHORITY_MIGRATION = (
 IDENTITY_DIGEST_MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "013_local_pilot_identity_digest_boundary.sql"
 )
+EMAIL_PUBLICATION_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "014_email_gateway_publication.sql"
+)
 
 pytestmark = [pytest.mark.postgres_integration]
 if not RUN_INTEGRATION:
@@ -160,7 +163,7 @@ def _identity_ref(provider: str, label: str) -> str:
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 15
+    assert _migration_ledger_count() == 16
     result = _container_sql(
         """
         SELECT count(*)
@@ -185,12 +188,79 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
               'identity_resolution_work', 'identity_resolution_worker_metrics',
               'retention_runs', 'retention_cas_tombstones',
               'model_fatal_latches', 'identity_authority_denials'
+              , 'email_connector_config_projections', 'email_poll_batches',
+              'email_poll_batch_deliveries', 'email_message_publication_outbox'
           )
           AND c.relrowsecurity
           AND c.relforcerowsecurity
         """
     )
-    assert int(result.stdout.strip()) == 37
+    assert int(result.stdout.strip()) == 41
+
+
+def test_email_publication_migration_is_idempotent_forced_rls_and_least_grant() -> None:
+    migration_sql = EMAIL_PUBLICATION_MIGRATION.read_text(encoding="utf-8")
+    _container_sql(migration_sql)
+    _container_sql(migration_sql)
+
+    security = _container_sql(
+        """
+        SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
+               has_table_privilege('gbos_observer_app', c.oid, 'SELECT'),
+               has_table_privilege('gbos_observer_app', c.oid, 'INSERT'),
+               has_table_privilege('gbos_observer_app', c.oid, 'UPDATE'),
+               has_table_privilege('gbos_observer_app', c.oid, 'DELETE')
+        FROM pg_class AS c
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'observer'
+          AND c.relname IN (
+              'email_connector_config_projections',
+              'email_poll_batches',
+              'email_poll_batch_deliveries',
+              'email_message_publication_outbox'
+          )
+        ORDER BY c.relname
+        """
+    )
+    rows = security.stdout.strip().splitlines()
+    assert len(rows) == 4
+    assert all("|t|t|" in row for row in rows)
+    assert any(row == "email_message_publication_outbox|t|t|t|t|f|f" for row in rows)
+
+    relay_grants = _container_sql(
+        """
+        SELECT count(*)
+        FROM (VALUES
+            ('relay_status'), ('attempt_count'), ('next_attempt_at'),
+            ('lease_owner'), ('lease_expires_at'), ('relay_generation'),
+            ('last_error_code'), ('delivery_receipt'),
+            ('delivery_receipt_digest'), ('delivered_at'), ('updated_at')
+        ) AS relay(column_name)
+        WHERE has_column_privilege(
+            'gbos_observer_app',
+            'observer.email_message_publication_outbox',
+            relay.column_name,
+            'UPDATE'
+        )
+        """
+    )
+    assert int(relay_grants.stdout.strip()) == 11
+
+    forbidden = _container_sql(
+        """
+        SELECT count(*)
+        FROM pg_class AS c
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'observer'
+          AND c.relkind = 'r'
+          AND (
+              c.relname LIKE 'gateway_%'
+              OR c.relname LIKE 'email_gateway_%'
+              OR c.relname LIKE '%provider_cursor%'
+          )
+        """
+    )
+    assert forbidden.stdout.strip() == "0"
 
 
 def _migration_ledger_count() -> int:
@@ -213,6 +283,7 @@ def _migration_ledger_count() -> int:
               'observer/012_local_pilot_model_fatal_latch.sql',
               'observer/012_local_pilot_identity_authority_safety.sql',
               'observer/013_local_pilot_identity_digest_boundary.sql',
+              'observer/014_email_gateway_publication.sql',
               'context/001_gate3_context.sql'
         )
         """

@@ -8,6 +8,18 @@ from datetime import datetime, timedelta
 from typing import Protocol
 
 from .connectors.serialization import canonical_observation_event_v11
+from .email_checkpoint_fence import (
+    EmailCheckpointFenceConflict,
+    EmailPollBatchFence,
+    EmailPollBatchMember,
+)
+from .email_publication import build_email_publication
+from .email_publication_outbox import (
+    EmailPublicationDeliveryReceipt,
+    EmailPublicationRelayClaim,
+    EmailPublicationRelayRelease,
+    PostgresEmailPublicationRelay,
+)
 from .models import (
     ConnectorItem,
     ConnectorKey,
@@ -498,6 +510,72 @@ class LocalPilotStorage(Protocol):
         next_version: int,
         now: datetime,
     ) -> ConnectorCheckpointMetadata: ...
+
+    def register_email_poll_batch(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        expected_cursor: str | None,
+        candidate_cursor: str | None,
+        expected_version: int,
+        delivery_ids: tuple[str, ...],
+        delivery_received_at: tuple[datetime, ...],
+        now: datetime,
+    ) -> EmailPollBatchFence: ...
+
+    def finalize_email_poll_batch(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        batch_id: str,
+        expected_version: int,
+        now: datetime,
+    ) -> bool: ...
+
+    def claim_email_publication(
+        self,
+        scope: TenantScope,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_seconds: int,
+    ) -> EmailPublicationRelayClaim | None: ...
+
+    def heartbeat_email_publication(
+        self,
+        scope: TenantScope,
+        *,
+        publication_id: str,
+        worker_id: str,
+        expected_generation: int,
+        now: datetime,
+        lease_seconds: int,
+    ) -> EmailPublicationRelayClaim: ...
+
+    def release_email_publication(
+        self,
+        scope: TenantScope,
+        *,
+        publication_id: str,
+        worker_id: str,
+        expected_generation: int,
+        now: datetime,
+        next_attempt_at: datetime,
+        error_code: str,
+    ) -> EmailPublicationRelayRelease: ...
+
+    def acknowledge_email_publication(
+        self,
+        scope: TenantScope,
+        *,
+        publication_id: str,
+        worker_id: str,
+        expected_generation: int,
+        receipt: dict[str, object],
+        now: datetime,
+    ) -> EmailPublicationDeliveryReceipt: ...
 
     def consume_nonce(
         self,
@@ -1101,6 +1179,32 @@ class PostgresLocalPilotStorage:
                         "normalized payload omits the durable delivery evidence reference"
                     )
 
+            email_projection: tuple[str, int] | None = None
+            if key.connector == "email" and "email_header_facts" in items[0].payload:
+                if len(items) != 1:
+                    raise NormalizedBatchConflict(
+                        "email delivery must normalize to exactly one publication"
+                    )
+                cursor.execute(
+                    """
+                    SELECT batch.mailbox_id, batch.mailbox_config_revision
+                    FROM observer.email_poll_batches AS batch
+                    JOIN observer.email_poll_batch_deliveries AS member
+                      ON member.site_id = batch.site_id
+                     AND member.batch_id = batch.batch_id
+                    WHERE batch.site_id = %s
+                      AND batch.connector = 'email'
+                      AND batch.connector_instance_id = %s
+                      AND member.delivery_id = %s
+                    ORDER BY batch.created_at, batch.batch_id
+                    LIMIT 1
+                    """,
+                    (scope.site_id, key.instance_id, delivery.delivery_id),
+                )
+                projection_row = cursor.fetchone()
+                if projection_row is not None:
+                    email_projection = (str(projection_row[0]), int(projection_row[1]))
+
             provider_event_ids = tuple(item.provider_event_id for item in items)
             normalized_lock_keys = [
                 hashlib.sha256(
@@ -1361,6 +1465,92 @@ class PostgresLocalPilotStorage:
                         job.created_at,
                     ),
                 )
+                if email_projection is not None:
+                    publication = build_email_publication(
+                        scope=scope,
+                        key=key,
+                        item=candidate.item,
+                        normalized=candidate.normalized,
+                        mailbox_id=email_projection[0],
+                        mailbox_config_revision=email_projection[1],
+                        observer_delivery_ref=delivery.delivery_id,
+                        received_at=delivery.received_at,
+                        publication_revision=1,
+                    )
+                    publication_payload = json.dumps(
+                        publication.to_wire(),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO observer.email_message_publication_outbox (
+                            site_id, publication_id, mailbox_id,
+                            mailbox_config_revision, connector,
+                            connector_instance_id, observer_delivery_ref,
+                            publication_revision, idempotency_key, payload,
+                            payload_digest, created_at
+                        ) VALUES (
+                            %s, %s, %s, %s, 'email', %s, %s,
+                            %s, %s, %s::jsonb, %s, %s
+                        )
+                        ON CONFLICT (site_id, mailbox_id, observer_delivery_ref)
+                        DO NOTHING
+                        RETURNING publication_id, payload_digest
+                        """,
+                        (
+                            scope.site_id,
+                            publication.publication_id,
+                            publication.mailbox_id,
+                            publication.mailbox_config_revision,
+                            key.instance_id,
+                            delivery.delivery_id,
+                            publication.publication_revision,
+                            publication.idempotency_key,
+                            publication_payload,
+                            publication.payload_sha256,
+                            job.created_at,
+                        ),
+                    )
+                    publication_row = cursor.fetchone()
+                    if publication_row is None:
+                        cursor.execute(
+                            """
+                            SELECT publication_id, payload_digest
+                            FROM observer.email_message_publication_outbox
+                            WHERE site_id = %s
+                              AND mailbox_id = %s
+                              AND observer_delivery_ref = %s
+                            """,
+                            (scope.site_id, publication.mailbox_id, delivery.delivery_id),
+                        )
+                        publication_row = cursor.fetchone()
+                    if (
+                        publication_row is None
+                        or str(publication_row[0]) != publication.publication_id
+                        or str(publication_row[1]) != publication.payload_sha256
+                    ):
+                        raise NormalizedBatchConflict("publication_payload_conflict")
+                    cursor.execute(
+                        """
+                        UPDATE observer.email_poll_batch_deliveries
+                        SET terminal_kind = 'published',
+                            terminal_ref_digest = %s,
+                            terminal_at = %s
+                        WHERE site_id = %s
+                          AND connector = 'email'
+                          AND connector_instance_id = %s
+                          AND delivery_id = %s
+                          AND terminal_kind IS NULL
+                        """,
+                        (
+                            hashlib.sha256(publication.publication_id.encode()).hexdigest(),
+                            job.created_at,
+                            scope.site_id,
+                            key.instance_id,
+                            delivery.delivery_id,
+                        ),
+                    )
                 persisted[candidate.provider_event_id] = PersistedNormalizedObservation(
                     provider_event_id=candidate.provider_event_id,
                     event_id=candidate.event_id,
@@ -1810,6 +2000,27 @@ class PostgresLocalPilotStorage:
                 error_code=reason_code,
                 now=now,
             )
+            if metadata.connector == "email":
+                cursor.execute(
+                    """
+                    UPDATE observer.email_poll_batch_deliveries
+                    SET terminal_kind = 'quarantined',
+                        terminal_ref_digest = %s,
+                        terminal_at = %s
+                    WHERE site_id = %s
+                      AND connector = 'email'
+                      AND connector_instance_id = %s
+                      AND delivery_id = %s
+                      AND terminal_kind IS NULL
+                    """,
+                    (
+                        hashlib.sha256(quarantine_id.encode()).hexdigest(),
+                        now,
+                        scope.site_id,
+                        metadata.connector_instance_id,
+                        metadata.delivery_id,
+                    ),
+                )
             return metadata
 
     def replay_delivery(
@@ -2165,6 +2376,291 @@ class PostgresLocalPilotStorage:
             if row is None:
                 raise CheckpointConflict("stale checkpoint version")
             return _checkpoint_from_row(row)
+
+    def register_email_poll_batch(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        expected_cursor: str | None,
+        candidate_cursor: str | None,
+        expected_version: int,
+        delivery_ids: tuple[str, ...],
+        delivery_received_at: tuple[datetime, ...],
+        now: datetime,
+    ) -> EmailPollBatchFence:
+        _validate_scope_key(scope, key)
+        if key.connector != "email":
+            raise ValueError("email poll batch requires email connector")
+        _require_aware(now, "now")
+        if isinstance(expected_version, bool) or expected_version < 0:
+            raise ValueError("invalid expected checkpoint version")
+        if not delivery_ids or len(delivery_ids) > 1_000:
+            raise ValueError("email poll batch requires bounded deliveries")
+        if len(delivery_ids) != len(set(delivery_ids)):
+            raise ValueError("email poll batch deliveries must be unique")
+        if len(delivery_received_at) != len(delivery_ids):
+            raise ValueError("email poll batch timestamps must match deliveries")
+        for received_at in delivery_received_at:
+            _require_aware(received_at, "delivery_received_at")
+        for delivery_id in delivery_ids:
+            _require_identifier(delivery_id, "delivery_id", maximum=512)
+        batch_material = "\x1f".join(
+            (
+                scope.site_id,
+                key.instance_id,
+                expected_cursor or "",
+                candidate_cursor or "",
+                str(expected_version),
+                *delivery_ids,
+            )
+        )
+        batch_digest = hashlib.sha256(batch_material.encode()).hexdigest()
+        batch_id = "EPB-" + stable_ulid("email-poll-batch", batch_material)
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                """
+                SELECT mailbox_id, mailbox_config_revision, activation_not_before
+                FROM observer.email_connector_config_projections
+                WHERE site_id = %s
+                  AND connector = 'email'
+                  AND connector_instance_id = %s
+                ORDER BY mailbox_config_revision DESC
+                LIMIT 1
+                FOR SHARE
+                """,
+                (scope.site_id, key.instance_id),
+            )
+            projection = cursor.fetchone()
+            if projection is None:
+                raise EmailCheckpointFenceConflict("connector_projection_missing")
+            if any(value < projection[2] for value in delivery_received_at):
+                raise EmailCheckpointFenceConflict("activation_watermark_rejected")
+            cursor.execute(
+                """
+                INSERT INTO observer.email_poll_batches (
+                    site_id, batch_id, connector, connector_instance_id,
+                    mailbox_id, mailbox_config_revision,
+                    expected_checkpoint_version, expected_cursor, candidate_cursor,
+                    batch_digest, status, created_at
+                ) VALUES (
+                    %s, %s, 'email', %s, %s, %s,
+                    %s, %s, %s, %s, 'open', %s
+                )
+                ON CONFLICT (site_id, batch_id) DO NOTHING
+                """,
+                (
+                    scope.site_id,
+                    batch_id,
+                    key.instance_id,
+                    projection[0],
+                    projection[1],
+                    expected_version,
+                    expected_cursor,
+                    candidate_cursor,
+                    batch_digest,
+                    now,
+                ),
+            )
+            for ordinal, delivery_id in enumerate(delivery_ids):
+                cursor.execute(
+                    """
+                    INSERT INTO observer.email_poll_batch_deliveries (
+                        site_id, batch_id, connector, connector_instance_id,
+                        delivery_id, ordinal
+                    ) VALUES (%s, %s, 'email', %s, %s, %s)
+                    ON CONFLICT (site_id, batch_id, delivery_id) DO NOTHING
+                    """,
+                    (scope.site_id, batch_id, key.instance_id, delivery_id, ordinal),
+                )
+            cursor.execute(
+                """
+                SELECT expected_checkpoint_version, expected_cursor, candidate_cursor,
+                       batch_digest, created_at, finalized_at
+                FROM observer.email_poll_batches
+                WHERE site_id = %s AND batch_id = %s
+                """,
+                (scope.site_id, batch_id),
+            )
+            row = cursor.fetchone()
+            if row is None or str(row[3]) != batch_digest:
+                raise EmailCheckpointFenceConflict("poll_batch_replay_drift")
+            cursor.execute(
+                """
+                SELECT delivery_id, terminal_kind, terminal_ref_digest, terminal_at
+                FROM observer.email_poll_batch_deliveries
+                WHERE site_id = %s AND batch_id = %s
+                ORDER BY ordinal
+                """,
+                (scope.site_id, batch_id),
+            )
+            members = tuple(
+                EmailPollBatchMember(
+                    delivery_id=str(member[0]),
+                    terminal_kind=None if member[1] is None else str(member[1]),
+                    terminal_ref=None if member[2] is None else "sha256:" + str(member[2]),
+                    terminal_at=member[3],
+                )
+                for member in cursor.fetchall()
+            )
+        if tuple(value.delivery_id for value in members) != delivery_ids:
+            raise EmailCheckpointFenceConflict("poll_batch_replay_drift")
+        return EmailPollBatchFence(
+            batch_id=batch_id,
+            site_id=scope.site_id,
+            connector_instance_id=key.instance_id,
+            expected_cursor=None if row[1] is None else str(row[1]),
+            candidate_cursor=None if row[2] is None else str(row[2]),
+            expected_version=int(row[0]),
+            members=members,
+            created_at=row[4],
+            finalized_at=row[5],
+        )
+
+    def finalize_email_poll_batch(
+        self,
+        scope: TenantScope,
+        key: ConnectorKey,
+        *,
+        batch_id: str,
+        expected_version: int,
+        now: datetime,
+    ) -> bool:
+        _validate_scope_key(scope, key)
+        _require_identifier(batch_id, "batch_id", maximum=80)
+        _require_aware(now, "now")
+        with self._connection.transaction(), self._connection.cursor() as cursor:
+            self._set_site(cursor, scope)
+            cursor.execute(
+                """
+                SELECT candidate_cursor, expected_checkpoint_version, status
+                FROM observer.email_poll_batches
+                WHERE site_id = %s AND batch_id = %s
+                  AND connector = 'email' AND connector_instance_id = %s
+                FOR UPDATE
+                """,
+                (scope.site_id, batch_id, key.instance_id),
+            )
+            batch = cursor.fetchone()
+            if batch is None or int(batch[1]) != expected_version:
+                return False
+            if str(batch[2]) == "finalized":
+                return True
+            cursor.execute(
+                """
+                SELECT count(*) FILTER (WHERE terminal_kind IS NULL), count(*)
+                FROM observer.email_poll_batch_deliveries
+                WHERE site_id = %s AND batch_id = %s
+                """,
+                (scope.site_id, batch_id),
+            )
+            counts = cursor.fetchone()
+            if counts is None or int(counts[1]) == 0 or int(counts[0]) != 0:
+                return False
+            cursor.execute(
+                """
+                UPDATE observer.connector_checkpoints
+                SET cursor_value = %s,
+                    checkpoint_version = checkpoint_version + 1,
+                    updated_at = %s
+                WHERE site_id = %s AND connector = 'email'
+                  AND connector_instance_id = %s
+                  AND checkpoint_version = %s
+                RETURNING checkpoint_version
+                """,
+                (batch[0], now, scope.site_id, key.instance_id, expected_version),
+            )
+            if cursor.fetchone() is None:
+                return False
+            cursor.execute(
+                """
+                UPDATE observer.email_poll_batches
+                SET status = 'finalized', finalized_at = %s
+                WHERE site_id = %s AND batch_id = %s AND status = 'open'
+                RETURNING batch_id
+                """,
+                (now, scope.site_id, batch_id),
+            )
+            return cursor.fetchone() is not None
+
+    def claim_email_publication(
+        self,
+        scope: TenantScope,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_seconds: int,
+    ) -> EmailPublicationRelayClaim | None:
+        _validate_scope(scope)
+        return PostgresEmailPublicationRelay(self._connection).claim(
+            site_id=scope.site_id,
+            worker_id=worker_id,
+            now=now,
+            lease_seconds=lease_seconds,
+        )
+
+    def heartbeat_email_publication(
+        self,
+        scope: TenantScope,
+        *,
+        publication_id: str,
+        worker_id: str,
+        expected_generation: int,
+        now: datetime,
+        lease_seconds: int,
+    ) -> EmailPublicationRelayClaim:
+        _validate_scope(scope)
+        return PostgresEmailPublicationRelay(self._connection).heartbeat(
+            site_id=scope.site_id,
+            publication_id=publication_id,
+            worker_id=worker_id,
+            expected_generation=expected_generation,
+            now=now,
+            lease_seconds=lease_seconds,
+        )
+
+    def release_email_publication(
+        self,
+        scope: TenantScope,
+        *,
+        publication_id: str,
+        worker_id: str,
+        expected_generation: int,
+        now: datetime,
+        next_attempt_at: datetime,
+        error_code: str,
+    ) -> EmailPublicationRelayRelease:
+        _validate_scope(scope)
+        return PostgresEmailPublicationRelay(self._connection).release(
+            site_id=scope.site_id,
+            publication_id=publication_id,
+            worker_id=worker_id,
+            expected_generation=expected_generation,
+            now=now,
+            next_attempt_at=next_attempt_at,
+            error_code=error_code,
+        )
+
+    def acknowledge_email_publication(
+        self,
+        scope: TenantScope,
+        *,
+        publication_id: str,
+        worker_id: str,
+        expected_generation: int,
+        receipt: dict[str, object],
+        now: datetime,
+    ) -> EmailPublicationDeliveryReceipt:
+        _validate_scope(scope)
+        return PostgresEmailPublicationRelay(self._connection).acknowledge(
+            site_id=scope.site_id,
+            publication_id=publication_id,
+            worker_id=worker_id,
+            expected_generation=expected_generation,
+            receipt=receipt,
+            now=now,
+        )
 
     def consume_nonce(
         self,
