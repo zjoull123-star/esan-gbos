@@ -195,7 +195,7 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
         ValidationError,
         canonical_digest,
     )
-    from services.email_gateway.operations import InboxOperations
+    from services.email_gateway.operations import InboxCommandAuthority, InboxOperations
     from services.email_gateway.repositories.audit import PostgresAuditRepository
     from services.email_gateway.repositories.identity import (
         PostgresIdentityProjectionRepository,
@@ -338,6 +338,38 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
             request_id="request-mailbox-create-2",
             idempotency_key="mailbox-create-2",
         ).mailbox
+
+        # Intake is intentionally fail-closed until an administrator has
+        # versioned an explicit SLA policy for each mailbox. These durations
+        # are test fixtures, not product defaults.
+        with connection.transaction():
+            connection.execute("SELECT set_config('gbos.site_id', %s, true)", (alpha.site_id,))
+            for policy_index, policy_mailbox in enumerate((mailbox, second_mailbox), start=1):
+                connection.execute(
+                    """
+                    INSERT INTO email_gateway.mailbox_sla_policies (
+                        site_id, mailbox_ref, policy_ref, revision,
+                        first_response_duration_seconds, effective_at,
+                        request_id, idempotency_key, payload_digest
+                    ) VALUES (%s, %s, %s, 1, 3600, %s, %s, %s, %s)
+                    """,
+                    (
+                        alpha.site_id,
+                        policy_mailbox.mailbox_ref,
+                        f"SLA-01ARZ3NDEKTSV4RRFFQ69G5FA{policy_index}",
+                        now - timedelta(days=1),
+                        f"request-sla-{policy_index}",
+                        f"sla-policy-{policy_index}",
+                        canonical_digest(
+                            {
+                                "mailbox_ref": policy_mailbox.mailbox_ref,
+                                "revision": 1,
+                                "first_response_duration_seconds": 3600,
+                                "effective_at": (now - timedelta(days=1)).isoformat(),
+                            }
+                        ),
+                    ),
+                )
 
         publication = EmailMessagePublication(
             publication_ref="repo-publication-alpha",
@@ -504,6 +536,18 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
             team_refs=(mailbox.default_team_ref,),
             roles=("Sales User",),
         )
+        claim_authority = InboxCommandAuthority(
+            schema_version="1.0",
+            command="claim",
+            actor_ref_digest=canonical_digest(
+                {"site_id": alpha.site_id, "user_ref": actor.actor_ref}
+            ),
+            actor_roles=actor.roles,
+            actor_team_refs=actor.team_refs,
+            actor_eligibility_revision="sha256:" + "e" * 64,
+            inbox_item_ref=claimable.inbox_item_ref,
+            expected_inbox_revision=claimable.revision,
+        )
         poison = AuditEvent(
             audit_ref="audit-poison-inbox-operation",
             site_id=alpha.site_id,
@@ -518,11 +562,15 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
         workflow.append_audit(alpha, poison)
         operations = InboxOperations(workflow)
         rollback_audit_count = workflow.audit_count(alpha)
-        with pytest.raises(IdempotencyConflict, match="audit"):
+        # The poisoned audit row simulates a database-side partial-write
+        # conflict.  The Postgres boundary intentionally redacts driver and
+        # constraint details while the surrounding function transaction rolls
+        # every Inbox/SLA write back.
+        with pytest.raises(ValidationError, match="persistence operation rejected"):
             operations.claim(
                 alpha,
                 actor=actor,
-                actor_enabled=True,
+                authority=claim_authority,
                 inbox_item_ref=claimable.inbox_item_ref,
                 expected_revision=claimable.revision,
                 request_id="REQ-CLAIM-PG-ROLLBACK",
@@ -535,7 +583,7 @@ def test_email_gateway_postgres_repositories_are_atomic_scoped_and_replay_safe()
 
         claim_command = dict(
             actor=actor,
-            actor_enabled=True,
+            authority=claim_authority,
             inbox_item_ref=claimable.inbox_item_ref,
             expected_revision=claimable.revision,
             request_id="REQ-CLAIM-PG-LOSS",
