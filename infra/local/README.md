@@ -89,7 +89,7 @@ The current-source synthetic core restart is separate from formal pilot approval
 `local_pilot_go=false`, with channels, models, media and tunnel still disabled; the core is
 healthy on the current locked images. Formal preflight returns `rc78` solely because
 `local_pilot_go=false`. The current credential-free source run records full backend
-`3978 passed, 59 skipped, 1 warning`, failed `0`; the warning is the existing Starlette
+`3980 passed, 59 skipped, 1 warning`, failed `0`; the warning is the existing Starlette
 TestClient/httpx deprecation. Ruff check/format (`720 files`), CI-scope mypy
 (`121 sources`), compileall and `scripts/dev/secret-scan` are green. Frontend
 lint/typecheck/build are green, unit

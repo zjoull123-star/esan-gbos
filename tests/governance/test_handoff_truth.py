@@ -348,7 +348,7 @@ def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
     assert "runtime source reference" in handoff.lower()
     assert "current code HEAD 是" not in handoff
     assert "governed rebuild/record" in handoff.lower()
-    assert "3978 passed, 59 skipped, 1 warning" in handoff
+    assert "3980 passed, 59 skipped, 1 warning" in handoff
     assert "720 files" in handoff
     assert "121 sources" in handoff
     assert "232 passed" in handoff

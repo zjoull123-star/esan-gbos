@@ -90,7 +90,7 @@ source SHA256 label 是
 material deletion 均未启用。
 
 当前 credential-free source verification 为：full backend
-`3978 passed, 59 skipped, 1 warning`、failed `0`；唯一 warning 是既有 Starlette
+`3980 passed, 59 skipped, 1 warning`、failed `0`；唯一 warning 是既有 Starlette
 TestClient/httpx deprecation。Ruff check 与 format（`720 files`）、CI-scope mypy
 （`121 sources`）、compileall 和 `scripts/dev/secret-scan` 全部 green。Frontend
 lint/typecheck/build green、unit
