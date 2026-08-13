@@ -50,7 +50,8 @@ CURRENT_RUNTIME_SOURCE_COMMIT = "2efcf2810c1f215a02b19458fd5a565663d2f3bc"
 CURRENT_IMAGE_LOCK_COMMIT = "9c121d5741798ebf9c97369eec83a900521b7840"
 CURRENT_FRAPPE_SOURCE_SHA256 = "f6fe3ab3938890e6d041df03bfd5857528c8e1269a631b38d6bbb527978c959d"
 CURRENT_RUNTIME_SOURCE_SHA256 = "cdb14db857668b50efd2cf3e1dfdfd9534dcd1041ca5a4988d391fac93a075c6"
-CURRENT_GITLEAKS_ALLOWLIST_COMMIT = "c27687ec6b39e669014b9ae8980cf6565556aaba"
+HISTORICAL_GITLEAKS_ALLOWLIST_COMMIT = "c27687ec6b39e669014b9ae8980cf6565556aaba"
+CURRENT_GITLEAKS_ALLOWLIST_COMMIT = "6ee371e164480e967a2b4ffeb48b482e5eab3c97"
 CURRENT_LIVE_SITE_BASE_URL = "http://127.0.0.1:58080"
 
 CEO_ROLES = (
@@ -342,6 +343,7 @@ def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
     assert CURRENT_IMAGE_LOCK_COMMIT in handoff
     assert CURRENT_FRAPPE_SOURCE_SHA256 in handoff
     assert CURRENT_RUNTIME_SOURCE_SHA256 in handoff
+    assert CURRENT_GITLEAKS_ALLOWLIST_COMMIT in handoff
     assert "frappe source reference" in handoff.lower()
     assert "runtime source reference" in handoff.lower()
     assert "current code HEAD 是" not in handoff
@@ -504,7 +506,7 @@ def test_historical_identity_governance_closure_remains_source_bound_and_honest(
     assert evidence["verification"]["full_history_gitleaks"] == {
         "commits_scanned": 263,
         "leaks": 0,
-        "allowlist_commit": CURRENT_GITLEAKS_ALLOWLIST_COMMIT,
+        "allowlist_commit": HISTORICAL_GITLEAKS_ALLOWLIST_COMMIT,
         "allowlist_scope": "reviewed exact synthetic fixture patterns only",
         "unreviewed_zero_claim": False,
     }

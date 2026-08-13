@@ -103,7 +103,8 @@ historical-only evidence；它不是本轮镜像的证明，**not rerun on the c
 images**。当前源码只重新运行了 29 个 frontend-harness 场景，因此不宣称当前镜像已有
 authenticated live-site Playwright 证据。
 
-Full-history Gitleaks 使用已审阅且已提交的 exact synthetic allowlist（commit
+Full-history Gitleaks 使用已审阅且已提交的 exact synthetic allowlist（current commit
+`6ee371e164480e967a2b4ffeb48b482e5eab3c97`；historical closure 仍绑定旧的
 `c27687ec6b39e669014b9ae8980cf6565556aaba`）；结果必须以本轮最终提交后的重新扫描为准，
 不把 worktree 元数据错误或未审阅结果称为 zero。Trivy filesystem scan 与两套当前
 locked image scan 均必须 exit `0` 后才可称 current；这里只报告 `0` unwaived
