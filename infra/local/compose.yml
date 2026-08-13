@@ -444,6 +444,42 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  email-initial-route-worker:
+    image: *runtime-image
+    pull_policy: never
+    profiles: ["email-initial-routing"]
+    command: ["python", "-m", "services.local_pilot_runtime.initial_route_worker"]
+    environment:
+      <<: *runtime-environment
+      GBOS_EMAIL_GATEWAY_KILL_SWITCH: ${GBOS_EMAIL_GATEWAY_KILL_SWITCH:-true}
+      GBOS_EMAIL_INITIAL_ROUTE_KILL_SWITCH: ${GBOS_EMAIL_INITIAL_ROUTE_KILL_SWITCH:-true}
+      GBOS_EXTERNAL_SEND_ENABLED: "false"
+    secrets:
+      - postgres_email_gateway_password
+      - source: frappe_email_gateway_authority_api_key
+        target: frappe_email_gateway_authority_api_key
+        mode: 0400
+      - source: frappe_email_gateway_authority_api_secret
+        target: frappe_email_gateway_authority_api_secret
+        mode: 0400
+    volumes:
+      - ${GBOS_LOCAL_PILOT_MANIFEST:-./local-pilot-manifest.json}:/config/local-pilot-manifest.json:ro
+      - ${GBOS_CONFIG_DIR:-/tmp/gbos-local-pilot-config-unavailable}/runtime-initial-route-worker.json:/config/email-gateway-runtime.json:ro
+      - ../../.runtime/local-pilot:/run/gbos:ro
+    networks: [local-internal]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      frappe-email-gateway-authority-bootstrap:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
   frappe-email-command-publication-bootstrap:
     image: *frappe-image
     pull_policy: never
@@ -484,7 +520,7 @@ services:
   frappe-email-gateway-authority-bootstrap:
     image: *frappe-image
     pull_policy: never
-    profiles: ["email-approved-outbound"]
+    profiles: ["email-approved-outbound", "email-initial-routing"]
     environment:
       GBOS_LOCAL_PILOT_SITE_ID: "${GBOS_FRAPPE_SITE_NAME:-gbos.localhost}"
       GBOS_PRODUCTION_ENABLED: "false"

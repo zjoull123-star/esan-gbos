@@ -24,6 +24,7 @@ _EMAIL_GATEWAY_ROLES = {
     "email-gateway-api": "gbos_email_gateway_app",
     "email-publication-worker": "gbos_observer_publisher",
     "mailbox-config-projection-worker": "gbos_email_gateway_worker",
+    "initial-route-worker": "gbos_email_gateway_worker",
 }
 _ROLE_PASSWORD_FILES = {
     "observer": "/run/secrets/postgres_observer_password",
@@ -37,6 +38,7 @@ _ROLE_PASSWORD_FILES = {
     "email-gateway-api": "/run/secrets/postgres_email_gateway_password",
     "email-publication-worker": "/run/secrets/postgres_observer_publisher_password",
     "mailbox-config-projection-worker": "/run/secrets/postgres_email_gateway_password",
+    "initial-route-worker": "/run/secrets/postgres_email_gateway_password",
     "email-send-worker": "/run/secrets/postgres_email_send_worker_password",
 }
 _CHANNEL_FILES = {
@@ -109,6 +111,7 @@ def _load_manifest(path: Path, *, synthetic: bool) -> dict[str, Any]:
         != {
             "kill_switch",
             "identity_projection_kill_switch",
+            "initial_route_kill_switch",
             "publication_kill_switch",
             "command_publication_kill_switch",
             "send_kill_switch",
@@ -274,8 +277,20 @@ def _email_gateway_runtime_config(
         "email-gateway-api": "email_gateway_api",
         "email-publication-worker": "email_publication_worker",
         "mailbox-config-projection-worker": "mailbox_config_projection_worker",
+        "initial-route-worker": "email_gateway_worker",
     }[purpose]
-    enabled = publication_enabled if purpose == "email-publication-worker" else gateway_enabled
+    initial_route_enabled = (
+        gateway_enabled and gateway["initial_route_kill_switch"] is False
+    )
+    enabled = (
+        publication_enabled
+        if purpose == "email-publication-worker"
+        else (
+            initial_route_enabled
+            if purpose == "initial-route-worker"
+            else gateway_enabled
+        )
+    )
     components = {
         name: {
             "enabled": enabled and name == enabled_component,

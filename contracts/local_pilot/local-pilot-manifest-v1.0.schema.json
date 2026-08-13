@@ -175,6 +175,7 @@
       "required": [
         "kill_switch",
         "identity_projection_kill_switch",
+        "initial_route_kill_switch",
         "publication_kill_switch",
         "command_publication_kill_switch",
         "send_kill_switch",
@@ -184,6 +185,7 @@
       "properties": {
         "kill_switch": {"type": "boolean"},
         "identity_projection_kill_switch": {"type": "boolean"},
+        "initial_route_kill_switch": {"type": "boolean"},
         "publication_kill_switch": {"type": "boolean"},
         "command_publication_kill_switch": {"const": true},
         "send_kill_switch": {"const": true},

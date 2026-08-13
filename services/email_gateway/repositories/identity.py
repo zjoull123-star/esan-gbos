@@ -11,11 +11,19 @@ from ..models import (
     require_scope,
 )
 from ..postgres import Connection, redacted_database_errors, site_transaction
+from .identity_route_work import (
+    InMemoryIdentityRouteWorkRepository,
+    enqueue_projection_in_transaction,
+)
 
 
 class InMemoryIdentityProjectionRepository:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        route_work_repository: InMemoryIdentityRouteWorkRepository | None = None,
+    ) -> None:
         self._projections: dict[tuple[str, str, str], IdentityProjection] = {}
+        self.route_work_repository = route_work_repository or InMemoryIdentityRouteWorkRepository()
         self._lock = RLock()
 
     def get(self, scope: TenantScope, opaque_address_ref: str) -> IdentityProjection | None:
@@ -37,7 +45,16 @@ class InMemoryIdentityProjectionRepository:
                     if projection.payload_digest != current.payload_digest or projection != current:
                         raise IdempotencyConflict("identity projection revision drift")
                     return current
+            previous = self._projections.get(key)
             self._projections[key] = projection
+            try:
+                self.route_work_repository.enqueue_projection(scope, projection)
+            except Exception:
+                if previous is None:
+                    self._projections.pop(key, None)
+                else:
+                    self._projections[key] = previous
+                raise
             return projection
 
 
@@ -163,6 +180,7 @@ class PostgresIdentityProjectionRepository:
             durable = _projection_from_row(durable_row)
             if durable != projection:
                 raise IdempotencyConflict("identity projection revision drift")
+            enqueue_projection_in_transaction(cursor, scope, projection)
             return durable
 
 
