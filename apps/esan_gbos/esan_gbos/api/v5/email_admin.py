@@ -13,13 +13,17 @@ from esan_gbos.domain.v5_email_dto import (
     V5EmailDTOValidationError,
     map_connector_health,
     map_mailbox,
+    map_sla_policy,
+    map_sla_policy_result,
     validate_mailbox_status,
     validate_mailbox_upsert,
+    validate_sla_policy_upsert,
 )
 
 EMAIL_ADMIN_ROLES = frozenset({"Integration Admin", "GBOS Admin"})
 _OPAQUE_MAILBOX_ADDRESS = re.compile(r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
 _TEAM_REF = re.compile(r"^TEM-[0-9A-HJKMNP-TV-Z]{26}$")
+_MAILBOX_REF = re.compile(r"^MBX-[0-9A-HJKMNP-TV-Z]{26}$")
 _GATEWAY_MAILBOX_FIELDS = frozenset(
     {
         "mailbox_ref",
@@ -62,6 +66,180 @@ def _safe_transient_text(value: object, field: str, *, maximum: int) -> str:
     ):
         raise BFFError("invalid_dto", f"{field} is invalid")
     return value
+
+
+def _strict_integer(
+    value: object,
+    field: str,
+    *,
+    minimum: int,
+    maximum: int | None = None,
+    error_code: str,
+) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise BFFError(error_code, f"{field} must be an integer")
+    if isinstance(value, str) and re.fullmatch(r"0|[1-9][0-9]*", value) is None:
+        raise BFFError(error_code, f"{field} must be an integer")
+    try:
+        result = int(value)
+    except (OverflowError, ValueError) as error:
+        raise BFFError(error_code, f"{field} must be an integer") from error
+    if result < minimum or (maximum is not None and result > maximum):
+        raise BFFError(error_code, f"{field} is outside the allowed range")
+    return result
+
+
+def _mailbox_reference(value: object, *, error_code: str, status: int = 400) -> str:
+    if (
+        not isinstance(value, str)
+        or _MAILBOX_REF.fullmatch(value) is None
+        or value != value.strip()
+    ):
+        raise BFFError(error_code, "mailbox_ref is invalid", status=status)
+    return value
+
+
+def _opaque_cursor(
+    value: object,
+    *,
+    error_code: str,
+    status: int = 400,
+) -> str:
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 512
+        or value != value.strip()
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise BFFError(error_code, "cursor is invalid", status=status)
+    return value
+
+
+def _invalid_sla_response(message: str) -> BFFError:
+    return BFFError("internal_error", message, status=503)
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # type: ignore[untyped-decorator]
+@bff_endpoint("GET")
+def list_sla_policies(
+    mailbox_ref: str,
+    cursor: str | None = None,
+    page_size: int | str = 25,
+) -> dict[str, Any]:
+    require_roles(EMAIL_ADMIN_ROLES)
+    reference = _mailbox_reference(mailbox_ref, error_code="invalid_query")
+    payload = {
+        **scope_payload(),
+        "mailbox_ref": reference,
+        "page_size": _strict_integer(
+            page_size,
+            "page_size",
+            minimum=1,
+            maximum=100,
+            error_code="invalid_query",
+        ),
+    }
+    if cursor is not None:
+        payload["cursor"] = _opaque_cursor(cursor, error_code="invalid_query")
+    data = call_gateway(
+        method="POST",
+        path="/internal/v1/bff/email-admin/sla-policies/list",
+        purpose="email_admin_read",
+        payload=payload,
+    )
+    if set(data) != {"mailbox_ref", "sla_policies", "next_cursor"}:
+        raise _invalid_sla_response("Email Gateway SLA policy list is invalid")
+    if data["mailbox_ref"] != reference:
+        raise _invalid_sla_response("Email Gateway SLA policy mailbox scope is invalid")
+    rows = data["sla_policies"]
+    if not isinstance(rows, builtins.list) or len(rows) > payload["page_size"]:
+        raise _invalid_sla_response("Email Gateway SLA policy list is invalid")
+    next_cursor = data["next_cursor"]
+    if next_cursor is not None:
+        next_cursor = _opaque_cursor(
+            next_cursor,
+            error_code="internal_error",
+            status=503,
+        )
+    try:
+        policies = [map_sla_policy(row) for row in rows]
+    except (TypeError, V5EmailDTOValidationError) as error:
+        raise _invalid_sla_response("Email Gateway SLA policy list is invalid") from error
+    return v5_success(
+        {
+            "mailbox_ref": reference,
+            "sla_policies": policies,
+            "next_cursor": next_cursor,
+        },
+        next_cursor=next_cursor,
+    )
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # type: ignore[untyped-decorator]
+@bff_endpoint("POST")
+def upsert_sla_policy(
+    mailbox_ref: str,
+    first_response_duration_seconds: int | str,
+    effective_at: str,
+    expected_revision: int | str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    require_roles(EMAIL_ADMIN_ROLES)
+    try:
+        command = validate_sla_policy_upsert(
+            {
+                "mailbox_ref": _mailbox_reference(mailbox_ref, error_code="invalid_dto"),
+                "first_response_duration_seconds": _strict_integer(
+                    first_response_duration_seconds,
+                    "first_response_duration_seconds",
+                    minimum=60,
+                    maximum=604800,
+                    error_code="invalid_dto",
+                ),
+                "effective_at": effective_at,
+                "expected_revision": _strict_integer(
+                    expected_revision,
+                    "expected_revision",
+                    minimum=0,
+                    error_code="invalid_dto",
+                ),
+                "idempotency_key": idempotency_key,
+            }
+        )
+    except V5EmailDTOValidationError as error:
+        raise BFFError("invalid_dto", str(error)) from error
+    payload = {**scope_payload(), **command}
+
+    def execute() -> dict[str, Any]:
+        data = call_gateway(
+            method="POST",
+            path="/internal/v1/bff/email-admin/sla-policies/upsert",
+            purpose="email_admin_command",
+            payload=payload,
+            idempotency_key=command["idempotency_key"],
+        )
+        if set(data) != {"sla_policy"}:
+            raise _invalid_sla_response("Email Gateway SLA policy response is invalid")
+        try:
+            result = map_sla_policy_result(data["sla_policy"])
+        except (TypeError, V5EmailDTOValidationError) as error:
+            raise _invalid_sla_response("Email Gateway SLA policy response is invalid") from error
+        if result["mailbox_ref"] != command["mailbox_ref"]:
+            raise _invalid_sla_response("Email Gateway SLA policy mailbox scope is invalid")
+        return result
+
+    result, replayed, original_request_id = run_idempotent(
+        "email_admin.upsert_sla_policy",
+        command["idempotency_key"],
+        payload,
+        execute,
+        api_version="v5",
+    )
+    return v5_success(
+        {"sla_policy": result},
+        replayed=replayed,
+        original_request_id=original_request_id,
+    )
 
 
 def _map_mailbox_response(data: dict[str, Any]) -> dict[str, Any]:

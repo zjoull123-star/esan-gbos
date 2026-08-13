@@ -13,6 +13,8 @@ TEAM_ONE = "TEM-01ARZ3NDEKTSV4RRFFQ69G5FAV"
 TEAM_TWO = "TEM-01ARZ3NDEKTSV4RRFFQ69G5FB0"
 RAW_MAILBOX_ADDRESS = "mailbox-raw-sentinel@example.invalid"
 OPAQUE_MAILBOX_ADDRESS = "extid:v1:email:" + "M" * 43
+SLA_MAILBOX_REF = "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV"
+SLA_POLICY_REF = "SLA-01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 
 def command_authority(command: str = "claim") -> dict[str, Any]:
@@ -194,6 +196,405 @@ def mailbox_upsert_kwargs(**overrides: Any) -> dict[str, Any]:
         "idempotency_key": "create-mailbox-01",
         **overrides,
     }
+
+
+def sla_policy_payload(*, include_mailbox: bool = False, **overrides: Any) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "policy_ref": SLA_POLICY_REF,
+        "revision": 4,
+        "first_response_duration_seconds": 3600,
+        "effective_at": "2026-08-14T09:30:00+08:00",
+    }
+    if include_mailbox:
+        value["mailbox_ref"] = SLA_MAILBOX_REF
+    return {**value, **overrides}
+
+
+def sla_policy_upsert_kwargs(**overrides: Any) -> dict[str, Any]:
+    return {
+        "mailbox_ref": SLA_MAILBOX_REF,
+        "first_response_duration_seconds": "3600",
+        "effective_at": "2026-08-14T09:30:00+08:00",
+        "expected_revision": "3",
+        "idempotency_key": "sla-policy-upsert-01",
+        **overrides,
+    }
+
+
+def test_sla_policy_list_is_closed_scoped_and_normalizes_utc(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        admin,
+        "call_gateway",
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or {
+                "mailbox_ref": SLA_MAILBOX_REF,
+                "sla_policies": [sla_policy_payload()],
+                "next_cursor": "opaque-next-02",
+            }
+        ),
+    )
+
+    response = admin.list_sla_policies(
+        mailbox_ref=SLA_MAILBOX_REF,
+        cursor="opaque-current-01",
+        page_size="100",
+    )
+
+    assert response["data"] == {
+        "mailbox_ref": SLA_MAILBOX_REF,
+        "sla_policies": [
+            {
+                "policy_ref": SLA_POLICY_REF,
+                "revision": 4,
+                "first_response_duration_seconds": 3600,
+                "effective_at": "2026-08-14T01:30:00Z",
+            }
+        ],
+        "next_cursor": "opaque-next-02",
+    }
+    assert calls == [
+        {
+            "method": "POST",
+            "path": "/internal/v1/bff/email-admin/sla-policies/list",
+            "purpose": "email_admin_read",
+            "payload": {
+                "actor_ref": "sales@example.invalid",
+                "actor_roles": ["Integration Admin"],
+                "allowed_team_refs": [TEAM_ONE, TEAM_TWO],
+                "mailbox_ref": SLA_MAILBOX_REF,
+                "cursor": "opaque-current-01",
+                "page_size": 100,
+            },
+        }
+    ]
+
+
+def test_sla_policy_list_applies_transport_page_default_only(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"GBOS Admin"}
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        admin,
+        "call_gateway",
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or {"mailbox_ref": SLA_MAILBOX_REF, "sla_policies": [], "next_cursor": None}
+        ),
+    )
+
+    response = admin.list_sla_policies(mailbox_ref=SLA_MAILBOX_REF)
+
+    assert response["data"] == {
+        "mailbox_ref": SLA_MAILBOX_REF,
+        "sla_policies": [],
+        "next_cursor": None,
+    }
+    assert calls[0]["payload"]["page_size"] == 25
+    assert "cursor" not in calls[0]["payload"]
+
+
+def test_sla_policy_upsert_is_idempotent_closed_scoped_and_normalizes_utc(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    gateway_calls: list[dict[str, Any]] = []
+    idempotency_calls: list[tuple[str, str, dict[str, Any], str]] = []
+
+    monkeypatch.setattr(
+        admin,
+        "call_gateway",
+        lambda **kwargs: (
+            gateway_calls.append(kwargs) or {"sla_policy": sla_policy_payload(include_mailbox=True)}
+        ),
+    )
+
+    def run_idempotent(
+        operation: str,
+        key: str,
+        payload: dict[str, Any],
+        execute: Any,
+        *,
+        api_version: str,
+    ) -> tuple[dict[str, Any], bool, str]:
+        idempotency_calls.append((operation, key, payload, api_version))
+        return execute(), True, "REQ-original"
+
+    monkeypatch.setattr(admin, "run_idempotent", run_idempotent)
+
+    response = admin.upsert_sla_policy(**sla_policy_upsert_kwargs())
+
+    expected_payload = {
+        "actor_ref": "sales@example.invalid",
+        "actor_roles": ["Integration Admin"],
+        "allowed_team_refs": [TEAM_ONE, TEAM_TWO],
+        "mailbox_ref": SLA_MAILBOX_REF,
+        "first_response_duration_seconds": 3600,
+        "effective_at": "2026-08-14T01:30:00Z",
+        "expected_revision": 3,
+        "idempotency_key": "sla-policy-upsert-01",
+    }
+    assert gateway_calls == [
+        {
+            "method": "POST",
+            "path": "/internal/v1/bff/email-admin/sla-policies/upsert",
+            "purpose": "email_admin_command",
+            "payload": expected_payload,
+            "idempotency_key": "sla-policy-upsert-01",
+        }
+    ]
+    assert idempotency_calls == [
+        (
+            "email_admin.upsert_sla_policy",
+            "sla-policy-upsert-01",
+            expected_payload,
+            "v5",
+        )
+    ]
+    assert response["data"] == {
+        "sla_policy": {
+            "mailbox_ref": SLA_MAILBOX_REF,
+            "policy_ref": SLA_POLICY_REF,
+            "revision": 4,
+            "first_response_duration_seconds": 3600,
+            "effective_at": "2026-08-14T01:30:00Z",
+        }
+    }
+    assert response["meta"]["replayed"] is True
+    assert response["meta"]["original_request_id"] == "REQ-original"
+
+
+def test_sla_policy_utc_normalization_preserves_rfc3339_fraction(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        admin,
+        "call_gateway",
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or {
+                "sla_policy": sla_policy_payload(
+                    include_mailbox=True,
+                    effective_at="2026-08-14T09:30:00.123456789+08:00",
+                )
+            }
+        ),
+    )
+
+    response = admin.upsert_sla_policy(
+        **sla_policy_upsert_kwargs(effective_at="2026-08-14T09:30:00.123456789+08:00")
+    )
+
+    assert calls[0]["payload"]["effective_at"] == "2026-08-14T01:30:00.123456789Z"
+    assert response["data"]["sla_policy"]["effective_at"] == ("2026-08-14T01:30:00.123456789Z")
+
+
+@pytest.mark.parametrize("operation", ["list", "upsert"])
+def test_sla_policy_role_denial_happens_before_gateway(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Sales Manager"}
+    gateway_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(admin, "call_gateway", lambda **kwargs: gateway_calls.append(kwargs))
+
+    with pytest.raises(admin.BFFError) as raised:
+        if operation == "list":
+            admin.list_sla_policies(mailbox_ref=SLA_MAILBOX_REF)
+        else:
+            admin.upsert_sla_policy(**sla_policy_upsert_kwargs())
+
+    assert raised.value.code == "permission_denied"
+    assert raised.value.status == 403
+    assert gateway_calls == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mailbox_ref", "MBX-01"),
+        ("mailbox_ref", SLA_MAILBOX_REF + "\n"),
+        ("cursor", ""),
+        ("cursor", "cursor\nvalue"),
+        ("cursor", "x" * 513),
+        ("page_size", 0),
+        ("page_size", 101),
+        ("page_size", True),
+        ("page_size", 1.5),
+        ("page_size", "1.5"),
+        ("page_size", "9" * 5000),
+    ],
+)
+def test_sla_policy_list_rejects_malformed_inputs_before_gateway(
+    v5_modules: tuple[Any, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    gateway_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(admin, "call_gateway", lambda **kwargs: gateway_calls.append(kwargs))
+    values: dict[str, object] = {"mailbox_ref": SLA_MAILBOX_REF}
+    values[field] = value
+
+    with pytest.raises(admin.BFFError):
+        admin.list_sla_policies(**values)
+
+    assert gateway_calls == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mailbox_ref", "MBX-invalid"),
+        ("first_response_duration_seconds", 59),
+        ("first_response_duration_seconds", 604801),
+        ("first_response_duration_seconds", True),
+        ("first_response_duration_seconds", 60.0),
+        ("first_response_duration_seconds", "60.0"),
+        ("effective_at", "2026-08-14T09:30:00"),
+        ("effective_at", "not-a-timestamp"),
+        ("effective_at", "2026-08-14 09:30:00+08:00"),
+        ("effective_at", "2026-08-14T09:30:00+0800"),
+        ("effective_at", "2026-08-14T09:30:00-00:00"),
+        ("effective_at", "2026-08-14T09:30:00.1234567890+08:00"),
+        ("effective_at", "x" * 36),
+        ("expected_revision", -1),
+        ("expected_revision", True),
+        ("idempotency_key", "short"),
+        ("idempotency_key", "key\rvalue"),
+        ("idempotency_key", "x" * 257),
+    ],
+)
+def test_sla_policy_upsert_rejects_malformed_inputs_before_gateway(
+    v5_modules: tuple[Any, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    gateway_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(admin, "call_gateway", lambda **kwargs: gateway_calls.append(kwargs))
+
+    with pytest.raises(admin.BFFError):
+        admin.upsert_sla_policy(**sla_policy_upsert_kwargs(**{field: value}))
+
+    assert gateway_calls == []
+
+
+def test_sla_policy_upsert_requires_duration_and_rejects_public_authority_fields(
+    v5_modules: tuple[Any, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    gateway_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(admin, "call_gateway", lambda **kwargs: gateway_calls.append(kwargs))
+    missing_duration = sla_policy_upsert_kwargs()
+    missing_duration.pop("first_response_duration_seconds")
+
+    with pytest.raises(TypeError):
+        admin.upsert_sla_policy(**missing_duration)
+    for forbidden in ("policy_ref", "site_id", "team_ref", "purpose", "actor_ref"):
+        with pytest.raises(TypeError):
+            admin.upsert_sla_policy(**sla_policy_upsert_kwargs(**{forbidden: "forbidden"}))
+
+    assert gateway_calls == []
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {
+            "mailbox_ref": SLA_MAILBOX_REF,
+            "sla_policies": [],
+            "next_cursor": None,
+            "extra": "drift",
+        },
+        {"mailbox_ref": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAW", "sla_policies": [], "next_cursor": None},
+        {
+            "mailbox_ref": SLA_MAILBOX_REF,
+            "sla_policies": [sla_policy_payload(extra="drift")],
+            "next_cursor": None,
+        },
+        {
+            "mailbox_ref": SLA_MAILBOX_REF,
+            "sla_policies": [sla_policy_payload(policy_ref=" " + SLA_POLICY_REF)],
+            "next_cursor": None,
+        },
+        {
+            "mailbox_ref": SLA_MAILBOX_REF,
+            "sla_policies": [sla_policy_payload(effective_at="2026-08-14T01:30:00")],
+            "next_cursor": None,
+        },
+        {
+            "mailbox_ref": SLA_MAILBOX_REF,
+            "sla_policies": [sla_policy_payload(first_response_duration_seconds=True)],
+            "next_cursor": None,
+        },
+        {"mailbox_ref": SLA_MAILBOX_REF, "sla_policies": [], "next_cursor": "x" * 513},
+        {
+            "mailbox_ref": SLA_MAILBOX_REF,
+            "sla_policies": [sla_policy_payload() for _index in range(101)],
+            "next_cursor": None,
+        },
+    ],
+)
+def test_sla_policy_list_rejects_closed_response_drift(
+    v5_modules: tuple[Any, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    response: dict[str, Any],
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    monkeypatch.setattr(admin, "call_gateway", lambda **_kwargs: response)
+
+    with pytest.raises(admin.BFFError) as raised:
+        admin.list_sla_policies(mailbox_ref=SLA_MAILBOX_REF)
+
+    assert raised.value.status == 503
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"sla_policy": sla_policy_payload(include_mailbox=True), "extra": "drift"},
+        {"sla_policy": sla_policy_payload(include_mailbox=True, extra="drift")},
+        {
+            "sla_policy": sla_policy_payload(
+                include_mailbox=True,
+                mailbox_ref="MBX-01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            )
+        },
+        {"sla_policy": sla_policy_payload(include_mailbox=True, policy_ref="SLA-invalid")},
+        {"sla_policy": sla_policy_payload(include_mailbox=True, revision=0)},
+    ],
+)
+def test_sla_policy_upsert_rejects_closed_response_drift(
+    v5_modules: tuple[Any, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    response: dict[str, Any],
+) -> None:
+    _gateway, admin, _inbox, fake = v5_modules
+    fake._roles = {"Integration Admin"}
+    monkeypatch.setattr(admin, "call_gateway", lambda **_kwargs: response)
+
+    with pytest.raises(admin.BFFError) as raised:
+        admin.upsert_sla_policy(**sla_policy_upsert_kwargs())
+
+    assert raised.value.status == 503
 
 
 def test_mailbox_reads_delegate_exact_actor_role_and_team_scope(

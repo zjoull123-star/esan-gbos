@@ -14,6 +14,8 @@ OPERATIONS = {
     "/api/method/esan_gbos.api.v5.email_admin.upsert_mailbox": "post",
     "/api/method/esan_gbos.api.v5.email_admin.set_mailbox_status": "post",
     "/api/method/esan_gbos.api.v5.email_admin.upsert_rule": "post",
+    "/api/method/esan_gbos.api.v5.email_admin.list_sla_policies": "get",
+    "/api/method/esan_gbos.api.v5.email_admin.upsert_sla_policy": "post",
     "/api/method/esan_gbos.api.v5.email_inbox.list": "get",
     "/api/method/esan_gbos.api.v5.email_inbox.get": "get",
     "/api/method/esan_gbos.api.v5.email_inbox.claim": "post",
@@ -47,12 +49,12 @@ def resolve_schema(value: dict[str, object], schema: dict[str, object]) -> dict[
     return value["components"]["schemas"][reference.rsplit("/", maxsplit=1)[-1]]
 
 
-def test_v5_surface_is_exactly_the_nineteen_email_operations_and_never_cached() -> None:
+def test_v5_surface_is_exactly_the_twenty_one_email_operations_and_never_cached() -> None:
     value = contract()
 
     assert value["openapi"] == "3.1.0"
     assert value["info"]["version"] == "5.0.0"
-    assert len(value["paths"]) == 19
+    assert len(value["paths"]) == 21
     assert set(value["paths"]) == set(OPERATIONS)
     for path, method in OPERATIONS.items():
         operations = value["paths"][path]
@@ -191,6 +193,123 @@ def test_v5_closed_shapes_expose_only_safe_mailbox_inbox_and_health_projections(
         "revoked",
         "unknown",
     ]
+
+
+def test_v5_sla_policy_operations_and_schemas_are_exact_closed_and_non_send() -> None:
+    value = contract()
+    schemas = value["components"]["schemas"]
+    list_operation = value["paths"]["/api/method/esan_gbos.api.v5.email_admin.list_sla_policies"][
+        "get"
+    ]
+    upsert_operation = value["paths"]["/api/method/esan_gbos.api.v5.email_admin.upsert_sla_policy"][
+        "post"
+    ]
+
+    assert list_operation["operationId"] == "listEmailMailboxSlaPolicies"
+    assert list_operation["security"] == [{"FrappeSession": []}]
+    list_envelope = resolve_schema(
+        value,
+        list_operation["responses"]["200"]["content"]["application/json"]["schema"],
+    )
+    assert list_envelope["additionalProperties"] is False
+    assert list_envelope["required"] == ["data", "meta"]
+    assert list_envelope["properties"]["data"] == {
+        "$ref": "#/components/schemas/MailboxSlaPolicyListData"
+    }
+    assert [parameter["name"] for parameter in list_operation["parameters"]] == [
+        "mailbox_ref",
+        "cursor",
+        "page_size",
+    ]
+    mailbox, cursor, page_size = list_operation["parameters"]
+    assert mailbox["required"] is True
+    assert mailbox["schema"] == {
+        "type": "string",
+        "minLength": 30,
+        "maxLength": 30,
+        "pattern": "^MBX-[0-9A-HJKMNP-TV-Z]{26}$",
+    }
+    assert cursor["required"] is False
+    assert cursor["schema"] == {"type": "string", "minLength": 1, "maxLength": 512}
+    assert page_size["required"] is False
+    assert page_size["schema"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 25,
+    }
+
+    assert upsert_operation["operationId"] == "upsertEmailMailboxSlaPolicy"
+    assert upsert_operation["security"] == [{"FrappeSession": [], "FrappeCsrf": []}]
+    assert upsert_operation["x-gbos-provider-send"] is False
+    upsert_envelope = resolve_schema(
+        value,
+        upsert_operation["responses"]["200"]["content"]["application/json"]["schema"],
+    )
+    assert upsert_envelope["additionalProperties"] is False
+    assert upsert_envelope["required"] == ["data", "meta"]
+    assert upsert_envelope["properties"]["data"] == {
+        "$ref": "#/components/schemas/MailboxSlaPolicyUpsertData"
+    }
+    body = resolve_schema(
+        value,
+        upsert_operation["requestBody"]["content"]["application/x-www-form-urlencoded"]["schema"],
+    )
+    assert body["additionalProperties"] is False
+    assert set(body["required"]) == {
+        "mailbox_ref",
+        "first_response_duration_seconds",
+        "effective_at",
+        "expected_revision",
+        "idempotency_key",
+    }
+    assert set(body["properties"]) == set(body["required"])
+    assert body["properties"]["first_response_duration_seconds"] == {
+        "type": "integer",
+        "minimum": 60,
+        "maximum": 604800,
+    }
+    assert body["properties"]["effective_at"] == {
+        "type": "string",
+        "format": "date-time",
+        "minLength": 20,
+        "maxLength": 35,
+    }
+    assert body["properties"]["expected_revision"] == {"type": "integer", "minimum": 0}
+    assert body["properties"]["idempotency_key"] == {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 256,
+    }
+    for forbidden in ("policy_ref", "site_id", "team_ref", "purpose", "actor_ref"):
+        assert forbidden not in body["properties"]
+
+    policy = schemas["MailboxSlaPolicy"]
+    assert policy["additionalProperties"] is False
+    assert set(policy["required"]) == {
+        "policy_ref",
+        "revision",
+        "first_response_duration_seconds",
+        "effective_at",
+    }
+    assert set(policy["properties"]) == set(policy["required"])
+    assert policy["properties"]["effective_at"]["pattern"] == (
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$"
+    )
+    result = schemas["MailboxSlaPolicyResult"]
+    assert result["additionalProperties"] is False
+    assert set(result["required"]) == {"mailbox_ref", *policy["required"]}
+    assert set(result["properties"]) == set(result["required"])
+    assert result["properties"]["effective_at"]["pattern"] == (
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$"
+    )
+
+    list_data = schemas["MailboxSlaPolicyListData"]
+    assert list_data["additionalProperties"] is False
+    assert set(list_data["required"]) == {"mailbox_ref", "sla_policies", "next_cursor"}
+    upsert_data = schemas["MailboxSlaPolicyUpsertData"]
+    assert upsert_data["additionalProperties"] is False
+    assert upsert_data["required"] == ["sla_policy"]
 
 
 def test_v5_has_no_send_operation_or_sensitive_fields() -> None:

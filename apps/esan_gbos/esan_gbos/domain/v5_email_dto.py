@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -49,6 +50,12 @@ _TEAM_REF = re.compile(r"^TEM-[0-9A-HJKMNP-TV-Z]{26}$")
 _CONNECTOR_REF = re.compile(r"^OCI-[0-9A-HJKMNP-TV-Z]{26}$")
 _CREDENTIAL_REF = re.compile(r"^secretref:v1/[A-Za-z0-9][A-Za-z0-9._/-]*$")
 _MAILBOX_ADDRESS_IDENTITY_REF = re.compile(r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
+_MAILBOX_REF = re.compile(r"^MBX-[0-9A-HJKMNP-TV-Z]{26}$")
+_SLA_POLICY_REF = re.compile(r"^SLA-[0-9A-HJKMNP-TV-Z]{26}$")
+_RFC3339 = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
+    r"(?P<fraction>\.\d{1,9})?(?P<zone>Z|[+-]\d{2}:\d{2})$"
+)
 
 
 def _object(value: object, field: str) -> Mapping[str, object]:
@@ -125,6 +132,95 @@ def _matching_text(
     if pattern.fullmatch(text) is None:
         raise V5EmailDTOValidationError(f"{field} is invalid")
     return text
+
+
+def _strict_text(value: object, field: str, *, minimum: int = 1, maximum: int) -> str:
+    if (
+        not isinstance(value, str)
+        or not minimum <= len(value) <= maximum
+        or value != value.strip()
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise V5EmailDTOValidationError(f"{field} must be bounded text")
+    return value
+
+
+def _rfc3339_utc(value: object, field: str) -> str:
+    text = _strict_text(value, field, minimum=20, maximum=35)
+    match = _RFC3339.fullmatch(text)
+    if match is None or match.group("zone") == "-00:00":
+        raise V5EmailDTOValidationError(f"{field} must be timezone-aware RFC3339")
+    try:
+        parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+        if parsed.utcoffset() is None:
+            raise ValueError("timezone missing")
+        normalized = parsed.astimezone(UTC)
+    except (OverflowError, ValueError) as error:
+        raise V5EmailDTOValidationError(f"{field} must be timezone-aware RFC3339") from error
+    return normalized.strftime("%Y-%m-%dT%H:%M:%S") + (match.group("fraction") or "") + "Z"
+
+
+def map_sla_policy(value: object) -> dict[str, Any]:
+    item = _object(value, "SLA policy")
+    required = {
+        "policy_ref",
+        "revision",
+        "first_response_duration_seconds",
+        "effective_at",
+    }
+    _closed(item, required)
+    return {
+        "policy_ref": _matching_text(item["policy_ref"], "policy_ref", _SLA_POLICY_REF, maximum=30),
+        "revision": _integer(item["revision"], "revision", minimum=1),
+        "first_response_duration_seconds": _integer(
+            item["first_response_duration_seconds"],
+            "first_response_duration_seconds",
+            minimum=60,
+            maximum=604800,
+        ),
+        "effective_at": _rfc3339_utc(item["effective_at"], "effective_at"),
+    }
+
+
+def map_sla_policy_result(value: object) -> dict[str, Any]:
+    item = _object(value, "SLA policy result")
+    policy_fields = {
+        "policy_ref",
+        "revision",
+        "first_response_duration_seconds",
+        "effective_at",
+    }
+    _closed(item, policy_fields | {"mailbox_ref"})
+    return {
+        "mailbox_ref": _matching_text(item["mailbox_ref"], "mailbox_ref", _MAILBOX_REF, maximum=30),
+        **map_sla_policy({field: item[field] for field in policy_fields}),
+    }
+
+
+def validate_sla_policy_upsert(value: object) -> dict[str, Any]:
+    item = _object(value, "SLA policy command")
+    required = {
+        "mailbox_ref",
+        "first_response_duration_seconds",
+        "effective_at",
+        "expected_revision",
+        "idempotency_key",
+    }
+    _closed(item, required)
+    return {
+        "mailbox_ref": _matching_text(item["mailbox_ref"], "mailbox_ref", _MAILBOX_REF, maximum=30),
+        "first_response_duration_seconds": _integer(
+            item["first_response_duration_seconds"],
+            "first_response_duration_seconds",
+            minimum=60,
+            maximum=604800,
+        ),
+        "effective_at": _rfc3339_utc(item["effective_at"], "effective_at"),
+        "expected_revision": _integer(item["expected_revision"], "expected_revision"),
+        "idempotency_key": _strict_text(
+            item["idempotency_key"], "idempotency_key", minimum=8, maximum=256
+        ),
+    }
 
 
 def map_mailbox(value: object) -> dict[str, Any]:
