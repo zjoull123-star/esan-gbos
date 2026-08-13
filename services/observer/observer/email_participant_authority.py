@@ -461,12 +461,21 @@ class EmailParticipantAuthorityResolver:
             (cc if role_value == "original_cc" else to).extend(selected)
         if not to:
             raise EmailParticipantAuthorityConflict("recipient_to_unavailable")
+        normalized_to = _deduplicate(to)
+        normalized_cc = _deduplicate(cc)
         return {
             "from": sender[0],
-            "to": _deduplicate(to),
-            "cc": _deduplicate(cc),
+            "to": normalized_to,
+            "cc": normalized_cc,
             "roles": dict(roles),
             "parsed_address_roles_digest": canonical_binding_digest(parsed_roles),
+            "participant_projection": _participant_projection(
+                sender=sender[0],
+                to=normalized_to,
+                cc=normalized_cc,
+                subjects=subjects,
+                parsed_identities=parsed_identities,
+            ),
         }
 
     def __repr__(self) -> str:
@@ -544,6 +553,31 @@ def _resolve_role(
 
 def _deduplicate(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
+
+
+def _participant_projection(
+    *,
+    sender: str,
+    to: list[str],
+    cc: list[str],
+    subjects: tuple[EmailParticipantSubject, ...],
+    parsed_identities: list[str],
+) -> list[dict[str, str]]:
+    def protected(address: str) -> str:
+        matches = {
+            identity_ref
+            for subject, identity_ref in zip(subjects, parsed_identities, strict=True)
+            if hmac.compare_digest(subject.subject.subject, address)
+        }
+        if len(matches) != 1:
+            raise EmailParticipantAuthorityConflict("participant_identity_ambiguous")
+        return next(iter(matches))
+
+    return [
+        {"address_role": "sender", "opaque_address_ref": protected(sender)},
+        *({"address_role": "to", "opaque_address_ref": protected(address)} for address in to),
+        *({"address_role": "cc", "opaque_address_ref": protected(address)} for address in cc),
+    ]
 
 
 def _reference(value: object, prefix: str) -> str:

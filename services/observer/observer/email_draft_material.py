@@ -19,6 +19,7 @@ from .email_participant_authority import (
 from .models import TenantScope
 
 _DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
+_OPAQUE_EMAIL = re.compile(r"^extid:v1:email:[A-Za-z0-9_-]{43}$")
 _RECEIPT_FIELDS = frozenset(
     {
         "receipt_ref",
@@ -266,7 +267,7 @@ class EmailDraftMaterialService:
         if replay is not None:
             return replay
         resolved = self._participant_resolver(scope, authorization, roles)
-        sender, recipients, cc, subject = _resolved_participants(resolved, roles)
+        sender, recipients, cc, subject, participants = _resolved_participants(resolved, roles)
         try:
             body = material.decode("utf-8")
         except UnicodeDecodeError:
@@ -285,6 +286,7 @@ class EmailDraftMaterialService:
             "evidence_ref": str(stored.object_ref),
             "digest": final_digest,
             "role_binding": role_binding,
+            "participants": participants,
         }
         self._replays[idempotency_key] = (replay_digest, result)
         return dict(result)
@@ -326,9 +328,17 @@ def _participant_roles(value: Mapping[str, object]) -> dict[str, object]:
 
 def _resolved_participants(
     value: Mapping[str, object], roles: Mapping[str, object]
-) -> tuple[str, list[str], list[str], str]:
+) -> tuple[str, list[str], list[str], str, list[dict[str, str]]]:
     if not isinstance(value, Mapping) or not set(value).issubset(
-        {"from", "to", "cc", "subject", "roles", "parsed_address_roles_digest"}
+        {
+            "from",
+            "to",
+            "cc",
+            "subject",
+            "roles",
+            "parsed_address_roles_digest",
+            "participant_projection",
+        }
     ):
         raise PermissionError("participant authority is invalid")
     if value.get("roles") != roles:
@@ -339,7 +349,45 @@ def _resolved_participants(
     subject = "Re: governed inbox message"
     if value.get("subject") is not None:
         subject = _text(value.get("subject"), "subject", maximum=240)
-    return sender, recipients, cc, subject
+    participants = _protected_participants(
+        value.get("participant_projection"),
+        recipient_count=len(recipients),
+        cc_count=len(cc),
+    )
+    return sender, recipients, cc, subject, participants
+
+
+def _protected_participants(
+    value: object,
+    *,
+    recipient_count: int,
+    cc_count: int,
+) -> list[dict[str, str]]:
+    if not isinstance(value, list) or not 2 <= len(value) <= 256:
+        raise PermissionError("participant projection is invalid")
+    result: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, Mapping) or set(item) != {
+            "address_role",
+            "opaque_address_ref",
+        }:
+            raise PermissionError("participant projection is invalid")
+        role = item.get("address_role")
+        opaque = item.get("opaque_address_ref")
+        if role not in {"sender", "to", "cc"} or not isinstance(opaque, str):
+            raise PermissionError("participant projection is invalid")
+        if _OPAQUE_EMAIL.fullmatch(opaque) is None:
+            raise PermissionError("participant projection is invalid")
+        result.append({"address_role": role, "opaque_address_ref": opaque})
+    if (
+        sum(item["address_role"] == "sender" for item in result) != 1
+        or sum(item["address_role"] == "to" for item in result) != recipient_count
+        or sum(item["address_role"] == "cc" for item in result) != cc_count
+        or len({(item["address_role"], item["opaque_address_ref"]) for item in result})
+        != len(result)
+    ):
+        raise PermissionError("participant projection is invalid")
+    return result
 
 
 def _address(value: object, field: str) -> str:

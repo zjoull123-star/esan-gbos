@@ -250,6 +250,12 @@ def test_resolver_recomputes_all_identity_hmacs_and_uniquely_matches_mailbox_own
     assert resolved["from"] == "mailbox@example.invalid"
     assert resolved["to"] == ["sender@example.invalid"]
     assert resolved["cc"] == ["copy@example.invalid"]
+    assert resolved["participant_projection"] == [
+        {"address_role": "sender", "opaque_address_ref": _identity_ref("mailbox@example.invalid")},
+        {"address_role": "to", "opaque_address_ref": _identity_ref("sender@example.invalid")},
+        {"address_role": "cc", "opaque_address_ref": _identity_ref("copy@example.invalid")},
+    ]
+    assert "@" not in repr(resolved["participant_projection"])
     assert resolved["parsed_address_roles_digest"] == canonical_binding_digest(
         ["from", "to", "cc", "bcc"]
     )

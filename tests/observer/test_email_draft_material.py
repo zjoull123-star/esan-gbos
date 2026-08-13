@@ -56,6 +56,16 @@ def _service(root: Path) -> EmailDraftMaterialService:
             "from": "sales@example.invalid",
             "to": ["customer@example.invalid"],
             "roles": roles,
+            "participant_projection": [
+                {
+                    "address_role": "sender",
+                    "opaque_address_ref": "extid:v1:email:" + "a" * 43,
+                },
+                {
+                    "address_role": "to",
+                    "opaque_address_ref": "extid:v1:email:" + "b" * 43,
+                },
+            ],
         }
 
     return EmailDraftMaterialService(
@@ -142,9 +152,19 @@ def test_finalize_resolves_addresses_from_opaque_roles_and_returns_only_cas_bind
         idempotency_key="draft-finalize-01",
     )
 
-    assert set(result) == {"evidence_ref", "digest", "role_binding"}
+    assert set(result) == {"evidence_ref", "digest", "role_binding", "participants"}
     assert str(result["evidence_ref"]).startswith("obs:v1:")
     assert str(result["role_binding"]).startswith("sha256:")
+    assert result["participants"] == [
+        {
+            "address_role": "sender",
+            "opaque_address_ref": "extid:v1:email:" + "a" * 43,
+        },
+        {
+            "address_role": "to",
+            "opaque_address_ref": "extid:v1:email:" + "b" * 43,
+        },
+    ]
     assert "@" not in repr(result)
 
 
