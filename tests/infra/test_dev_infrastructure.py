@@ -14,6 +14,7 @@ FINAL_CONTAINERFILE = REPO_ROOT / "infra" / "dev" / "Containerfile.final"
 REALTIME_PACKAGE = REPO_ROOT / "infra" / "dev" / "realtime-runtime" / "package.json"
 REALTIME_LOCK = REPO_ROOT / "infra" / "dev" / "realtime-runtime" / "package-lock.json"
 FRONTEND_WORKSPACE = REPO_ROOT / "apps" / "esan_gbos" / "frontend" / "pnpm-workspace.yaml"
+FRONTEND_LOCK = REPO_ROOT / "apps" / "esan_gbos" / "frontend" / "pnpm-lock.yaml"
 GITLEAKS_CONFIG = REPO_ROOT / ".gitleaks.toml"
 TRIVY_WAIVERS = REPO_ROOT / "security" / "trivy-gate01-ignore.yaml"
 NGINX_TEMPLATE = REPO_ROOT / "infra" / "dev" / "nginx" / "frappe.conf.template"
@@ -543,6 +544,15 @@ def test_frontend_dependency_build_scripts_are_explicitly_denied() -> None:
         assert re.search(rf"(?m)^  {re.escape(dependency)}: false$", workspace)
     assert "dangerouslyAllowAllBuilds" not in workspace
     assert "strictDepBuilds: false" not in workspace
+
+
+def test_frontend_lock_excludes_nanoid_release_with_cve_2026_67213() -> None:
+    lock = read_required(FRONTEND_LOCK)
+    workspace = read_required(FRONTEND_WORKSPACE)
+
+    assert "\n  nanoid@3.3.17:\n" not in lock
+    assert "\n      nanoid: 3.3.17\n" not in lock
+    assert "'nanoid@3.3.17': 3.3.18" in workspace
 
 
 def test_gitleaks_exception_is_narrow_and_keeps_default_rules() -> None:
