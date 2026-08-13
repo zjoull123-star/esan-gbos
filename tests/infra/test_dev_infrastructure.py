@@ -358,6 +358,7 @@ def test_custom_image_builder_verifies_every_source_ref() -> None:
 
 def test_final_runtime_prunes_build_tooling_and_uses_a_locked_realtime_bundle() -> None:
     containerfile = read_required(FINAL_CONTAINERFILE)
+    normalized_containerfile = " ".join(containerfile.split())
     runtime_package = read_required(REALTIME_PACKAGE)
     runtime_lock = read_required(REALTIME_LOCK)
 
@@ -373,9 +374,9 @@ def test_final_runtime_prunes_build_tooling_and_uses_a_locked_realtime_bundle() 
     assert "find apps/esan_gbos -type d -name node_modules" in containerfile
     assert "apt-get upgrade -y" in containerfile
     assert (
-        "apt-get purge -y --auto-remove curl git libcurl3-gnutls libcurl4 "
-        "vim vim-common vim-runtime xxd"
-    ) in containerfile
+        "apt-get purge -y --auto-remove chromium-headless-shell chromium-common "
+        "\\ curl git libcurl3-gnutls libcurl4 vim vim-common vim-runtime xxd"
+    ) in normalized_containerfile
     assert 'ENV GIT_PYTHON_REFRESH="quiet"' in containerfile
 
     for dependency in ('"socket.io": "4.8.3"', '"@redis/client": "1.5.12"', '"cookie": "0.7.0"'):
@@ -449,6 +450,12 @@ def test_security_and_sbom_commands_are_reproducible_and_pinned() -> None:
     assert "**/*.jar" not in sbom
     assert "docker image inspect" in security
     assert "docker image inspect" in sbom
+
+
+def test_final_runtime_image_removes_the_unneeded_headless_browser() -> None:
+    final_containerfile = read_required(FINAL_CONTAINERFILE)
+
+    assert "chromium-headless-shell chromium-common" in final_containerfile
 
 
 def test_gate01_security_waivers_are_narrow_expiring_and_machine_validated() -> None:
