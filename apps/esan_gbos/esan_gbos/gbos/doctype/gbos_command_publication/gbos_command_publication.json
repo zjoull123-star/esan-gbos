@@ -1,0 +1,30 @@
+{
+  "doctype": "DocType",
+  "name": "GBOS Command Publication",
+  "module": "GBOS",
+  "engine": "InnoDB",
+  "track_changes": 0,
+  "field_order": ["approved_command", "command_payload", "payload_digest", "publication_status", "attempt", "generation", "max_attempts", "worker_id", "fence_token", "lease_expires_at", "heartbeat_at", "claim_request_id", "heartbeat_request_id", "acknowledge_request_id", "release_request_id", "gateway_command_receipt_ref", "gateway_send_outbox_ref", "gateway_payload_digest", "safe_error_code"],
+  "fields": [
+    {"fieldname": "approved_command", "label": "Approved Command", "fieldtype": "Link", "options": "GBOS Approved Command", "reqd": 1, "read_only": 1},
+    {"fieldname": "command_payload", "label": "Closed Command Payload", "fieldtype": "Code", "options": "JSON", "reqd": 1, "read_only": 1},
+    {"fieldname": "payload_digest", "label": "Payload Digest", "fieldtype": "Data", "reqd": 1, "read_only": 1, "unique": 1},
+    {"fieldname": "publication_status", "label": "Publication Status", "fieldtype": "Select", "options": "Pending\nRetry\nClaimed\nAcknowledged\nDead Letter", "default": "Pending", "reqd": 1, "read_only": 1},
+    {"fieldname": "attempt", "label": "Attempt", "fieldtype": "Int", "default": "0", "read_only": 1},
+    {"fieldname": "generation", "label": "Generation", "fieldtype": "Int", "default": "0", "read_only": 1},
+    {"fieldname": "max_attempts", "label": "Max Attempts", "fieldtype": "Int", "default": "5", "reqd": 1, "read_only": 1},
+    {"fieldname": "worker_id", "label": "Worker ID", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "fence_token", "label": "Fence Token", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "lease_expires_at", "label": "Lease Expires At", "fieldtype": "Datetime", "read_only": 1},
+    {"fieldname": "heartbeat_at", "label": "Heartbeat At", "fieldtype": "Datetime", "read_only": 1},
+    {"fieldname": "claim_request_id", "label": "Claim Request ID", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "heartbeat_request_id", "label": "Heartbeat Request ID", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "acknowledge_request_id", "label": "Acknowledge Request ID", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "release_request_id", "label": "Release Request ID", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "gateway_command_receipt_ref", "label": "Gateway Command Receipt Ref", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "gateway_send_outbox_ref", "label": "Gateway Send Outbox Ref", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "gateway_payload_digest", "label": "Gateway Payload Digest", "fieldtype": "Data", "read_only": 1},
+    {"fieldname": "safe_error_code", "label": "Safe Error Code", "fieldtype": "Data", "read_only": 1}
+  ],
+  "permissions": []
+}

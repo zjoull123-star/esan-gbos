@@ -26,6 +26,7 @@ PREFIXES = {
     "GBOS Sourcing Event": "SRC",
     "GBOS Work Item": "WRK",
     "GBOS Review Case": "REV",
+    "GBOS Email Send Approval": "ESA",
 }
 
 WORKFLOWS = {

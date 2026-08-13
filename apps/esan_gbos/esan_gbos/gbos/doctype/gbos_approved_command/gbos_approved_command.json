@@ -1,0 +1,22 @@
+{
+  "doctype": "DocType",
+  "name": "GBOS Approved Command",
+  "module": "GBOS",
+  "engine": "InnoDB",
+  "track_changes": 0,
+  "field_order": ["review_case", "email_send_approval", "actor_user_ref", "policy_version", "command_type", "command_payload", "payload_sha256", "idempotency_key", "stable_client_request_id", "issued_at", "expires_at"],
+  "fields": [
+    {"fieldname": "review_case", "label": "Review Case", "fieldtype": "Link", "options": "GBOS Review Case", "reqd": 1, "read_only": 1},
+    {"fieldname": "email_send_approval", "label": "Email Send Approval", "fieldtype": "Link", "options": "GBOS Email Send Approval", "reqd": 1, "read_only": 1},
+    {"fieldname": "actor_user_ref", "label": "Actor User Ref", "fieldtype": "Data", "reqd": 1, "read_only": 1},
+    {"fieldname": "policy_version", "label": "Policy Version", "fieldtype": "Data", "reqd": 1, "read_only": 1},
+    {"fieldname": "command_type", "label": "Command Type", "fieldtype": "Data", "reqd": 1, "read_only": 1},
+    {"fieldname": "command_payload", "label": "Closed Command Payload", "fieldtype": "Code", "options": "JSON", "reqd": 1, "read_only": 1},
+    {"fieldname": "payload_sha256", "label": "Payload SHA-256", "fieldtype": "Data", "reqd": 1, "read_only": 1, "unique": 1},
+    {"fieldname": "idempotency_key", "label": "Idempotency Key", "fieldtype": "Data", "reqd": 1, "read_only": 1, "unique": 1},
+    {"fieldname": "stable_client_request_id", "label": "Stable Client Request ID", "fieldtype": "Data", "reqd": 1, "read_only": 1},
+    {"fieldname": "issued_at", "label": "Issued At", "fieldtype": "Datetime", "reqd": 1, "read_only": 1},
+    {"fieldname": "expires_at", "label": "Expires At", "fieldtype": "Datetime", "reqd": 1, "read_only": 1}
+  ],
+  "permissions": []
+}

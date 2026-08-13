@@ -44,6 +44,12 @@ def _parse_json(value: object, *, fallback: Any) -> Any:
 
 def _scoped_case(name: str, *, for_update: bool = False) -> Any:
     case = frappe.get_doc("GBOS Review Case", name, for_update=for_update)
+    if case.policy_version == "email_send_owner_v1":
+        raise BFFError(
+            "specialized_review_required",
+            "Email send reviews require the specialized endpoint",
+            status=409,
+        )
     if not can_access_review_case(
         roles=set(frappe.get_roles()),
         actor_ref=frappe.session.user,
@@ -155,6 +161,7 @@ def list(
         "review_status": "Pending",
         "business_status": "Pending",
         "case_payload_sha256": ["is", "set"],
+        "policy_version": ["!=", "email_send_owner_v1"],
     }
     cursor_value: tuple[str, str] | None = None
     if cursor:
@@ -240,6 +247,12 @@ def decide(
     expected_case_payload_hash: str | None = None,
 ) -> dict[str, Any]:
     require_roles(REVIEW_ROLES)
+    if policy_version == "email_send_owner_v1":
+        raise BFFError(
+            "specialized_review_required",
+            "Email send decisions require the specialized approval endpoint",
+            status=409,
+        )
     raw: dict[str, Any] = {
         "name": name,
         "decision": decision,

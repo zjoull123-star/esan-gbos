@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from esan_gbos.domain.review_dto import (
     REVIEW_SUBJECT_DOCTYPES,
@@ -10,9 +12,15 @@ from esan_gbos.domain.review_dto import (
     validate_subject_pin,
 )
 
+EMAIL_SEND_POLICY = "email_send_owner_v1"
+
 
 def test_external_identity_is_a_pinned_review_subject() -> None:
     assert "GBOS External Identity" in REVIEW_SUBJECT_DOCTYPES
+
+
+def test_email_send_approval_is_a_pinned_but_specialized_review_subject() -> None:
+    assert "GBOS Email Send Approval" in REVIEW_SUBJECT_DOCTYPES
 
 
 def _decision_payload() -> dict[str, object]:
@@ -38,6 +46,29 @@ def test_decision_payload_is_strict_and_normalizes_reason() -> None:
 
     assert value["decision_note"] == "Evidence supports approval."
     assert value["decision"] == "Approved"
+
+
+def test_generic_decision_dto_rejects_the_email_send_owner_policy() -> None:
+    payload = _decision_payload()
+    payload["policy_version"] = EMAIL_SEND_POLICY
+
+    with pytest.raises(ReviewDTOValidationError, match="specialized email send"):
+        validate_decision_payload(payload)
+
+
+def test_generic_review_api_excludes_and_rejects_email_send_owner_cases() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "apps"
+        / "esan_gbos"
+        / "esan_gbos"
+        / "api"
+        / "v2"
+        / "review_case.py"
+    ).read_text(encoding="utf-8")
+
+    assert '"policy_version": ["!=", "email_send_owner_v1"]' in source
+    assert source.count('case.policy_version == "email_send_owner_v1"') == 1
 
 
 @pytest.mark.parametrize("decision", ("Pending", "Superseded", "approved", ""))

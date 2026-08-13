@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import pytest
 from esan_gbos.domain.permissions import (
+    EMAIL_COMMAND_PUBLICATION_ROLE,
     PermissionScopeError,
     can_access_crm_record,
     can_access_record,
     communication_scope,
     role_has_doctype_permission,
 )
+
+EMAIL_COMMAND_DOCTYPES = {
+    "GBOS Email Send Approval",
+    "GBOS Approved Command",
+    "GBOS Command Publication",
+}
 
 
 def test_team_member_can_read_team_record() -> None:
@@ -179,6 +186,58 @@ def test_email_gateway_authority_consumer_has_no_general_doctype_permissions() -
                 doctype,
                 permission_type,
             )
+
+
+def test_email_command_publication_consumer_has_zero_general_doctype_permissions() -> None:
+    for doctype in EMAIL_COMMAND_DOCTYPES | {
+        "GBOS Team",
+        "GBOS Review Case",
+        "GBOS External Identity",
+        "Integration Request",
+    }:
+        for permission_type in (
+            "read",
+            "write",
+            "create",
+            "delete",
+            "report",
+            "export",
+            "print",
+            "email",
+            "share",
+        ):
+            assert not role_has_doctype_permission(
+                EMAIL_COMMAND_PUBLICATION_ROLE,
+                doctype,
+                permission_type,
+            )
+
+
+@pytest.mark.parametrize(
+    "role",
+    (
+        "GBOS Admin",
+        "CEO",
+        "Sales Manager",
+        "Sales User",
+        "Reviewer",
+        "Integration Admin",
+    ),
+)
+def test_no_human_role_has_generic_docperm_on_email_command_authority_records(role: str) -> None:
+    for doctype in EMAIL_COMMAND_DOCTYPES:
+        for permission_type in (
+            "read",
+            "write",
+            "create",
+            "delete",
+            "report",
+            "export",
+            "print",
+            "email",
+            "share",
+        ):
+            assert not role_has_doctype_permission(role, doctype, permission_type)
 
 
 def test_buyer_is_limited_to_procurement_and_authorized_demand_summary() -> None:

@@ -12,9 +12,9 @@ def test_runner_is_unique_current_source_twice_migrated_and_always_torn_down() -
     assert "set -euo pipefail" in source
     assert "mktemp -d" in source
     assert '--project-name "${PROJECT_NAME}"' in source
-    assert "gbos-email-authority-" in source
-    assert "email-authority-" in source
     assert source.count('bench --site "$SITE_NAME" migrate') == 2
+    assert "gbos-email-send-" in source
+    assert "email-send-" in source
     assert "apps/esan_gbos:/home/frappe/frappe-bench/apps/esan_gbos:ro" in source
     assert "down --volumes --remove-orphans" in source
     assert "trap cleanup EXIT INT TERM" in source
@@ -35,7 +35,19 @@ def test_runner_executes_only_named_native_authority_modules_without_provider_se
         "run-tests --module esan_gbos.gbos.doctype.gbos_external_identity."
         "test_gbos_external_identity" in source
     )
-    assert source.count("--skip-test-records") == 2
+    assert (
+        "run-tests --module esan_gbos.gbos.doctype.gbos_email_send_approval."
+        "test_gbos_email_send_approval" in source
+    )
+    assert (
+        "run-tests --module esan_gbos.gbos.doctype.gbos_approved_command."
+        "test_gbos_approved_command" in source
+    )
+    assert (
+        "run-tests --module esan_gbos.gbos.doctype.gbos_command_publication."
+        "test_gbos_command_publication" in source
+    )
+    assert source.count("--skip-test-records") == 5
     assert "run-tests --app" not in source
     assert "OBSERVER_POSTGRES_PASSWORD=authority-observer-" in source
     assert "observer-api" not in source.casefold()
@@ -45,6 +57,7 @@ def test_runner_executes_only_named_native_authority_modules_without_provider_se
     assert "frontend" not in source
     assert "scheduler" not in source
     assert "queue-short" not in source
+    assert "esan_gbos.api.internal.email_command_publication" in source
 
 
 def test_runner_passes_container_shell_variables_without_pid_expansion() -> None:

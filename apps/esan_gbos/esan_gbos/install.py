@@ -4,6 +4,7 @@ import frappe
 
 from esan_gbos.ceo_access import backfill_ceo_full_access
 from esan_gbos.domain.permissions import (
+    EMAIL_COMMAND_PUBLICATION_ROLE,
     EMAIL_GATEWAY_AUTHORITY_ROLE,
     IDENTITY_RESOLVER_ROLE,
     INTERNAL_MATERIALIZER_ROLE,
@@ -26,6 +27,7 @@ GBOS_ROLES = (
     "Agent TrustedMaterializer",
     "Observer Identity Resolver",
     "Email Gateway Authority Consumer",
+    "Email Command Publication Consumer",
 )
 
 PARENT_DOCTYPES = (
@@ -43,9 +45,19 @@ PARENT_DOCTYPES = (
     "GBOS Work Item",
     "GBOS Review Case",
     "GBOS Informal Observation",
+    "GBOS Email Send Approval",
+    "GBOS Approved Command",
+    "GBOS Command Publication",
 )
 CRM_DOCTYPES = ("CRM Organization", "Contact", "CRM Lead", "CRM Deal")
 INTERNAL_MATERIALIZATION_AUDIT_DOCTYPES = ("Integration Request",)
+_CLOSED_EMAIL_COMMAND_DOCTYPES = frozenset(
+    {
+        "GBOS Email Send Approval",
+        "GBOS Approved Command",
+        "GBOS Command Publication",
+    }
+)
 
 
 def after_install() -> None:
@@ -71,7 +83,8 @@ def after_migrate() -> None:
 def ensure_roles() -> None:
     for role_name in GBOS_ROLES:
         desk_access = int(
-            role_name
+            role_name != EMAIL_COMMAND_PUBLICATION_ROLE
+            and role_name
             not in {
                 INTERNAL_MATERIALIZER_ROLE,
                 IDENTITY_RESOLVER_ROLE,
@@ -97,7 +110,7 @@ def _permission_values(doctype: str, role: str) -> dict[str, int | str]:
     can_write = role_has_doctype_permission(role, doctype, "write")
     can_create = role_has_doctype_permission(role, doctype, "create")
     can_delete = role_has_doctype_permission(role, doctype, "delete")
-    internal_service = role in {
+    internal_service = role == EMAIL_COMMAND_PUBLICATION_ROLE or role in {
         INTERNAL_MATERIALIZER_ROLE,
         IDENTITY_RESOLVER_ROLE,
         EMAIL_GATEWAY_AUTHORITY_ROLE,
@@ -124,7 +137,10 @@ def ensure_permissions() -> None:
                 "permlevel": 0,
                 "if_owner": 0,
             }
-            if role == EMAIL_GATEWAY_AUTHORITY_ROLE:
+            if (
+                role in (EMAIL_GATEWAY_AUTHORITY_ROLE, EMAIL_COMMAND_PUBLICATION_ROLE)
+                or doctype in _CLOSED_EMAIL_COMMAND_DOCTYPES
+            ):
                 name = frappe.db.get_value("Custom DocPerm", filters, "name")
                 if name:
                     frappe.delete_doc("Custom DocPerm", name, ignore_permissions=True)

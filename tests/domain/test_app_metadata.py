@@ -31,6 +31,11 @@ CHILD_DOCTYPES = {
     "GBOS Informal Evidence Ref",
 }
 GATE4_AUDIT_DOCTYPES = {"GBOS Review Decision"}
+EMAIL_SEND_COMMAND_DOCTYPES = {
+    "GBOS Email Send Approval",
+    "GBOS Approved Command",
+    "GBOS Command Publication",
+}
 COMMON_FIELDS = {"origin", "business_status", "review_status", "revision"}
 
 
@@ -79,7 +84,9 @@ def test_custom_app_license_metadata_matches_the_shipped_agpl_text() -> None:
 
 
 def test_gate_one_doctypes_remain_frozen_and_gate_four_adds_only_review_audit() -> None:
-    assert set(_doctype_documents()) == (PARENT_DOCTYPES | CHILD_DOCTYPES | GATE4_AUDIT_DOCTYPES)
+    assert set(_doctype_documents()) == (
+        PARENT_DOCTYPES | CHILD_DOCTYPES | GATE4_AUDIT_DOCTYPES | EMAIL_SEND_COMMAND_DOCTYPES
+    )
 
 
 def test_every_parent_has_governed_fields_and_is_not_submittable() -> None:

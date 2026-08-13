@@ -28,6 +28,7 @@ _IMMUTABLE_SCOPE_FIELDS = (
     "case_payload_sha256",
     "evidence_refs",
     "policy_version",
+    "approval_expires_at",
     "origin",
     "origin_reference",
 )
@@ -38,9 +39,39 @@ _DECISION_FIELDS = (
     "decided_at",
     "decision_record",
     "decision_payload_sha256",
+    "approved_command",
+    "command_publication",
 )
 
 _SUBJECT_FIELDS = {
+    "GBOS Email Send Approval": (
+        "site_id",
+        "processing_purpose",
+        "team",
+        "assignee_user_ref",
+        "approval_expires_at",
+        "mailbox_ref",
+        "mailbox_config_revision",
+        "inbox_item_ref",
+        "inbox_item_revision",
+        "conversation_ref",
+        "conversation_revision",
+        "reply_draft_ref",
+        "reply_draft_revision",
+        "reply_draft_digest",
+        "participants",
+        "party_ref",
+        "party_revision",
+        "team_revision",
+        "owner_user_ref",
+        "owner_eligibility_revision",
+        "final_mime_evidence_ref",
+        "final_mime_digest",
+        "evidence_refs",
+        "stable_client_request_id",
+        "payload_sha256",
+        "revision",
+    ),
     "GBOS Demand Signal": (
         "title",
         "team",
@@ -218,7 +249,7 @@ def build_subject_snapshot(doc: object) -> dict[str, Any]:
 def build_case_payload(case: object) -> dict[str, Any]:
     snapshot_value = _value(case, "subject_snapshot")
     evidence_value = _value(case, "evidence_refs")
-    return {
+    payload = {
         "title": _value(case, "title"),
         "team": _value(case, "team"),
         "assigned_reviewer": _value(case, "assigned_reviewer"),
@@ -230,6 +261,10 @@ def build_case_payload(case: object) -> dict[str, Any]:
         "evidence_refs": _json_list(evidence_value, "evidence_refs"),
         "policy_version": _value(case, "policy_version"),
     }
+    approval_expires_at = _value(case, "approval_expires_at")
+    if approval_expires_at not in (None, ""):
+        payload["approval_expires_at"] = _json_value(approval_expires_at)
+    return payload
 
 
 class GBOSReviewCase(GBOSDocument):

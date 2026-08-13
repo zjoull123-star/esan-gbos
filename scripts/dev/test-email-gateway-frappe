@@ -7,8 +7,8 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gbos-email-authority.XXXXXX")"
 RUN_SUFFIX="$(basename "${RUN_DIR}" | tr '[:upper:].' '[:lower:]-')-$$"
-PROJECT_NAME="gbos-email-authority-${RUN_SUFFIX}"
-SITE_NAME="email-authority-${RUN_SUFFIX}.localhost"
+PROJECT_NAME="gbos-email-send-${RUN_SUFFIX}"
+SITE_NAME="email-send-${RUN_SUFFIX}.localhost"
 ENV_FILE="${RUN_DIR}/compose.env"
 OVERRIDE_FILE="${RUN_DIR}/current-source.yml"
 COMPOSE_FILE="${REPO_ROOT}/infra/dev/compose.yml"
@@ -85,4 +85,9 @@ compose --profile core run --rm --no-deps \
     bench --site "$SITE_NAME" migrate
     bench --site "$SITE_NAME" run-tests --module esan_gbos.gbos.doctype.gbos_party_profile.test_gbos_party_profile --skip-test-records
     bench --site "$SITE_NAME" run-tests --module esan_gbos.gbos.doctype.gbos_external_identity.test_gbos_external_identity --skip-test-records
+    bench --site "$SITE_NAME" run-tests --module esan_gbos.gbos.doctype.gbos_email_send_approval.test_gbos_email_send_approval --skip-test-records
+    bench --site "$SITE_NAME" run-tests --module esan_gbos.gbos.doctype.gbos_approved_command.test_gbos_approved_command --skip-test-records
+    bench --site "$SITE_NAME" run-tests --module esan_gbos.gbos.doctype.gbos_command_publication.test_gbos_command_publication --skip-test-records
+    bench --site "$SITE_NAME" execute esan_gbos.api.internal.email_command_publication._now >/dev/null
+    bench --site "$SITE_NAME" execute esan_gbos.install.ensure_roles >/dev/null
   '

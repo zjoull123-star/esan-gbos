@@ -8,6 +8,7 @@ from typing import Any
 REVIEW_SUBJECT_DOCTYPES = frozenset(
     {
         "GBOS Demand Signal",
+        "GBOS Email Send Approval",
         "GBOS External Identity",
         "GBOS Party Profile",
         "GBOS Product Brief",
@@ -107,6 +108,10 @@ def validate_decision_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ReviewDTOValidationError(f"missing required fields: {', '.join(sorted(missing))}")
     if unexpected:
         raise ReviewDTOValidationError(f"unexpected fields: {', '.join(sorted(unexpected))}")
+    if payload.get("policy_version") == "email_send_owner_v1":
+        raise ReviewDTOValidationError(
+            "specialized email send decisions require the email_send.approve endpoint"
+        )
 
     decision = payload["decision"]
     if decision not in DECISIONS:

@@ -32,6 +32,7 @@ GBOS_ROLES = [
     "Agent TrustedMaterializer",
     "Observer Identity Resolver",
     "Email Gateway Authority Consumer",
+    "Email Command Publication Consumer",
 ]
 
 fixtures = [
@@ -53,6 +54,9 @@ _PARENT_DOCTYPES = [
     "GBOS Work Item",
     "GBOS Review Case",
     "GBOS Informal Observation",
+    "GBOS Email Send Approval",
+    "GBOS Approved Command",
+    "GBOS Command Publication",
 ]
 
 permission_query_conditions = {
@@ -78,6 +82,14 @@ permission_query_conditions = {
     "CRM Deal": "esan_gbos.permissions.crm_deal_permission_query",
     "Contact": "esan_gbos.permissions.contact_permission_query",
 }
+for _email_command_doctype in (
+    "GBOS Email Send Approval",
+    "GBOS Approved Command",
+    "GBOS Command Publication",
+):
+    permission_query_conditions[_email_command_doctype] = (
+        "esan_gbos.api.v5.email_send.email_command_permission_query"
+    )
 permission_query_conditions["Integration Request"] = (
     "esan_gbos.permissions.integration_request_permission_query"
 )
@@ -86,6 +98,14 @@ has_permission = {
     doctype: "esan_gbos.permissions.has_gbos_permission"
     for doctype in ["GBOS Team", *_PARENT_DOCTYPES]
 }
+for _email_command_doctype in (
+    "GBOS Email Send Approval",
+    "GBOS Approved Command",
+    "GBOS Command Publication",
+):
+    has_permission[_email_command_doctype] = (
+        "esan_gbos.api.v5.email_send.has_email_command_permission"
+    )
 has_permission.update(
     {
         doctype: "esan_gbos.permissions.has_crm_permission"

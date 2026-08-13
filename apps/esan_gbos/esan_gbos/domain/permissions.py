@@ -49,11 +49,21 @@ _BUSINESS_DOCTYPES = frozenset(
     }
 )
 _INTEGRATION_DOCTYPES = frozenset({"GBOS External Identity", "GBOS External Crosswalk"})
-_NON_DELETABLE_DOCTYPES = frozenset({"GBOS External Identity"})
-_ALL_PARENT_DOCTYPES = _BUSINESS_DOCTYPES | _INTEGRATION_DOCTYPES | {"GBOS Team"}
+_EMAIL_COMMAND_DOCTYPES = frozenset(
+    {
+        "GBOS Email Send Approval",
+        "GBOS Approved Command",
+        "GBOS Command Publication",
+    }
+)
+_NON_DELETABLE_DOCTYPES = frozenset({"GBOS External Identity"}) | _EMAIL_COMMAND_DOCTYPES
+_ALL_PARENT_DOCTYPES = (
+    _BUSINESS_DOCTYPES | _INTEGRATION_DOCTYPES | _EMAIL_COMMAND_DOCTYPES | {"GBOS Team"}
+)
 INTERNAL_MATERIALIZER_ROLE = "Agent TrustedMaterializer"
 IDENTITY_RESOLVER_ROLE = "Observer Identity Resolver"
 EMAIL_GATEWAY_AUTHORITY_ROLE = "Email Gateway Authority Consumer"
+EMAIL_COMMAND_PUBLICATION_ROLE = "Email Command Publication Consumer"
 INTERNAL_MATERIALIZATION_SUBJECT_DOCTYPES = frozenset(
     {
         "GBOS Demand Signal",
@@ -140,9 +150,15 @@ def role_has_doctype_permission(
     """Return the coarse DocPerm capability before record-level scope is applied."""
     if doctype not in _ALL_PARENT_DOCTYPES:
         return False
+    if doctype in _EMAIL_COMMAND_DOCTYPES:
+        return False
     if permission_type == "delete" and doctype in _NON_DELETABLE_DOCTYPES:
         return False
-    if role in {IDENTITY_RESOLVER_ROLE, EMAIL_GATEWAY_AUTHORITY_ROLE}:
+    if role in {
+        IDENTITY_RESOLVER_ROLE,
+        EMAIL_GATEWAY_AUTHORITY_ROLE,
+        EMAIL_COMMAND_PUBLICATION_ROLE,
+    }:
         return False
     if role == INTERNAL_MATERIALIZER_ROLE:
         if permission_type == "read":
