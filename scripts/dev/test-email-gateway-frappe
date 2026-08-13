@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck disable=SC1007  # CDPATH is intentionally scoped to the cd command.
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1007  # CDPATH is intentionally scoped to the cd command.
 REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gbos-email-authority.XXXXXX")"
 RUN_SUFFIX="$(basename "${RUN_DIR}" | tr '[:upper:].' '[:lower:]-')-$$"
@@ -17,6 +19,7 @@ cleanup() {
     --env-file "${ENV_FILE}" \
     -f "${COMPOSE_FILE}" \
     -f "${OVERRIDE_FILE}" \
+    --profile core \
     down --volumes --remove-orphans >/dev/null 2>&1 || true
   rm -rf -- "${RUN_DIR}"
 }
@@ -26,6 +29,7 @@ umask 077
 printf '%s\n' \
   "DB_ROOT_PASSWORD=authority-db-${RUN_SUFFIX}" \
   "ADMIN_PASSWORD=authority-admin-${RUN_SUFFIX}" \
+  "OBSERVER_POSTGRES_PASSWORD=authority-observer-${RUN_SUFFIX}" \
   "SITE_NAME=${SITE_NAME}" \
   "APP_LIST=erpnext,crm,esan_gbos" \
   "GBOS_IMAGE_STAGE=final" \
@@ -57,6 +61,7 @@ compose() {
 
 compose --profile core up -d db redis-cache redis-queue
 compose --profile core run --rm configurator
+# shellcheck disable=SC2016  # Variables expand inside the container shell.
 compose --profile core run --rm --no-deps \
   -e SITE_NAME="${SITE_NAME}" \
   -e DB_ROOT_PASSWORD="authority-db-${RUN_SUFFIX}" \
@@ -64,20 +69,20 @@ compose --profile core run --rm --no-deps \
   backend /bin/sh -eu -c '
     touch sites/apps.txt
     for app in erpnext crm esan_gbos; do
-      grep -Fxq "$$app" sites/apps.txt || printf "%s\n" "$$app" >> sites/apps.txt
+      grep -Fxq "$app" sites/apps.txt || printf "%s\n" "$app" >> sites/apps.txt
     done
-    bench new-site "$$SITE_NAME" \
+    bench new-site "$SITE_NAME" \
       --mariadb-user-host-login-scope="%" \
       --db-root-username=root \
-      --db-root-password="$$DB_ROOT_PASSWORD" \
-      --admin-password="$$ADMIN_PASSWORD" \
+      --db-root-password="$DB_ROOT_PASSWORD" \
+      --admin-password="$ADMIN_PASSWORD" \
       --set-default
-    bench --site "$$SITE_NAME" install-app erpnext
-    bench --site "$$SITE_NAME" install-app crm
-    bench --site "$$SITE_NAME" install-app esan_gbos
-    bench --site "$$SITE_NAME" set-config allow_tests true
-    bench --site "$$SITE_NAME" migrate
-    bench --site "$$SITE_NAME" migrate
-    bench --site "$$SITE_NAME" run-tests --module esan_gbos.gbos.doctype.gbos_party_profile.test_gbos_party_profile
-    bench --site "$$SITE_NAME" run-tests --module esan_gbos.gbos.doctype.gbos_external_identity.test_gbos_external_identity
+    bench --site "$SITE_NAME" install-app erpnext
+    bench --site "$SITE_NAME" install-app crm
+    bench --site "$SITE_NAME" install-app esan_gbos
+    bench --site "$SITE_NAME" set-config allow_tests true
+    bench --site "$SITE_NAME" migrate
+    bench --site "$SITE_NAME" migrate
+    bench --site "$SITE_NAME" run-tests --module esan_gbos.gbos.doctype.gbos_party_profile.test_gbos_party_profile --skip-test-records
+    bench --site "$SITE_NAME" run-tests --module esan_gbos.gbos.doctype.gbos_external_identity.test_gbos_external_identity --skip-test-records
   '

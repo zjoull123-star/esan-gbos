@@ -14,10 +14,13 @@ def test_runner_is_unique_current_source_twice_migrated_and_always_torn_down() -
     assert '--project-name "${PROJECT_NAME}"' in source
     assert "gbos-email-authority-" in source
     assert "email-authority-" in source
-    assert source.count('bench --site "$$SITE_NAME" migrate') == 2
+    assert source.count('bench --site "$SITE_NAME" migrate') == 2
     assert "apps/esan_gbos:/home/frappe/frappe-bench/apps/esan_gbos:ro" in source
     assert "down --volumes --remove-orphans" in source
     assert "trap cleanup EXIT INT TERM" in source
+    cleanup_start = source.index("cleanup() {")
+    cleanup = source[cleanup_start : source.index("\n}\n", cleanup_start)]
+    assert "--profile core" in cleanup
     assert "internal: true" in source
 
 
@@ -32,10 +35,22 @@ def test_runner_executes_only_named_native_authority_modules_without_provider_se
         "run-tests --module esan_gbos.gbos.doctype.gbos_external_identity."
         "test_gbos_external_identity" in source
     )
+    assert source.count("--skip-test-records") == 2
     assert "run-tests --app" not in source
-    assert "observer" not in source.casefold()
+    assert "OBSERVER_POSTGRES_PASSWORD=authority-observer-" in source
+    assert "observer-api" not in source.casefold()
+    assert "observer-worker" not in source.casefold()
     assert "provider" not in source.casefold()
     assert "mailbox" not in source.casefold()
     assert "frontend" not in source
     assert "scheduler" not in source
     assert "queue-short" not in source
+
+
+def test_runner_passes_container_shell_variables_without_pid_expansion() -> None:
+    source = RUNNER.read_text(encoding="utf-8")
+
+    assert "$$app" not in source
+    assert "$$SITE_NAME" not in source
+    assert "$$DB_ROOT_PASSWORD" not in source
+    assert "$$ADMIN_PASSWORD" not in source
