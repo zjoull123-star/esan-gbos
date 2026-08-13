@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from observer.connectors.email_delivery import EmailRawDeliveryDecoder
 from observer.connectors.email_provider import EmailProviderError
 from observer.connectors.fake_email_provider import FakeEmailProvider, FakeEmailProviderMode
+from observer.local_pilot_ingestion import DeliveryQuarantine
 
 NOW = datetime(2026, 8, 13, 13, tzinfo=UTC)
 
@@ -28,6 +30,25 @@ def test_fake_provider_ordered_duplicate_and_out_of_order_are_deterministic() ->
     ]
     assert not hasattr(ordered, "checkpoint")
     assert not hasattr(ordered, "advance_checkpoint")
+
+
+def test_fake_provider_uses_distinct_valid_rfc_message_ids() -> None:
+    provider = FakeEmailProvider(mode=FakeEmailProviderMode.ORDERED_SUCCESS, now=NOW)
+    deliveries = provider.poll(None, 10).deliveries
+    decoder = EmailRawDeliveryDecoder()
+
+    facts = [
+        decoder.decode_delivery(
+            delivery.exact_bytes,
+            delivery_id=delivery.delivery_id,
+            received_at=delivery.received_at,
+            source_ref="obs:v1:partition:sha256:" + "a" * 64,
+        )[0].payload["email_header_facts"]
+        for delivery in deliveries
+    ]
+
+    assert all(value.message_id_digest is not None for value in facts)
+    assert facts[0].message_id_digest != facts[1].message_id_digest
 
 
 @pytest.mark.parametrize(
@@ -61,4 +82,12 @@ def test_fake_provider_malformed_and_oversized_modes_use_same_delivery_path() ->
 
     assert malformed.poll(None, 10).deliveries[0].media_type == "message/rfc822"
     assert b"malformed" in malformed.poll(None, 10).deliveries[0].exact_bytes
-    assert len(oversized.poll(None, 10).deliveries[0].exact_bytes) > 5_000_000
+    delivery = oversized.poll(None, 10).deliveries[0]
+    assert len(delivery.exact_bytes) > 5_000_000
+    with pytest.raises(DeliveryQuarantine, match="email.attachment_too_large"):
+        EmailRawDeliveryDecoder().decode_delivery(
+            delivery.exact_bytes,
+            delivery_id=delivery.delivery_id,
+            received_at=delivery.received_at,
+            source_ref="obs:v1:partition:sha256:" + "b" * 64,
+        )

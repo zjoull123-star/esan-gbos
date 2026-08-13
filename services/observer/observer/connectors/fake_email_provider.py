@@ -60,6 +60,7 @@ class FakeEmailProvider:
             message = EmailMessage()
             message["From"] = "sender@example.invalid"
             message["To"] = "recipient@example.invalid"
+            message["Message-ID"] = "<fake-oversized@example.invalid>"
             message.set_content("body")
             message.add_attachment(
                 b"x" * 5_000_001,
@@ -93,7 +94,8 @@ class FakeEmailProvider:
         message["From"] = "sender@example.invalid"
         message["To"] = "recipient@example.invalid"
         message["Subject"] = "fake subject"
-        message["Message-ID"] = f"<{delivery_id}@example.invalid>"
+        message_id = delivery_id.replace(":", "-")
+        message["Message-ID"] = f"<{message_id}@example.invalid>"
         message.set_content("fake body")
         return RawDelivery(delivery_id, message.as_bytes(), "message/rfc822", self._now)
 

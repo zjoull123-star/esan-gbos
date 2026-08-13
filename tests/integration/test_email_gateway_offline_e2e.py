@@ -669,12 +669,12 @@ def test_oversized_fake_mode_quarantines_then_allows_checkpoint(
 
     assert result.status == "ok"
     assert result.checkpoint_advanced is True
-    assert state.quarantined == {"fake:oversized": "email.thread_headers_missing"}
+    assert state.quarantined == {"fake:oversized": "email.attachment_too_large"}
     assert state.outbox.records == ()
     assert state.fence.batches[0].members[0].terminal_kind == "quarantined"
 
 
-def test_provider_duplicate_batch_fails_closed_before_checkpoint_or_publication(
+def test_provider_duplicate_batch_is_deduplicated_before_checkpoint_and_publication(
     tmp_path: Path,
 ) -> None:
     key = ConnectorKey("email", "duplicate-batch")
@@ -687,8 +687,49 @@ def test_provider_duplicate_batch_fails_closed_before_checkpoint_or_publication(
         key,
     ).run_once(limit=10)
 
-    assert result.status == "retry"
-    assert result.safe_error_code == "poll_batch_register_failed"
+    assert result.status == "ok"
+    assert result.accepted_count == 1
+    assert result.safe_error_code is None
+    assert result.checkpoint_advanced is True
+    assert len(state.accepted_refs) == 1
+    assert len(state.outbox.records) == 1
+
+
+def test_provider_duplicate_delivery_id_with_payload_drift_pauses_connector(
+    tmp_path: Path,
+) -> None:
+    class DriftProvider:
+        @property
+        def provider_kind(self) -> str:
+            return "fake"
+
+        def poll(self, checkpoint: str | None, limit: int) -> EmailProviderPollResult:
+            first = RawDelivery(
+                "fake:drift",
+                b"first",
+                "message/rfc822",
+                NOW,
+            )
+            second = RawDelivery(
+                "fake:drift",
+                b"second",
+                "message/rfc822",
+                NOW,
+            )
+            return EmailProviderPollResult(
+                expected_cursor=checkpoint,
+                candidate_cursor="fake:cursor:drift",
+                deliveries=(first, second)[:limit],
+            )
+
+    key = ConnectorKey("email", "duplicate-drift")
+    mailbox = _mailbox("B1", instance_id=key.instance_id)
+    state = _OfflineObserverState(cas_root=tmp_path / "cas-drift", mailbox=mailbox)
+
+    result = _scheduler(state, DriftProvider(), key).run_once(limit=10)
+
+    assert result.status == "paused"
+    assert result.safe_error_code == "duplicate_delivery_drift"
     assert result.checkpoint_advanced is False
     assert state.accepted_refs == {}
     assert state.outbox.records == ()

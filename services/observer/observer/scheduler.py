@@ -495,6 +495,18 @@ class DurablePollingScheduler:
                 batch.error_code or "poll_failed",
                 paused=batch.disposition in {PollDisposition.PAUSE, PollDisposition.REJECTED},
             )
+        try:
+            deliveries = _deduplicate_deliveries(batch.deliveries)
+        except ValueError:
+            return self._record_failure(now, "duplicate_delivery_drift", paused=True)
+        if deliveries != batch.deliveries:
+            batch = PollBatch(
+                disposition=batch.disposition,
+                expected_cursor=batch.expected_cursor,
+                candidate_cursor=batch.candidate_cursor,
+                deliveries=deliveries,
+                error_code=batch.error_code,
+            )
         accepted = 0
         batch_id: str | None = None
         if self._key.connector == "email" and batch.deliveries:
@@ -643,6 +655,21 @@ def imap_poll_batch(
         deliveries=tuple(message.raw_delivery for message in result.messages),
         error_code=result.error_code,
     )
+
+
+def _deduplicate_deliveries(
+    deliveries: tuple[RawDelivery, ...],
+) -> tuple[RawDelivery, ...]:
+    unique: list[RawDelivery] = []
+    by_id: dict[str, RawDelivery] = {}
+    for delivery in deliveries:
+        previous = by_id.get(delivery.delivery_id)
+        if previous is None:
+            by_id[delivery.delivery_id] = delivery
+            unique.append(delivery)
+        elif previous != delivery:
+            raise ValueError("duplicate delivery identity drift")
+    return tuple(unique)
 
 
 def wecom_poll_batch(result: object) -> PollBatch:
