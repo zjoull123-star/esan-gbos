@@ -20,6 +20,7 @@ def _all_sql() -> str:
         "009_email_gateway_mailbox_identity.sql",
         "010_email_gateway_sla_authority.sql",
         "011_email_gateway_retention_runtime.sql",
+        "012_identity_projection_purpose_scope.sql",
     ]
     return "\n".join(path.read_text() for path in files).lower()
 
