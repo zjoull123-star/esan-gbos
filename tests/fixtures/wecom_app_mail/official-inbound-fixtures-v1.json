@@ -1,0 +1,278 @@
+{
+  "schema_version": "1.0",
+  "provenance": {
+    "authority": "first-party WeCom documentation",
+    "accessed_on": "2026-08-14",
+    "timezone": "Asia/Shanghai",
+    "sources": {
+      "mail_overview": "https://developer.work.weixin.qq.com/document/path/95486",
+      "callback_configuration": "https://developer.work.weixin.qq.com/document/path/90930",
+      "receive_event": "https://developer.work.weixin.qq.com/document/path/97495",
+      "access_token": "https://developer.work.weixin.qq.com/document/path/91039",
+      "mail_list": "https://developer.work.weixin.qq.com/document/path/97369",
+      "read_mail": "https://developer.work.weixin.qq.com/document/path/97979",
+      "frequency_limits": "https://developer.work.weixin.qq.com/document/path/90312",
+      "global_errors": "https://developer.work.weixin.qq.com/document/path/90313"
+    }
+  },
+  "sanitization": {
+    "synthetic_values_only": true,
+    "contains_real_corp_or_app_id": false,
+    "contains_real_secret_or_token": false,
+    "contains_real_mailbox_address": false,
+    "contains_customer_or_real_eml": false
+  },
+  "cases": {
+    "wecom-app-mail-callback-v1.0.schema.json": {
+      "valid": {
+        "url_verification": {
+          "http_method": "GET",
+          "query": {
+            "msg_signature": "0123456789abcdef0123456789abcdef01234567",
+            "timestamp": "1786617600",
+            "nonce": "synthetic-nonce-1",
+            "echostr": "c3ludGhldGljLWVuY3J5cHRlZC1jaGFsbGVuZ2U="
+          },
+          "plaintext_response": "synthetic-url-verification"
+        },
+        "encrypted_receive_event": {
+          "http_method": "POST",
+          "content_type": "application/xml",
+          "query": {
+            "msg_signature": "89abcdef0123456789abcdef0123456789abcdef",
+            "timestamp": "1786617660",
+            "nonce": "synthetic-nonce-2"
+          },
+          "encrypted_envelope_xml": "<xml><ToUserName><![CDATA[synthetic-corp]]></ToUserName><AgentID><![CDATA[1000001]]></AgentID><Encrypt><![CDATA[c3ludGhldGljLWVuY3J5cHRlZC1ldmVudA==]]></Encrypt></xml>",
+          "decrypted_event_xml": "<xml><ToUserName><![CDATA[synthetic-app-mail]]></ToUserName><FromUserName><![CDATA[sys]]></FromUserName><CreateTime><![CDATA[1786617660]]></CreateTime><MsgType><![CDATA[event]]></MsgType><Event><![CDATA[app_email_change]]></Event><ChangeType><![CDATA[receive_email]]></ChangeType><Amount><![CDATA[2]]></Amount></xml>",
+          "decrypted_event": {
+            "ToUserName": "synthetic-app-mail",
+            "FromUserName": "sys",
+            "CreateTime": 1786617660,
+            "MsgType": "event",
+            "Event": "app_email_change",
+            "ChangeType": "receive_email",
+            "Amount": 2
+          }
+        },
+        "replayed_receive_event": {
+          "http_method": "POST",
+          "content_type": "application/xml",
+          "query": {
+            "msg_signature": "89abcdef0123456789abcdef0123456789abcdef",
+            "timestamp": "1786617660",
+            "nonce": "synthetic-nonce-2"
+          },
+          "encrypted_envelope_xml": "<xml><ToUserName><![CDATA[synthetic-corp]]></ToUserName><AgentID><![CDATA[1000001]]></AgentID><Encrypt><![CDATA[c3ludGhldGljLWVuY3J5cHRlZC1ldmVudA==]]></Encrypt></xml>",
+          "decrypted_event_xml": "<xml><ToUserName><![CDATA[synthetic-app-mail]]></ToUserName><FromUserName><![CDATA[sys]]></FromUserName><CreateTime><![CDATA[1786617660]]></CreateTime><MsgType><![CDATA[event]]></MsgType><Event><![CDATA[app_email_change]]></Event><ChangeType><![CDATA[receive_email]]></ChangeType><Amount><![CDATA[2]]></Amount></xml>",
+          "decrypted_event": {
+            "ToUserName": "synthetic-app-mail",
+            "FromUserName": "sys",
+            "CreateTime": 1786617660,
+            "MsgType": "event",
+            "Event": "app_email_change",
+            "ChangeType": "receive_email",
+            "Amount": 2
+          }
+        }
+      },
+      "invalid": {
+        "malformed_signature": {
+          "http_method": "GET",
+          "query": {
+            "msg_signature": "not-a-signature!",
+            "timestamp": "1786617600",
+            "nonce": "synthetic-nonce",
+            "echostr": "c3ludGhldGlj"
+          },
+          "plaintext_response": "synthetic"
+        },
+        "malformed_encrypted_xml": {
+          "http_method": "POST",
+          "content_type": "application/xml",
+          "query": {
+            "msg_signature": "0123456789abcdef0123456789abcdef01234567",
+            "timestamp": "1786617660",
+            "nonce": "synthetic-nonce"
+          },
+          "encrypted_envelope_xml": "<xml><Encrypt>not-cdata</Encrypt></xml>",
+          "decrypted_event_xml": "<xml><FromUserName><![CDATA[sys]]></FromUserName><MsgType><![CDATA[event]]></MsgType><Event><![CDATA[app_email_change]]></Event><ChangeType><![CDATA[receive_email]]></ChangeType><Amount><![CDATA[1]]></Amount></xml>",
+          "decrypted_event": {
+            "ToUserName": "synthetic-app-mail",
+            "FromUserName": "sys",
+            "CreateTime": 1786617660,
+            "MsgType": "event",
+            "Event": "app_email_change",
+            "ChangeType": "receive_email",
+            "Amount": 1
+          }
+        },
+        "malformed_decrypted_xml": {
+          "http_method": "POST",
+          "content_type": "application/xml",
+          "query": {
+            "msg_signature": "0123456789abcdef0123456789abcdef01234567",
+            "timestamp": "1786617660",
+            "nonce": "synthetic-nonce"
+          },
+          "encrypted_envelope_xml": "<xml><ToUserName><![CDATA[synthetic-corp]]></ToUserName><Encrypt><![CDATA[c3ludGhldGlj]]></Encrypt></xml>",
+          "decrypted_event_xml": "<xml><Event><![CDATA[unknown]]></Event></xml>",
+          "decrypted_event": {
+            "ToUserName": "synthetic-app-mail",
+            "FromUserName": "sys",
+            "CreateTime": 1786617660,
+            "MsgType": "event",
+            "Event": "app_email_change",
+            "ChangeType": "receive_email",
+            "Amount": 1
+          }
+        },
+        "unknown_event": {
+          "http_method": "POST",
+          "content_type": "application/xml",
+          "query": {
+            "msg_signature": "0123456789abcdef0123456789abcdef01234567",
+            "timestamp": "1786617660",
+            "nonce": "synthetic-nonce"
+          },
+          "encrypted_envelope_xml": "<xml><ToUserName><![CDATA[synthetic-corp]]></ToUserName><Encrypt><![CDATA[c3ludGhldGlj]]></Encrypt></xml>",
+          "decrypted_event_xml": "<xml><FromUserName><![CDATA[sys]]></FromUserName><MsgType><![CDATA[event]]></MsgType><Event><![CDATA[app_email_change]]></Event><ChangeType><![CDATA[receive_email]]></ChangeType><Amount><![CDATA[1]]></Amount></xml>",
+          "decrypted_event": {
+            "ToUserName": "synthetic-app-mail",
+            "FromUserName": "sys",
+            "CreateTime": 1786617660,
+            "MsgType": "event",
+            "Event": "different_event",
+            "ChangeType": "receive_email",
+            "Amount": 1
+          }
+        },
+        "oversized_encrypt": {
+          "http_method": "POST",
+          "content_type": "application/xml",
+          "query": {
+            "msg_signature": "0123456789abcdef0123456789abcdef01234567",
+            "timestamp": "1786617660",
+            "nonce": "synthetic-nonce"
+          },
+          "encrypted_envelope_xml": "synthetic-oversized-placeholder",
+          "decrypted_event_xml": "<xml><FromUserName><![CDATA[sys]]></FromUserName><MsgType><![CDATA[event]]></MsgType><Event><![CDATA[app_email_change]]></Event><ChangeType><![CDATA[receive_email]]></ChangeType><Amount><![CDATA[1]]></Amount></xml>",
+          "decrypted_event": {
+            "ToUserName": "synthetic-app-mail",
+            "FromUserName": "sys",
+            "CreateTime": 1786617660,
+            "MsgType": "event",
+            "Event": "app_email_change",
+            "ChangeType": "receive_email",
+            "Amount": 1
+          }
+        },
+        "receive_event_claims_mail_id": {
+          "http_method": "POST",
+          "content_type": "application/xml",
+          "query": {
+            "msg_signature": "0123456789abcdef0123456789abcdef01234567",
+            "timestamp": "1786617660",
+            "nonce": "synthetic-nonce"
+          },
+          "encrypted_envelope_xml": "<xml><ToUserName><![CDATA[synthetic-corp]]></ToUserName><Encrypt><![CDATA[c3ludGhldGlj]]></Encrypt></xml>",
+          "decrypted_event_xml": "<xml><FromUserName><![CDATA[sys]]></FromUserName><MsgType><![CDATA[event]]></MsgType><Event><![CDATA[app_email_change]]></Event><ChangeType><![CDATA[receive_email]]></ChangeType><Amount><![CDATA[1]]></Amount></xml>",
+          "decrypted_event": {
+            "ToUserName": "synthetic-app-mail",
+            "FromUserName": "sys",
+            "CreateTime": 1786617660,
+            "MsgType": "event",
+            "Event": "app_email_change",
+            "ChangeType": "receive_email",
+            "Amount": 1,
+            "mail_id": "invented-mail-id"
+          }
+        },
+        "additional_field": {
+          "http_method": "GET",
+          "query": {
+            "msg_signature": "0123456789abcdef0123456789abcdef01234567",
+            "timestamp": "1786617600",
+            "nonce": "synthetic-nonce",
+            "echostr": "c3ludGhldGlj"
+          },
+          "plaintext_response": "synthetic",
+          "unexpected": true
+        }
+      }
+    },
+    "wecom-app-mail-token-v1.0.schema.json": {
+      "valid": {
+        "successful_token": {
+          "errcode": 0,
+          "errmsg": "ok",
+          "access_token": "synthetic_access_token_0001",
+          "expires_in": 7200
+        }
+      },
+      "invalid": {
+        "nonzero_errcode": {"errcode": 40014, "errmsg": "synthetic invalid token", "access_token": "invalid", "expires_in": 7200},
+        "malformed_token": {"errcode": 0, "errmsg": "ok", "access_token": "contains space", "expires_in": 7200},
+        "oversized_token": {"errcode": 0, "errmsg": "ok", "access_token": "synthetic-token-placeholder", "expires_in": 90000},
+        "additional_field": {"errcode": 0, "errmsg": "ok", "access_token": "synthetic_token", "expires_in": 7200, "unexpected": true}
+      }
+    },
+    "wecom-app-mail-list-v1.0.schema.json": {
+      "valid": {
+        "paginated_page": {
+          "errcode": 0,
+          "errmsg": "ok",
+          "next_cursor": "synthetic-cursor-0002",
+          "has_more": 1,
+          "mail_list": [
+            {"mail_id": "synthetic-mail-id-0001"},
+            {"mail_id": "synthetic-mail-id-0002"}
+          ]
+        },
+        "empty_page": {"errcode": 0, "errmsg": "ok", "next_cursor": "", "has_more": 0, "mail_list": []}
+      },
+      "invalid": {
+        "missing_mail_id": {"errcode": 0, "errmsg": "ok", "next_cursor": "", "has_more": 0, "mail_list": [{}]},
+        "unknown_has_more": {"errcode": 0, "errmsg": "ok", "next_cursor": "", "has_more": 2, "mail_list": []},
+        "oversized_cursor": {"errcode": 0, "errmsg": "ok", "next_cursor": 123, "has_more": 1, "mail_list": []},
+        "malformed_mail_list": {"errcode": 0, "errmsg": "ok", "next_cursor": "", "has_more": 0, "mail_list": "not-an-array"},
+        "item_additional_field": {"errcode": 0, "errmsg": "ok", "next_cursor": "", "has_more": 0, "mail_list": [{"mail_id": "synthetic-mail-id", "unexpected": true}]},
+        "additional_field": {"errcode": 0, "errmsg": "ok", "next_cursor": "", "has_more": 0, "mail_list": [], "unexpected": true}
+      }
+    },
+    "wecom-app-mail-message-v1.0.schema.json": {
+      "valid": {
+        "full_eml": {
+          "errcode": 0,
+          "errmsg": "ok",
+          "mail_data": "Date: Thu, 14 Aug 2026 10:00:00 +0800\r\nFrom: synthetic-sender@example.invalid\r\nTo: synthetic-mailbox@example.invalid\r\nSubject: Synthetic inbound fixture\r\nMessage-ID: <synthetic-0001@example.invalid>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSynthetic body only."
+        }
+      },
+      "invalid": {
+        "malformed_errcode": {"errcode": "0", "errmsg": "ok", "mail_data": "\r\nFrom: a\r\nTo: b\r\nSubject: c\r\n\r\nd"},
+        "malformed_eml": {"errcode": 0, "errmsg": "ok", "mail_data": "not-rfc822"},
+        "oversized_eml": {"errcode": 0, "errmsg": "ok", "mail_data": "\r\nFrom: a\r\nTo: b\r\nSubject: c\r\n\r\nsynthetic-placeholder\u0000"},
+        "additional_field": {"errcode": 0, "errmsg": "ok", "mail_data": "\r\nFrom: a\r\nTo: b\r\nSubject: c\r\n\r\nd", "unexpected": true}
+      }
+    },
+    "wecom-app-mail-error-v1.0.schema.json": {
+      "valid": {
+        "rate_limit_45009": {"errcode": 45009, "errmsg": "synthetic rate limit message"},
+        "invalid_token_40014": {"errcode": 40014, "errmsg": "synthetic invalid access token"},
+        "expired_token_42001": {"errcode": 42001, "errmsg": "synthetic expired access token"},
+        "authorization_invalid_48004": {"errcode": 48004, "errmsg": "synthetic authorization invalid"},
+        "permission_reclaimed_48006": {"errcode": 48006, "errmsg": "synthetic permission reclaimed"},
+        "application_disabled_50003": {"errcode": 50003, "errmsg": "synthetic application disabled"},
+        "application_prohibited_60031": {"errcode": 60031, "errmsg": "synthetic application prohibited"}
+      },
+      "invalid": {
+        "success_errcode": {"errcode": 0, "errmsg": "ok"},
+        "unknown_errcode": {"errcode": 49999, "errmsg": "synthetic unknown"},
+        "oversized_errmsg": {"errcode": 45009, "errmsg": ""},
+        "invented_http_429": {"errcode": 45009, "errmsg": "synthetic rate limit message", "http_status": 429},
+        "invented_retry_after": {"errcode": 45009, "errmsg": "synthetic rate limit message", "retry_after": 60},
+        "additional_field": {"errcode": 45009, "errmsg": "synthetic rate limit message", "unexpected": true}
+      }
+    }
+  }
+}

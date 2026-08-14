@@ -40,7 +40,7 @@
 ### Observer intake owner
 
 - Create: `services/observer/migrations/014_email_gateway_publication.sql`
-- Create: `services/observer/migrations/015_wecom_app_mail_signals.sql`
+- Create: `services/observer/migrations/022_wecom_app_mail_signals.sql`
 - Create: `services/observer/observer/email_publication.py`
 - Create: `services/observer/observer/email_checkpoint_fence.py`
 - Create: `services/observer/observer/email_address_match.py`
@@ -500,7 +500,10 @@
 - Create: `contracts/email_gateway/wecom-app-mail-error-v1.0.schema.json`
 - Create: `tests/fixtures/wecom_app_mail/official-inbound-fixtures-v1.json` containing all named sanitized callback/token/list/message/error cases
 - Extend: `tests/contracts/test_email_gateway_contracts.py`
-- Create: `docs/compat/wecom-app-mail-contract.md`
+- Modify: `docs/compat/wecom-app-mail-contract.md`
+- Modify: `contracts/README.md`
+- Modify: `docs/superpowers/specs/2026-08-13-gbos-email-gateway-design.md`
+- Modify: `docs/superpowers/plans/2026-08-13-gbos-email-gateway.md`
 
 - [ ] **Step 1: Re-read the current official WeCom documentation**
 
@@ -512,7 +515,7 @@
 
 - [ ] **Step 3: Write sanitized fixture/parser RED tests**
 
-  Cover the one officially confirmed callback serialization and one officially confirmed response serialization; do not leave “XML/JSON as applicable.” Cover valid encrypted callback, duplicate/replayed callback, receive event with count only, token response, paginated list, full message/EML response, empty page, 429, token expiry, revocation, every mapped provider error, unknown fields, oversized values, and malformed encoding.
+  Cover the one officially confirmed callback serialization and one officially confirmed response serialization; do not leave “XML/JSON as applicable.” Cover valid encrypted callback, duplicate/replayed callback, receive event with count only, token response, paginated list, full message/EML response, empty page, JSON `45009`, token expiry, revocation, every mapped provider error, unknown fields, oversized values, and malformed encoding. Reject invented HTTP 429 or `Retry-After` fields.
 
 - [ ] **Step 4: Run the contract test and verify RED before implementation**
 
@@ -529,7 +532,7 @@
   Run: `uv run --frozen pytest tests/contracts/test_email_gateway_contracts.py -q`
 
   ```bash
-  git add -- contracts/email_gateway/wecom-app-mail-callback-v1.0.schema.json contracts/email_gateway/wecom-app-mail-list-v1.0.schema.json contracts/email_gateway/wecom-app-mail-message-v1.0.schema.json contracts/email_gateway/wecom-app-mail-token-v1.0.schema.json contracts/email_gateway/wecom-app-mail-error-v1.0.schema.json tests/fixtures/wecom_app_mail/official-inbound-fixtures-v1.json tests/contracts/test_email_gateway_contracts.py docs/compat/wecom-app-mail-contract.md
+  git add -- contracts/email_gateway/wecom-app-mail-callback-v1.0.schema.json contracts/email_gateway/wecom-app-mail-list-v1.0.schema.json contracts/email_gateway/wecom-app-mail-message-v1.0.schema.json contracts/email_gateway/wecom-app-mail-token-v1.0.schema.json contracts/email_gateway/wecom-app-mail-error-v1.0.schema.json tests/fixtures/wecom_app_mail/official-inbound-fixtures-v1.json tests/contracts/test_email_gateway_contracts.py docs/compat/wecom-app-mail-contract.md contracts/README.md docs/superpowers/specs/2026-08-13-gbos-email-gateway-design.md docs/superpowers/plans/2026-08-13-gbos-email-gateway.md
   git diff --cached --name-only | sort
   git commit -m "feat(email-gateway): freeze WeCom application mail contract"
   ```
@@ -538,7 +541,7 @@
 
 **Files:**
 
-- Create: `services/observer/migrations/015_wecom_app_mail_signals.sql`
+- Create: `services/observer/migrations/022_wecom_app_mail_signals.sql`
 - Create: `services/observer/observer/connectors/wecom_app_mail_callback.py`
 - Create: `services/observer/observer/email_signal_queue.py`
 - Modify: `services/observer/observer/local_pilot_api.py`
@@ -578,7 +581,7 @@
   Run the exact Step 3 command and `scripts/dev/test-email-gateway-postgres --all`. Expected: no external network; all tests and migration-twice PASS; malformed callbacks have stable safe codes and no secret/plaintext leakage.
 
   ```bash
-  git add -- services/observer/migrations/015_wecom_app_mail_signals.sql services/observer/observer/connectors/wecom_app_mail_callback.py services/observer/observer/email_signal_queue.py services/observer/observer/local_pilot_api.py services/local_pilot_runtime/wecom_app_mail_webhook.py tests/observer/test_wecom_app_mail_callback.py tests/local_pilot_runtime/test_wecom_app_mail_webhook.py tests/infra/test_wecom_app_mail_runtime.py scripts/local-pilot/prepare-secrets scripts/local-pilot/render-config infra/local/compose.yml infra/local/runtime-entrypoints.json
+  git add -- services/observer/migrations/022_wecom_app_mail_signals.sql services/observer/observer/connectors/wecom_app_mail_callback.py services/observer/observer/email_signal_queue.py services/observer/observer/local_pilot_api.py services/local_pilot_runtime/wecom_app_mail_webhook.py tests/observer/test_wecom_app_mail_callback.py tests/local_pilot_runtime/test_wecom_app_mail_webhook.py tests/infra/test_wecom_app_mail_runtime.py scripts/local-pilot/prepare-secrets scripts/local-pilot/render-config infra/local/compose.yml infra/local/runtime-entrypoints.json
   git diff --cached --name-only | sort
   git commit -m "feat(observer): accept governed WeCom mail signals"
   ```
@@ -597,7 +600,7 @@
 
 - [ ] **Step 1: Write injected-transport RED tests**
 
-  Cover token cache/expiry, request binding, pagination, out-of-order pages, duplicate stable IDs, 429 Retry-After, bounded 5xx retry, timeout, token invalidation, revocation pause, malformed response, oversized EML, and exact safe-error mapping. `repr`/exceptions must not contain token, corp/app ID, mailbox address, raw EML, or provider payload.
+  Cover token cache/expiry, request binding, pagination, out-of-order pages, duplicate stable IDs, JSON `errcode=45009`, bounded 5xx retry, timeout, token invalidation, revocation pause, malformed response, oversized EML, and exact safe-error mapping. `repr`/exceptions must not contain token, corp/app ID, mailbox address, raw EML, or provider payload. Never infer HTTP 429, `Retry-After`, or a provider retry delay.
 
 - [ ] **Step 2: Write signal lease and activation-boundary RED tests**
 
@@ -624,6 +627,8 @@
 - [ ] **Step 7: Route every result through the common Observer fence**
 
   Full EML enters the same CAS → delivery/job → normalization/publication → checkpoint finalizer built in Chunk 1. Malformed/oversized messages become Observer quarantine; token/provider errors do not advance cursor.
+
+  JSON `errcode=45009` immediately persists a mailbox-local paused connector/checkpoint state and does not advance the cursor. Restart, callback replay, reconciliation schedule, elapsed time, and backoff must not resume it. Only the existing authenticated admin command (`Integration Admin` or `GBOS Admin`) may explicitly resume it with expected revision, idempotency, and an audit record; other mailboxes continue independently.
 
 - [ ] **Step 8: Run GREEN and commit pull/reconcile path**
 
@@ -680,7 +685,7 @@
   git diff --check
   ```
 
-  Expected: every command exits 0 without provider network or credentials; migrations apply twice and the disposable database is removed; the frozen EML fixture's exact CAS SHA-256 matches; 429/revocation/malformed-message tests pause only their mailbox.
+  Expected: every command exits 0 without provider network or credentials; migrations apply twice and the disposable database is removed; the frozen EML fixture's exact CAS SHA-256 matches; `45009`/revocation/malformed-message tests pause only their mailbox, and only an audited explicit admin command can resume a `45009` pause.
 
 - [ ] **Step 6: Commit shadow readiness**
 

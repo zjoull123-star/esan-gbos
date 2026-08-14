@@ -13,6 +13,9 @@ from jsonschema.exceptions import ValidationError
 ROOT = Path(__file__).parents[2]
 EMAIL_GATEWAY = ROOT / "contracts" / "email_gateway"
 EXAMPLES = EMAIL_GATEWAY / "examples" / "provider-neutral-v1.json"
+WECOM_FIXTURES = (
+    ROOT / "tests" / "fixtures" / "wecom_app_mail" / "official-inbound-fixtures-v1.json"
+)
 
 SCHEMAS = {
     "email-message-publication-v1.0.schema.json",
@@ -26,6 +29,92 @@ STANDALONE_SCHEMAS = {
     "mailbox-sla-policy-v1.0.schema.json",
     "mailbox-connector-projection-v2.0.schema.json",
     "email-send-approved-command-v2.0.schema.json",
+}
+
+WECOM_SCHEMAS = {
+    "wecom-app-mail-callback-v1.0.schema.json",
+    "wecom-app-mail-error-v1.0.schema.json",
+    "wecom-app-mail-list-v1.0.schema.json",
+    "wecom-app-mail-message-v1.0.schema.json",
+    "wecom-app-mail-token-v1.0.schema.json",
+}
+
+WECOM_OFFICIAL_SOURCES = {
+    "mail_overview": "https://developer.work.weixin.qq.com/document/path/95486",
+    "callback_configuration": "https://developer.work.weixin.qq.com/document/path/90930",
+    "receive_event": "https://developer.work.weixin.qq.com/document/path/97495",
+    "access_token": "https://developer.work.weixin.qq.com/document/path/91039",
+    "mail_list": "https://developer.work.weixin.qq.com/document/path/97369",
+    "read_mail": "https://developer.work.weixin.qq.com/document/path/97979",
+    "frequency_limits": "https://developer.work.weixin.qq.com/document/path/90312",
+    "global_errors": "https://developer.work.weixin.qq.com/document/path/90313",
+}
+
+WECOM_EXPECTED_CASES = {
+    "wecom-app-mail-callback-v1.0.schema.json": {
+        "valid": {
+            "url_verification",
+            "encrypted_receive_event",
+            "replayed_receive_event",
+        },
+        "invalid": {
+            "malformed_signature",
+            "malformed_encrypted_xml",
+            "malformed_decrypted_xml",
+            "unknown_event",
+            "oversized_encrypt",
+            "receive_event_claims_mail_id",
+            "additional_field",
+        },
+    },
+    "wecom-app-mail-token-v1.0.schema.json": {
+        "valid": {"successful_token"},
+        "invalid": {
+            "nonzero_errcode",
+            "malformed_token",
+            "oversized_token",
+            "additional_field",
+        },
+    },
+    "wecom-app-mail-list-v1.0.schema.json": {
+        "valid": {"paginated_page", "empty_page"},
+        "invalid": {
+            "missing_mail_id",
+            "unknown_has_more",
+            "oversized_cursor",
+            "malformed_mail_list",
+            "item_additional_field",
+            "additional_field",
+        },
+    },
+    "wecom-app-mail-message-v1.0.schema.json": {
+        "valid": {"full_eml"},
+        "invalid": {
+            "malformed_errcode",
+            "malformed_eml",
+            "oversized_eml",
+            "additional_field",
+        },
+    },
+    "wecom-app-mail-error-v1.0.schema.json": {
+        "valid": {
+            "rate_limit_45009",
+            "invalid_token_40014",
+            "expired_token_42001",
+            "authorization_invalid_48004",
+            "permission_reclaimed_48006",
+            "application_disabled_50003",
+            "application_prohibited_60031",
+        },
+        "invalid": {
+            "success_errcode",
+            "unknown_errcode",
+            "oversized_errmsg",
+            "invented_http_429",
+            "invented_retry_after",
+            "additional_field",
+        },
+    },
 }
 
 EXPECTED_CASES = {
@@ -117,6 +206,10 @@ def _examples() -> dict[str, Any]:
     return _load(EXAMPLES)
 
 
+def _wecom_fixtures() -> dict[str, Any]:
+    return _load(WECOM_FIXTURES)
+
+
 def _case(filename: str, outcome: str, name: str) -> dict[str, Any]:
     value = _examples()["cases"][filename][outcome][name]
     assert isinstance(value, dict)
@@ -156,7 +249,7 @@ def _scoped_validator(
 
 def test_email_gateway_contract_set_is_exact_and_valid_2020_12() -> None:
     actual = {path.name for path in EMAIL_GATEWAY.glob("*.schema.json")}
-    assert actual == SCHEMAS | STANDALONE_SCHEMAS
+    assert actual == SCHEMAS | STANDALONE_SCHEMAS | WECOM_SCHEMAS
 
     for filename in sorted(actual):
         schema = _schema(filename)
@@ -165,13 +258,157 @@ def test_email_gateway_contract_set_is_exact_and_valid_2020_12() -> None:
 
 
 def test_all_object_shapes_are_closed_and_all_strings_are_bounded() -> None:
-    for filename in sorted(SCHEMAS):
+    for filename in sorted(SCHEMAS | WECOM_SCHEMAS):
         for node in _walk_schema(_schema(filename)):
             if node.get("type") == "object":
                 assert node.get("additionalProperties") is False, (filename, node)
             if node.get("type") == "string":
                 assert "maxLength" in node, (filename, node)
                 assert node["maxLength"] > 0
+
+
+def test_wecom_contract_artifacts_exist_before_the_freeze_can_be_green() -> None:
+    missing = [
+        str(path.relative_to(ROOT))
+        for path in [
+            *(EMAIL_GATEWAY / filename for filename in sorted(WECOM_SCHEMAS)),
+            WECOM_FIXTURES,
+        ]
+        if not path.is_file()
+    ]
+    assert missing == [], f"missing WeCom contract artifacts: {missing}"
+
+
+def test_wecom_fixture_manifest_has_exact_first_party_provenance() -> None:
+    fixtures = _wecom_fixtures()
+    assert set(fixtures) == {"schema_version", "provenance", "sanitization", "cases"}
+    assert fixtures["schema_version"] == "1.0"
+    assert fixtures["provenance"]["authority"] == "first-party WeCom documentation"
+    assert fixtures["provenance"]["accessed_on"] == "2026-08-14"
+    assert fixtures["provenance"]["timezone"] == "Asia/Shanghai"
+    assert fixtures["provenance"]["sources"] == WECOM_OFFICIAL_SOURCES
+
+    sanitization = fixtures["sanitization"]
+    assert sanitization == {
+        "synthetic_values_only": True,
+        "contains_real_corp_or_app_id": False,
+        "contains_real_secret_or_token": False,
+        "contains_real_mailbox_address": False,
+        "contains_customer_or_real_eml": False,
+    }
+
+
+def test_wecom_fixture_manifest_has_exact_named_cases() -> None:
+    cases = _wecom_fixtures()["cases"]
+    assert set(cases) == WECOM_SCHEMAS
+
+    for filename, expected in WECOM_EXPECTED_CASES.items():
+        assert set(cases[filename]) == {"valid", "invalid"}
+        assert set(cases[filename]["valid"]) == expected["valid"]
+        assert set(cases[filename]["invalid"]) == expected["invalid"]
+
+
+@pytest.mark.parametrize("filename", sorted(WECOM_SCHEMAS))
+def test_wecom_named_valid_fixtures_pass_and_invalid_fixtures_fail(filename: str) -> None:
+    validator = _validator(filename)
+    cases = _wecom_fixtures()["cases"][filename]
+
+    for name, value in cases["valid"].items():
+        errors = list(validator.iter_errors(value))
+        assert errors == [], (name, errors)
+
+    for _name, value in cases["invalid"].items():
+        with pytest.raises(ValidationError, match=".+"):
+            validator.validate(value)
+
+
+def test_wecom_callback_is_an_encrypted_xml_count_only_wake_signal() -> None:
+    callback_schema = _schema("wecom-app-mail-callback-v1.0.schema.json")
+    assert callback_schema["$comment"] == (
+        "Wake signal only: Amount is a count hint; no callback field is a delivery or cursor."
+    )
+
+    callback_cases = _wecom_fixtures()["cases"][callback_schema["$id"].rsplit("/", 1)[-1]]
+    receive_event = callback_cases["valid"]["encrypted_receive_event"]
+    assert receive_event["http_method"] == "POST"
+    assert receive_event["content_type"] == "application/xml"
+    assert receive_event["decrypted_event"]["Amount"] == 2
+    assert "mail_id" not in receive_event["decrypted_event"]
+    assert "cursor" not in receive_event["decrypted_event"]
+
+
+def test_only_pulled_mail_list_entries_supply_stable_delivery_ids() -> None:
+    cases = _wecom_fixtures()["cases"]["wecom-app-mail-list-v1.0.schema.json"]
+    page = cases["valid"]["paginated_page"]
+    empty = cases["valid"]["empty_page"]
+
+    assert page["has_more"] == 1
+    assert page["next_cursor"]
+    assert [item["mail_id"] for item in page["mail_list"]] == [
+        "synthetic-mail-id-0001",
+        "synthetic-mail-id-0002",
+    ]
+    assert empty == {
+        "errcode": 0,
+        "errmsg": "ok",
+        "next_cursor": "",
+        "has_more": 0,
+        "mail_list": [],
+    }
+
+
+def test_45009_is_json_only_and_freezes_no_retry_timing() -> None:
+    cases = _wecom_fixtures()["cases"]["wecom-app-mail-error-v1.0.schema.json"]
+    rate_limit = cases["valid"]["rate_limit_45009"]
+    assert rate_limit == {"errcode": 45009, "errmsg": "synthetic rate limit message"}
+    assert "http_status" not in rate_limit
+    assert "retry_after" not in rate_limit
+
+    validator = _validator("wecom-app-mail-error-v1.0.schema.json")
+    for case_name in ("invented_http_429", "invented_retry_after"):
+        with pytest.raises(ValidationError):
+            validator.validate(cases["invalid"][case_name])
+
+
+def test_wecom_wire_bounds_reject_actual_oversized_values() -> None:
+    fixtures = _wecom_fixtures()["cases"]
+    mutations = (
+        (
+            "wecom-app-mail-callback-v1.0.schema.json",
+            "encrypted_receive_event",
+            "encrypted_envelope_xml",
+            "x" * 65537,
+        ),
+        (
+            "wecom-app-mail-token-v1.0.schema.json",
+            "successful_token",
+            "access_token",
+            "x" * 513,
+        ),
+        (
+            "wecom-app-mail-list-v1.0.schema.json",
+            "paginated_page",
+            "next_cursor",
+            "x" * 257,
+        ),
+        (
+            "wecom-app-mail-message-v1.0.schema.json",
+            "full_eml",
+            "mail_data",
+            "x" * 1025,
+        ),
+        (
+            "wecom-app-mail-error-v1.0.schema.json",
+            "rate_limit_45009",
+            "errmsg",
+            "x" * 1025,
+        ),
+    )
+    for filename, case_name, field_name, oversized in mutations:
+        value = copy.deepcopy(fixtures[filename]["valid"][case_name])
+        value[field_name] = oversized
+        with pytest.raises(ValidationError):
+            _validator(filename).validate(value)
 
 
 def test_example_manifest_has_exact_named_cases_for_every_schema() -> None:

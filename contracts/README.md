@@ -104,6 +104,27 @@ These contracts do not enable a provider adapter, connect to Frappe, prove a
 live mailbox, send email, or claim end-to-end integration. Checked-in external
 send switches remain false.
 
+The provider-specific WeCom application-mail inbound contracts are also under
+[`email_gateway/`](./email_gateway/):
+
+- `wecom-app-mail-callback-v1.0` freezes URL verification and the encrypted XML
+  receive-event envelope. Its `Amount` is only a wake/count hint and never a
+  delivery or cursor.
+- `wecom-app-mail-token-v1.0`, `wecom-app-mail-list-v1.0`, and
+  `wecom-app-mail-message-v1.0` freeze the exact successful fields used for
+  token caching, pagination by `next_cursor`, stable pulled `mail_id`, and
+  bounded EML retrieval.
+- `wecom-app-mail-error-v1.0` freezes only documented JSON error codes used by
+  inbound processing. In particular, `45009` has no invented HTTP 429,
+  `Retry-After`, or retry-delay field. It durably pauses one mailbox until an
+  authorized administrator explicitly resumes it.
+
+The named cases and first-party provenance are stored in
+[`tests/fixtures/wecom_app_mail/official-inbound-fixtures-v1.json`](../tests/fixtures/wecom_app_mail/official-inbound-fixtures-v1.json).
+All values are synthetic and contain no real tenant, secret, mailbox, customer,
+or message content. These contracts authorize offline Tasks 7–9 only; they do
+not enable provider access or outbound send.
+
 ### Gate 2 aggregate contracts
 
 - `common.schema.json`: shared definitions for identifiers, temporal fields,

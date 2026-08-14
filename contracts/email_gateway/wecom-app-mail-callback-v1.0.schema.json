@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.invalid/contracts/email_gateway/wecom-app-mail-callback-v1.0.schema.json",
+  "title": "WeCom application mail encrypted callback v1.0",
+  "description": "Closed representation of the first-party GET URL verification and POST encrypted XML receive-email callback wire forms.",
+  "$comment": "Wake signal only: Amount is a count hint; no callback field is a delivery or cursor.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http_method": {
+          "type": "string",
+          "const": "GET",
+          "maxLength": 3
+        },
+        "query": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "msg_signature": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9]+$"
+            },
+            "timestamp": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20,
+              "pattern": "^[0-9]+$"
+            },
+            "nonce": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "echostr": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[A-Za-z0-9+/=]+$"
+            }
+          },
+          "required": ["msg_signature", "timestamp", "nonce", "echostr"]
+        },
+        "plaintext_response": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\r\\n\\uFEFF\"]+$"
+        }
+      },
+      "required": ["http_method", "query", "plaintext_response"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http_method": {
+          "type": "string",
+          "const": "POST",
+          "maxLength": 4
+        },
+        "content_type": {
+          "type": "string",
+          "const": "application/xml",
+          "maxLength": 15
+        },
+        "query": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "msg_signature": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9]+$"
+            },
+            "timestamp": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20,
+              "pattern": "^[0-9]+$"
+            },
+            "nonce": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": ["msg_signature", "timestamp", "nonce"]
+        },
+        "encrypted_envelope_xml": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536,
+          "pattern": "^<xml>[\\s\\S]*<ToUserName><!\\[CDATA\\[[^\\]]+\\]\\]></ToUserName>[\\s\\S]*(<AgentID><!\\[CDATA\\[[^\\]]+\\]\\]></AgentID>[\\s\\S]*)?<Encrypt><!\\[CDATA\\[[A-Za-z0-9+/=]+\\]\\]></Encrypt>[\\s\\S]*</xml>$"
+        },
+        "decrypted_event_xml": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536,
+          "pattern": "^<xml>[\\s\\S]*<FromUserName><!\\[CDATA\\[sys\\]\\]></FromUserName>[\\s\\S]*<MsgType><!\\[CDATA\\[event\\]\\]></MsgType>[\\s\\S]*<Event><!\\[CDATA\\[app_email_change\\]\\]></Event>[\\s\\S]*<ChangeType><!\\[CDATA\\[receive_email\\]\\]></ChangeType>[\\s\\S]*<Amount><!\\[CDATA\\[[0-9]+\\]\\]></Amount>[\\s\\S]*</xml>$"
+        },
+        "decrypted_event": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ToUserName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "FromUserName": {
+              "type": "string",
+              "const": "sys",
+              "maxLength": 3
+            },
+            "CreateTime": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "MsgType": {
+              "type": "string",
+              "const": "event",
+              "maxLength": 5
+            },
+            "Event": {
+              "type": "string",
+              "const": "app_email_change",
+              "maxLength": 16
+            },
+            "ChangeType": {
+              "type": "string",
+              "const": "receive_email",
+              "maxLength": 13
+            },
+            "Amount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          },
+          "required": [
+            "ToUserName",
+            "FromUserName",
+            "CreateTime",
+            "MsgType",
+            "Event",
+            "ChangeType",
+            "Amount"
+          ]
+        }
+      },
+      "required": [
+        "http_method",
+        "content_type",
+        "query",
+        "encrypted_envelope_xml",
+        "decrypted_event_xml",
+        "decrypted_event"
+      ]
+    }
+  ]
+}

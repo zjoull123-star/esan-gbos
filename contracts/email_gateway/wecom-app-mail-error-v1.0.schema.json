@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.invalid/contracts/email_gateway/wecom-app-mail-error-v1.0.schema.json",
+  "title": "WeCom application mail frozen error response v1.0",
+  "description": "Closed JSON error responses used by inbound Tasks 7-9. 45009 carries no frozen HTTP 429, Retry-After, or retry-delay semantics.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "errcode": {
+      "type": "integer",
+      "enum": [40014, 42001, 45009, 48004, 48006, 50003, 60031]
+    },
+    "errmsg": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    }
+  },
+  "required": ["errcode", "errmsg"]
+}

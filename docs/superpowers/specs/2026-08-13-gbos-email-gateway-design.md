@@ -106,7 +106,8 @@ connector intake 边界内，把结果交给 Observer 的单一写入路径；�
 - 向 Observer 返回 provider 元数据、附件和稳定 cursor 候选；
 - 发送一份已批准、已冻结的 MIME 请求；
 - 在能力允许时按 client request ID 对账发送结果；
-- 将 429、鉴权失败、撤权、5xx、超时和永久错误映射为闭合安全错误码。
+- 将官方 JSON `45009`、鉴权失败、撤权、5xx、超时和永久错误映射为闭合安全错误码；
+  不臆造 HTTP 429、`Retry-After` 或自动恢复时间。
 
 企业微信适配器负责 access token、回调合同、分页、限流与应用邮箱 API；IMAP/SMTP
 适配器负责 TLS、UID/UIDVALIDITY、`BODY.PEEK`、SMTP 投递和兼容迁移。只有 Observer
@@ -402,7 +403,10 @@ quarantined
 ## 8. 故障处理
 
 - **重复/乱序回调：** callback ledger 幂等接收，provider cursor 和定时对账补偿。
-- **429/5xx/超时：** 有界退避，不推进 cursor；达到阈值只暂停该邮箱，其他邮箱继续。
+- **JSON `45009`：** 立即持久暂停且不推进该邮箱 cursor；重启、回调重放、定时对账、
+  退避或时间经过均不得自动恢复。只有 `Integration Admin` 或 `GBOS Admin` 通过带
+  expected revision、idempotency 与审计记录的显式命令才可恢复，其他邮箱继续。
+- **5xx/超时：** 有界重试且不推进 cursor；达到阈值只暂停该邮箱，其他邮箱继续。
 - **撤权/鉴权失败：** 立即暂停适配器并显示安全错误码，不循环撞库。
 - **畸形或超限邮件/附件：** 整封投递隔离，不产生部分业务事实，不供模型或外发复用。
 - **身份未确认/撤销/失效：** 即时阻断归属、发送和访问提升；历史记录只读保留。
@@ -507,7 +511,8 @@ quarantined
 
 - 所有 wire/config schema 闭合，额外字段 fail closed。
 - Gateway migrations 连续运行两次，FORCE RLS、最小 grants 和跨站点测试通过。
-- Adapter 覆盖签名/解密、分页、乱序、重放、429、超时、token 失效和限额。
+- Adapter 覆盖签名/解密、分页、乱序、重放、JSON `45009`、超时、token 失效和限额；
+  测试拒绝臆造的 HTTP 429、`Retry-After` 与自动恢复。
 - Observer CAS/delivery/publication/cursor 单一写入顺序、崩溃重启、Gateway 幂等消费、
   跨邮箱独立入箱和人工合并通过。
 - 身份复用单一 `GBOS External Identity` 权威；全部人工、分权审核、projection replay、
@@ -525,7 +530,8 @@ quarantined
 - **路由运营 Go：** 确认客户命中当前负责人，歧义进入待认领，不误改客户归属。
 - **外发 Go：** ADR/权限矩阵/Action Guard 合同已更新；一次负责人 delegated approval
   只发送一次，收件人、final MIME、provider 回执和审计一致。
-- **故障 Go：** 撤权、429、断网、重启、重复回调和 emergency stop 均安全恢复。
+- **故障 Go：** 撤权、JSON `45009`、断网、重启、重复回调和 emergency stop 均安全；
+  `45009` 只允许经审计的管理员显式恢复。
 - 任一证据缺失时只保持相应阶段 No-Go；单元测试、配置截图或服务启动不替代真实证明。
 
 ## 14. 当前事实与迁移

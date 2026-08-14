@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.invalid/contracts/email_gateway/wecom-app-mail-token-v1.0.schema.json",
+  "title": "WeCom internal application access token success response v1.0",
+  "description": "Closed successful JSON response from GET /cgi-bin/gettoken. Errors use the separate frozen error schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "errcode": {
+      "type": "integer",
+      "const": 0
+    },
+    "errmsg": {
+      "type": "string",
+      "const": "ok",
+      "maxLength": 2
+    },
+    "access_token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "expires_in": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 86400
+    }
+  },
+  "required": ["errcode", "errmsg", "access_token", "expires_in"]
+}

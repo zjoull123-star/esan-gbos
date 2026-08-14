@@ -1,12 +1,14 @@
 # WeCom application-mail inbound contract status
 
-Status: **RED — not frozen**
+Status: **GREEN for inbound Tasks 6–9 — frozen**
 
 Official documentation reviewed: **2026-08-14 (Asia/Shanghai)**
 
-This note records only facts visible in current first-party WeCom documentation. It is not a
-wire-contract approval. The five inbound JSON Schemas and sanitized fixture bundle remain absent,
-and Tasks 7–9 must not start while the mandatory gap below is unresolved.
+This note records only facts visible in current first-party WeCom documentation. The five closed
+inbound JSON Schemas and sanitized synthetic fixture bundle are now frozen for Tasks 7–9. This
+approval covers callback verification, token acquisition, inbox listing, full EML reads, and the
+explicit `45009` pause policy below. It does not approve a live mailbox, credentials, provider
+network access, historical backfill, or outbound send.
 
 ## Confirmed first-party facts
 
@@ -88,17 +90,27 @@ Source: [Read application mail](https://developer.work.weixin.qq.com/document/pa
 Sources: [API frequency limits](https://developer.work.weixin.qq.com/document/path/90312) and
 [global error codes](https://developer.work.weixin.qq.com/document/path/90313).
 
-## Mandatory unresolved gap
+## Approved `45009` policy
 
-The approved Task 8 test plan requires exact handling of **HTTP 429 with `Retry-After`**. None of
-the current first-party pages reviewed above specifies that the application-mail endpoints return
-HTTP status 429 or a `Retry-After` header. The official material instead describes a JSON
-`errcode=45009` and interval-based blocking.
+The reviewed first-party pages do not specify HTTP status 429 or a `Retry-After` header for the
+application-mail endpoints. No schema, fixture, or adapter may translate `45009` into HTTP 429,
+invent `Retry-After`, or derive an automatic recovery timer.
 
-No schema or fixture may translate `45009` into HTTP 429, invent a `Retry-After` header, or choose a
-retry delay. Task 6 therefore remains RED. Tasks 7–9 remain blocked until a current first-party
-WeCom source confirms the required HTTP contract or the approved implementation plan is revised to
-use only the officially documented `45009` behavior.
+The approved inbound behavior is therefore deliberately conservative:
+
+- JSON `errcode=45009` immediately durably pauses only the affected mailbox connector;
+- the failed operation does not advance its provider cursor or checkpoint;
+- other mailbox connectors continue independently;
+- restart, callback replay, periodic reconciliation, elapsed time, and backoff never clear the
+  pause;
+- only an authenticated `Integration Admin` or `GBOS Admin` may explicitly resume it through the
+  governed admin command, with expected-revision, idempotency, and audit checks;
+- already-published immutable items may finish their local processing, but no further provider pull
+  is made while the connector is paused.
+
+This operator-approved rule resolves the former Task 6 inbound blocker without asserting an
+undocumented provider retry contract. Tasks 7–9 may proceed offline and remain default-off; a real
+shadow mailbox still requires separate explicit authorization and evidence.
 
 ## Outbound boundary
 

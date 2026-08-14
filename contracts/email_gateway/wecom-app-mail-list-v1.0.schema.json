@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gbos.invalid/contracts/email_gateway/wecom-app-mail-list-v1.0.schema.json",
+  "title": "WeCom application inbox mail list success response v1.0",
+  "description": "Closed successful JSON page returned by get_mail_list. Each pulled mail_id is a stable provider delivery candidate; callback Amount is not.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "errcode": {
+      "type": "integer",
+      "const": 0
+    },
+    "errmsg": {
+      "type": "string",
+      "const": "ok",
+      "maxLength": 2
+    },
+    "next_cursor": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "has_more": {
+      "type": "integer",
+      "enum": [0, 1]
+    },
+    "mail_list": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mail_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "required": ["mail_id"]
+      }
+    }
+  },
+  "required": ["errcode", "errmsg", "next_cursor", "has_more", "mail_list"]
+}
