@@ -133,6 +133,7 @@ class PostgresLocalPilotRuntime:
     projection_publisher: Any | None
     identity_resolution_metrics: IdentityResolutionMetrics
     email_connector_config_repository: Any
+    email_signal_repository: Any
     evidence_reveal: Any | None
     email_draft_material_repository: Any | None
     email_draft_material: Any | None
@@ -177,6 +178,7 @@ def compose_postgres_local_pilot_runtime(
     restricted_model_policy: Literal["deny", "local_tokenized"] = "deny",
     identity_resolution_metrics: IdentityResolutionMetrics | None = None,
     email_connector_configs: Any | None = None,
+    email_signals: Any | None = None,
     evidence_reveal: Any | None = None,
     email_draft_material_repository: Any | None = None,
     email_draft_material: Any | None = None,
@@ -190,6 +192,7 @@ def compose_postgres_local_pilot_runtime(
     from .context_outbox import ContextOutboxPublisherWorker
     from .control_service import LocalPilotControlService, PostgresControlRepository
     from .email_connector_config import PostgresEmailConnectorConfigRepository
+    from .email_signal_queue import PostgresEmailSignalRepository
     from .identity_resolution_work import PostgresIdentityResolutionWorkRepository
     from .local_pilot_api import create_local_pilot_app
     from .model_projection import (
@@ -221,6 +224,9 @@ def compose_postgres_local_pilot_runtime(
         PostgresEmailConnectorConfigRepository(connection)
         if email_connector_configs is None
         else email_connector_configs
+    )
+    active_email_signals = (
+        PostgresEmailSignalRepository(connection) if email_signals is None else email_signals
     )
     projection_repository = None
     projection_publisher = None
@@ -266,6 +272,7 @@ def compose_postgres_local_pilot_runtime(
         clock=clock,
         identity_resolution_metrics=active_identity_resolution_metrics,
         email_connector_configs=active_email_connector_configs,
+        email_signals=active_email_signals,
         evidence_reveal=evidence_reveal,
         email_draft_material=email_draft_material,
         email_material_retention=email_material_retention,
@@ -283,6 +290,7 @@ def compose_postgres_local_pilot_runtime(
         projection_publisher=projection_publisher,
         identity_resolution_metrics=active_identity_resolution_metrics,
         email_connector_config_repository=active_email_connector_configs,
+        email_signal_repository=active_email_signals,
         evidence_reveal=evidence_reveal,
         email_draft_material_repository=email_draft_material_repository,
         email_draft_material=email_draft_material,

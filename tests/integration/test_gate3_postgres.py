@@ -126,6 +126,9 @@ EMAIL_CONNECTOR_CONFIG_MIGRATION = (
 EMAIL_PARTICIPANT_AUTHORITY_MIGRATION = (
     ROOT / "services" / "observer" / "migrations" / "016_email_gateway_participant_authority.sql"
 )
+EMAIL_SIGNAL_MIGRATION = (
+    ROOT / "services" / "observer" / "migrations" / "022_wecom_app_mail_signals.sql"
+)
 
 pytestmark = [pytest.mark.postgres_integration]
 if not RUN_INTEGRATION:
@@ -174,7 +177,7 @@ def _identity_ref(provider: str, label: str) -> str:
 
 
 def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
-    assert _migration_ledger_count() == 23
+    assert _migration_ledger_count() == 24
     result = _container_sql(
         """
         SELECT count(*)
@@ -209,12 +212,31 @@ def test_gate3_migrations_run_twice_and_enable_forced_rls() -> None:
               'email_material_retention_work',
               'email_material_tombstone_receipts',
               'email_material_legal_hold_events'
+              , 'email_signals', 'email_signal_work'
           )
           AND c.relrowsecurity
           AND c.relforcerowsecurity
         """
     )
-    assert int(result.stdout.strip()) == 49
+    assert int(result.stdout.strip()) == 51
+    signal_security = _container_sql(
+        """
+        SELECT c.relname,
+               has_table_privilege('gbos_observer_app', c.oid, 'SELECT'),
+               has_table_privilege('gbos_observer_app', c.oid, 'INSERT'),
+               has_table_privilege('gbos_observer_app', c.oid, 'UPDATE'),
+               has_table_privilege('gbos_observer_app', c.oid, 'DELETE')
+        FROM pg_class AS c
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'observer'
+          AND c.relname IN ('email_signals', 'email_signal_work')
+        ORDER BY c.relname
+        """
+    )
+    assert signal_security.stdout.strip().splitlines() == [
+        "email_signal_work|t|f|f|f",
+        "email_signals|t|t|f|f",
+    ]
 
 
 def test_email_publication_migration_is_idempotent_forced_rls_and_least_grant() -> None:
@@ -554,6 +576,7 @@ def _migration_ledger_count() -> int:
               'observer/019_email_material_retention_tombstones.sql',
               'observer/020_identity_projection_outbox.sql',
               'observer/021_email_material_retention_callback.sql',
+              'observer/022_wecom_app_mail_signals.sql',
               'context/001_gate3_context.sql'
         )
         """

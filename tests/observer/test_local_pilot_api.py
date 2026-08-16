@@ -14,6 +14,10 @@ from observer.control_service import ConnectorControlResult, ConnectorStatus
 from observer.email_connector_config import InMemoryEmailConnectorConfigRepository
 from observer.email_material_retention import EmailMaterialRetentionRequest
 from observer.email_participant_authority import canonical_binding_digest
+from observer.email_signal_queue import (
+    CurrentEmailConnectorConfig,
+    InMemoryEmailSignalRepository,
+)
 from observer.identity_resolution_work import IdentityResolutionWorkSnapshot
 from observer.local_pilot_api import LocalPilotAPIConfig, create_local_pilot_app
 from observer.models import ConnectorKey, TenantScope
@@ -278,6 +282,8 @@ def _config(
         draft_material_auth_ref="observer-email-draft-material-v1",
         retention_bearer_token="observer-draft-material-token",
         retention_auth_ref="observer-retention-verifier-v1",
+        email_signal_bearer_token="observer-email-signal-token",
+        email_signal_auth_ref="observer-email-signal-v1",
         max_request_bytes=max_request_bytes,
     )
 
@@ -312,6 +318,7 @@ def _app(
     email_material_retention: FakeEmailMaterialRetention | None = None,
     mailbox_identity: object | None = None,
     address_match: object | None = None,
+    email_signals: object | None = None,
 ) -> tuple[FastAPI, FakeControlService, FakeReadService]:
     control = FakeControlService()
     reader = FakeReadService()
@@ -329,8 +336,88 @@ def _app(
         email_material_retention=email_material_retention,
         email_mailbox_identity=mailbox_identity,
         email_address_match=address_match,
+        email_signals=email_signals,
     )
     return app, control, reader
+
+
+def test_email_signal_accept_uses_distinct_auth_closed_shape_and_exact_replay_receipt() -> None:
+    activation = NOW - timedelta(hours=1)
+    signals = InMemoryEmailSignalRepository(
+        configs=(
+            CurrentEmailConnectorConfig(
+                site_id="alpha.example",
+                observer_connector_instance_ref="OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                provider_kind="wecom_app_mail",
+                mailbox_ref="MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                mailbox_config_revision=7,
+                activation_not_before=activation,
+                inbound_enabled=True,
+            ),
+        )
+    )
+    app, _control, _reader = _app(email_signals=signals)
+    payload = {
+        "schema_version": "1.0",
+        "site_id": "alpha.example",
+        "signal_kind": "callback",
+        "observer_connector_instance_ref": "OCI-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "activation_watermark": {
+            "mailbox_id": "MBX-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "mailbox_config_revision": 7,
+            "not_before": activation.isoformat().replace("+00:00", "Z"),
+        },
+        "count_hint": 2,
+        "callback_timestamp": NOW.isoformat().replace("+00:00", "Z"),
+        "payload_digest": "sha256:" + "1" * 64,
+        "nonce_digest": "sha256:" + "2" * 64,
+        "replay_key_digest": "sha256:" + "3" * 64,
+        "idempotency_key": "email-signal:" + "4" * 64,
+    }
+    headers = {
+        **_headers(purpose="email_signal_accept", request_id="signal-request-01"),
+        "Authorization": "Bearer observer-email-signal-token",
+        "X-GBOS-Local-Auth-Ref": "observer-email-signal-v1",
+        "Idempotency-Key": payload["idempotency_key"],
+    }
+    client = TestClient(app)
+
+    ordinary = client.post(
+        "/internal/v1/email-signals/accept",
+        headers={
+            **_headers(purpose="email_signal_accept"),
+            "Idempotency-Key": payload["idempotency_key"],
+        },
+        json=payload,
+    )
+    first = client.post("/internal/v1/email-signals/accept", headers=headers, json=payload)
+    replay = client.post("/internal/v1/email-signals/accept", headers=headers, json=payload)
+    extra = client.post(
+        "/internal/v1/email-signals/accept",
+        headers=headers,
+        json={**payload, "raw_callback": "private callback plaintext"},
+    )
+    drift = client.post(
+        "/internal/v1/email-signals/accept",
+        headers=headers,
+        json={**payload, "payload_digest": "sha256:" + "9" * 64},
+    )
+
+    assert ordinary.status_code == 401
+    assert first.status_code == replay.status_code == 200
+    assert first.json() == replay.json()
+    assert first.json() == {
+        "schema_version": "1.0",
+        "signal_receipt_ref": first.json()["signal_receipt_ref"],
+        "payload_digest": payload["payload_digest"],
+    }
+    assert extra.status_code == 422
+    assert drift.status_code == 409
+    assert all(
+        response.headers["cache-control"] == "no-store"
+        for response in (ordinary, first, replay, extra, drift)
+    )
+    assert "private callback plaintext" not in extra.text
 
 
 class FakeEmailMailboxIdentity:

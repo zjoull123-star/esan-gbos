@@ -29,6 +29,12 @@ from .email_connector_config import (
 )
 from .email_draft_material import DraftAuthorizationReceipt
 from .email_material_retention import EmailMaterialRetentionRequest
+from .email_signal_queue import (
+    EmailSignalConflict,
+    EmailSignalReceipt,
+    EmailSignalRequest,
+    EmailSignalUnavailable,
+)
 from .identity_resolution_work import (
     IdentityAuthorityDenial,
     IdentityAuthorityDenialConflict,
@@ -72,6 +78,8 @@ class LocalPilotAPIConfig:
     draft_material_auth_ref: str | None = field(default=None, repr=False)
     retention_bearer_token: str | None = field(default=None, repr=False)
     retention_auth_ref: str | None = field(default=None, repr=False)
+    email_signal_bearer_token: str | None = field(default=None, repr=False)
+    email_signal_auth_ref: str | None = field(default=None, repr=False)
     max_request_bytes: int = 262_144
 
     def __post_init__(self) -> None:
@@ -104,6 +112,12 @@ class LocalPilotAPIConfig:
             if self.retention_auth_ref != "observer-retention-verifier-v1":
                 raise ValueError("retention authentication reference is invalid")
             _safe_secret(self.retention_bearer_token, "retention_bearer_token")
+        if (self.email_signal_bearer_token is None) != (self.email_signal_auth_ref is None):
+            raise ValueError("email signal authentication is incomplete")
+        if self.email_signal_bearer_token is not None:
+            if self.email_signal_auth_ref != "observer-email-signal-v1":
+                raise ValueError("email signal authentication reference is invalid")
+            _safe_secret(self.email_signal_bearer_token, "email_signal_bearer_token")
         if not 1 <= self.max_request_bytes <= 1_048_576:
             raise ValueError("max_request_bytes is outside the local API budget")
         if self.network_mode == "loopback":
@@ -224,6 +238,16 @@ class EmailConnectorConfigs(Protocol):
         projection: dict[str, object],
         projected_at: datetime,
     ) -> EmailConnectorConfigReceipt: ...
+
+
+class EmailSignals(Protocol):
+    def accept(
+        self,
+        scope: TenantScope,
+        *,
+        request: EmailSignalRequest,
+        accepted_at: datetime,
+    ) -> EmailSignalReceipt: ...
 
 
 class EvidenceReveal(Protocol):
@@ -421,6 +445,39 @@ class EmailConnectorConfigRequest(_ClosedModel):
         return value
 
 
+class EmailSignalAcceptRequest(_ClosedModel):
+    schema_version: Literal["1.0"]
+    site_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]{0,139}$")
+    signal_kind: Literal["callback", "reconciliation"]
+    observer_connector_instance_ref: str = Field(pattern=r"^OCI-[0-9A-HJKMNP-TV-Z]{26}$")
+    activation_watermark: ActivationWatermarkRequest
+    count_hint: int | None = Field(ge=0, le=4_294_967_295)
+    callback_timestamp: str | None = Field(default=None, min_length=20, max_length=35)
+    payload_digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    nonce_digest: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
+    replay_key_digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    idempotency_key: str = Field(pattern=r"^email-signal:[a-f0-9]{64}$")
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "site_id": self.site_id,
+            "signal_kind": self.signal_kind,
+            "observer_connector_instance_ref": self.observer_connector_instance_ref,
+            "activation_watermark": {
+                "mailbox_id": self.activation_watermark.mailbox_id,
+                "mailbox_config_revision": self.activation_watermark.mailbox_config_revision,
+                "not_before": self.activation_watermark.not_before,
+            },
+            "count_hint": self.count_hint,
+            "callback_timestamp": self.callback_timestamp,
+            "payload_digest": self.payload_digest,
+            "nonce_digest": self.nonce_digest,
+            "replay_key_digest": self.replay_key_digest,
+            "idempotency_key": self.idempotency_key,
+        }
+
+
 class EvidenceRevealAuthorizationRequest(_ClosedModel):
     receipt_ref: str = Field(min_length=1, max_length=256)
     site_id: str = Field(min_length=1, max_length=140)
@@ -535,6 +592,7 @@ def create_local_pilot_app(
     email_material_retention: EmailMaterialRetention | None = None,
     email_mailbox_identity: EmailMailboxIdentity | None = None,
     email_address_match: EmailAddressMatch | None = None,
+    email_signals: EmailSignals | None = None,
 ) -> FastAPI:
     """Create the authenticated Frappe v4 downstream surface without starting I/O."""
 
@@ -595,6 +653,22 @@ def create_local_pilot_app(
     async def connector_config_unavailable(
         request: Request,
         exc: EmailConnectorConfigUnavailable,
+    ) -> JSONResponse:
+        del exc
+        return _error(request, 503, "runtime_unavailable")
+
+    @application.exception_handler(EmailSignalConflict)
+    async def email_signal_conflict(
+        request: Request,
+        exc: EmailSignalConflict,
+    ) -> JSONResponse:
+        del exc
+        return _error(request, 409, "idempotency_conflict")
+
+    @application.exception_handler(EmailSignalUnavailable)
+    async def email_signal_unavailable(
+        request: Request,
+        exc: EmailSignalUnavailable,
     ) -> JSONResponse:
         del exc
         return _error(request, 503, "runtime_unavailable")
@@ -691,6 +765,31 @@ def create_local_pilot_app(
             config_publication_ref=config_publication_ref,
             projection=payload.to_wire(),
             projected_at=projected_at.astimezone(UTC),
+        )
+        return receipt.to_wire()
+
+    @application.post("/internal/v1/email-signals/accept")
+    def accept_email_signal(
+        request: Request,
+        payload: Annotated[EmailSignalAcceptRequest, Body()],
+    ) -> dict[str, object]:
+        guard.require_running()
+        scope, _request_id = _governed_scope(
+            request,
+            expected_purpose="email_signal_accept",
+        )
+        _matching_idempotency(request, payload.idempotency_key)
+        if payload.site_id != scope.site_id:
+            raise PermissionError("email signal site scope mismatch")
+        if email_signals is None:
+            raise EmailSignalUnavailable("email signal repository is unavailable")
+        accepted_at = clock()
+        _require_aware(accepted_at, "email signal acceptance clock")
+        signal_request = EmailSignalRequest.from_wire(payload.to_wire())
+        receipt = email_signals.accept(
+            scope,
+            request=signal_request,
+            accepted_at=accepted_at.astimezone(UTC),
         )
         return receipt.to_wire()
 
@@ -1084,7 +1183,10 @@ async def _validate_internal_request(
         "/internal/v1/retention/email-material/register",
         "/internal/v1/retention/tombstones/verify",
     }
-    if retention_path:
+    if request.url.path == "/internal/v1/email-signals/accept":
+        bearer_token = config.email_signal_bearer_token
+        expected_auth_ref = config.email_signal_auth_ref
+    elif retention_path:
         bearer_token = config.retention_bearer_token
         expected_auth_ref = config.retention_auth_ref
     elif request.url.path in {

@@ -91,6 +91,7 @@ DEFAULT_RUNTIME_CONFIG = Path("/config/local-pilot-runtime.json")
 DEFAULT_CURSOR_SECRET = Path("/run/secrets/cursor_hmac_key")
 DEFAULT_MAILBOX_PROJECTION_BEARER = Path("/run/secrets/mailbox_projection_bearer")
 DEFAULT_DRAFT_MATERIAL_BEARER = Path("/run/secrets/observer_email_draft_material_bearer")
+DEFAULT_EMAIL_SIGNAL_BEARER = Path("/run/secrets/observer_email_signal_bearer")
 DEFAULT_IDENTITY_HMAC_KEY = Path("/run/secrets/identity_hmac_key")
 DEFAULT_EVIDENCE_CAS_ROOT = Path("/var/lib/gbos/evidence")
 DEFAULT_OBSERVER_PORT = 8003
@@ -344,6 +345,8 @@ def build_postgres_runtime(
     mailbox_projection_auth_ref: str | None = None,
     draft_material_bearer_token: SecretValue | None = None,
     draft_material_auth_ref: str | None = None,
+    email_signal_bearer_token: SecretValue | None = None,
+    email_signal_auth_ref: str | None = None,
     terminal_retention_registrar: AuthoritativeTerminalRegistrar | None = None,
     identity_resolver: HmacSha256IdentityTokenResolver | None = None,
     identity_hmac_key: bytes | None = None,
@@ -373,6 +376,10 @@ def build_postgres_runtime(
             else None
         ),
         draft_material_auth_ref=draft_material_auth_ref,
+        email_signal_bearer_token=(
+            email_signal_bearer_token.reveal() if email_signal_bearer_token is not None else None
+        ),
+        email_signal_auth_ref=email_signal_auth_ref,
         retention_bearer_token=(
             draft_material_bearer_token.reveal()
             if draft_material_bearer_token is not None
@@ -472,6 +479,7 @@ def main(
     cursor_secret_file: Path = DEFAULT_CURSOR_SECRET,
     mailbox_projection_bearer_file: Path = DEFAULT_MAILBOX_PROJECTION_BEARER,
     draft_material_bearer_file: Path = DEFAULT_DRAFT_MATERIAL_BEARER,
+    email_signal_bearer_file: Path = DEFAULT_EMAIL_SIGNAL_BEARER,
     identity_hmac_key_file: Path = DEFAULT_IDENTITY_HMAC_KEY,
     email_material_retention_config_path: Path = DEFAULT_EMAIL_MATERIAL_RETENTION_CONFIG,
     email_gateway_retention_bearer_file: Path = DEFAULT_EMAIL_GATEWAY_RETENTION_BEARER,
@@ -519,6 +527,8 @@ def main(
         mailbox_projection_auth_ref = None
         draft_material_bearer = None
         draft_material_auth_ref = None
+        email_signal_bearer = None
+        email_signal_auth_ref = None
         identity_resolver = None
         identity_hmac_key = None
         terminal_retention_registrar = None
@@ -556,6 +566,11 @@ def main(
                 bearer_token=retention_bearer.reveal(),
                 auth_ref=retention_config.gateway_api.auth_ref,
             )
+        if environment.get("GBOS_WECOM_APP_MAIL_CALLBACK_ENABLED", "false") == "true":
+            if not isinstance(gateway, Mapping) or gateway.get("kill_switch") is not False:
+                raise ValueError("email signal API requires enabled email Gateway governance")
+            email_signal_bearer = load_secret_file(email_signal_bearer_file)
+            email_signal_auth_ref = "observer-email-signal-v1"
         connection = connect_postgres(config.postgres, connector=connector)
         if draft_material_bearer is not None:
             PostgresEmailDraftMaterialRepository(connection).preflight()
@@ -569,6 +584,8 @@ def main(
             mailbox_projection_auth_ref=mailbox_projection_auth_ref,
             draft_material_bearer_token=draft_material_bearer,
             draft_material_auth_ref=draft_material_auth_ref,
+            email_signal_bearer_token=email_signal_bearer,
+            email_signal_auth_ref=email_signal_auth_ref,
             terminal_retention_registrar=terminal_retention_registrar,
             identity_resolver=identity_resolver,
             identity_hmac_key=identity_hmac_key,

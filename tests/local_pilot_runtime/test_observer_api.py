@@ -27,6 +27,7 @@ from services.observer.observer.email_participant_authority import (
     EmailParticipantAuthorityResolver,
     PostgresEmailParticipantAuthorityRepository,
 )
+from services.observer.observer.email_signal_queue import PostgresEmailSignalRepository
 from services.observer.observer.identity_resolution_work import (
     PostgresIdentityResolutionWorkRepository,
 )
@@ -339,6 +340,8 @@ def test_observer_runtime_composes_real_health_without_model_projection() -> Non
     )
     assert runtime.identity_resolution_metrics._connection is runtime.connection
     assert runtime.email_connector_config_repository._connection is runtime.connection
+    assert isinstance(runtime.email_signal_repository, PostgresEmailSignalRepository)
+    assert runtime.email_signal_repository._connection is runtime.connection
     with pytest.raises(RuntimeError, match="disabled"):
         runtime.outbox._publisher(object(), "event-1", "idem-1")
 
@@ -356,6 +359,8 @@ def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_au
         mailbox_projection_auth_ref="gateway-mailbox-projection-v1",
         draft_material_bearer_token=SecretValue("draft-material-token"),
         draft_material_auth_ref="observer-email-draft-material-v1",
+        email_signal_bearer_token=SecretValue("email-signal-token"),
+        email_signal_auth_ref="observer-email-signal-v1",
         identity_resolver=identity_resolver,
         identity_hmac_key=b"i" * 32,
         evidence_cas_root=tmp_path / "cas",
@@ -398,6 +403,7 @@ def test_observer_runtime_injects_reveal_and_draft_cas_services_with_separate_au
     assert "/internal/v1/bff/email-mailbox-identity/derive" in paths
     assert runtime.email_address_match is not None
     assert "/internal/v1/email-address-match/attest" in paths
+    assert "/internal/v1/email-signals/accept" in paths
     assert "signing_key=<redacted>" in repr(runtime.email_address_match)
 
 
