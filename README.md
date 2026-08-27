@@ -4,6 +4,14 @@ ESAN Global Business Operating System 是面向全球销售、产品打样、采
 AI 观察和经营洞察的治理型业务前台。系统复用 Frappe CRM 的 Organization、
 Contact、Lead 和 Deal；金蝶仍是订单、库存与财务权威系统。
 
+> **公开仓库状态（2026-08-27）：** 当前分支仍是不可部署的 WIP，企业微信邮件网关
+> Tasks 7–8 部分完成、Task 9 未开始，完整测试仍有已知阻塞。真实邮箱、模型、外发、
+> Kingdee、cloud 和 production 全部保持 No-Go。请先阅读
+> [当前交接真相](docs/HANDOFF.md)，不要把公开可见性解释为产品发布或生产授权。
+>
+> 仓库当前没有 repository-wide `LICENSE` 文件；公开可读不代表授予复制、修改、分发或
+> 商用许可。若后续需要开源，应由仓库所有者单独选择并批准许可证。
+
 ## 当前交付边界
 
 本仓库记录 Gate 0–6 的本地、合成数据技术实现；正式 local pilot 仍为
@@ -39,8 +47,8 @@ DeepSeek gateway 已实现并完成配置边界（endpoint 为
 以下能力保持关闭、不代表已验证或不存在：真实金蝶连接及任何金蝶写入、生产
 渠道采集、真实 AI 模型调用、自动外发、自动报价、正式订单创建、腾讯云部署和
 生产发布。本地拓扑与上一轮 source-bound 镜像基线已记录为
-`composition.status=composed`；本轮 mailbox-identity 源码尚需在任何 canary 前重新
-构建、记录与 attestation。这只表示声明的服务和已记录镜像具备组合条件。正式 manifest 仍保持
+`composition.status=composed`；当前 WeCom runtime 源码晚于历史锁定镜像，必须在任何
+canary 前重新构建、记录与 attestation。这只表示声明的服务和已记录镜像具备组合条件。正式 manifest 仍保持
 `local_pilot_go=false`（No-Go），real channels、real model、Kingdee、cloud 和
 production 均未验证。Observer profile 承载 Gate 3–6 的 PostgreSQL 本地验证，
 但仍不是核心 CRM/PWA 的启动依赖。

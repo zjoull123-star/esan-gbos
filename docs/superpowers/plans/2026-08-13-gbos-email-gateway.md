@@ -1,5 +1,11 @@
 # GBOS Independent Email Gateway Implementation Plan
 
+> **2026-08-27 successor status:** This file preserves the approved task contract and historical
+> step counts. The current v5 OpenAPI has 21 operations after SLA extensions; the PWA exposes the
+> 19 mailbox/inbox operations but not the two specialized send-review operations and does not yet
+> project `send_governance`. Current completion, red tests and P0 gates are maintained in
+> [HANDOFF](../../HANDOFF.md); do not infer completion from unchecked historical steps below.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a provider-neutral, human-governed Email Gateway that receives durable Observer email publications, operates a separate CRM Inbox, reuses Frappe identity and routing authority, and sends only after a revision-pinned human ApprovedCommand passes Action Guard.

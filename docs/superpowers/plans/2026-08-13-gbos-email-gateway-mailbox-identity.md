@@ -1,5 +1,10 @@
 # Email Gateway Mailbox Identity Implementation Plan
 
+> **2026-08-27 successor status:** This plan's 19-operation baseline is historical. The current v5
+> OpenAPI has 21 operations after SLA extensions, while the PWA still omits the two specialized
+> send-review operations. Current progress and production-test gates are maintained in
+> [HANDOFF](../../HANDOFF.md).
+
 > **Execution:** Use strict RED -> GREEN TDD in the existing isolated worktree. Preserve the
 > frozen v1 projection and all unrelated work. Do not use provider credentials, provider
 > network, model network, real external send, or production mutation.

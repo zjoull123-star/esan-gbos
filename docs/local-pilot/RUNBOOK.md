@@ -1,5 +1,11 @@
 # ESAN GBOS 本地影子试点运行手册
 
+> **2026-08-27 current-audit notice：** 本手册保留多轮 source/image/test 的 historical
+> operator snapshots；下文旧段落中的“当前”仅指各自快照日期。当前 HEAD、红测、镜像过期、
+> Docker/端口阻塞、企业微信 WIP 与生产测试 P0 统一以
+> [GBOS 当前交接真相](../HANDOFF.md) 为准。在 HANDOFF 的 P0 全绿和新 image attestation
+> 完成前，不得执行真实 Email/WeCom/DeepSeek canary sequence。
+
 ## 当前结论
 
 本地服务拓扑和当前源码镜像现已 **组合并记录**：
@@ -180,9 +186,9 @@ provider payload 和 error payload 禁止作为 label。readiness 必须有数�
 外发批准和 Send Outbox 仍未由该离线流程执行；启用前必须另取当前 source/image 绑定的
 授权与 live evidence。
 
-## Task 13 credential-free closure 与 real-canary operator sequence
+## Task 13 historical credential-free closure 与 real-canary operator sequence
 
-当前 source-bound closure 分别绑定 Frappe source reference
+该 historical source-bound closure 当时分别绑定 Frappe source reference
 `4b2512ba5bf8bbc3bc12cc6beb62055c735dc629`、runtime source reference
 `341b2df9c45b22c0579f960dcb5ecbe694cdd215` 与 image-lock recording commit
 `d8bdc18b468f0e0b2507b4db3a5d0e55ef9ab2f2`：
@@ -214,9 +220,11 @@ response_reported_observed_model=unknown
   `--chain-attestation`，只写入 `response_reported_observed_model`，不接受 free-form
   observed model。真实 canary 未运行，因此该字段当前仍 unknown。
 - 本地 identity HMAC 与 Frappe identity resolver API key/secret 已按用户授权生成并存入
-  Keychain，未进入仓库或证据。Email credential、DeepSeek API key、人工批准的 trusted
-  phrase lexicon 与 operator scope 仍缺失。此前 older source 的 current locked runtime
-  images blocker 已关闭：当前镜像已按上述实际源码重建并记录；若对应源码再变化，
+  Keychain，未进入仓库或证据。在该 historical snapshot 时，Email credential、DeepSeek
+  API key、人工批准的 trusted phrase lexicon 与 operator scope 仍缺失；后续 presence
+  变化以 HANDOFF 为准。该 historical snapshot 当时关闭了 older source
+  的 current locked runtime images blocker：镜像已按当时实际源码重建并记录；当前 HEAD
+  已再次变化，
   **rebuild before the real canary** 仍是硬门。72 小时连续运行不再作为本阶段退出条件，
   按用户决定 deferred/not required for this stage。
 - 较早完整 isolated PostgreSQL integration matrix 为 `43 passed, 1 warning`；当前

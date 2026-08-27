@@ -4,19 +4,23 @@
 channel ingestion, identity resolution and model proposals without enabling outbound
 actions, Kingdee, cloud deployment or production state changes.
 
-**Current source-bound image references:** Frappe source reference
-`35beb2586f12043ce4b89b6875527ec4a75150b9`, runtime source reference
-`1fd20d4df930fc9a70168453d29be1c9dc192522`, and image-lock recording commit
-`54d9aa7866189d5fe2028aeea177f6cff8102b41`. The locked Frappe/PWA image is
+**Current audited code:** `7d97e3dc9f9626e9d4570d6b3509152f6ba0d5b7` on
+`feat/user-identity-resolution-20260810` (2026-08-27 audit). **Historical source-bound image
+references:** Frappe source reference `35beb2586f12043ce4b89b6875527ec4a75150b9`, runtime
+source reference `1fd20d4df930fc9a70168453d29be1c9dc192522`, and image-lock recording commit
+`54d9aa7866189d5fe2028aeea177f6cff8102b41`. The recorded Frappe/PWA image is
 `sha256:0b0e24d7e25c2e384e977c1aa00ef8d032e54aadbb84af813fb077c58fd28460`;
-the local runtime image is
+the recorded local runtime image is
 `sha256:489ad22e95300ec27156904d583f67979cf8142f8b31479d8b938ad3d3a6c0b1`.
 Their source SHA256 labels are respectively
 `f6fe3ab3938890e6d041df03bfd5857528c8e1269a631b38d6bbb527978c959d` and
 `e946cdf903d87b9d387107b82801556ad85994cb7e5702c21854eebda804fd3e`; each image carries
-its own exact source revision and source-hash label.
+its own exact historical source revision and source-hash label. Current local-runtime source is
+`ae14e6c56ab2cd5c2fa5324bb7bc7364ba84bea2b6cf110f74ca0ac3705aa0fc`, so the runtime image
+is stale and must be rebuilt/recorded before canary. Docker/OrbStack was unavailable during the
+audit, so no image or running service was inspected.
 
-## Current architecture
+## Checked-in architecture (not current runtime availability)
 
 - Frappe/PWA, MariaDB, PostgreSQL, Redis, Observer API, Context API and Agent API are
   composed in the isolated `esan-gbos-local-pilot` project.
@@ -26,16 +30,18 @@ its own exact source revision and source-hash label.
   least-privilege credentials and digest-locked images.
 - Persistent evidence and tokenizer-vault volumes run as non-root UID/GID
   `10001:10001` with mode `0700`.
-- The PWA is available locally at `http://127.0.0.1:58080/gbos`; this is local
-  synthetic runtime evidence, not a production deployment.
+- The PWA is designed to bind locally at `http://127.0.0.1:58080/gbos`; no service was observed
+  there during the 2026-08-27 audit because Docker/OrbStack was unavailable. Historical synthetic
+  runtime evidence is not a production deployment.
 
-## Completed locally
+## Historical credential-free completion
 
 - [x] Compose isolation, loopback exposure, profiles, secrets, image locks and
   fail-closed preflight.
-- [x] The current Frappe/PWA and runtime source was rebuilt, inspected and recorded; the
-  synthetic core was restarted from those images. Real channels, models, sends and terminal
-  material deletion remain disabled.
+- [x] The 2026-08-14 Frappe/PWA and runtime source snapshot was rebuilt, inspected and recorded;
+  the synthetic core was then restarted from those historical images. Current WeCom runtime
+  changes are later than that lock and require a new rebuild. Real channels, models, sends and
+  terminal material deletion remain disabled.
 - [x] Fresh Frappe v16 site install for ERPNext, CRM and `esan_gbos`, followed by two
   migrations and native identity permission tests.
 - [x] Observer, Context, Agent and Media PostgreSQL migration chain executed twice with
@@ -58,25 +64,33 @@ its own exact source revision and source-hash label.
 - [x] Current pre-canary evidence package records source/image bindings and zero
   external activity without modifying historical Gate evidence.
 
-The current credential-free source run records full backend
-`3989 passed, 59 skipped, 1 warning`, failed `0`; the warning is the existing Starlette
-TestClient/httpx deprecation. Ruff check/format (`720 files`), CI-scope mypy
-(`151 sources`), compileall, and `scripts/dev/secret-scan` are green. Frontend
-lint/typecheck/build are green, with unit
-`232 passed` and frontend-harness Playwright `29 passed`. The disposable PostgreSQL `--all`
-gate passed Observer/Context `3` tests with 16 deselected and one existing warning, plus
-`2` Gateway tests, and removed its container.
+The 2026-08-14 credential-free source snapshot recorded full backend
+`3989 passed, 59 skipped, 1 warning`, failed `0`; Ruff check/format (`720 files`), CI-scope
+mypy (`151 sources`), compileall and secret scan were green. Frontend unit recorded
+`232 passed` and frontend-harness Playwright `29 passed`; disposable PostgreSQL recorded
+Observer/Context `3 passed, 16 deselected, 1 warning` plus Gateway `2 passed`. These are
+historical counts, not current-HEAD proof.
+
+The 2026-08-27 audit is red: full pytest stops at collection because
+`services/local_pilot_runtime/wecom_app_mail_webhook.py` is missing. Ignoring only that test file
+produces `4062 passed, 59 skipped, 6 failed, 1 warning`: two callback semantics and four missing
+runtime-composition/config/secret gates. Email Gateway core is `237 passed, 2 skipped`; Task 6
+contracts are `32 passed`; WeCom provider core is `38 passed`. Frontend email slices are
+`35 passed` Vitest and `4 passed` mocked Playwright harness. Migration 022 and RLS were not rerun
+against PostgreSQL.
 
 The `test:e2e:site` result at `http://127.0.0.1:58080` (`4 passed, 21 skipped, 0 failed` in
 `6.5s`) is historical-only and is **not rerun on the current source-bound images**. The prior
 21 skipped scenarios were harness-only by design, so that snapshot was not all 25 live and
 is not current proof.
 
-Trivy filesystem and current locked-image scans exited `0`; report only `0` unwaived
+Historical Trivy filesystem and locked-image scans exited `0`; report only `0` unwaived
 High/Critical, `0` image secrets and `0` misconfigurations. The historical waiver set has
 `57` entries covering `103` exact PURLs, expiring `2026-09-30`, and is not a total-findings
-zero claim. The synthetic core is healthy on the current images; formal preflight returns
-`rc78` solely because `local_pilot_go=false`. Email IMAP login/checkpoint/canary remains
+zero claim. On 2026-08-27 Docker/OrbStack and required images were unavailable; formal and
+synthetic preflight both returned `rc78` for multiple blockers, including
+`local_pilot_go=false`, image unavailability and runtime source/image mismatch. Email IMAP
+login/checkpoint/canary remains
 unrun because formal go, activation-time/checkpoint control and provider validation have not
 completed; local credential presence alone is insufficient. DeepSeek response-reported model
 remains `unknown`, and `production_go=false`/`local_pilot_go=false` remain unchanged.
@@ -90,9 +104,9 @@ Playwright `27 passed`, and lint/typecheck/build/Ruff/format/mypy (`130 sources`
 all green. A disposable PostgreSQL run applied the Observer chain and Email Gateway 001–009
 twice and passed `3 + 2` focused real-DB tests; an isolated Frappe v16 site completed install,
 two migrations and five native email/identity test modules. All disposable state was removed.
-No provider, model or external-send network was used. These earlier mailbox-identity changes
-are now included in the current source-bound images; a later source-group change still requires
-a clean-source rebuild, image-lock refresh and attestation before canary or deployment.
+No provider, model or external-send network was used. Those mailbox-identity changes were included
+in the 2026-08-14 source-bound images; the later WeCom source-group change now requires a new
+clean-source rebuild, image-lock refresh and attestation before canary or deployment.
 
 ## Deferred by explicit scope decision
 
@@ -129,9 +143,15 @@ external_send=false
   record the returned model identity and stop on mismatch, invalid JSON or budget gate.
 - [ ] Re-run live restart, provider failure, revocation, retention and emergency-stop
   drills; capture a new real-canary evidence package.
-- [ ] Resolve the WeCom `errcode=45009` governance contract explicitly. Official material does
-  not prove HTTP 429/`Retry-After`; Tasks 7–9 remain stopped until the exact pause/manual-recovery
-  decision is approved.
+- [x] Resolve the WeCom `errcode=45009` governance contract. The approved policy is per-mailbox
+  durable pause with no cursor advance or automatic recovery; only authenticated
+  `Integration Admin`/`GBOS Admin` may resume it.
+- [ ] Complete the approved `45009` behavior in runtime: connect the typed pause to durable
+  connector/checkpoint state, restart-safe cursor protection, audit and the governed admin-resume
+  command. Classification and generic resume exist separately today.
+- [ ] Complete Tasks 7–9: fix the two callback red tests; implement webhook, transport, poller,
+  reconciler and offline shadow E2E; wire Compose/tunnel/config/secrets/start/status/containment/
+  attestation; then rebuild and record the runtime image.
 - [ ] Obtain an auditable outbound idempotency/receipt/status-reconciliation contract before
   Task 18. Task 19 remains prohibited and `external_send=false` remains mandatory.
 

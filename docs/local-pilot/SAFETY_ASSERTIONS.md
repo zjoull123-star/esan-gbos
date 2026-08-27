@@ -1,5 +1,10 @@
 # Local Pilot Safety Assertions
 
+> **2026-08-27 current-audit notice：** 本文中的镜像 digest、运行状态与测试计数是
+> historical snapshots。当前 source/image/runtime/P0 真相见 [HANDOFF](../HANDOFF.md)；
+> 未完成新的 clean rebuild、attestation 与全绿回归前，不得把下列历史 observation 当作
+> 当前可用性或 production Go。
+
 任何一层不满足都不得解释为“可以启动”。
 
 ## NO-CLOUD
@@ -61,7 +66,7 @@
 - `composition.status=composed`
 - `local_pilot_go=false`
 - 正式 preflight 必须返回 78；synthetic preflight 不放宽正式门。
-- 当前源码 runtime/Frappe 镜像已经构建并记录；这不改变 formal No-Go，也不构成
+- 本段 historical snapshot 的 runtime/Frappe 镜像曾构建并记录；这不改变 formal No-Go，也不构成
   生产、真实渠道、DeepSeek、Kingdee 或云 Go。
 
 ## SYNTHETIC-CORE-SNAPSHOT

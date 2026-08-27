@@ -50,6 +50,8 @@ CURRENT_RUNTIME_SOURCE_COMMIT = "1fd20d4df930fc9a70168453d29be1c9dc192522"
 CURRENT_IMAGE_LOCK_COMMIT = "54d9aa7866189d5fe2028aeea177f6cff8102b41"
 CURRENT_FRAPPE_SOURCE_SHA256 = "f6fe3ab3938890e6d041df03bfd5857528c8e1269a631b38d6bbb527978c959d"
 CURRENT_RUNTIME_SOURCE_SHA256 = "e946cdf903d87b9d387107b82801556ad85994cb7e5702c21854eebda804fd3e"
+AUDITED_CODE_HEAD = "7d97e3dc9f9626e9d4570d6b3509152f6ba0d5b7"
+AUDITED_RUNTIME_SOURCE_SHA256 = "ae14e6c56ab2cd5c2fa5324bb7bc7364ba84bea2b6cf110f74ca0ac3705aa0fc"
 HISTORICAL_GITLEAKS_ALLOWLIST_COMMIT = "c27687ec6b39e669014b9ae8980cf6565556aaba"
 CURRENT_GITLEAKS_ALLOWLIST_COMMIT = "6ee371e164480e967a2b4ffeb48b482e5eab3c97"
 CURRENT_LIVE_SITE_BASE_URL = "http://127.0.0.1:58080"
@@ -338,16 +340,33 @@ def test_handoff_calls_out_current_source_and_image_rebuild_boundary() -> None:
     handoff = _read(HANDOFF)
     normalized_handoff = " ".join(handoff.split())
 
+    assert AUDITED_CODE_HEAD in handoff
+    assert AUDITED_RUNTIME_SOURCE_SHA256 in handoff
     assert CURRENT_FRAPPE_SOURCE_COMMIT in handoff
     assert CURRENT_RUNTIME_SOURCE_COMMIT in handoff
     assert CURRENT_IMAGE_LOCK_COMMIT in handoff
     assert CURRENT_FRAPPE_SOURCE_SHA256 in handoff
     assert CURRENT_RUNTIME_SOURCE_SHA256 in handoff
     assert CURRENT_GITLEAKS_ALLOWLIST_COMMIT in handoff
-    assert "frappe source reference" in handoff.lower()
-    assert "runtime source reference" in handoff.lower()
-    assert "current code HEAD 是" not in handoff
+    assert "frappe source reference" in normalized_handoff.lower()
+    assert "runtime source reference" in normalized_handoff.lower()
+    assert "runtime 镜像过期" in _read(EXTERNAL_DEPS)
     assert "governed rebuild/record" in handoff.lower()
+    assert "4062 passed, 59 skipped, 6 failed, 1 warning" in handoff
+    assert "wecom_app_mail_webhook.py" in handoff
+    assert "Docker/OrbStack socket 不存在" in handoff
+    assert "当前 blocker 不只" in handoff
+    assert "Task 6 已完成" in handoff
+    assert "Task 7" in handoff and "部分完成" in handoff
+    assert "Task 8" in handoff and "部分完成" in handoff
+    assert "Task 9" in handoff and "未开始" in handoff
+    assert "partial / synthetic-harness" in normalized_handoff
+    assert "对齐生产测试前的 P0" in handoff
+    assert "Tasks 6–9 未实现" not in handoff
+    assert "当前也没有收到精确批准" not in handoff
+    assert "唯一 blocker" not in handoff
+
+    # Earlier numbers remain only as an explicitly historical image-bound snapshot.
     assert "3989 passed, 59 skipped, 1 warning" in handoff
     assert "720 files" in handoff
     assert "151 sources" in handoff
